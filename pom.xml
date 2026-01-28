@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright (c) 2016, 2025 Oracle and/or its affiliates.
+    Copyright (c) 2016, 2026 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -19,8 +19,8 @@
 
 <project xmlns="http://maven.apache.org/POM/4.0.0"
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-
+        xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <groupId>io.helidon.extensions</groupId>
     <artifactId>helidon-extensions-project</artifactId>
@@ -30,12 +30,17 @@
     <name>Helidon Extensions Project</name>
     <description>Extensions for Helidon</description>
 
+    <modules>
+        <module>hashicorp-vault</module>
+        <module>neo4j</module>
+    </modules>
+
     <organization>
         <name>Oracle Corporation</name>
         <url>https://www.oracle.com/</url>
     </organization>
 
-    <inceptionYear>2018</inceptionYear>
+    <inceptionYear>2025</inceptionYear>
 
     <licenses>
         <license>
@@ -59,37 +64,81 @@
         <spotbugs.skip>false</spotbugs.skip>
         <spotbugs.threshold>Medium</spotbugs.threshold>
 
+        <surefire.argLine>-Xmx1024m -Dfile.encoding=UTF-8</surefire.argLine>
+        <failsafe.argLine>-Xmx1024m -Dfile.encoding=UTF-8</failsafe.argLine>
+
         <dependency-check.skip>false</dependency-check.skip>
         <checkstyle.skip>false</checkstyle.skip>
 
         <version.lib.checkstyle>10.12.5</version.lib.checkstyle>
         <version.lib.asm>9.5</version.lib.asm>
+        <version.lib.hamcrest>1.3</version.lib.hamcrest>
+        <version.lib.junit>5.9.3</version.lib.junit>
+        <version.lib.mockito>2.23.4</version.lib.mockito>
+        <version.lib.testcontainers>1.19.8</version.lib.testcontainers>
 
         <version.plugin.helidon-build-tools>4.0.6</version.plugin.helidon-build-tools>
         <version.plugin.checkstyle>3.3.1</version.plugin.checkstyle>
+        <version.plugin.clean>3.2.0</version.plugin.clean>
         <version.plugin.compiler>3.11.0</version.plugin.compiler>
         <version.plugin.dependency>3.6.0</version.plugin.dependency>
         <version.plugin.directory>1.0</version.plugin.directory>
         <version.plugin.enforcer>3.3.0</version.plugin.enforcer>
         <version.plugin.exec>3.1.0</version.plugin.exec>
         <version.plugin.jar>3.3.0</version.plugin.jar>
+        <version.plugin.javadoc>3.6.2</version.plugin.javadoc>
         <version.plugin.license>1.16</version.plugin.license>
         <version.plugin.os>1.5.0.Final</version.plugin.os>
         <version.plugin.resources>3.3.1</version.plugin.resources>
         <version.plugin.version-plugin>2.15.0</version.plugin.version-plugin>
         <version.plugin.buildnumber>3.1.0</version.plugin.buildnumber>
         <version.plugin.spotbugs>4.7.3.5</version.plugin.spotbugs>
+        <version.plugin.surefire>3.1.0</version.plugin.surefire>
         <version.plugin.findsecbugs>1.12.0</version.plugin.findsecbugs>
         <version.plugin.dependency-check>10.0.3</version.plugin.dependency-check>
     </properties>
 
-    <modules>
-        <module>neo4j</module>
-    </modules>
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter-params</artifactId>
+                <version>${version.lib.junit}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter-engine</artifactId>
+                <version>${version.lib.junit}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.hamcrest</groupId>
+                <artifactId>hamcrest-all</artifactId>
+                <version>${version.lib.hamcrest}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-core</artifactId>
+                <version>${version.lib.mockito}</version>
+            </dependency>
+            <dependency>
+                <!-- testcontainers should only be used in integration tests -->
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${version.lib.testcontainers}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <build>
         <pluginManagement>
             <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-clean-plugin</artifactId>
+                    <version>${version.plugin.clean}</version>
+                </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-gpg-plugin</artifactId>
@@ -111,6 +160,21 @@
                     <version>${version.plugin.dependency}</version>
                 </plugin>
                 <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>exec-maven-plugin</artifactId>
+                    <version>${version.plugin.exec}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-javadoc-plugin</artifactId>
+                    <version>${version.plugin.javadoc}</version>
+                </plugin>
+                <plugin>
+                    <groupId>io.helidon.build-tools</groupId>
+                    <artifactId>helidon-javadoc-maven-plugin</artifactId>
+                    <version>${version.plugin.helidon-build-tools}</version>
+                </plugin>
+                <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
                     <version>${version.plugin.compiler}</version>
@@ -126,6 +190,25 @@
                              -->
                             <arg>-Xpkginfo:always</arg>
                         </compilerArgs>
+                    </configuration>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.ow2.asm</groupId>
+                            <artifactId>asm</artifactId>
+                            <version>${version.lib.asm}</version>
+                        </dependency>
+                    </dependencies>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${version.plugin.surefire}</version>
+                    <configuration>
+                        <useModulePath>false</useModulePath>
+                        <trimStackTrace>false</trimStackTrace>
+                        <!-- DO NOT override argLine instead use surefire.argLine -->
+                        <argLine>${surefire.argLine}</argLine>
+                        <redirectTestOutputToFile>true</redirectTestOutputToFile>
                     </configuration>
                     <dependencies>
                         <dependency>
@@ -253,6 +336,14 @@
                     </executions>
                     <configuration>
                         <getRevisionOnlyOnce>true</getRevisionOnlyOnce>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>io.helidon.build-tools</groupId>
+                    <artifactId>helidon-services-plugin</artifactId>
+                    <version>${version.plugin.helidon-build-tools}</version>
+                    <configuration>
+                        <mode>fail</mode>
                     </configuration>
                 </plugin>
             </plugins>
@@ -383,7 +474,8 @@
                                     <!--suppress UnresolvedMavenProperty -->
                                     <configLocation>${top.parent.basedir}/etc/checkstyle.xml</configLocation>
                                     <!--suppress UnresolvedMavenProperty -->
-                                    <suppressionsLocation>${top.parent.basedir}/etc/checkstyle-suppressions.xml</suppressionsLocation>
+                                    <suppressionsLocation>${top.parent.basedir}/etc/checkstyle-suppressions.xml
+                                    </suppressionsLocation>
                                 </configuration>
                             </execution>
                         </executions>

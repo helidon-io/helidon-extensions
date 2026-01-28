@@ -49,15 +49,18 @@ frontend/node
 node_modules
 archetype-resources/pom.xml
 # excluded as it contains both Oracle and original copyright notice
-neo4j/examples/mp/src/main/java/io/helidon/examples/integrations/neo4j/mp/domain/Actor.java
-neo4j/examples/mp/src/main/java/io/helidon/examples/integrations/neo4j/mp/domain/Movie.java
-neo4j/examples/mp/src/main/java/io/helidon/examples/integrations/neo4j/mp/domain/MovieRepository.java
-neo4j/examples/mp/src/main/java/io/helidon/examples/integrations/neo4j/mp/domain/Person.java
-neo4j/examples/se/src/main/java/io/helidon/examples/integrations/neo4j/mp/domain/Actor.java
-neo4j/examples/se/src/main/java/io/helidon/examples/integrations/neo4j/domain/Actor.java
-neo4j/examples/se/src/main/java/io/helidon/examples/integrations/neo4j/domain/Movie.jav
-neo4j/examples/se/src/main/java/io/helidon/examples/integrations/neo4j/domain/MovieRepository.java
-neo4j/examples/se/src/main/java/io/helidon/examples/integrations/neo4j/domain/Person.java
+neo4j/examples/mp/src/main/java/io/helidon/extensions/neo4j/examples/mp/domain/Actor.java
+neo4j/examples/mp/src/main/java/io/helidon/extensions/neo4j/examples/mp/domain/Movie.java
+neo4j/examples/mp/src/main/java/io/helidon/extensions/neo4j/examples/mp/domain/MovieRepository.java
+neo4j/examples/mp/src/main/java/io/helidon/extensions/neo4j/examples/mp/domain/Person.java
+neo4j/examples/se-declarative/src/main/java/io/helidon/extensions/neo4j/examples/declarative/domain/Actor.java
+neo4j/examples/se-declarative/src/main/java/io/helidon/extensions/neo4j/examples/declarative/domain/Movie.java
+neo4j/examples/se-declarative/src/main/java/io/helidon/extensions/neo4j/examples/declarative/domain/MovieRepository.java
+neo4j/examples/se-declarative/src/main/java/io/helidon/extensions/neo4j/examples/declarative/domain/Person.java
+neo4j/examples/se-imperative/src/main/java/io/helidon/extensions/neo4j/examples/imperative/domain/Actor.java
+neo4j/examples/se-imperative/src/main/java/io/helidon/extensions/neo4j/examples/imperative/domain/Movie.java
+neo4j/examples/se-imperative/src/main/java/io/helidon/extensions/neo4j/examples/imperative/domain/MovieRepository.java
+neo4j/examples/se-imperative/src/main/java/io/helidon/extensions/neo4j/examples/imperative/domain/Person.java
 etc/THIRD_PARTY_LICENSES.xml
 etc/HELIDON_THIRD_PARTY_LICENSES.xml
 etc/dependency-check-suppression.xml
@@ -74,3 +77,4 @@ src/test/resources/static/classpath/index.html
 service.loader
 .repo
 reflection.proto
+manifest
