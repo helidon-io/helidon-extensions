@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+    Copyright (c) 2021, 2025 Oracle and/or its affiliates.
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+-->
+
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xmlns="http://maven.apache.org/POM/4.0.0"
+        xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.helidon.extensions</groupId>
+        <artifactId>helidon-extensions-project</artifactId>
+        <version>4.0.0-SNAPSHOT</version>
+    </parent>
+
+    <groupId>io.helidon.extensions.hashicorp.vault</groupId>
+    <artifactId>helidon-extensions-hashicorp-vault-project</artifactId>
+    <packaging>pom</packaging>
+
+    <name>Helidon Extensions Hashicorp Vault Project</name>
+    <description>Extension for HashiCorp Vault</description>
+
+    <modules>
+        <module>bom</module>
+        <module>modules</module>
+    </modules>
+
+    <properties>
+        <!--
+        When changing Helidon base version:
+        - change it here to version manage Helidon dependencies
+        - change it in all example POM files in parent section, as that cannot use a property
+        -->
+        <helidon.version>4.3.2</helidon.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>io.helidon</groupId>
+                <artifactId>helidon-dependencies</artifactId>
+                <version>${helidon.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.hashicorp.vault</groupId>
+                <artifactId>helidon-extensions-hashicorp-vault-bom</artifactId>
+                <version>${project.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <profiles>
+        <profile>
+            <id>examples</id>
+            <modules>
+                <module>examples</module>
+            </modules>
+        </profile>
+        <profile>
+            <id>tests</id>
+            <modules>
+                <module>tests</module>
+            </modules>
+        </profile>
+    </profiles>
+</project>
