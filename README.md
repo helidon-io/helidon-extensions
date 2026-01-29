@@ -13,6 +13,7 @@ Each extension is versioned independently. Please see the documentation for each
 See README for individual extensions.
 
 * [neo4j](neo4j/docs/README.md)
+* [HashiCorp Vault](hashicorp-vault/docs/README.md)
 
 ## Examples
 

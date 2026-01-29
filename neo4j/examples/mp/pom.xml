@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright (c) 2021, 2025 Oracle and/or its affiliates.
+    Copyright (c) 2021, 2026 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -24,15 +24,17 @@
     <parent>
         <groupId>io.helidon.applications</groupId>
         <artifactId>helidon-mp</artifactId>
-        <version>4.2.4</version>
+        <version>4.3.2</version>
         <relativePath/>
     </parent>
-    <artifactId>helidon-extensions-mp-neo4j-example</artifactId>
+    <artifactId>helidon-extensions-neo4j-examples-mp</artifactId>
     <version>4.0.0-SNAPSHOT</version>
     <name>Helidon MP Neo4j Example</name>
 
     <properties>
-        <neo4j-harness.version>5.12.0</neo4j-harness.version>
+        <helidon.extension.neo4j.version>4.0.0-SNAPSHOT</helidon.extension.neo4j.version>
+        <neo4j-harness.version>5.26.17</neo4j-harness.version>
+        <neo4j.version>6.0.2</neo4j.version>
     </properties>
 
     <dependencies>
@@ -41,16 +43,12 @@
             <artifactId>helidon-microprofile</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.integrations.neo4j</groupId>
-            <artifactId>helidon-integrations-neo4j</artifactId>
+            <groupId>io.helidon.extensions.neo4j</groupId>
+            <artifactId>helidon-extensions-neo4j</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.integrations.neo4j</groupId>
-            <artifactId>helidon-integrations-neo4j-metrics</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.helidon.integrations.neo4j</groupId>
-            <artifactId>helidon-integrations-neo4j-health</artifactId>
+            <groupId>io.helidon.extensions.neo4j</groupId>
+            <artifactId>helidon-extensions-neo4j-health</artifactId>
         </dependency>
 
         <dependency>
@@ -101,6 +99,25 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.neo4j.driver</groupId>
+                <artifactId>neo4j-java-driver-bom</artifactId>
+                <version>${neo4j.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.neo4j</groupId>
+                <artifactId>helidon-extensions-neo4j-bom</artifactId>
+                <version>${helidon.extension.neo4j.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <build>
         <plugins>

@@ -20,10 +20,4 @@ To enable Neo4j, add the following dependency to your project’s `pom.xml`
 </dependency>
 ```
 
-```xml
-<dependency>
-    <groupId>io.helidon.extensions.neo4j</groupId>
-    <artifactId>helidon-extensions-neo4j-metrics</artifactId>
-</dependency>
-```
 

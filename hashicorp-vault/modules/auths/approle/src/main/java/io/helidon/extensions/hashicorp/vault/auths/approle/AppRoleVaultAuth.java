@@ -1,0 +1,192 @@
+/*
+ * Copyright (c) 2021, 2026 Oracle and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.helidon.extensions.hashicorp.vault.auths.approle;
+
+import java.lang.System.Logger.Level;
+import java.util.Optional;
+
+import io.helidon.common.Weight;
+import io.helidon.common.Weighted;
+import io.helidon.config.Config;
+import io.helidon.extensions.hashicorp.vault.Vault;
+import io.helidon.extensions.hashicorp.vault.VaultApiException;
+import io.helidon.extensions.hashicorp.vault.VaultConfig;
+import io.helidon.extensions.hashicorp.vault.auths.common.NoVaultAuth;
+import io.helidon.extensions.hashicorp.vault.rest.RestApi;
+import io.helidon.extensions.hashicorp.vault.spi.VaultAuth;
+import io.helidon.http.HeaderName;
+import io.helidon.http.HeaderNames;
+
+/**
+ * Vault authentication for AppRole.
+ */
+@Weight(Weighted.DEFAULT_WEIGHT + 100)
+public class AppRoleVaultAuth implements VaultAuth {
+    private static final System.Logger LOGGER = System.getLogger(AppRoleVaultAuth.class.getName());
+    private static final HeaderName VAULT_NAMESPACE_HEADER_NAME = HeaderNames.create("X-Vault-Namespace");
+    private final String appRoleId;
+    private final String secretId;
+    private final String methodPath;
+
+    /**
+     * Constructor required for Java Service Loader.
+     *
+     * @deprecated please use {@link #builder()}
+     */
+    @Deprecated
+    public AppRoleVaultAuth() {
+        this.appRoleId = null;
+        this.secretId = null;
+        this.methodPath = null;
+    }
+
+    private AppRoleVaultAuth(Builder builder) {
+        this.appRoleId = builder.appRoleId;
+        this.secretId = builder.secretId;
+        this.methodPath = builder.path;
+    }
+
+    /**
+     * Create a new builder.
+     *
+     * @return new builder
+     */
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    @Override
+    public Optional<RestApi> authenticate(Config config, VaultConfig vaultConfig) {
+        boolean enabled = config.get("auth.app-role.enabled")
+                .asBoolean()
+                .orElse(true);
+
+        if (!enabled) {
+            return Optional.empty();
+        }
+        Optional<String> maybeAppRoleId = Optional.ofNullable(this.appRoleId)
+                .or(() -> config.get("auth.app-role.role-id")
+                        .asString()
+                        .asOptional());
+
+        if (maybeAppRoleId.isEmpty()) {
+            LOGGER.log(Level.DEBUG, "AppRole vault authentication not used, as app-role.role-id is not defined");
+            return Optional.empty();
+        }
+
+        String appRoleId = maybeAppRoleId.get();
+        String secretId = Optional.ofNullable(this.secretId)
+                .or(() -> config.get("auth.app-role.secret-id")
+                        .asString()
+                        .asOptional())
+                .orElseThrow(() -> new VaultApiException(
+                        "AppRole ID is defined (%s), but secret id is not. Cannot authenticate.",
+                        appRoleId));
+
+        LOGGER.log(Level.TRACE, "Will try to login to Vault using app role id: " + appRoleId + " and a secret id.");
+
+        String address = vaultConfig.address();
+
+        // explicitly use default
+        var loginVaultBuilder = Vault.builder()
+                .address(address)
+                .vaultAuthsDiscoverServices(false)
+                .webClient(vaultConfig.webClient())
+                .faultTolerance(vaultConfig.faultTolerance())
+                .addVaultAuth(NoVaultAuth.create());
+
+        vaultConfig.baseNamespace()
+                .ifPresent(loginVaultBuilder::baseNamespace);
+
+        Vault loginVault = loginVaultBuilder.build();
+        String methodPath = Optional.ofNullable(this.methodPath)
+                .orElseGet(() -> config.get("auth.app-role.path")
+                        .asString()
+                        .orElse(AppRoleAuth.AUTH_METHOD.defaultPath()));
+
+        LOGGER.log(Level.INFO,
+                   "Authenticated Vault {0}/{1} using AppRole, roleId \"{2}\"",
+                   address, methodPath, appRoleId);
+
+        return Optional.of(AppRoleRestApi.appRoleBuilder()
+                                   .webClientBuilder(webclient -> {
+                                       webclient.from(vaultConfig.webClient())
+                                               .baseUri(address + "/v1");
+                                       vaultConfig.baseNamespace()
+                                               .ifPresent(ns -> webclient.addHeader(VAULT_NAMESPACE_HEADER_NAME, ns));
+                                   })
+                                   .faultTolerance(vaultConfig.faultTolerance())
+                                   .auth(loginVault.auth(AppRoleAuth.AUTH_METHOD, methodPath))
+                                   .appRoleId(appRoleId)
+                                   .secretId(secretId)
+                                   .build());
+
+    }
+
+    /**
+     * Fluent API builder for {@link AppRoleVaultAuth}.
+     */
+    public static class Builder implements io.helidon.common.Builder<Builder, AppRoleVaultAuth> {
+        private String appRoleId;
+        private String secretId;
+        private String path;
+
+        private Builder() {
+        }
+
+        @Override
+        public AppRoleVaultAuth build() {
+            return new AppRoleVaultAuth(this);
+        }
+
+        /**
+         * ID of the AppRole.
+         *
+         * @param appRoleId AppRole ID
+         * @return updated builder
+         */
+        public Builder appRoleId(String appRoleId) {
+            this.appRoleId = appRoleId;
+            return this;
+        }
+
+        /**
+         * Secret ID generated for the AppRole.
+         *
+         * @param secretId secret ID
+         * @return updated builder
+         */
+        public Builder secretId(String secretId) {
+            this.secretId = secretId;
+            return this;
+        }
+
+        /**
+         * Custom method path.
+         *
+         * @param path path of the app role method, defaults to
+         *             {@link io.helidon.extensions.hashicorp.vault.auths.approle.AppRoleAuth#AUTH_METHOD}
+         *             default path
+         * @return updated builder
+         */
+        public Builder path(String path) {
+            this.path = path;
+            return this;
+        }
+    }
+
+}

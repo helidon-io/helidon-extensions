@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright (c) 2021, 2025 Oracle and/or its affiliates.
+    Copyright (c) 2021, 2026 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -26,21 +26,29 @@
         <artifactId>helidon-extensions-project</artifactId>
         <version>4.0.0-SNAPSHOT</version>
     </parent>
+
     <groupId>io.helidon.extensions.neo4j</groupId>
     <artifactId>helidon-extensions-neo4j-project</artifactId>
     <packaging>pom</packaging>
+
     <name>Helidon Neo4j Extension</name>
 
+    <modules>
+        <module>bom</module>
+        <module>modules</module>
+    </modules>
+
     <properties>
-        <helidon.version>4.2.4</helidon.version>
+        <helidon.version>4.3.2</helidon.version>
+        <version.lib.neo4j>6.0.2</version.lib.neo4j>
     </properties>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>io.helidon</groupId>
-                <artifactId>helidon-dependencies</artifactId>
-                <version>${helidon.version}</version>
+                <groupId>org.neo4j.driver</groupId>
+                <artifactId>neo4j-java-driver-bom</artifactId>
+                <version>${version.lib.neo4j}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -51,14 +59,22 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+            <dependency>
+                <groupId>io.helidon</groupId>
+                <artifactId>helidon-dependencies</artifactId>
+                <version>${helidon.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
-    <modules>
-        <module>neo4j</module>
-        <module>health</module>
-        <module>metrics</module>
-        <module>bom</module>
-        <module>examples</module>
-    </modules>
+    <profiles>
+        <profile>
+            <id>examples</id>
+            <modules>
+                <module>examples</module>
+            </modules>
+        </profile>
+    </profiles>
 </project>
