@@ -39,7 +39,7 @@
     </modules>
 
     <properties>
-        <helidon.version>4.3.2</helidon.version>
+        <helidon.version>4.3.4</helidon.version>
         <version.lib.neo4j>6.0.2</version.lib.neo4j>
     </properties>
 

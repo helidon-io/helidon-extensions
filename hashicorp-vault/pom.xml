@@ -45,7 +45,7 @@
         - change it here to version manage Helidon dependencies
         - change it in all example POM files in parent section, as that cannot use a property
         -->
-        <helidon.version>4.3.2</helidon.version>
+        <helidon.version>4.3.4</helidon.version>
     </properties>
 
     <dependencyManagement>
