@@ -34,6 +34,32 @@
         <reactorRule name="tests">
             <profiles>
                 <profile>tests</profile>
+            </profiles>
+            <moduleSets>
+                <moduleSet name="vault">
+                    <includes>
+                        <include>hashicorp-vault/**</include>
+                    </includes>
+                </moduleSet>
+                <moduleSet name="neo4j">
+                    <includes>
+                        <include>neo4j/**</include>
+                    </includes>
+                </moduleSet>
+                <moduleSet name="oci">
+                    <includes>
+                        <include>oci-v3/**</include>
+                    </includes>
+                </moduleSet>
+                <moduleSet name="helidon">
+                    <includes>
+                        <include>helidon/**</include>
+                    </includes>
+                </moduleSet>
+            </moduleSets>
+        </reactorRule>
+        <reactorRule name="examples">
+            <profiles>
                 <profile>examples</profile>
             </profiles>
             <moduleSets>
