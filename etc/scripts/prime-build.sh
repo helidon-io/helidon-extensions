@@ -49,8 +49,8 @@ version() {
 
 readonly HELIDON_BRANCH="main"
 
-# we define Helidon version in dependencies pom
-HELIDON_VERSION=$(version "${WS_DIR}/dependencies/pom.xml")
+# each extension may use a different version, use an explicit (current) snapshot
+HELIDON_VERSION=27.0.0-SNAPSHOT
 readonly HELIDON_VERSION
 
 echo "HELIDON_VERSION=${HELIDON_VERSION}"
