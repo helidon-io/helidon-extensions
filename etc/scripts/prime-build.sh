@@ -30,13 +30,13 @@ on_error(){
 trap on_error ERR
 
 # Path to this script
-if [ -h "${0}" ] ; then
-    SCRIPT_PATH="$(readlink "${0}")"
-else
-    # shellcheck disable=SC155
-    SCRIPT_PATH="${0}"
-fi
-readonly SCRIPT_PATH
+#if [ -h "${0}" ] ; then
+#    SCRIPT_PATH="$(readlink "${0}")"
+#else
+#    # shellcheck disable=SC155
+#    SCRIPT_PATH="${0}"
+#fi
+#readonly SCRIPT_PATH
 
 # Path to the root of the workspace
 # shellcheck disable=SC2046
