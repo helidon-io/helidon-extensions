@@ -43,7 +43,7 @@ jobs:
           setup-latest-java: true
           run: |
             mvn ${MVN_ARGS} --version
-            mvn ${MVN_ARGS} build-cache:go-offline
+            mvn ${MVN_ARGS} io.helidon.build-tools:helidon-build-cache-maven-plugin:4.0.26:go-offline
             mvn ${MVN_ARGS} -T8 \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -DskipTests \

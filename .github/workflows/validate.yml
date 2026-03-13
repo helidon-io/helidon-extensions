@@ -107,7 +107,7 @@ jobs:
           maven-cache: read-write
           run: |
             mvn --version
-            mvn ${MVN_ARGS} build-cache:go-offline
+            mvn ${MVN_ARGS} io.helidon.build-tools:helidon-build-cache-maven-plugin:4.0.26:go-offline
             mvn ${MVN_ARGS} \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -DskipTests \
@@ -131,7 +131,7 @@ jobs:
           maven-cache: read-write
           run: |
             mvn --version
-            mvn ${MVN_ARGS} build-cache:go-offline
+            mvn ${MVN_ARGS} io.helidon.build-tools:helidon-build-cache-maven-plugin:4.0.26:go-offline
             mvn ${MVN_ARGS} \
               -DreactorRule=tests \
               -DmoduleSet=${{ matrix.moduleSet }} \
