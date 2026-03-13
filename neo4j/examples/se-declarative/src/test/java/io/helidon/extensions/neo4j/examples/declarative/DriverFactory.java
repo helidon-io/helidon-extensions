@@ -18,14 +18,13 @@ package io.helidon.extensions.neo4j.examples.declarative;
 
 import java.util.function.Supplier;
 
-import io.helidon.common.LazyValue;
 import io.helidon.service.registry.Service;
 
-import org.neo4j.driver.AuthTokens;
 import org.neo4j.driver.Config;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.GraphDatabase;
-import org.testcontainers.containers.GenericContainer;
+import org.neo4j.harness.Neo4j;
+import org.neo4j.harness.Neo4jBuilders;
 
 @Service.Singleton
 class DriverFactory implements Supplier<Driver> {
@@ -72,36 +71,32 @@ class DriverFactory implements Supplier<Driver> {
             (LillyW)-[:DIRECTED]->(TheMatrixRevolutions),
             (LanaW)-[:DIRECTED]->(TheMatrixRevolutions),
             (JoelS)-[:PRODUCED]->(TheMatrixRevolutions)""";
-    private static final String USERNAME = "neo4j";
-    private static final String PASSWORD = "changeit";
 
-    private final LazyValue<GenericContainer<?>> instance;
+    private volatile Neo4j server;
+    private Driver driver;
 
     DriverFactory() {
-        this.instance = LazyValue.create(() -> new GenericContainer<>("neo4j:5.26")
-                .withEnv("NEO4J_AUTH", USERNAME + "/" + PASSWORD)
-                .withExposedPorts(7474, 7687));
     }
 
     @Override
     public Driver get() {
-        GenericContainer<?> neo4jContainer = instance.get();
-        neo4jContainer.start();
+        return driver;
+    }
 
-        Driver d = GraphDatabase.driver("bolt://localhost:" + neo4jContainer.getMappedPort(7687),
-                                        AuthTokens.basic(USERNAME, PASSWORD),
-                                        Config.defaultConfig());
+    @Service.PostConstruct
+    void postConstruct() {
+        server = Neo4jBuilders.newInProcessBuilder()
+                .withDisabledServer()
+                .withFixture(FIXTURE)
+                .build();
 
-        d.session()
-                .run(FIXTURE);
-
-        return d;
+        this.driver = GraphDatabase.driver(server.boltURI(), Config.defaultConfig());
     }
 
     @Service.PreDestroy
     void shutdown() {
-        if (instance.isLoaded()) {
-            instance.get().close();
+        if (server != null) {
+            server.close();
         }
     }
 }

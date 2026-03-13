@@ -34,7 +34,7 @@
     <properties>
         <mainClass>io.helidon.extensions.neo4j.examples.imperative.Main</mainClass>
         <helidon.extension.neo4j.version>4.0.0-SNAPSHOT</helidon.extension.neo4j.version>
-        <neo4j-harness.version>5.26.17</neo4j-harness.version>
+        <neo4j-harness.version>5.26.22</neo4j-harness.version>
         <version.lib.neo4j>6.0.2</version.lib.neo4j>
     </properties>
 
