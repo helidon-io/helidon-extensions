@@ -16,7 +16,7 @@
 
 package io.helidon.extensions.hashicorp.vault.secrets.transit;
 
-import io.helidon.common.config.Config;
+import io.helidon.config.Config;
 import io.helidon.extensions.hashicorp.vault.Vault;
 import io.helidon.security.spi.SecurityProvider;
 import io.helidon.security.spi.SecurityProviderService;
@@ -24,7 +24,6 @@ import io.helidon.security.spi.SecurityProviderService;
 /**
  * Service provider for {@link io.helidon.security.spi.SecurityProviderService} for transit secrets.
  */
-@SuppressWarnings("removal")
 public class TransitSecurityService implements SecurityProviderService {
     @Override
     public String providerConfigKey() {
@@ -37,7 +36,7 @@ public class TransitSecurityService implements SecurityProviderService {
     }
 
     @Override
-    public SecurityProvider providerInstance(Config config) {
-        return new TransitSecurityProvider(Vault.create(io.helidon.config.Config.config(config)));
+    public SecurityProvider create(Config config) {
+        return new TransitSecurityProvider(Vault.create(config));
     }
 }

@@ -21,7 +21,7 @@ import java.util.Optional;
 import java.util.function.Function;
 
 import io.helidon.common.Base64Value;
-import io.helidon.common.config.Config;
+import io.helidon.config.Config;
 import io.helidon.extensions.hashicorp.vault.Vault;
 import io.helidon.security.SecurityException;
 import io.helidon.security.spi.DigestProvider;

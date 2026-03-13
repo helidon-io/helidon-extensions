@@ -16,7 +16,7 @@
 
 package io.helidon.extensions.hashicorp.vault.secrets.kv1;
 
-import io.helidon.common.config.Config;
+import io.helidon.config.Config;
 import io.helidon.extensions.hashicorp.vault.Vault;
 import io.helidon.security.spi.SecurityProvider;
 import io.helidon.security.spi.SecurityProviderService;
@@ -24,7 +24,6 @@ import io.helidon.security.spi.SecurityProviderService;
 /**
  * Service loader service implementation for {@link io.helidon.security.spi.SecurityProviderService}.
  */
-@SuppressWarnings("removal")
 public class Kv1SecurityService implements SecurityProviderService {
     /**
      * @deprecated Do not use this constructor, this is a service loader service!
@@ -44,7 +43,7 @@ public class Kv1SecurityService implements SecurityProviderService {
     }
 
     @Override
-    public SecurityProvider providerInstance(Config config) {
-        return new Kv1SecurityProvider(Vault.create(io.helidon.config.Config.config(config)));
+    public SecurityProvider create(Config config) {
+        return new Kv1SecurityProvider(Vault.create(config));
     }
 }
