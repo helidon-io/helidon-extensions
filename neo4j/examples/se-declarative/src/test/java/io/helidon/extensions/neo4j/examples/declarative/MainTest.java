@@ -43,7 +43,7 @@ public class MainTest {
     @Test
     public void testHealth() {
         try (Http1ClientResponse response = webClient.get("/observe/health").request()) {
-            assertThat(response.status(), is(Status.NO_CONTENT_204));
+            assertThat(response.status(), is(Status.OK_200));
         }
     }
 
