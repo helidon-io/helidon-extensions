@@ -33,6 +33,7 @@
     <modules>
         <module>hashicorp-vault</module>
         <module>neo4j</module>
+        <module>oci-v3</module>
     </modules>
 
     <organization>

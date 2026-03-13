@@ -111,12 +111,35 @@ jobs:
             mvn ${MVN_ARGS} \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -DskipTests \
-              -Ptests \
-              -Pexamples \
               install
+  _tests:
+    needs: build
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        os: [ ubuntu-22.04, windows-2022 ]
+        moduleSet: [ helidon, oci, vault, neo4j ]
+    runs-on: ${{ matrix.os }}
+    name: tests/${{ matrix.moduleSet }}-${{matrix.platform}}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/common
+        with:
+          build-cache: read-write
+          maven-cache: read-write
+          run: |
+            mvn --version
+            mvn ${MVN_ARGS} build-cache:go-offline
+            mvn ${MVN_ARGS} \
+              -DreactorRule=tests \
+              -DmoduleSet=${{ matrix.moduleSet }} \
+              -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
+              verify
   gate:
     runs-on: ubuntu-22.04
-    needs: [ copyright, checkstyle, shellcheck, build ]
+    needs: [ copyright, checkstyle, shellcheck, build, _tests ]
     steps:
       - shell: bash
         run: |
