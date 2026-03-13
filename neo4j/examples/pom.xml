@@ -40,6 +40,5 @@
     <modules>
         <module>se-imperative</module>
         <module>se-declarative</module>
-        <module>mp</module>
     </modules>
 </project>

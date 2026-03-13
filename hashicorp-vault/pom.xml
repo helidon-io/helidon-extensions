@@ -16,10 +16,10 @@
     limitations under the License.
 
 -->
-
-<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xmlns="http://maven.apache.org/POM/4.0.0"
-        xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>io.helidon.extensions</groupId>
@@ -45,22 +45,22 @@
         - change it here to version manage Helidon dependencies
         - change it in all example POM files in parent section, as that cannot use a property
         -->
-        <helidon.version>4.3.4</helidon.version>
+        <helidon.version>27.0.0-SNAPSHOT</helidon.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>io.helidon</groupId>
-                <artifactId>helidon-dependencies</artifactId>
-                <version>${helidon.version}</version>
+                <groupId>io.helidon.extensions.hashicorp.vault</groupId>
+                <artifactId>helidon-extensions-hashicorp-vault-bom</artifactId>
+                <version>${project.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
             <dependency>
-                <groupId>io.helidon.extensions.hashicorp.vault</groupId>
-                <artifactId>helidon-extensions-hashicorp-vault-bom</artifactId>
-                <version>${project.version}</version>
+                <groupId>io.helidon</groupId>
+                <artifactId>helidon-dependencies</artifactId>
+                <version>${helidon.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

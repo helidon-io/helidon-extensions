@@ -44,8 +44,4 @@ module io.helidon.extensions.hashicorp.vault {
     uses io.helidon.extensions.hashicorp.vault.spi.AuthMethodProvider;
     uses io.helidon.extensions.hashicorp.vault.spi.VaultAuth;
     uses io.helidon.extensions.hashicorp.vault.spi.SysProvider;
-
-    // required for CDI
-    opens io.helidon.extensions.hashicorp.vault to weld.core.impl, io.helidon.microprofile.cdi;
-
 }
