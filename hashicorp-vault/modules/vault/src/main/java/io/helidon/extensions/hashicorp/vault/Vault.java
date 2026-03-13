@@ -32,7 +32,6 @@ import io.helidon.http.Method;
  * Once you have a Vault instance, you can access secrets through engines.
  * To get access to secrets, use {@link #secrets(Engine)}.
  */
-@RuntimeType.PrototypedBy(VaultConfig.class)
 public interface Vault extends RuntimeType.Api<VaultConfig> {
     /**
      * HTTP {@code LIST} method used by several Vault engines.

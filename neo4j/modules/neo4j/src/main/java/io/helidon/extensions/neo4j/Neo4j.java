@@ -28,7 +28,6 @@ import org.neo4j.driver.Driver;
  * Main entry point for Neo4j support for Helidon.
  * Performs configuration and the prepared driver.
  */
-@RuntimeType.PrototypedBy(Neo4jConfig.class)
 public final class Neo4j implements RuntimeType.Api<Neo4jConfig> {
     private final Driver driver;
     private final Neo4jConfig config;
