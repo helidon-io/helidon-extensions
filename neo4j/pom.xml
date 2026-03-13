@@ -31,7 +31,7 @@
     <artifactId>helidon-extensions-neo4j-project</artifactId>
     <packaging>pom</packaging>
 
-    <name>Helidon Neo4j Extension</name>
+    <name>Helidon Extensions Neo4j Project</name>
 
     <modules>
         <module>bom</module>

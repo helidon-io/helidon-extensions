@@ -28,7 +28,7 @@
     </parent>
 
     <artifactId>helidon-extensions-neo4j-health</artifactId>
-    <name>Helidon Neo4j Health Extension</name>
+    <name>Helidon Extensions Neo4j Health</name>
 
     <dependencies>
         <dependency>
