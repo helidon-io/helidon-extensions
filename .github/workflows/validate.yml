@@ -1,0 +1,123 @@
+#
+# Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: "Validate"
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [ 'main', 'release-*' ]
+    tags-ignore: [ '**' ]
+  workflow_call:
+    inputs:
+      ref:
+        description: The branch, tag or SHA to checkout
+        required: false
+        type: string
+        default: ''
+
+env:
+  MVN_VERSION: 3.9.9
+  JAVA_VERSION: 21
+  JAVA_DISTRO: oracle
+  MVN_ARGS: |
+    -B -fae -e
+    -Dmaven.wagon.httpconnectionManager.ttlSeconds=60
+    -Dmaven.wagon.http.retryHandler.count=3
+    -Djdk.toolchain.version=${JAVA_VERSION}
+    -Dcache.enabled=true
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prime-build:
+    timeout-minutes: 30
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: '0'
+      - name: Helidon Priming build
+        uses: ./.github/actions/common
+        with:
+          free-space: true
+          build-cache: read-write
+          maven-cache: read-write
+          run: |
+            etc/scripts/prime-build.sh
+  copyright:
+    needs: prime-build
+    timeout-minutes: 5
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: ./.github/actions/common
+        with:
+          run: etc/scripts/copyright.sh
+  checkstyle:
+    needs: prime-build
+    timeout-minutes: 5
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/common
+        with:
+          run: etc/scripts/checkstyle.sh
+  shellcheck:
+    timeout-minutes: 5
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/common
+        with:
+          maven-cache: none
+          run: etc/scripts/shellcheck.sh
+  build:
+    needs: prime-build
+    timeout-minutes: 15
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/common
+        with:
+          build-cache: read-write
+          maven-cache: read-write
+          run: |
+            mvn --version
+            mvn ${MVN_ARGS} build-cache:go-offline
+            mvn ${MVN_ARGS} \
+              -Dorg.slf4j.simpleLogger.showThreadName=true \
+              -DskipTests \
+              -Ptests \
+              -Pexamples \
+              install
+  gate:
+    runs-on: ubuntu-22.04
+    needs: [ copyright, checkstyle, shellcheck, build ]
+    steps:
+      - shell: bash
+        run: |
+          echo OK
