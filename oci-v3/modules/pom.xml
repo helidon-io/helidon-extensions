@@ -33,5 +33,9 @@
 
     <modules>
         <module>oci</module>
+        <module>authentication</module>
+        <module>metrics</module>
+        <module>secrets-config-source</module>
+        <module>tls-certificates</module>
     </modules>
 </project>

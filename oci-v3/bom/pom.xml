@@ -38,6 +38,36 @@
                 <artifactId>helidon-extensions-oci-v3</artifactId>
                 <version>${oci.extension.version}</version>
             </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.oci.v3.authentication</groupId>
+                <artifactId>helidon-extensions-oci-v3-authentication-instance</artifactId>
+                <version>${oci.extension.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.oci.v3.authentication</groupId>
+                <artifactId>helidon-extensions-oci-v3-authentication-oke-workload</artifactId>
+                <version>${oci.extension.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.oci.v3.authentication</groupId>
+                <artifactId>helidon-extensions-oci-v3-authentication-resource</artifactId>
+                <version>${oci.extension.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.oci.v3.metrics</groupId>
+                <artifactId>helidon-extensions-oci-v3-metrics</artifactId>
+                <version>${oci.extension.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.oci.v3</groupId>
+                <artifactId>helidon-extensions-oci-v3-secrets-config-source</artifactId>
+                <version>${oci.extension.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.oci.v3</groupId>
+                <artifactId>helidon-extensions-oci-v3-tls-certificates</artifactId>
+                <version>${oci.extension.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 </project>

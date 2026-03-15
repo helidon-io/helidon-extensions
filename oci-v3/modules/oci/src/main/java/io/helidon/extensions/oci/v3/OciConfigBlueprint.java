@@ -71,13 +71,13 @@ interface OciConfigBlueprint {
      *     <li>{@code resource-principal}  - use identity of the OCI resource the service is executed on
      *     (fn), uses
      *     {@link com.oracle.bmc.auth.ResourcePrincipalAuthenticationDetailsProvider}, and is available in a
-     *     separate module {@code helidon-integrations-oci-authentication-resource}</li>
+     *     separate module {@code helidon-extensions-oci-v3-authentication-resource}</li>
      *     <li>{@code instance-principal} - use identity of the OCI instance the service is running on, uses
      *     {@link com.oracle.bmc.auth.InstancePrincipalsAuthenticationDetailsProvider}, and is available in a
-     *     separate module {@code helidon-integrations-oci-authentication-resource}</li>
+     *     separate module {@code helidon-extensions-oci-v3-authentication-resource}</li>
      *     <li>{@code oke-workload-identity} - use identity of the OCI Kubernetes workload, uses
      *     {@code com.oracle.bmc.auth.okeworkloadidentity.OkeWorkloadIdentityAuthenticationDetailsProvider}, and is available in a
-     *     separate module {@code helidon-integrations-oci-authentication-oke-workload}</li>
+     *     separate module {@code helidon-extensions-oci-v3-authentication-oke-workload}</li>
      * </ul>
      *
      * @return the authentication method to apply

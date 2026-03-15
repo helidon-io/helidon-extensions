@@ -40,4 +40,8 @@
         <maven.javadoc.skip>true</maven.javadoc.skip>
         <dependency-check.skip>true</dependency-check.skip>
     </properties>
+
+    <modules>
+        <module>authentication</module>
+    </modules>
 </project>
