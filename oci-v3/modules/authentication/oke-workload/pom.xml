@@ -24,7 +24,7 @@
         <version>4.0.0-SNAPSHOT</version>
     </parent>
     <artifactId>helidon-extensions-oci-v3-authentication-oke-workload</artifactId>
-    <name>Helidon Integrations OCI Authentication Workload</name>
+    <name>Helidon Extensions OCI Authentication Workload</name>
 
     <description>
         Authentication based on Workload identity

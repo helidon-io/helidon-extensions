@@ -27,7 +27,7 @@
     </parent>
     <groupId>io.helidon.extensions.oci.v3.metrics</groupId>
     <artifactId>helidon-extensions-oci-v3-metrics-project</artifactId>
-    <name>Helidon Integrations OCI Metrics Project</name>
+    <name>Helidon Extensions OCI Metrics Project</name>
     <description>Helidon Metrics to OCI Project</description>
     <packaging>pom</packaging>
 

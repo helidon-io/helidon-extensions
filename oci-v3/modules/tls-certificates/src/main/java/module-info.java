@@ -15,7 +15,7 @@
  */
 
 /**
- * Helidon Integrations of OCI Certificates Service.
+ * Helidon Extensions of OCI Certificates Service.
  */
 module io.helidon.extensions.oci.v3.tls.certificates {
     requires static io.helidon.config.metadata;

@@ -25,7 +25,7 @@
         <relativePath>../../pom.xml</relativePath>
     </parent>
     <artifactId>helidon-extensions-oci-v3-secrets-config-source</artifactId>
-    <name>Helidon Integrations OCI Secrets Config Source</name>
+    <name>Helidon Extensions OCI Secrets Config Source</name>
 
     <description>
         OCI Secrets Retrieval API ConfigSourceProvider Implementation

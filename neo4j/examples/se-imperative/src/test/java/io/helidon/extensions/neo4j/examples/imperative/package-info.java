@@ -15,6 +15,6 @@
  */
 
 /**
- * Tests for Helidon Integrations Neo4j Example.
+ * Tests for Helidon Extensions Neo4j Example.
  */
 package io.helidon.extensions.neo4j.examples.imperative;

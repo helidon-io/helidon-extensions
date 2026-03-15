@@ -24,7 +24,7 @@
         <version>4.0.0-SNAPSHOT</version>
     </parent>
     <artifactId>helidon-extensions-oci-v3-authentication-instance</artifactId>
-    <name>Helidon Integrations OCI Authentication Instance</name>
+    <name>Helidon Extensions OCI Authentication Instance</name>
 
     <description>
         Authentication based on Instance's principal

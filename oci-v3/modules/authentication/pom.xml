@@ -28,7 +28,7 @@
 
     <groupId>io.helidon.extensions.oci.v3.authentication</groupId>
     <artifactId>helidon-extensions-oci-v3-authentication-project</artifactId>
-    <name>Helidon Integrations OCI Authentication Project</name>
+    <name>Helidon Extensions OCI Authentication Project</name>
 
     <description>
         Additional OCI Authentication providers

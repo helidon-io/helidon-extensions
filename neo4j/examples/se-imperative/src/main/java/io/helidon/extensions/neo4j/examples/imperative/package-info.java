@@ -15,7 +15,7 @@
  */
 
 /**
- * Helidon Integrations Neo4j Example.
+ * Helidon Extensions Neo4j Example.
  * <p>
  *
  * @see io.helidon.extensions.neo4j.examples.imperative.Main

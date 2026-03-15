@@ -15,6 +15,6 @@
  */
 
 /**
- * Helidon Integrations SPI of OCI Certificates Service.
+ * Helidon Extensions SPI of OCI Certificates Service.
  */
 package io.helidon.extensions.oci.v3.tls.certificates.spi;

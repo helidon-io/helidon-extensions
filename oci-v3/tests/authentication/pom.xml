@@ -25,7 +25,7 @@
     </parent>
 
     <artifactId>helidon-extensions-oci-v3-tests-authentication</artifactId>
-    <name>Helidon Integrations OCI Tests Authentication</name>
+    <name>Helidon Extensions OCI Tests Authentication</name>
     <description>Tests for OCI authentication details providers</description>
 
     <dependencies>
