@@ -144,7 +144,7 @@ runs:
       with:
         path: |
           ./**/target/**
-          .m2/repository/io/helidon/extensions/**
+          .m2/repository/io/helidon/**
         enableCrossOsArchive: true
         key: build-cache-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.build-cache-id }}
         restore-keys: |
@@ -156,7 +156,7 @@ runs:
       with:
         path: |
           ./**/target/**
-          .m2/repository/io/helidon/extensions/**
+          .m2/repository/io/helidon/**
         enableCrossOsArchive: true
         key: build-cache-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.build-cache-id }}
     - name: Build cache (read-only)
@@ -165,7 +165,7 @@ runs:
       with:
         path: |
           ./**/target/**
-          .m2/repository/io/helidon/extensions/**
+          .m2/repository/io/helidon/**
         enableCrossOsArchive: true
         fail-on-cache-miss: true
         key: build-cache-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.build-cache-id }}
