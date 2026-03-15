@@ -51,11 +51,6 @@
                         <include>oci-v3/**</include>
                     </includes>
                 </moduleSet>
-                <moduleSet name="helidon">
-                    <includes>
-                        <include>helidon/**</include>
-                    </includes>
-                </moduleSet>
             </moduleSets>
         </reactorRule>
         <reactorRule name="examples">
@@ -76,11 +71,6 @@
                 <moduleSet name="oci">
                     <includes>
                         <include>oci-v3/**</include>
-                    </includes>
-                </moduleSet>
-                <moduleSet name="helidon">
-                    <includes>
-                        <include>helidon/**</include>
                     </includes>
                 </moduleSet>
             </moduleSets>
