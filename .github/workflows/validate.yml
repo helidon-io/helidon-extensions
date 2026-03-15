@@ -17,9 +17,9 @@ name: "Validate"
 
 on:
   pull_request:
-  push:
-    branches-ignore: [ 'main', 'release-*' ]
-    tags-ignore: [ '**' ]
+#  push:
+#    branches-ignore: [ 'main', 'release-*' ]
+#    tags-ignore: [ '**' ]
   workflow_call:
     inputs:
       ref:
@@ -121,6 +121,24 @@ jobs:
             echo "hashicorp_vault=${hashicorp_vault}"
             echo "oci_v3=${oci_v3}"
           } >> "${GITHUB_OUTPUT}"
+  prime-build:
+    needs: changes
+    if: ${{ needs.changes.outputs.neo4j == 'true' || needs.changes.outputs.hashicorp_vault == 'true' || needs.changes.outputs.oci_v3 == 'true' }}
+    timeout-minutes: 30
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Helidon Priming build
+        uses: ./.github/actions/common
+        with:
+          free-space: true
+          build-cache: read-write
+          maven-cache: read-write
+          run: |
+            etc/scripts/prime-build.sh
   copyright:
     needs: [ changes, prime-build ]
     timeout-minutes: 5
@@ -156,26 +174,6 @@ jobs:
         with:
           maven-cache: none
           run: etc/scripts/shellcheck.sh
-
-  prime-build:
-    needs: changes
-    if: ${{ needs.changes.outputs.neo4j == 'true' || needs.changes.outputs.hashicorp_vault == 'true' || needs.changes.outputs.oci_v3 == 'true' }}
-    timeout-minutes: 30
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-          fetch-depth: 0
-      - name: Helidon Priming build
-        uses: ./.github/actions/common
-        with:
-          free-space: true
-          build-cache: read-write
-          maven-cache: read-write
-          run: |
-            etc/scripts/prime-build.sh
-
   neo4j:
     needs: [ prime-build, changes ]
     if: ${{ needs.changes.outputs.neo4j == 'true' }}
