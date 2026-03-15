@@ -44,44 +44,84 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  prime-build:
-    timeout-minutes: 30
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: '0'
-      - name: Helidon Priming build
-        uses: ./.github/actions/common
-        with:
-          free-space: true
-          build-cache: read-write
-          maven-cache: read-write
-          run: |
-            etc/scripts/prime-build.sh
-  copyright:
-    needs: prime-build
+  changes:
     timeout-minutes: 5
     runs-on: ubuntu-22.04
+    outputs:
+      neo4j: ${{ steps.filter.outputs.neo4j }}
+      hashicorp_vault: ${{ steps.filter.outputs.hashicorp_vault }}
+      oci_v3: ${{ steps.filter.outputs.oci_v3 }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
-      - uses: ./.github/actions/common
-        with:
-          run: etc/scripts/copyright.sh
-  checkstyle:
-    needs: prime-build
-    timeout-minutes: 5
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-      - uses: ./.github/actions/common
-        with:
-          run: etc/scripts/checkstyle.sh
+      - id: filter
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_all=false
+          base=""
+          head=""
+
+          case "${{ github.event_name }}" in
+            workflow_call)
+              run_all=true
+              ;;
+            pull_request)
+              base="${{ github.event.pull_request.base.sha }}"
+              head="${{ github.event.pull_request.head.sha }}"
+              ;;
+            push)
+              base="${{ github.event.before }}"
+              head="${{ github.sha }}"
+              if [ "${base}" = "0000000000000000000000000000000000000000" ]; then
+                run_all=true
+              fi
+              ;;
+            *)
+              run_all=true
+              ;;
+          esac
+
+          changed_files=""
+          if [ "${run_all}" = "false" ]; then
+            changed_files="$(git diff --name-only "${base}" "${head}")"
+            printf 'Changed files:\n%s\n' "${changed_files}"
+
+            if printf '%s\n' "${changed_files}" | grep -Eq \
+              '^(pom\.xml|\.github/|etc/|licensing/|copyright-(failures\.txt|update\.sh)$)'; then
+              run_all=true
+            fi
+          fi
+
+          neo4j=false
+          hashicorp_vault=false
+          oci_v3=false
+
+          if [ "${run_all}" = "true" ]; then
+            neo4j=true
+            hashicorp_vault=true
+            oci_v3=true
+          else
+            if printf '%s\n' "${changed_files}" | grep -Eq '^neo4j/'; then
+              neo4j=true
+            fi
+            if printf '%s\n' "${changed_files}" | grep -Eq '^hashicorp-vault/'; then
+              hashicorp_vault=true
+            fi
+            if printf '%s\n' "${changed_files}" | grep -Eq '^oci-v3/'; then
+              oci_v3=true
+            fi
+          fi
+
+          {
+            echo "neo4j=${neo4j}"
+            echo "hashicorp_vault=${hashicorp_vault}"
+            echo "oci_v3=${oci_v3}"
+          } >> "${GITHUB_OUTPUT}"
+
   shellcheck:
     timeout-minutes: 5
     runs-on: ubuntu-22.04
@@ -93,83 +133,121 @@ jobs:
         with:
           maven-cache: none
           run: etc/scripts/shellcheck.sh
-  build:
-    needs: prime-build
-    timeout-minutes: 15
-    runs-on: ubuntu-22.04
+
+  neo4j:
+    needs: changes
+    if: ${{ needs.changes.outputs.neo4j == 'true' }}
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        os: [ ubuntu-22.04, windows-2022 ]
+        include:
+          - { os: ubuntu-22.04, platform: linux }
+          - { os: windows-2022, platform: windows }
+    runs-on: ${{ matrix.os }}
+    name: neo4j/${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
       - uses: ./.github/actions/common
         with:
-          build-cache: read-write
           maven-cache: read-write
+          test-artifact-name: neo4j-${{ matrix.platform }}
+          free-space: true
           run: |
             mvn --version
-            mvn ${MVN_ARGS} io.helidon.build-tools:helidon-build-cache-maven-plugin:4.0.26:go-offline
+            mvn ${MVN_ARGS} -pl neo4j -am -Pexamples,checkstyle,copyright go-offline
             mvn ${MVN_ARGS} \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
-              -DskipTests \
-              install
-  _tests:
-    needs: build
-    timeout-minutes: 30
+              -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
+              -pl neo4j \
+              -am \
+              -Pexamples,checkstyle,copyright \
+              verify
+
+  hashicorp_vault:
+    needs: changes
+    if: ${{ needs.changes.outputs.hashicorp_vault == 'true' }}
+    timeout-minutes: 45
     strategy:
       matrix:
         os: [ ubuntu-22.04, windows-2022 ]
-        moduleSet: [ helidon, oci, vault, neo4j ]
         include:
           - { os: ubuntu-22.04, platform: linux }
           - { os: windows-2022, platform: windows }
     runs-on: ${{ matrix.os }}
-    name: tests/${{ matrix.moduleSet }}-${{matrix.platform}}
+    name: hashicorp-vault/${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
       - uses: ./.github/actions/common
         with:
-          build-cache: read-only
-          test-artifact-name: tests-${{ matrix.moduleSet }}-${{ matrix.platform }}
+          maven-cache: read-write
+          test-artifact-name: hashicorp-vault-${{ matrix.platform }}
           free-space: true
           run: |
+            mvn --version
+            mvn ${MVN_ARGS} -pl hashicorp-vault -am -Pexamples,tests,checkstyle,copyright go-offline
             mvn ${MVN_ARGS} \
-              -DreactorRule=tests \
-              -DmoduleSet=${{ matrix.moduleSet }} \
+              -Dorg.slf4j.simpleLogger.showThreadName=true \
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
+              -pl hashicorp-vault \
+              -am \
+              -Pexamples,tests,checkstyle,copyright \
               verify
-  _examples:
-    needs: build
-    timeout-minutes: 30
+
+  oci_v3:
+    needs: changes
+    if: ${{ needs.changes.outputs.oci_v3 == 'true' }}
+    timeout-minutes: 45
     strategy:
       matrix:
         os: [ ubuntu-22.04, windows-2022 ]
-        moduleSet: [ helidon, oci, vault, neo4j ]
         include:
           - { os: ubuntu-22.04, platform: linux }
           - { os: windows-2022, platform: windows }
     runs-on: ${{ matrix.os }}
-    name: examples/${{ matrix.moduleSet }}-${{matrix.platform}}
+    name: oci-v3/${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
       - uses: ./.github/actions/common
         with:
-          build-cache: read-only
-          test-artifact-name: examples-${{ matrix.moduleSet }}-${{ matrix.platform }}
+          maven-cache: read-write
+          test-artifact-name: oci-v3-${{ matrix.platform }}
           free-space: true
           run: |
+            mvn --version
+            mvn ${MVN_ARGS} -pl oci-v3 -am -Pexamples,tests,checkstyle,copyright go-offline
             mvn ${MVN_ARGS} \
-              -DreactorRule=examples \
-              -DmoduleSet=${{ matrix.moduleSet }} \
+              -Dorg.slf4j.simpleLogger.showThreadName=true \
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
+              -pl oci-v3 \
+              -am \
+              -Pexamples,tests,checkstyle,copyright \
               verify
+
   gate:
+    if: ${{ always() }}
     runs-on: ubuntu-22.04
-    needs: [ copyright, checkstyle, shellcheck, build, _tests, _examples ]
+    needs: [ changes, shellcheck, neo4j, hashicorp_vault, oci_v3 ]
     steps:
       - shell: bash
         run: |
+          set -euo pipefail
+
+          for result in \
+            "${{ needs.changes.result }}" \
+            "${{ needs.shellcheck.result }}" \
+            "${{ needs.neo4j.result }}" \
+            "${{ needs.hashicorp_vault.result }}" \
+            "${{ needs.oci_v3.result }}"; do
+            if [ "${result}" != "success" ] && [ "${result}" != "skipped" ]; then
+              exit 1
+            fi
+          done
+
           echo OK
