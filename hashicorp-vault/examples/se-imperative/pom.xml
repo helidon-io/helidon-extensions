@@ -27,14 +27,14 @@
         <relativePath/>
     </parent>
 
-    <groupId>io.helidon.examples.integrations.vault</groupId>
-    <artifactId>helidon-examples-integrations-vault-hcp</artifactId>
+    <groupId>io.helidon.extensions.hashicorp.vault.examples</groupId>
+    <artifactId>helidon-extensions-hashicorp-vault-examples-se-imperative</artifactId>
     <version>27.0.0-SNAPSHOT</version>
-    <name>Helidon Extensions Hashicorp Vault Example SE Imperative</name>
-    <description>Helidon integration with Vault.</description>
+    <name>Helidon Extensions Hashicorp Vault Example SE (Imperative)</name>
+    <description>Example for Helidon integration with Vault using programmatic (imperative) APIs.</description>
 
     <properties>
-        <mainClass>io.helidon.extensions.hashicorp.vault.examples.se.VaultMain</mainClass>
+        <mainClass>io.helidon.extensions.hashicorp.vault.examples.imperative.VaultMain</mainClass>
 
         <vault.version>27.0.0-SNAPSHOT</vault.version>
     </properties>
