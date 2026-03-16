@@ -41,6 +41,7 @@
         <module>hashicorp-vault</module>
         <module>neo4j</module>
         <module>oci-v3</module>
+        <module>langchain4j</module>
     </modules>
 
     <organization>

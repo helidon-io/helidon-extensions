@@ -51,6 +51,7 @@ jobs:
       neo4j: ${{ steps.filter.outputs.neo4j }}
       hashicorp_vault: ${{ steps.filter.outputs.hashicorp_vault }}
       oci_v3: ${{ steps.filter.outputs.oci_v3 }}
+      lc4j: ${{ steps.filter.outputs.lc4j }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -99,11 +100,13 @@ jobs:
           neo4j=false
           hashicorp_vault=false
           oci_v3=false
+          lc4j=false
 
           if [ "${run_all}" = "true" ]; then
             neo4j=true
             hashicorp_vault=true
             oci_v3=true
+            lc4j=true
           else
             if printf '%s\n' "${changed_files}" | grep -Eq '^neo4j/'; then
               neo4j=true
@@ -114,16 +117,20 @@ jobs:
             if printf '%s\n' "${changed_files}" | grep -Eq '^oci-v3/'; then
               oci_v3=true
             fi
+            if printf '%s\n' "${changed_files}" | grep -Eq '^langchain4j/'; then
+              lc4j=true
+            fi
           fi
 
           {
             echo "neo4j=${neo4j}"
             echo "hashicorp_vault=${hashicorp_vault}"
             echo "oci_v3=${oci_v3}"
+            echo "lc4j=${lc4j}"
           } >> "${GITHUB_OUTPUT}"
   prime-build:
     needs: changes
-    if: ${{ needs.changes.outputs.neo4j == 'true' || needs.changes.outputs.hashicorp_vault == 'true' || needs.changes.outputs.oci_v3 == 'true' }}
+    if: ${{ needs.changes.outputs.neo4j == 'true' || needs.changes.outputs.hashicorp_vault == 'true' || needs.changes.outputs.oci_v3 == 'true' || needs.changes.outputs.lc4j == 'true' }}
     timeout-minutes: 30
     runs-on: ubuntu-22.04
     steps:
@@ -271,10 +278,43 @@ jobs:
               -Pexamples,tests,spotbugs,javadoc \
               verify
 
+  langchain4j:
+    needs: [ prime-build, changes ]
+    if: ${{ needs.changes.outputs.lc4j == 'true' }}
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        os: [ ubuntu-22.04, windows-2022 ]
+        include:
+          - { os: ubuntu-22.04, platform: linux }
+          - { os: windows-2022, platform: windows }
+    runs-on: ${{ matrix.os }}
+    name: langchain4j/${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/common
+        with:
+          build-cache: read-only
+          maven-cache: read-only
+          test-artifact-name: langchain4j-${{ matrix.platform }}
+          free-space: true
+          run: |
+            mvn --version
+            mvn ${MVN_ARGS} io.helidon.build-tools:helidon-build-cache-maven-plugin:4.0.26:go-offline
+            mvn ${MVN_ARGS} \
+              -Dorg.slf4j.simpleLogger.showThreadName=true \
+              -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
+              -pl langchain4j \
+              -am \
+              -Pexamples,tests,spotbugs,javadoc \
+              verify
+
   gate:
     if: ${{ always() }}
     runs-on: ubuntu-22.04
-    needs: [ changes, prime-build, copyright, checkstyle, shellcheck, neo4j, hashicorp_vault, oci_v3 ]
+    needs: [ changes, prime-build, copyright, checkstyle, shellcheck, neo4j, langchain4j, hashicorp_vault, oci_v3 ]
     steps:
       - shell: bash
         run: |
@@ -288,6 +328,7 @@ jobs:
             "${{ needs.shellcheck.result }}" \
             "${{ needs.neo4j.result }}" \
             "${{ needs.hashicorp_vault.result }}" \
+            "${{ needs.langchain4j.result }}" \
             "${{ needs.oci_v3.result }}"; do
             if [ "${result}" != "success" ] && [ "${result}" != "skipped" ]; then
               exit 1
