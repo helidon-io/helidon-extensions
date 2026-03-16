@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.helidon.extensions.hashicorp.vault.tests.test;
+package io.helidon.extensions.hashicorp.vault.tests.vault.test;
 
 import java.sql.Connection;
 import java.sql.DriverManager;

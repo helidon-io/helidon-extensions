@@ -140,7 +140,6 @@ jobs:
           run: |
             etc/scripts/prime-build.sh
   copyright:
-    needs: [ changes, prime-build ]
     timeout-minutes: 5
     runs-on: ubuntu-22.04
     steps:
@@ -152,7 +151,7 @@ jobs:
         with:
           run: etc/scripts/copyright.sh
   checkstyle:
-    needs: [ changes, prime-build ]
+    needs: [ prime-build ]
     timeout-minutes: 5
     runs-on: ubuntu-22.04
     steps:
@@ -163,7 +162,6 @@ jobs:
         with:
           run: etc/scripts/checkstyle.sh
   shellcheck:
-    needs: changes
     timeout-minutes: 5
     runs-on: ubuntu-22.04
     steps:
@@ -204,7 +202,7 @@ jobs:
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
               -pl neo4j \
               -am \
-              -Pexamples,tests \
+              -Pexamples,tests,spotbugs,javadoc \
               verify
 
   hashicorp_vault:
@@ -237,7 +235,7 @@ jobs:
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
               -pl hashicorp-vault \
               -am \
-              -Pexamples,tests \
+              -Pexamples,tests,spotbugs,javadoc \
               verify
 
   oci_v3:
@@ -270,7 +268,7 @@ jobs:
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
               -pl oci-v3 \
               -am \
-              -Pexamples,tests \
+              -Pexamples,tests,spotbugs,javadoc \
               verify
 
   gate:

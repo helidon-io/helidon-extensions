@@ -17,4 +17,4 @@
 /**
  * Example of Helidon integration with Hashicorp Vault.
  */
-package io.helidon.extensions.hashicorp.vault.examples.se;
+package io.helidon.extensions.hashicorp.vault.examples.imperative;

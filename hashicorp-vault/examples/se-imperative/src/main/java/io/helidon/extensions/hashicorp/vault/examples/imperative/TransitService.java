@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.helidon.extensions.hashicorp.vault.examples.se;
+package io.helidon.extensions.hashicorp.vault.examples.imperative;
 
 import java.util.List;
 

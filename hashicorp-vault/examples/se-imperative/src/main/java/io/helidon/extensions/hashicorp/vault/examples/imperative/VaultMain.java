@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.helidon.extensions.hashicorp.vault.examples.se;
+package io.helidon.extensions.hashicorp.vault.examples.imperative;
 
 import io.helidon.config.Config;
 import io.helidon.extensions.hashicorp.vault.Vault;

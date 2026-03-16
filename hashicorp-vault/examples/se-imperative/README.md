@@ -20,7 +20,7 @@ mvn clean package
 3. Start this application
 
 ```shell
-java -jar ./target/helidon-examples-integrations-vault-hcp.jar
+java -jar ./target/helidon-extensions-hashicorp-vault-examples-se-imperative.jar
 ```
 
 4. Exercise the endpoints

@@ -60,7 +60,7 @@ class DefaultOciCertificatesTlsManager extends ConfiguredTlsManager implements O
     private TlsConfig tlsConfig;
 
     DefaultOciCertificatesTlsManager(OciCertificatesTlsManagerConfig cfg) {
-        this(cfg, "@default", null);
+        this(cfg, "@default", Config.empty());
     }
 
     DefaultOciCertificatesTlsManager(OciCertificatesTlsManagerConfig cfg,
@@ -69,10 +69,7 @@ class DefaultOciCertificatesTlsManager extends ConfiguredTlsManager implements O
         super(name, TYPE);
         this.cfg = Objects.requireNonNull(cfg);
 
-        // if config changes then will do a reload
-        if (config instanceof Config watchableConfig) {
-            watchableConfig.onChange(this::config);
-        }
+        config.onChange(this::config);
     }
 
     @Override // TlsManager

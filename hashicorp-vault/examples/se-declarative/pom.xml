@@ -27,11 +27,11 @@
         <relativePath/>
     </parent>
 
-    <groupId>io.helidon.examples.integrations.vault</groupId>
-    <artifactId>helidon-examples-integrations-vault-hcp-declarative</artifactId>
+    <groupId>io.helidon.extensions.hashicorp.vault.examples</groupId>
+    <artifactId>helidon-extensions-hashicorp-vault-examples-declarative</artifactId>
     <version>27.0.0-SNAPSHOT</version>
-    <name>Helidon Extensions Hashicorp Vault Example SE Declarative</name>
-    <description>Helidon integration with Vault.</description>
+    <name>Helidon Extensions Hashicorp Vault Example Declarative</name>
+    <description>Example for Helidon integration with Vault using annotation based (declarative) APIs.</description>
 
     <properties>
         <mainClass>io.helidon.extensions.hashicorp.vault.examples.declarative.VaultMain</mainClass>
