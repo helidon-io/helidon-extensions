@@ -21,14 +21,23 @@
         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.helidon.extensions</groupId>
+        <artifactId>helidon-extensions-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../parent/pom.xml</relativePath>
+    </parent>
+
     <groupId>io.helidon.extensions.oci.v3</groupId>
     <artifactId>helidon-extensions-oci-v3-bom</artifactId>
-    <version>4.0.0-SNAPSHOT</version>
+    <version>27.0.0-SNAPSHOT</version>
+
     <packaging>pom</packaging>
     <name>Helidon Extensions OCI SDK v3 BOM</name>
 
     <properties>
-        <oci.extension.version>4.0.0-SNAPSHOT</oci.extension.version>
+        <oci.extension.version>27.0.0-SNAPSHOT</oci.extension.version>
     </properties>
 
     <dependencyManagement>

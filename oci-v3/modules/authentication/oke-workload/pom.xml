@@ -21,7 +21,7 @@
     <parent>
         <groupId>io.helidon.extensions.oci.v3.authentication</groupId>
         <artifactId>helidon-extensions-oci-v3-authentication-project</artifactId>
-        <version>4.0.0-SNAPSHOT</version>
+        <version>27.0.0-SNAPSHOT</version>
     </parent>
     <artifactId>helidon-extensions-oci-v3-authentication-oke-workload</artifactId>
     <name>Helidon Extensions OCI Authentication Workload</name>

@@ -24,11 +24,13 @@
     <parent>
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-project</artifactId>
-        <version>4.0.0-SNAPSHOT</version>
+        <version>1.0.0-SNAPSHOT</version>
     </parent>
 
     <groupId>io.helidon.extensions.oci.v3</groupId>
     <artifactId>helidon-extensions-oci-v3-project</artifactId>
+    <version>27.0.0-SNAPSHOT</version>
+
     <packaging>pom</packaging>
 
     <name>Helidon Extensions OCI SDK v3 Project</name>
@@ -48,6 +50,9 @@
         - change it in all example POM files in parent section, as that cannot use a property
         -->
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
+        <!--
+        Align with lc4j extension
+        -->
         <version.lib.oci>3.78.1</version.lib.oci>
     </properties>
 
@@ -76,6 +81,24 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>io.helidon.build-tools</groupId>
+                <artifactId>helidon-services-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>generate-meta-inf-services</id>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>services</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 
     <profiles>
         <profile>

@@ -29,14 +29,14 @@
 
     <groupId>io.helidon.examples.integrations.vault</groupId>
     <artifactId>helidon-examples-integrations-vault-hcp-declarative</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>27.0.0-SNAPSHOT</version>
     <name>Helidon Extensions Hashicorp Vault Example SE Declarative</name>
     <description>Helidon integration with Vault.</description>
 
     <properties>
         <mainClass>io.helidon.extensions.hashicorp.vault.examples.declarative.VaultMain</mainClass>
 
-        <vault.version>4.0.0-SNAPSHOT</vault.version>
+        <vault.version>27.0.0-SNAPSHOT</vault.version>
     </properties>
 
     <dependencies>

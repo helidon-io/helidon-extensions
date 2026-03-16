@@ -20,9 +20,16 @@
         xmlns="http://maven.apache.org/POM/4.0.0"
         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.helidon.extensions</groupId>
+        <artifactId>helidon-extensions-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../parent/pom.xml</relativePath>
+    </parent>
+
     <groupId>io.helidon.extensions.hashicorp.vault</groupId>
     <artifactId>helidon-extensions-hashicorp-vault-bom</artifactId>
-    <version>4.0.0-SNAPSHOT</version>
+    <version>27.0.0-SNAPSHOT</version>
 
     <packaging>pom</packaging>
 
@@ -30,7 +37,7 @@
     <description>Hashicorp Vault extension BOM POM</description>
 
     <properties>
-        <helidon.hashicorp.vault.version>4.0.0-SNAPSHOT</helidon.hashicorp.vault.version>
+        <helidon.hashicorp.vault.version>27.0.0-SNAPSHOT</helidon.hashicorp.vault.version>
     </properties>
 
     <dependencyManagement>

@@ -21,7 +21,7 @@
     <parent>
         <groupId>io.helidon.extensions.neo4j</groupId>
         <artifactId>helidon-extensions-neo4j-modules-project</artifactId>
-        <version>4.0.0-SNAPSHOT</version>
+        <version>27.0.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>helidon-extensions-neo4j</artifactId>
