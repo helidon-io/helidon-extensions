@@ -28,7 +28,7 @@
     </parent>
 
     <artifactId>helidon-extensions-langchain4j-providers-lc4j-in-process</artifactId>
-    <name>Langchain4j build-in providers Project</name>
+    <name>Langchain4j built-in providers Project</name>
 
     <dependencies>
         <dependency>

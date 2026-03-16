@@ -29,6 +29,8 @@
 
     <groupId>io.helidon.extensions.langchain4j</groupId>
     <artifactId>helidon-extensions-langchain4j-project</artifactId>
+    <version>27.0.0-SNAPSHOT</version>
+
     <packaging>pom</packaging>
 
     <name>Helidon Extensions Langchain4j Project</name>
@@ -51,6 +53,7 @@
         <version.lib.langchain4j>1.12.1</version.lib.langchain4j>
         <version.lib.langchain4j-community>1.12.1-beta21</version.lib.langchain4j-community>
         <version.lib.coherence>25.03.1</version.lib.coherence>
+        <langchain4j.extension.version>${project.version}</langchain4j.extension.version>
         <!--
         Align with oci extension
         -->
