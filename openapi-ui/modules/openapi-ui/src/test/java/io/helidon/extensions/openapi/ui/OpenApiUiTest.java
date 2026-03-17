@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2022, 2026 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.helidon.integrations.openapi.ui;
+package io.helidon.extensions.openapi.ui;
 
 import java.util.Map;
 
@@ -68,7 +68,6 @@ class OpenApiUiTest {
         server.addFeature(OpenApiFeature.builder()
                                   .servicesDiscoverServices(false)
                                   .staticFile("src/test/resources/greeting.yml")
-                                  .cors(cors -> cors.enabled(false))
                                   .addService(OpenApiUi.create())
                                   .build())
                 .addFeature(OpenApiFeature.builder()
@@ -76,13 +75,11 @@ class OpenApiUiTest {
                                     .staticFile("src/test/resources/greeting.yml")
                                     .webContext("/openapi-greeting")
                                     .name("openapi-greeting")
-                                    .cors(cors -> cors.enabled(false))
                                     .addService(OpenApiUi.create())
                                     .build())
                 .addFeature(OpenApiFeature.builder()
                                     .servicesDiscoverServices(false)
                                     .staticFile("src/test/resources/greeting.yml")
-                                    .cors(cors -> cors.enabled(false))
                                     .addService(OpenApiUi.builder()
                                                         .webContext("/my-ui")
                                                         .build())

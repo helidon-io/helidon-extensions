@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.helidon.integrations.openapi.ui;
+package io.helidon.extensions.openapi.ui;
 
 import io.helidon.config.Config;
 import io.helidon.openapi.spi.OpenApiServiceProvider;
