@@ -43,6 +43,7 @@
         <module>oci-v3</module>
         <module>langchain4j</module>
         <module>eureka</module>
+        <module>crac</module>
     </modules>
 
     <organization>
