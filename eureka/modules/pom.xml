@@ -30,6 +30,9 @@
     <artifactId>helidon-extensions-eureka-modules-project</artifactId>
     <name>Helidon Extensions Eureka Modules Project</name>
 
+    <properties>
+        <javadoc.fail-on-warnings>true</javadoc.fail-on-warnings>
+    </properties>
 
     <modules>
     </modules>

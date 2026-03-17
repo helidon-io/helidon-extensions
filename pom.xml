@@ -79,6 +79,7 @@
 
         <dependency-check.skip>false</dependency-check.skip>
         <checkstyle.skip>false</checkstyle.skip>
+        <javadoc.fail-on-warnings>false</javadoc.fail-on-warnings>
 
         <version.lib.checkstyle>10.12.5</version.lib.checkstyle>
         <version.lib.asm>9.5</version.lib.asm>
@@ -167,6 +168,14 @@
                     <groupId>io.helidon.build-tools</groupId>
                     <artifactId>helidon-javadoc-maven-plugin</artifactId>
                     <version>${version.plugin.helidon-build-tools}</version>
+                    <configuration>
+                        <source>${version.java}</source>
+                        <failOnError>true</failOnError>
+                        <failOnWarnings>${javadoc.fail-on-warnings}</failOnWarnings>
+                        <!-- we are not interested in each file that is generated -->
+                        <quiet>true</quiet>
+                        <offline>true</offline>
+                    </configuration>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
