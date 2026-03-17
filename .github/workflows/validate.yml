@@ -44,93 +44,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
-    timeout-minutes: 5
-    runs-on: ubuntu-22.04
-    outputs:
-      neo4j: ${{ steps.filter.outputs.neo4j }}
-      hashicorp_vault: ${{ steps.filter.outputs.hashicorp_vault }}
-      oci_v3: ${{ steps.filter.outputs.oci_v3 }}
-      lc4j: ${{ steps.filter.outputs.lc4j }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-          fetch-depth: 0
-      - id: filter
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          run_all=false
-          base=""
-          head=""
-
-          case "${{ github.event_name }}" in
-            workflow_call)
-              run_all=true
-              ;;
-            pull_request)
-              base="${{ github.event.pull_request.base.sha }}"
-              head="${{ github.event.pull_request.head.sha }}"
-              ;;
-            push)
-              base="${{ github.event.before }}"
-              head="${{ github.sha }}"
-              if [ "${base}" = "0000000000000000000000000000000000000000" ]; then
-                run_all=true
-              fi
-              ;;
-            *)
-              run_all=true
-              ;;
-          esac
-
-          changed_files=""
-          if [ "${run_all}" = "false" ]; then
-            changed_files="$(git diff --name-only "${base}" "${head}")"
-            printf 'Changed files:\n%s\n' "${changed_files}"
-
-            if printf '%s\n' "${changed_files}" | grep -Eq \
-              '^(pom\.xml|\.github/|etc/|licensing/|copyright-(failures\.txt|update\.sh)$)'; then
-              run_all=true
-            fi
-          fi
-
-          neo4j=false
-          hashicorp_vault=false
-          oci_v3=false
-          lc4j=false
-
-          if [ "${run_all}" = "true" ]; then
-            neo4j=true
-            hashicorp_vault=true
-            oci_v3=true
-            lc4j=true
-          else
-            if printf '%s\n' "${changed_files}" | grep -Eq '^neo4j/'; then
-              neo4j=true
-            fi
-            if printf '%s\n' "${changed_files}" | grep -Eq '^hashicorp-vault/'; then
-              hashicorp_vault=true
-            fi
-            if printf '%s\n' "${changed_files}" | grep -Eq '^oci-v3/'; then
-              oci_v3=true
-            fi
-            if printf '%s\n' "${changed_files}" | grep -Eq '^langchain4j/'; then
-              lc4j=true
-            fi
-          fi
-
-          {
-            echo "neo4j=${neo4j}"
-            echo "hashicorp_vault=${hashicorp_vault}"
-            echo "oci_v3=${oci_v3}"
-            echo "lc4j=${lc4j}"
-          } >> "${GITHUB_OUTPUT}"
   prime-build:
-    needs: changes
-    if: ${{ needs.changes.outputs.neo4j == 'true' || needs.changes.outputs.hashicorp_vault == 'true' || needs.changes.outputs.oci_v3 == 'true' || needs.changes.outputs.lc4j == 'true' }}
     timeout-minutes: 30
     runs-on: ubuntu-22.04
     steps:
@@ -180,8 +94,7 @@ jobs:
           maven-cache: none
           run: etc/scripts/shellcheck.sh
   neo4j:
-    needs: [ prime-build, changes ]
-    if: ${{ needs.changes.outputs.neo4j == 'true' }}
+    needs: [ prime-build ]
     timeout-minutes: 30
     strategy:
       matrix:
@@ -211,10 +124,7 @@ jobs:
               -am \
               -Pexamples,tests,spotbugs,javadoc \
               verify
-
   hashicorp_vault:
-    needs: [ prime-build, changes ]
-    if: ${{ needs.changes.outputs.hashicorp_vault == 'true' }}
     timeout-minutes: 45
     strategy:
       matrix:
@@ -244,10 +154,7 @@ jobs:
               -am \
               -Pexamples,tests,spotbugs,javadoc \
               verify
-
   oci_v3:
-    needs: [ prime-build, changes ]
-    if: ${{ needs.changes.outputs.oci_v3 == 'true' }}
     timeout-minutes: 45
     strategy:
       matrix:
@@ -279,8 +186,6 @@ jobs:
               verify
 
   langchain4j:
-    needs: [ prime-build, changes ]
-    if: ${{ needs.changes.outputs.lc4j == 'true' }}
     timeout-minutes: 30
     strategy:
       matrix:
@@ -312,27 +217,10 @@ jobs:
               verify
 
   gate:
-    if: ${{ always() }}
     runs-on: ubuntu-22.04
-    needs: [ changes, prime-build, copyright, checkstyle, shellcheck, neo4j, langchain4j, hashicorp_vault, oci_v3 ]
+    needs: [ prime-build, copyright, checkstyle, shellcheck, neo4j, langchain4j, hashicorp_vault, oci_v3 ]
     steps:
       - shell: bash
         run: |
-          set -euo pipefail
-
-          for result in \
-            "${{ needs.changes.result }}" \
-            "${{ needs.prime-build.result }}" \
-            "${{ needs.copyright.result }}" \
-            "${{ needs.checkstyle.result }}" \
-            "${{ needs.shellcheck.result }}" \
-            "${{ needs.neo4j.result }}" \
-            "${{ needs.hashicorp_vault.result }}" \
-            "${{ needs.langchain4j.result }}" \
-            "${{ needs.oci_v3.result }}"; do
-            if [ "${result}" != "success" ] && [ "${result}" != "skipped" ]; then
-              exit 1
-            fi
-          done
-
           echo OK
+
