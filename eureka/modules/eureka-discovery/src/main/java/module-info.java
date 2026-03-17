@@ -26,7 +26,7 @@ import io.helidon.common.features.api.HelidonFlavor;
 @Features.Path({"Discovery", "Eureka"})
 @Features.Preview
 @Features.Since("4.3.0")
-module io.helidon.discovery.providers.eureka {
+module io.helidon.extensions.eureka.discovery {
 
     requires static io.helidon.common.features.api;
     requires static io.helidon.config.metadata;
@@ -43,6 +43,6 @@ module io.helidon.discovery.providers.eureka {
     requires io.helidon.service.registry;
     requires io.helidon.json;
 
-    exports io.helidon.discovery.providers.eureka;
+    exports io.helidon.extensions.eureka.discovery;
 
 }

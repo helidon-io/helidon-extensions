@@ -24,10 +24,10 @@ import io.helidon.common.features.api.HelidonFlavor;
  * <p>Most users will never need to programmatically interact with any of the classes in any of the packages belonging
  * to this module.</p>
  *
- * @see io.helidon.integrations.eureka.EurekaRegistrationServerFeatureProvider#create(io.helidon.config.Config, String)
+ * @see io.helidon.extensions.eureka.EurekaRegistrationServerFeatureProvider#create(io.helidon.config.Config, String)
  */
 @Features.Name("EurekaRegistration")
-@Features.Description( "Eureka Server Service Instance Registration Integration")
+@Features.Description("Eureka Server Service Instance Registration Integration")
 @Features.Flavor({HelidonFlavor.SE, HelidonFlavor.MP})
 @Features.Path({"WebServer", "EurekaRegistration"})
 @Features.Preview
@@ -44,9 +44,9 @@ module io.helidon.extensions.eureka {
     requires static io.helidon.common.features.api;
     requires static io.helidon.config.metadata;
 
-    exports io.helidon.integrations.eureka;
+    exports io.helidon.extensions.eureka;
 
     provides io.helidon.webserver.spi.ServerFeatureProvider
-        with io.helidon.integrations.eureka.EurekaRegistrationServerFeatureProvider;
+            with io.helidon.extensions.eureka.EurekaRegistrationServerFeatureProvider;
 
 }

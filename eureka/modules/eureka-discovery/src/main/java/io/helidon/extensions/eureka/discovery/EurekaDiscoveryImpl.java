@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.helidon.discovery.providers.eureka;
+package io.helidon.extensions.eureka.discovery;
 
 import java.io.UncheckedIOException;
 import java.lang.System.Logger;
@@ -77,7 +77,7 @@ final class EurekaDiscoveryImpl implements EurekaDiscovery, NamedService {
      * The {@link Logger} used by instances of this class.
      *
      * <p>The {@linkplain Logger#getName() name} of the {@link Logger} is {@code
-     * io.helidon.discovery.providers.eureka.EurekaDiscoveryImpl}.</p>
+     * io.helidon.extensions.eureka.discovery.EurekaDiscoveryImpl}.</p>
      */
     private static final Logger LOGGER = getLogger(EurekaDiscoveryImpl.class.getName());
 

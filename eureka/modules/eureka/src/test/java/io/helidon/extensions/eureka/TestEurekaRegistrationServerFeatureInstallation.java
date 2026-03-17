@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.helidon.integrations.eureka;
+package io.helidon.extensions.eureka;
 
 import java.util.List;
 
@@ -43,9 +43,9 @@ final class TestEurekaRegistrationServerFeatureInstallation {
         // This is deliberately just the quickstart SE recipe; installing our server feature should be automagic if the
         // configuration is set up properly.
         this.ws = WebServer.builder()
-            .config(Services.get(Config.class).get("server"))
-            .routing(rb -> rb.get("/hello", (req, res) -> res.send("Hello World!")))
-            .build();
+                .config(Services.get(Config.class).get("server"))
+                .routing(rb -> rb.get("/hello", (req, res) -> res.send("Hello World!")))
+                .build();
         this.ws.start();
     }
 
@@ -61,7 +61,7 @@ final class TestEurekaRegistrationServerFeatureInstallation {
         assertThat(this.ws.isRunning(), is(true));
         List<?> serverFeatures = this.ws.prototype().features();
         assertThat(serverFeatures.size(), is(1));
-        EurekaRegistrationConfig prototype = ((EurekaRegistrationServerFeature)serverFeatures.get(0)).prototype();
+        EurekaRegistrationConfig prototype = ((EurekaRegistrationServerFeature) serverFeatures.get(0)).prototype();
         assertThat(prototype.enabled(), is(true));
     }
 

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.helidon.discovery.providers.eureka;
+package io.helidon.extensions.eureka.discovery;
 
 import java.util.Optional;
 
@@ -22,17 +22,15 @@ import io.helidon.builder.api.Prototype;
 import io.helidon.webclient.http1.Http1Client;
 
 /**
- * Prototypical state for {@link EurekaDiscovery} instances.
- *
- * <p>The {@link EurekaDiscoveryConfig} class is generated at compile time using facilities from the <a
- * href="https://helidon.io/docs/latest/se/builder#_generate_a_class_with_a_builder">Helidon Builder API</a>.</p>
- *
- * <p>Instances of this class are returned by the {@link EurekaDiscovery#prototype()} method.</p>
+ * Configuration of Eureka discovery.
+ * <p>
+ * The {@link EurekaDiscoveryConfig} class is generated at compile time using facilities from the <a
+ * href="https://helidon.io/docs/latest/se/builder#_generate_a_class_with_a_builder">Helidon Builder API</a>.
+ * <p>
+ * Instances of this class are returned by the {@link EurekaDiscovery#prototype()} method.
  *
  * @see EurekaDiscovery
- *
  * @see EurekaDiscovery#prototype()
- *
  * @see EurekaDiscovery#create(EurekaDiscoveryConfig)
  */
 @Prototype.Blueprint
@@ -43,7 +41,6 @@ interface EurekaDiscoveryConfigBlueprint extends Prototype.Factory<EurekaDiscove
      * The {@link CacheConfig} to use controlling how a local cache of Eureka server information is used.
      *
      * @return a {@link CacheConfig}
-     *
      * @see CacheConfig
      */
     @Option.Configured
@@ -59,9 +56,7 @@ interface EurekaDiscoveryConfigBlueprint extends Prototype.Factory<EurekaDiscove
      * http://example.com:8761/eureka}.</p>
      *
      * @return a {@link Http1Client}
-     *
      * @see Http1Client
-     *
      * @see io.helidon.webclient.http1.Http1ClientConfig.Builder#baseUri(io.helidon.webclient.api.ClientUri)
      */
     @Option.Configured
@@ -72,7 +67,6 @@ interface EurekaDiscoveryConfigBlueprint extends Prototype.Factory<EurekaDiscove
      * is normally entirely suitable.
      *
      * @return the name of this instance
-     *
      * @see io.helidon.config.NamedService#name()
      */
     @Option.Default(EurekaDiscoveryImpl.TYPE)

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.helidon.discovery.providers.eureka;
+package io.helidon.extensions.eureka.discovery;
 
 import java.time.Duration;
 

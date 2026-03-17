@@ -13,12 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.helidon.integrations.eureka;
+package io.helidon.extensions.eureka;
 
 import io.helidon.config.Config;
 import io.helidon.webserver.spi.ServerFeatureProvider;
 
-import static io.helidon.integrations.eureka.EurekaRegistrationServerFeature.EUREKA_ID;
+import static io.helidon.extensions.eureka.EurekaRegistrationServerFeature.EUREKA_ID;
 
 /**
  * A {@link ServerFeatureProvider} that creates and installs a {@link EurekaRegistrationServerFeature}.

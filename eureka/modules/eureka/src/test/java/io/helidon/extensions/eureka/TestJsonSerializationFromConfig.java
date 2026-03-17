@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.helidon.integrations.eureka;
+package io.helidon.extensions.eureka;
 
 import java.net.UnknownHostException;
 
@@ -71,7 +71,7 @@ final class TestJsonSerializationFromConfig {
 
         var portObject = json.objectValue("port");
         assertThat(portObject.flatMap(it -> it.intValue("$"))
-                .orElse(-42), is(actualPort));
+                           .orElse(-42), is(actualPort));
         assertThat(portObject.flatMap(it -> it.booleanValue("@enabled"))
                            .orElse(false), is(true));
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Oracle and/or its affiliates.
+ * Copyright (c) 2025, 2026 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,17 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.helidon.integrations.eureka;
+package io.helidon.extensions.eureka;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
-
-/*
- * Note that Javadoc for this interface is actually Javadoc for the prototype interface that is generated from it.
- *
- * Note as well that @see references to the prototype's methods cannot be used because they will reference the (publicly
- * inaccessible) blueprint interface.
- */
 
 /**
  * A {@linkplain Prototype.Api prototype} describing initial Eureka Server service instance registration port details.
@@ -43,7 +36,7 @@ interface PortInfoConfigBlueprint {
      *
      * @return the port number
      */
-    @Option.Configured(merge = true)
+    @Option.Configured
     int port();
 
     /**
@@ -51,7 +44,7 @@ interface PortInfoConfigBlueprint {
      *
      * @return whether the port is enabled
      */
-    @Option.Configured("enabled")
+    @Option.Configured
     boolean enabled();
 
 }

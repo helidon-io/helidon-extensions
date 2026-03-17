@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Oracle and/or its affiliates.
+ * Copyright (c) 2025, 2026 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,6 @@
  *
  * <p>Most users will never need to programmatically interact with any of the classes in this package.</p>
  *
- * @see io.helidon.integrations.eureka.EurekaRegistrationServerFeatureProvider#create(io.helidon.config.Config, String)
+ * @see io.helidon.extensions.eureka.EurekaRegistrationServerFeatureProvider#create(io.helidon.config.Config, String)
  */
-package io.helidon.integrations.eureka;
+package io.helidon.extensions.eureka;

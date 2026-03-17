@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Oracle and/or its affiliates.
+ * Copyright (c) 2025, 2026 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,18 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.helidon.discovery.providers.eureka;
+package io.helidon.extensions.eureka.discovery;
 
 import java.io.IOException;
 import java.util.Map;
 import java.util.SequencedSet;
 
-import io.helidon.discovery.providers.eureka.EurekaDiscoveryImpl.Instance;
+import io.helidon.extensions.eureka.discovery.EurekaDiscoveryImpl.Instance;
 import io.helidon.json.JsonParser;
 
 import org.junit.jupiter.api.Test;
 
-import static io.helidon.discovery.providers.eureka.EurekaDiscoveryImpl.Instance.Status.UP;
+import static io.helidon.extensions.eureka.discovery.EurekaDiscoveryImpl.Instance.Status.UP;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;

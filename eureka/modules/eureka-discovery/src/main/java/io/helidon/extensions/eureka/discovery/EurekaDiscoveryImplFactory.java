@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Oracle and/or its affiliates.
+ * Copyright (c) 2025, 2026 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.helidon.discovery.providers.eureka;
+package io.helidon.extensions.eureka.discovery;
 
 import java.lang.System.Logger;
 import java.util.Optional;
@@ -41,7 +41,7 @@ final class EurekaDiscoveryImplFactory implements Supplier<Optional<EurekaDiscov
      * A {@link Logger} for this class.
      *
      * <p>The {@link Logger}'s {@linkplain Logger#getName() name} is {@code
-     * io.helidon.discovery.providers.eureka.EurekaDiscoveryImplFactory}.</p>
+     * io.helidon.extensions.eureka.discovery.EurekaDiscoveryImplFactory}.</p>
      */
     private static final Logger LOGGER = getLogger(EurekaDiscoveryImpl.class.getName());
 
@@ -66,11 +66,9 @@ final class EurekaDiscoveryImplFactory implements Supplier<Optional<EurekaDiscov
     /**
      * Creates a new {@link EurekaDiscoveryImplFactory}.
      *
-     * @param sr a {@link ServiceRegistry}; must not be {@code null}
-     *
+     * @param sr     a {@link ServiceRegistry}; must not be {@code null}
      * @param config a {@link Config}; must not be {@code null}
-     *
-     * @exception NullPointerException if any argument is {@code null}
+     * @throws NullPointerException if any argument is {@code null}
      */
     EurekaDiscoveryImplFactory(ServiceRegistry sr, Config config) {
         super();

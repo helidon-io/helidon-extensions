@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Oracle and/or its affiliates.
+ * Copyright (c) 2025, 2026 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.helidon.integrations.eureka;
+package io.helidon.extensions.eureka;
 
 import java.util.function.Supplier;
 
@@ -23,20 +23,10 @@ import io.helidon.common.Weighted;
 import io.helidon.webclient.http1.Http1ClientConfig;
 import io.helidon.webserver.spi.ServerFeatureProvider;
 
-import static io.helidon.integrations.eureka.EurekaRegistrationServerFeature.EUREKA_ID;
-
-/*
- * Note that Javadoc for this interface is actually Javadoc for the prototype interface that is generated from it.
- *
- * Note as well that @see references to the prototype's methods cannot be used because they will reference the (publicly
- * inaccessible) blueprint interface.
- */
+import static io.helidon.extensions.eureka.EurekaRegistrationServerFeature.EUREKA_ID;
 
 /**
- * A {@linkplain Prototype.Api prototype} for {@link EurekaRegistrationServerFeature} {@linkplain
- * io.helidon.builder.api.RuntimeType.Api runtime type} instances.
- *
- * <p>Most users will never need to programmatically interact with any of the classes in this package.</p>
+ * Configuration of {@link io.helidon.extensions.eureka.EurekaRegistrationServerFeature}.
  *
  * @see EurekaRegistrationServerFeature
  */
@@ -44,14 +34,6 @@ import static io.helidon.integrations.eureka.EurekaRegistrationServerFeature.EUR
 @Prototype.Configured(value = EUREKA_ID, root = false)
 @Prototype.Provides(ServerFeatureProvider.class)
 interface EurekaRegistrationConfigBlueprint extends Prototype.Factory<EurekaRegistrationServerFeature> {
-
-    /*
-     * Javadoc present here is used both on generated prototype methods (some of which may return an Optional) and on
-     * the builder's mutator methods (none of which will accept an Optional and may have a different return type
-     * (e.g. the builder type itself)). Return type documentation is also used verbatim as parameter documentation for
-     * the associated builder method parameter. Wording throughout must therefore be terse and careful in order to apply
-     * in all possible use sites to which it is copied.
-     */
 
     /**
      * An {@link Http1ClientConfig.Builder} used to build an internal client for communicating with a Eureka server.
@@ -72,7 +54,7 @@ interface EurekaRegistrationConfigBlueprint extends Prototype.Factory<EurekaRegi
      * @see InstanceInfoConfig
      */
     @Option.Configured("instance")
-    @Option.DefaultMethod(value = "create")
+    @Option.DefaultMethod("create")
     InstanceInfoConfig instanceInfo();
 
     /**

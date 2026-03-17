@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Oracle and/or its affiliates.
+ * Copyright (c) 2025, 2026 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.helidon.integrations.eureka;
+package io.helidon.extensions.eureka;
 
 import java.io.UncheckedIOException;
 import java.lang.System.Logger;
@@ -45,11 +45,6 @@ import static java.lang.Thread.sleep;
 
 final class EurekaRegistrationHttpFeature implements HttpFeature {
 
-
-    /*
-     * Static fields.
-     */
-
     private static final Logger LOGGER = getLogger(EurekaRegistrationHttpFeature.class.getName());
 
     private static final JsonString UP = JsonString.create("UP");
@@ -59,34 +54,18 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
     private static final JsonString UNKNOWN = JsonString.create("UNKNOWN");
 
 
-    /*
-     * Instance fields.
-     */
-
     private final EurekaRegistrationConfig prototype;
 
     private volatile JsonObject instanceInfo;
-
     private volatile boolean stop;
-
     private volatile Thread renewer;
-
     private volatile Http1Client client;
-
-
-    /*
-     * Constructors.
-     */
 
     EurekaRegistrationHttpFeature(EurekaRegistrationConfig prototype) {
         super();
         this.prototype = Objects.requireNonNull(prototype, "prototype");
     }
 
-
-    /*
-     * Instance methods.
-     */
 
     static JsonObject json(InstanceInfoConfig prototype, int actualPort, boolean tls) {
         var instance = JsonObject.builder();
@@ -295,11 +274,6 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
     public void setup(HttpRouting.Builder routingBuilder) {
         // Nothing to do.
     }
-
-
-    /*
-     * Private instance methods.
-     */
 
     // for testing
     void afterStart(int actualPort, boolean tls) {
