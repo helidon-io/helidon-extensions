@@ -22,23 +22,20 @@
         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.helidon.discovery.providers</groupId>
-        <artifactId>helidon-discovery-providers-project</artifactId>
-        <version>4.4.0-SNAPSHOT</version>
+        <groupId>io.helidon.extensions.eureka</groupId>
+        <artifactId>helidon-extensions-eureka-modules-project</artifactId>
+        <version>27.0.0-SNAPSHOT</version>
     </parent>
-    <artifactId>helidon-discovery-providers-eureka</artifactId>
-    <name>Helidon Discovery Providers Eureka</name>
-
-    <description>
-        Eureka-based Discovery provider
-    </description>
+    <groupId>io.helidon.extensions.eureka.discovery</groupId>
+    <artifactId>helidon-extensions-eureka-discovery</artifactId>
+    <name>Helidon Extensions Eureka Discovery</name>
+    <description>Discovery provider for Eureka</description>
 
     <properties>
         <java.util.logging.config.file>src/test/resources/logging.properties</java.util.logging.config.file>
     </properties>
 
     <dependencies>
-
         <dependency>
             <groupId>io.helidon.builder</groupId>
             <artifactId>helidon-builder-api</artifactId>
@@ -46,10 +43,6 @@
         <dependency>
             <groupId>io.helidon.common</groupId>
             <artifactId>helidon-common</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.helidon.common</groupId>
-            <artifactId>helidon-common-config</artifactId>
         </dependency>
         <dependency>
             <groupId>io.helidon.common.features</groupId>
@@ -63,6 +56,7 @@
         <dependency>
             <groupId>io.helidon.config</groupId>
             <artifactId>helidon-config-metadata</artifactId>
+            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>io.helidon.common</groupId>
@@ -89,8 +83,8 @@
             <artifactId>helidon-webclient-http1</artifactId>
         </dependency>
         <dependency>
-            <groupId>jakarta.json</groupId>
-            <artifactId>jakarta.json-api</artifactId>
+            <groupId>io.helidon.json</groupId>
+            <artifactId>helidon-json</artifactId>
         </dependency>
         <dependency>
             <groupId>io.helidon.common</groupId>
@@ -108,7 +102,7 @@
         </dependency>
         <dependency>
             <groupId>io.helidon.http.media</groupId>
-            <artifactId>helidon-http-media-jsonp</artifactId>
+            <artifactId>helidon-http-media-json</artifactId>
             <scope>runtime</scope>
         </dependency>
 

@@ -49,47 +49,47 @@ final class InstanceInfoConfigSupport {
             if (builder.hostName().isEmpty()) {
                 // Get or compute and set a default hostName value.if we can.
                 builder.hostName(builder.config()
-                                 .orElseGet(Config::empty)
-                                 .get("hostName")
-                                 .asString()
-                                 .orElseGet(() -> localhost().map(InetAddress::getHostName)
-                                            .orElse(""))); // Empty string (!) is native Eureka's fallback
+                                         .orElseGet(Config::empty)
+                                         .get("hostName")
+                                         .asString()
+                                         .orElseGet(() -> localhost().map(InetAddress::getHostName)
+                                                 .orElse(""))); // Empty string (!) is native Eureka's fallback
             }
             if (builder.ipAddr().isEmpty()) {
                 // Get or compute and set a default ipAddr value.if we can.
                 builder.ipAddr(builder.config()
-                               .orElseGet(Config::empty)
-                               .get("ipAddr")
-                               .asString()
-                               .orElseGet(() -> localhost().map(InetAddress::getHostAddress)
-                                          .orElse(""))); // Empty string (!) is native Eureka's fallback
+                                       .orElseGet(Config::empty)
+                                       .get("ipAddr")
+                                       .asString()
+                                       .orElseGet(() -> localhost().map(InetAddress::getHostAddress)
+                                               .orElse(""))); // Empty string (!) is native Eureka's fallback
             }
             if (builder.healthCheckUrlPath().isEmpty()) {
                 // Get or compute and set a default healthCheckUrlPath value if we can.
                 builder.healthCheckUrlPath(builder.config()
-                                           .orElseGet(() -> Services.get(Config.class))
-                                           .root()
-                                           .get("server.reatures.observe.observers.health.endpoint")
-                                           .asString()
-                                           .orElse("/observe/health")); // Helidon convention, not native Eureka
+                                                   .orElseGet(() -> Services.get(Config.class))
+                                                   .root()
+                                                   .get("server.reatures.observe.observers.health.endpoint")
+                                                   .asString()
+                                                   .orElse("/observe/health")); // Helidon convention, not native Eureka
             }
             PortInfoConfig portInfo = builder.portInfo();
             if (portInfo.port() == 0) {
                 // Compute and set a default portInfo value.
                 builder.portInfo(PortInfoConfig.builder()
-                                 .from(portInfo)
-                                 .enabled(true)
-                                 .port(80)
-                                 .build());
+                                         .from(portInfo)
+                                         .enabled(true)
+                                         .port(80)
+                                         .build());
             }
             portInfo = builder.securePortInfo();
             if (portInfo.port() == 0) {
                 // Compute and set a default securePortInfo value.
                 builder.securePortInfo(PortInfoConfig.builder()
-                                       .from(portInfo)
-                                       .enabled(false)
-                                       .port(443)
-                                       .build());
+                                               .from(portInfo)
+                                               .enabled(false)
+                                               .port(443)
+                                               .build());
             }
 
         }
@@ -117,29 +117,24 @@ final class InstanceInfoConfigSupport {
         /**
          * Returns the prototype's {@linkplain InstanceInfoConfig#instanceId() instance ID} or a default value.
          *
-         * @param prototype the prototype
-         *
+         * @param prototype  the prototype
          * @param actualPort the actual port; used when computing default value
-         *
          * @return the instance ID
          */
         @Prototype.PrototypeMethod
         static String instanceId(InstanceInfoConfig prototype, int actualPort) {
             return prototype
-                .instanceId()
-                .orElseGet(() -> prototype.hostName() + ":" + actualPort);
+                    .instanceId()
+                    .orElseGet(() -> prototype.hostName() + ":" + actualPort);
         }
 
         /**
          * Returns the prototype's effective {@linkplain InstanceInfoConfig#port() port}, taking into account what the
          * actual port is and whether TLS is in effect or not.
          *
-         * @param prototype the prototype
-         *
+         * @param prototype  the prototype
          * @param actualPort the actual port
-         *
-         * @param tls whether or not {@code tls} is in effect
-         *
+         * @param tls        whether or not {@code tls} is in effect
          * @return the appropriate port
          */
         @Prototype.PrototypeMethod
@@ -151,9 +146,7 @@ final class InstanceInfoConfigSupport {
          * Returns whether the effective port is enabled.
          *
          * @param prototype the prototype
-         *
-         * @param tls whether or not TLS is in effect
-         *
+         * @param tls       whether or not TLS is in effect
          * @return whether the effective port is enabled
          */
         @Prototype.PrototypeMethod
@@ -165,12 +158,9 @@ final class InstanceInfoConfigSupport {
          * Returns the prototype's effective {@linkplain InstanceInfoConfig#securePort() secure port}, taking into
          * account what the actual port is and whether TLS is in effect or not.
          *
-         * @param prototype the prototype
-         *
+         * @param prototype  the prototype
          * @param actualPort the actual port
-         *
-         * @param tls whether or not {@code tls} is in effect
-         *
+         * @param tls        whether or not {@code tls} is in effect
          * @return the appropriate secure port
          */
         @Prototype.PrototypeMethod
@@ -182,9 +172,7 @@ final class InstanceInfoConfigSupport {
          * Returns whether the effective secure port is enabled.
          *
          * @param prototype the prototype
-         *
-         * @param tls whether or not TLS is in effect
-         *
+         * @param tls       whether or not TLS is in effect
          * @return whether the effective secure port is enabled
          */
         @Prototype.PrototypeMethod

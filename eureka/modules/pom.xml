@@ -35,6 +35,8 @@
     </properties>
 
     <modules>
+        <module>eureka</module>
+        <module>eureka-discovery</module>
     </modules>
 
 </project>

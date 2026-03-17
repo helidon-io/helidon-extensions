@@ -26,7 +26,6 @@ import static io.helidon.integrations.eureka.EurekaRegistrationServerFeature.EUR
  * <p>Most users will never need to programmatically interact with any of the classes in this package.</p>
  *
  * @see #create(Config, String)
- *
  * @see EurekaRegistrationServerFeature
  */
 public final class EurekaRegistrationServerFeatureProvider implements ServerFeatureProvider<EurekaRegistrationServerFeature> {
@@ -45,7 +44,6 @@ public final class EurekaRegistrationServerFeatureProvider implements ServerFeat
      * Returns {@value EurekaRegistrationServerFeature#EUREKA_ID} when invoked.
      *
      * @return {@value EurekaRegistrationServerFeature#EUREKA_ID} when invoked
-     *
      * @see io.helidon.config.ConfiguredProvider#configKey()
      */
     @Override // ServerFeatureProvider<EurekaRegistrationServerFeature> (ConfiguredProvider<EurekaRegistrationServerFeature>
@@ -70,21 +68,17 @@ public final class EurekaRegistrationServerFeatureProvider implements ServerFeat
      * configuration only.</p>
      *
      * @param config a {@link Config} node; must not be {@code null}
-     *
-     * @param name the name of the configured implementation; must not be {@code null}
-     *
+     * @param name   the name of the configured implementation; must not be {@code null}
      * @return a non-{@code null} {@link EurekaRegistrationServerFeature}
-     *
      * @see io.helidon.config.ConfiguredProvider#create(Config, String)
-     *
      * @see EurekaRegistrationConfig
      */
     @Override // ServerFeatureProvider<EurekaRegistrationServerFeature> (ConfiguredProvider<EurekaRegistrationServerFeature>
     public EurekaRegistrationServerFeature create(Config config, String name) {
         return EurekaRegistrationConfig.builder()
-            .config(config)
-            .name(name)
-            .build();
+                .config(config)
+                .name(name)
+                .build();
     }
 
 }

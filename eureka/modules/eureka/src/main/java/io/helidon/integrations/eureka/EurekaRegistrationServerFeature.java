@@ -48,6 +48,46 @@ public final class EurekaRegistrationServerFeature implements RuntimeType.Api<Eu
         this.prototype = Objects.requireNonNull(prototype, "prototype");
     }
 
+    /**
+     * Creates a {@link EurekaRegistrationServerFeature}.
+     *
+     * <p>Most users will never need to programmatically interact with any of the classes in this package.</p>
+     *
+     * @param prototype a prototype
+     * @return a {@link EurekaRegistrationServerFeature}
+     */
+    public static EurekaRegistrationServerFeature create(EurekaRegistrationConfig prototype) {
+        return new EurekaRegistrationServerFeature(prototype);
+    }
+
+    /**
+     * Returns a builder of the prototype that also knows how to build instances of this runtime type.
+     *
+     * <p>Most users will never need to programmatically interact with any of the classes in this package.</p>
+     *
+     * @return a builder of the prototype that also knows how to build instances of this runtime type
+     */
+    public static EurekaRegistrationConfig.Builder builder() {
+        return EurekaRegistrationConfig.builder();
+    }
+
+    /**
+     * Creates a {@link EurekaRegistrationServerFeature}.
+     *
+     * <p>Most users will never need to programmatically interact with any of the classes in this package.</p>
+     *
+     * @param builderConsumer a {@link Consumer} that updates a supplied {@link EurekaRegistrationConfig.Builder}; must
+     *                        not be {@code null}
+     * @return a non-{@code null} {@link EurekaRegistrationServerFeature}
+     * @throws NullPointerException if {@code builderConsumer} is {@code null}
+     * @see #builder()
+     */
+    public static EurekaRegistrationServerFeature create(Consumer<EurekaRegistrationConfig.Builder> builderConsumer) {
+        return builder()
+                .update(builderConsumer)
+                .build();
+    }
+
     @Override // ServerFeature
     public String name() {
         return this.prototype.name();
@@ -63,6 +103,18 @@ public final class EurekaRegistrationServerFeature implements RuntimeType.Api<Eu
         return this.prototype;
     }
 
+
+    /*
+     * Static methods.
+     */
+
+    // This method is required by the @RuntimeType.PrototypedBy contract, which governs this class. Without this method,
+    // the following compilation error occurs (by design):
+    //
+    //     As io.helidon.integrations.eureka.EurekaRegistrationServerFeature is annotated
+    //     with @RuntimeType.PrototypedBy(EurekaRegistrationConfig), the type must implement the following method:
+    //     static EurekaRegistrationServerFeature create(EurekaRegistrationConfig);
+
     @Override // ServerFeature
     public void setup(ServerFeatureContext featureContext) {
         if (!this.prototype().enabled()) {
@@ -74,43 +126,8 @@ public final class EurekaRegistrationServerFeature implements RuntimeType.Api<Eu
         }
         // Just the default?
         featureContext.socket(DEFAULT_SOCKET_NAME)
-            .httpRouting() // a builder
-            .addFeature(new EurekaRegistrationHttpFeature(this.prototype()));
-    }
-
-    @Override // ServerFeature
-    public String type() {
-        return EUREKA_ID;
-    }
-
-    @Override // Weighted
-    public double weight() {
-        return this.prototype.weight();
-    }
-
-
-    /*
-     * Static methods.
-     */
-
-
-    // This method is required by the @RuntimeType.PrototypedBy contract, which governs this class. Without this method,
-    // the following compilation error occurs (by design):
-    //
-    //     As io.helidon.integrations.eureka.EurekaRegistrationServerFeature is annotated
-    //     with @RuntimeType.PrototypedBy(EurekaRegistrationConfig), the type must implement the following method:
-    //     static EurekaRegistrationServerFeature create(EurekaRegistrationConfig);
-    /**
-     * Creates a {@link EurekaRegistrationServerFeature}.
-     *
-     * <p>Most users will never need to programmatically interact with any of the classes in this package.</p>
-     *
-     * @param prototype a prototype
-     *
-     * @return a {@link EurekaRegistrationServerFeature}
-     */
-    public static EurekaRegistrationServerFeature create(EurekaRegistrationConfig prototype) {
-        return new EurekaRegistrationServerFeature(prototype);
+                .httpRouting() // a builder
+                .addFeature(new EurekaRegistrationHttpFeature(this.prototype()));
     }
 
     // This method is required by the @Prototype.Factory contract, which this class does not implement but must abide
@@ -124,15 +141,10 @@ public final class EurekaRegistrationServerFeature implements RuntimeType.Api<Eu
     //     implement the following method: static EurekaRegistrationConfig.Builder builder() { return
     //     EurekaRegistrationConfig.builder(); }
     //
-    /**
-     * Returns a builder of the prototype that also knows how to build instances of this runtime type.
-     *
-     * <p>Most users will never need to programmatically interact with any of the classes in this package.</p>
-     *
-     * @return a builder of the prototype that also knows how to build instances of this runtime type
-     */
-    public static EurekaRegistrationConfig.Builder builder() {
-        return EurekaRegistrationConfig.builder();
+
+    @Override // ServerFeature
+    public String type() {
+        return EUREKA_ID;
     }
 
     // This method is required by the @Prototype.Factory contract, which this class does not implement but must abide
@@ -148,24 +160,10 @@ public final class EurekaRegistrationServerFeature implements RuntimeType.Api<Eu
     //     create(java.util.function.Consumer<io.helidon.integrations.eureka.EurekaRegistrationConfig.Builder> consumer)
     //     { return builder().update(consumer).build();}
     //
-    /**
-     * Creates a {@link EurekaRegistrationServerFeature}.
-     *
-     * <p>Most users will never need to programmatically interact with any of the classes in this package.</p>
-     *
-     * @param builderConsumer a {@link Consumer} that updates a supplied {@link EurekaRegistrationConfig.Builder}; must
-     * not be {@code null}
-     *
-     * @return a non-{@code null} {@link EurekaRegistrationServerFeature}
-     *
-     * @exception NullPointerException if {@code builderConsumer} is {@code null}
-     *
-     * @see #builder()
-     */
-    public static EurekaRegistrationServerFeature create(Consumer<EurekaRegistrationConfig.Builder> builderConsumer) {
-        return builder()
-            .update(builderConsumer)
-            .build();
+
+    @Override // Weighted
+    public double weight() {
+        return this.prototype.weight();
     }
 
 }

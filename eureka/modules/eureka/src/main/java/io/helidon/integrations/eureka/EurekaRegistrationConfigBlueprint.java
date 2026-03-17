@@ -23,8 +23,6 @@ import io.helidon.common.Weighted;
 import io.helidon.webclient.http1.Http1ClientConfig;
 import io.helidon.webserver.spi.ServerFeatureProvider;
 
-import jakarta.json.JsonBuilderFactory;
-
 import static io.helidon.integrations.eureka.EurekaRegistrationServerFeature.EUREKA_ID;
 
 /*
@@ -71,21 +69,11 @@ interface EurekaRegistrationConfigBlueprint extends Prototype.Factory<EurekaRegi
      * An {@link InstanceInfoConfig} describing the service instance to be registered.
      *
      * @return the {@link InstanceInfoConfig} describing the service instance to be registered
-     *
      * @see InstanceInfoConfig
      */
     @Option.Configured("instance")
     @Option.DefaultMethod(value = "create")
     InstanceInfoConfig instanceInfo();
-
-    /**
-     * A {@link JsonBuilderFactory} used for working with JSON internally; the default value is normally entirely
-     * suitable.
-     *
-     * @return a {@link JsonBuilderFactory}
-     */
-    @Option.DefaultCode("@jakarta.json.Json@.createBuilderFactory(@java.util.Map@.of())")
-    JsonBuilderFactory jsonBuilderFactory();
 
     /**
      * Whether this feature will be enabled.
@@ -101,7 +89,7 @@ interface EurekaRegistrationConfigBlueprint extends Prototype.Factory<EurekaRegi
      * value.
      *
      * @return the non-{@code null} name of this instance; {@value EurekaRegistrationServerFeature#EUREKA_ID} is a
-     * default value
+     *         default value
      */
     @Option.Default(EUREKA_ID)
     String name();

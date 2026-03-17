@@ -22,8 +22,6 @@ import java.util.Optional;
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
 
-import jakarta.json.JsonBuilderFactory;
-
 /*
  * Note that Javadoc for this interface is actually Javadoc for the prototype interface that is generated from it.
  *
@@ -131,18 +129,9 @@ interface InstanceInfoConfigBlueprint {
     String ipAddr();
 
     /**
-     * A {@link JsonBuilderFactory}.
-     *
-     * @return the {@link JsonBuilderFactory}
-     */
-    @Option.DefaultCode("@jakarta.json.Json@.createBuilderFactory(@java.util.Map@.of())")
-    JsonBuilderFactory jsonBuilderFactory();
-
-    /**
      * The {@link LeaseInfoConfig}.
      *
      * @return the {@link LeaseInfoConfig}
-     *
      * @see LeaseInfoConfig
      */
     @Option.Configured("lease")

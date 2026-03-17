@@ -38,23 +38,22 @@ import io.helidon.builder.api.Prototype;
 @Prototype.Configured
 interface LeaseInfoConfigBlueprint {
 
-  /**
-   * The lease renewal interval in seconds; the default value is strongly recommended.
-   *
-   * @return the lease renewal interval in seconds
-   */
-  @Option.Configured("renewalInterval")
-  @Option.DefaultInt(30)
-  int renewalIntervalInSecs();
+    /**
+     * The lease renewal interval in seconds; the default value is strongly recommended.
+     *
+     * @return the lease renewal interval in seconds
+     */
+    @Option.Configured("renewalInterval")
+    @Option.DefaultInt(30)
+    int renewalIntervalInSecs();
 
-  /**
-   * The lease duration in seconds; the default value is strongly recommended.
-   *
-   * @return the lease duration in seconds
-   */
-  @Option.Configured("duration")
-  @Option.DefaultInt(90)
-  int durationInSecs();
-
+    /**
+     * The lease duration in seconds; the default value is strongly recommended.
+     *
+     * @return the lease duration in seconds
+     */
+    @Option.Configured("duration")
+    @Option.DefaultInt(90)
+    int durationInSecs();
 
 }

@@ -20,6 +20,6 @@
  *
  * <p>Most users will never need to programmatically interact with any of the classes in this package.</p>
  *
- * @see io.helidon.integrations.eureka.EurekaRegistrationServerFeatureProvider#create(io.helidon.common.Config, String)
+ * @see io.helidon.integrations.eureka.EurekaRegistrationServerFeatureProvider#create(io.helidon.config.Config, String)
  */
 package io.helidon.integrations.eureka;

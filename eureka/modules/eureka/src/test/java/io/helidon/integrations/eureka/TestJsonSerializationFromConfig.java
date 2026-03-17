@@ -16,31 +16,21 @@
 package io.helidon.integrations.eureka;
 
 import java.net.UnknownHostException;
-import java.util.Map;
 
 import io.helidon.config.Config;
-import io.helidon.config.ConfigSources;
+import io.helidon.json.JsonObject;
 
-import jakarta.json.JsonBuilderFactory;
-import jakarta.json.JsonNumber;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonString;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import static java.net.InetAddress.getLocalHost;
 import static io.helidon.common.media.type.MediaTypes.APPLICATION_YAML;
-import static jakarta.json.Json.createBuilderFactory;
-import static jakarta.json.JsonValue.FALSE;
-import static jakarta.json.JsonValue.TRUE;
+import static java.net.InetAddress.getLocalHost;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 
 final class TestJsonSerializationFromConfig {
-
-    private static JsonBuilderFactory jbf = createBuilderFactory(Map.of());
 
     private Config config;
 
@@ -50,43 +40,58 @@ final class TestJsonSerializationFromConfig {
 
     @BeforeEach
     void setup() {
-        this.config = yaml("""
-                           eureka:
-                             instance:
-                               name: "My Application"
-                           """);
+        this.config = Config.just("""
+                                          eureka:
+                                            instance:
+                                              name: "My Application"
+                                          """,
+                                  APPLICATION_YAML);
     }
 
     @Test
     void testSerialization() throws UnknownHostException {
         int actualPort = 8080;
         InstanceInfoConfig iic = InstanceInfoConfig.builder()
-            .config(this.config.get("eureka.instance"))
-            .build();
+                .config(this.config.get("eureka.instance"))
+                .build();
         JsonObject json = EurekaRegistrationHttpFeature.json(iic, actualPort, false);
-        json = json.getJsonObject("instance");
+        json = json.objectValue("instance", null);
         assertThat(json, not(nullValue()));
-        assertThat(json.getString("instanceId"), is(getLocalHost().getHostName() + ":" + actualPort));
-        assertThat(json.getString("app"), is("My Application")); // explicitly set
-        assertThat(json.getString("appGroupName"), is("unknown"));
-        assertThat(((JsonString)json.getValue("/dataCenterInfo/name")).getString(), is("MyOwn"));
-        assertThat(((JsonString)json.getValue("/dataCenterInfo/@class")).getString(), is("com.netflix.appinfo.MyDataCenterInfo"));
-        assertThat(json.getString("ipAddr"), is(getLocalHost().getHostAddress()));
-        assertThat(json.getString("hostName"), is(getLocalHost().getHostName()));
-        assertThat(((JsonNumber)json.getValue("/port/$")).intValueExact(), is(actualPort));
-        assertThat(json.getValue("/port/@enabled"), is(TRUE));
-        assertThat(((JsonNumber)json.getValue("/securePort/$")).intValueExact(), is(443));
-        assertThat(json.getValue("/securePort/@enabled"), is(FALSE));
-        assertThat(json.getString("status"), is("UP"));
-        assertThat(json.getJsonObject("metadata"), not(nullValue()));
-        assertThat(json.getString("sid"), is("na"));
-        assertThat(json.getInt("countryId"), is(1));
-        assertThat(((JsonNumber)json.getValue("/leaseInfo/renewalIntervalInSecs")).intValueExact(), is(30));
-        assertThat(((JsonNumber)json.getValue("/leaseInfo/durationInSecs")).intValueExact(), is(90));
-    }
+        assertThat(json.stringValue("instanceId", null), is(getLocalHost().getHostName() + ":" + actualPort));
+        assertThat(json.stringValue("app", null), is("My Application")); // explicitly set
+        assertThat(json.stringValue("appGroupName", null), is("unknown"));
+        assertThat(json.objectValue("dataCenterInfo")
+                           .flatMap(it -> it.stringValue("name"))
+                           .orElse(null), is("MyOwn"));
+        assertThat(json.objectValue("dataCenterInfo")
+                           .flatMap(it -> it.stringValue("@class"))
+                           .orElse(null), is("com.netflix.appinfo.MyDataCenterInfo"));
+        assertThat(json.stringValue("ipAddr", null), is(getLocalHost().getHostAddress()));
+        assertThat(json.stringValue("hostName", null), is(getLocalHost().getHostName()));
 
-    private static final Config yaml(String yaml) {
-        return io.helidon.config.Config.create(ConfigSources.create(yaml, APPLICATION_YAML));
-    }
+        var portObject = json.objectValue("port");
+        assertThat(portObject.flatMap(it -> it.intValue("$"))
+                .orElse(-42), is(actualPort));
+        assertThat(portObject.flatMap(it -> it.booleanValue("@enabled"))
+                           .orElse(false), is(true));
 
+        var securePortObject = json.objectValue("securePort");
+        assertThat(securePortObject.flatMap(it -> it.intValue("$"))
+                           .orElse(-42), is(443));
+        assertThat(securePortObject.flatMap(it -> it.booleanValue("@enabled"))
+                           .orElse(true), is(false));
+
+        assertThat(json.stringValue("status", null), is("UP"));
+        assertThat(json.objectValue("metadata", null), not(nullValue()));
+        assertThat(json.stringValue("sid", null), is("na"));
+        assertThat(json.intValue("countryId", -1), is(1));
+
+        var leaseInfo = json.objectValue("leaseInfo");
+        assertThat(leaseInfo.flatMap(it -> it.intValue("renewalIntervalInSecs"))
+                           .orElse(-1),
+                   is(30));
+        assertThat(leaseInfo.flatMap(it -> it.intValue("durationInSecs"))
+                           .orElse(-1),
+                   is(90));
+    }
 }

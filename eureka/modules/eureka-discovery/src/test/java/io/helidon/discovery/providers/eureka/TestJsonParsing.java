@@ -20,25 +20,16 @@ import java.util.Map;
 import java.util.SequencedSet;
 
 import io.helidon.discovery.providers.eureka.EurekaDiscoveryImpl.Instance;
-import io.helidon.discovery.providers.eureka.EurekaDiscoveryImpl.Instance.Status;
-
-import jakarta.json.JsonArray;
-import jakarta.json.JsonReaderFactory;
+import io.helidon.json.JsonParser;
 
 import org.junit.jupiter.api.Test;
 
 import static io.helidon.discovery.providers.eureka.EurekaDiscoveryImpl.Instance.Status.UP;
-import static jakarta.json.Json.createReaderFactory;
-import static java.time.temporal.ChronoUnit.SECONDS;
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.not;
-import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class TestJsonParsing {
-
-    private static JsonReaderFactory jrf = createReaderFactory(Map.of());
 
     private TestJsonParsing() {
         super();
@@ -46,12 +37,15 @@ class TestJsonParsing {
 
     @Test
     void testApps() throws IOException {
+        var application = JsonParser.create(this.getClass().getResource("/apps.json").openStream().readAllBytes())
+                .readJsonObject()
+                .objectValue("applications")
+                .flatMap(it -> it.arrayValue("application"))
+                .orElseThrow();
+
         Map<String, SequencedSet<Instance>> cache =
-            EurekaDiscoveryImpl.instancesMap(jrf.createReader(this.getClass().getResource("/apps.json").openStream())
-                                             .readObject()
-                                             .getJsonObject("applications")
-                                             .getJsonArray("application"),
-                                             false);
+                EurekaDiscoveryImpl.instancesMap(application,
+                                                 false);
         assertThat(cache.size(), is(1));
         assertThat(cache.containsKey("EXAMPLE"), is(true));
         assertThrows(UnsupportedOperationException.class, cache::clear);
@@ -72,12 +66,15 @@ class TestJsonParsing {
 
     @Test
     void testAppsEXAMPLE() throws IOException {
+        var application = JsonParser.create(this.getClass().getResource("/apps-EXAMPLE.json").openStream().readAllBytes())
+                .readJsonObject()
+                .objectValue("application")
+                .flatMap(it -> it.arrayValue("instance"))
+                .orElseThrow();
+
         SequencedSet<Instance> instances =
-            EurekaDiscoveryImpl.instances(jrf.createReader(this.getClass().getResource("/apps-EXAMPLE.json").openStream())
-                                          .readObject()
-                                          .getJsonObject("application")
-                                          .getJsonArray("instance"),
-                                          true); // prefer IP address, just for kicks to test this path too
+                EurekaDiscoveryImpl.instances(application,
+                                              true); // prefer IP address, just for kicks to test this path too
         assertThat(instances.size(), is(1));
         Instance i = instances.getFirst();
         assertThat(i.id(), is("localhost:80")); // the id was set on registration; it's just an opaque string
@@ -93,21 +90,25 @@ class TestJsonParsing {
 
     @Test
     void testAppsDelta() throws IOException {
-        JsonArray applications = jrf.createReader(this.getClass().getResource("/apps.json").openStream())
-            .readObject()
-            .getJsonObject("applications")
-            .getJsonArray("application");
-        assertThat(applications.size(), is(1));
-        
-        Map<String, SequencedSet<Instance>> cache = EurekaDiscoveryImpl.instancesMap(applications, false);
+        var application = JsonParser.create(this.getClass().getResource("/apps.json").openStream().readAllBytes())
+                .readJsonObject()
+                .objectValue("applications")
+                .flatMap(it -> it.arrayValue("application"))
+                .orElseThrow();
+
+        assertThat(application.values().size(), is(1));
+
+        Map<String, SequencedSet<Instance>> cache = EurekaDiscoveryImpl.instancesMap(application, false);
         assertThat(cache.size(), is(1));
 
         // Now pretend that a deletion happened.
-        JsonArray changes = jrf.createReader(this.getClass().getResource("/apps-delta-deleted.json").openStream())
-            .readObject()
-            .getJsonObject("applications")
-            .getJsonArray("application");
-        assertThat(changes.size(), is(1));
+        var changes = JsonParser.create(this.getClass().getResource("/apps-delta-deleted.json").openStream().readAllBytes())
+                .readJsonObject()
+                .objectValue("applications")
+                .flatMap(it -> it.arrayValue("application"))
+                .orElseThrow();
+
+        assertThat(changes.values().size(), is(1));
 
         // Apply the changes.
         cache = EurekaDiscoveryImpl.change(cache, changes, false);

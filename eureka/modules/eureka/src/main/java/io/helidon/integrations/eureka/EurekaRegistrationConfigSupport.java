@@ -34,13 +34,12 @@ final class EurekaRegistrationConfigSupport {
             super();
         }
 
-        @SuppressWarnings("removal")
         @Override // Prototype.BuilderDecorator<EurekaRegistrationConfig.BuilderBase<?, ?>>
         public void decorate(EurekaRegistrationConfig.BuilderBase<?, ?> builder) {
             if (builder.clientBuilderSupplier().isEmpty()) {
                 Config config = builder.config()
-                        .map(Config::config)
-                        .orElseGet(Config::empty).get("client");
+                        .orElseGet(Config::empty)
+                        .get("client");
                 if (config.isObject()) {
                     builder.clientBuilderSupplier(() -> Http1Client.builder().config(config));
                 }

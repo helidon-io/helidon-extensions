@@ -38,20 +38,20 @@ import io.helidon.builder.api.Prototype;
 @Prototype.Configured
 interface PortInfoConfigBlueprint {
 
-  /**
-   * The port number.
-   *
-   * @return the port number
-   */
-  @Option.Configured(merge = true)
-  int port();
+    /**
+     * The port number.
+     *
+     * @return the port number
+     */
+    @Option.Configured(merge = true)
+    int port();
 
-  /**
-   * Whether the port is enabled.
-   *
-   * @return whether the port is enabled
-   */
-  @Option.Configured("enabled")
-  boolean enabled();
+    /**
+     * Whether the port is enabled.
+     *
+     * @return whether the port is enabled
+     */
+    @Option.Configured("enabled")
+    boolean enabled();
 
 }
