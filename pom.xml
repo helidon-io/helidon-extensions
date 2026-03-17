@@ -42,6 +42,7 @@
         <module>neo4j</module>
         <module>oci-v3</module>
         <module>langchain4j</module>
+        <module>eureka</module>
     </modules>
 
     <organization>

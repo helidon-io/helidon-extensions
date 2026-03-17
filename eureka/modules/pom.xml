@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+    Copyright (c) 2026 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -21,19 +21,17 @@
         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.helidon.extensions.neo4j</groupId>
-        <artifactId>helidon-extensions-neo4j-project</artifactId>
+        <groupId>io.helidon.extensions.eureka</groupId>
+        <artifactId>helidon-extensions-eureka-project</artifactId>
         <version>27.0.0-SNAPSHOT</version>
     </parent>
     <packaging>pom</packaging>
 
-    <artifactId>helidon-extensions-neo4j-modules-project</artifactId>
-    <name>Helidon Extensions Neo4j Modules Project</name>
+    <artifactId>helidon-extensions-eureka-modules-project</artifactId>
+    <name>Helidon Extensions Eureka Modules Project</name>
 
 
     <modules>
-        <module>neo4j</module>
-        <module>health</module>
     </modules>
 
 </project>
