@@ -125,6 +125,7 @@ jobs:
               -Pexamples,tests,spotbugs,javadoc \
               verify
   hashicorp_vault:
+    needs: [ prime-build ]
     timeout-minutes: 45
     strategy:
       matrix:
@@ -155,6 +156,7 @@ jobs:
               -Pexamples,tests,spotbugs,javadoc \
               verify
   oci_v3:
+    needs: [ prime-build ]
     timeout-minutes: 45
     strategy:
       matrix:
@@ -184,8 +186,8 @@ jobs:
               -am \
               -Pexamples,tests,spotbugs,javadoc \
               verify
-
   langchain4j:
+    needs: [ prime-build ]
     timeout-minutes: 30
     strategy:
       matrix:
@@ -215,7 +217,6 @@ jobs:
               -am \
               -Pexamples,tests,spotbugs,javadoc \
               verify
-
   gate:
     runs-on: ubuntu-22.04
     needs: [ prime-build, copyright, checkstyle, shellcheck, neo4j, langchain4j, hashicorp_vault, oci_v3 ]
