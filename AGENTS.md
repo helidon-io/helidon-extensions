@@ -24,7 +24,7 @@ Each integration project uses a similar layout:
 Use `-pl <module>` and `-am` to scope builds to the area you changed.
 
 ## Coding Style & Naming Conventions
-Target Java 21. Use 4-space indentation, keep Maven versions inherited unless there is a clear repository pattern requiring otherwise, and follow existing package and artifact naming in the
+Target Java 26. Use 4-space indentation, keep Maven versions inherited unless there is a clear repository pattern requiring otherwise, and follow existing package and artifact naming in the
 surrounding module.
 If `DEV-GUIDELINES.md` is intended to be authoritative, populate it and keep this section consistent with it.
 
