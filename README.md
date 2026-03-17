@@ -14,6 +14,9 @@ See README for individual extensions.
 
 * [neo4j](neo4j/docs/README.md)
 * [HashiCorp Vault](hashicorp-vault/docs/README.md)
+* [Eureka](eureka/docs/README.md)
+* [Langchain4j](langchain4j/docs/README.md)
+* [OCI SDK v3](oci-v3/docs/README.md)
 
 ## Examples
 

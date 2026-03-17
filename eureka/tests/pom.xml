@@ -42,5 +42,7 @@
     </properties>
 
     <modules>
+        <module>extension</module>
+        <module>discovery</module>
     </modules>
 </project>

@@ -41,6 +41,16 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>io.helidon.extensions.eureka</groupId>
+                <artifactId>helidon-extensions-eureka</artifactId>
+                <version>${eureka.extension.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.eureka</groupId>
+                <artifactId>helidon-extensions-eureka-discovery</artifactId>
+                <version>${eureka.extension.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 </project>

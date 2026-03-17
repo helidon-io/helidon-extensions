@@ -1,5 +1,5 @@
 {
-    "$id": "https://github.com/helidon-io/helidon/integrations/eureka/eureka/instance-info.schema.json",
+    "$id": "https://github.com/helidon-io/helidon/extensions/eureka/eureka/instance-info.schema.json",
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "InstanceInfo",
     "description": "A caller-supplied InstanceInfo object's JSON representation",

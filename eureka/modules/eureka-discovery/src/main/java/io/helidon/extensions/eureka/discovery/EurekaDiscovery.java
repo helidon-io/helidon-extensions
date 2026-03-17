@@ -203,18 +203,14 @@ public interface EurekaDiscovery extends Api<EurekaDiscoveryConfig>, Discovery {
      * <p>Implementations of this method <em>must</em> treat discovery names in a case-insensitive manner.</p>
      *
      * <p>Implementations of this method <em>must</em> order elements in the returned {@link SequencedSet} with elements
-     * that are known at invocation time to be <a
-     * href="https://javadoc.io/static/com.netflix.eureka/eureka-client/2.0.5/com/netflix/appinfo/InstanceInfo.InstanceStatus
-     * .html#UP">{@code
-     * UP}</a> or <a
-     * href="https://javadoc.io/static/com.netflix.eureka/eureka-client/2.0.5/com/netflix/appinfo/InstanceInfo.InstanceStatus
-     * .html#STARTING">{@code
-     * STARTING}</a> preceding other elements. All other ordering is undefined.</p>
+     * that are known at invocation time to be
+     * <a href="https://javadoc.io/static/com.netflix.eureka/eureka-client/2.0.5/com/netflix/appinfo/InstanceInfo.InstanceStatus.html#UP">
+     *     {@code UP}</a> or
+     * <a href="https://javadoc.io/static/com.netflix.eureka/eureka-client/2.0.5/com/netflix/appinfo/InstanceInfo.InstanceStatus.html#STARTING">
+     *     {@code STARTING}</a> preceding other elements. All other ordering is undefined.</p>
      *
      * @param discoveryName a discovery name; must not be {@code null}; will be handled in a case-insensitive manner;
-     *                      must comply with any requirements that might exist pertaining to a Eureka <a
-     *                      href="https://javadoc.io/static/com.netflix.eureka/eureka-client/2.0
-     *                      .5/com/netflix/discovery/shared/Application.html#getName()"><dfn>application
+     *                      must comply with any requirements that might exist pertaining to a Eureka <a href="https://javadoc.io/static/com.netflix.eureka/eureka-client/2.0.5/com/netflix/discovery/shared/Application.html#getName()"><dfn>application
      *                      name</dfn></a>
      * @param defaultValue  a {@link URI} that will be {@linkplain DiscoveredUri#uri() represented} as a {@link
      *                      DiscoveredUri} with no metdata if any kind of error occurs that prevents a normal invocation, or if
