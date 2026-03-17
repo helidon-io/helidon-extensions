@@ -20,9 +20,8 @@
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>io.helidon.extensions.oci.v3</groupId>
-        <artifactId>helidon-extensions-oci-v3-project</artifactId>
+        <artifactId>helidon-extensions-oci-v3-modules-project</artifactId>
         <version>27.0.0-SNAPSHOT</version>
-        <relativePath>../../pom.xml</relativePath>
     </parent>
     <artifactId>helidon-extensions-oci-v3-secrets-config-source</artifactId>
     <name>Helidon Extensions OCI Secrets Config Source</name>
