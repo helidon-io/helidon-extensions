@@ -16,7 +16,8 @@
 package io.helidon.extensions.eureka.tests.discovery;
 
 import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.SpringBootConfiguration;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.cloud.netflix.eureka.server.EnableEurekaServer;
 
 /**
@@ -25,7 +26,8 @@ import org.springframework.cloud.netflix.eureka.server.EnableEurekaServer;
  * <p>The Maven Failsafe plugin will start this server before all integration tests in this package, and will stop it
  * when all are completed.</p>
  */
-@SpringBootApplication
+@SpringBootConfiguration
+@EnableAutoConfiguration
 @EnableEurekaServer
 public class EurekaServerApplication {
 
