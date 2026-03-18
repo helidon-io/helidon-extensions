@@ -21,12 +21,16 @@ import java.util.Optional;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
+import io.helidon.openapi.spi.OpenApiServiceProvider;
 
 /**
- * {@link OpenApiUi} prototype.
+ * Configuration of Open API UI.
+ *
+ * @see io.helidon.extensions.openapi.ui.OpenApiUi
  */
 @Prototype.Blueprint
-@Prototype.Configured
+@Prototype.Configured(value = "ui", root = false)
+@Prototype.Provides(OpenApiServiceProvider.class)
 interface OpenApiUiConfigBlueprint extends Prototype.Factory<OpenApiUi> {
     /**
      * Merges implementation-specific UI options.

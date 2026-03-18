@@ -35,7 +35,8 @@ import io.helidon.openapi.OpenApiService;
 import io.helidon.webserver.http.HttpRules;
 import io.helidon.webserver.http.ServerRequest;
 import io.helidon.webserver.http.ServerResponse;
-import io.helidon.webserver.staticcontent.StaticContentService;
+import io.helidon.webserver.staticcontent.ClasspathHandlerConfig;
+import io.helidon.webserver.staticcontent.StaticContentFeature;
 
 import io.smallrye.openapi.ui.IndexHtmlCreator;
 import io.smallrye.openapi.ui.Option;
@@ -148,8 +149,12 @@ public final class OpenApiUi implements OpenApiService, RuntimeType.Api<OpenApiU
         rules.get(docPath + "[/]", (req, res) -> handle(req, res, content))
                 .get(uiPath + "[/]", this::redirectIndex)
                 .get(uiPath + "/index.html", this::index)
-                .register(uiPath, StaticContentService.create("helidon-openapi-ui"))
-                .register(uiPath, StaticContentService.create("META-INF/resources/openapi-ui"));
+                .register(uiPath, StaticContentFeature.createService(ClasspathHandlerConfig.builder()
+                                                                             .location("helidon-openapi-ui")
+                                                                             .build()))
+                .register(uiPath, StaticContentFeature.createService(ClasspathHandlerConfig.builder()
+                                                                             .location("META-INF/resources/openapi-ui")
+                                                                             .build()));
     }
 
     private void index(ServerRequest req, ServerResponse res) {

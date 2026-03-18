@@ -15,8 +15,10 @@
  */
 import io.helidon.common.features.api.Features;
 import io.helidon.common.features.api.HelidonFlavor;
-import io.helidon.extensions.openapi.ui.OpenApiUiProvider;
 
+/**
+ * Extension that integrates Open API UI with Helidon.
+ */
 @Features.Name("OpenAPI UI")
 @Features.Description("OpenAPI UI support")
 @Features.Flavor(HelidonFlavor.SE)
@@ -33,5 +35,5 @@ module io.helidon.extensions.openapi.ui {
     exports io.helidon.extensions.openapi.ui;
 
     provides io.helidon.openapi.spi.OpenApiServiceProvider with
-            OpenApiUiProvider;
+            io.helidon.extensions.openapi.ui.OpenApiUiProvider;
 }
