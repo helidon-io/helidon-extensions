@@ -17,6 +17,7 @@ See README for individual extensions.
 * [Eureka](eureka/docs/README.md)
 * [Langchain4j](langchain4j/docs/README.md)
 * [OCI SDK v3](oci-v3/docs/README.md)
+* [OpenAPI UI](openapi-ui/docs/README.md)
 
 ## Examples
 
