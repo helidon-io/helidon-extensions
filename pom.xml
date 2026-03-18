@@ -45,6 +45,7 @@
         <module>eureka</module>
         <module>crac</module>
         <module>openapi-ui</module>
+        <module>gson</module>
     </modules>
 
     <organization>

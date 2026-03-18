@@ -18,6 +18,7 @@ See README for individual extensions.
 * [Langchain4j](langchain4j/docs/README.md)
 * [OCI SDK v3](oci-v3/docs/README.md)
 * [OpenAPI UI](openapi-ui/docs/README.md)
+* [gson](gson/docs/README.md)
 
 ## Examples
 
@@ -31,6 +32,14 @@ See examples in individual extensions.
 ## Contributing
 
 This project welcomes contributions from the community. Before submitting a pull request, please [review our contribution guide](./CONTRIBUTING.md)
+
+When adding a new extension, the following things must be done:
+
+1. Create the extension directory (structure MUST be aligned with existing extensions)
+2. Add the extension module to root [pom.xml](pom.xml)
+3. Add a build step to [workflow](.github/workflows/validate.yml)
+   1. Add a new job, aligned with existing extensions as a last job before `gate`
+   2. Add the new job to the list of `needs` of the `gate` job 
 
 ## Security
 
