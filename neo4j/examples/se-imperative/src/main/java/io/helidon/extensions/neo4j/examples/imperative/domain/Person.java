@@ -21,7 +21,7 @@ package io.helidon.extensions.neo4j.examples.imperative.domain;
 /*
  * Helidon changes are under the copyright of:
  *
- * Copyright (c) 2021, 2024 Oracle and/or its affiliates.
+ * Copyright (c) 2021, 2026 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -73,9 +73,9 @@ public class Person {
     @SuppressWarnings("checkstyle:OperatorWrap")
     @Override
     public String toString() {
-        return "Person{" +
-                "name='" + name + '\'' +
-                ", born=" + born +
-                '}';
+        return "Person{"
+                + "name='" + name + '\''
+                + ", born=" + born
+                + '}';
     }
 }
