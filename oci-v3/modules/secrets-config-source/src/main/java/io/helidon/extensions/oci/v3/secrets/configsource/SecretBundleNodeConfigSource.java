@@ -483,6 +483,9 @@ public final class SecretBundleNodeConfigSource
         /**
          * Creates a new {@link Stamp}.
          *
+         * @param eTags              a {@link Set} of entity tags
+         * @param earliestExpiration an {@link Instant} identifying the earliest expiration of a Secret indirectly
+         *                           identified by one of the supplied tags
          * @throws NullPointerException if any argument is {@code null}
          */
         public Stamp {

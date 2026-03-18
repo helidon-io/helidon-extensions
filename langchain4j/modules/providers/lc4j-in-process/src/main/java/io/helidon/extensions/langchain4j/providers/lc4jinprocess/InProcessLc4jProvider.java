@@ -18,9 +18,11 @@ package io.helidon.extensions.langchain4j.providers.lc4jinprocess;
 
 import io.helidon.extensions.langchain4j.AiProvider;
 
-@SuppressWarnings("checkstyle:InterfaceIsType")
 @AiProvider.CustomModelFactories
-interface InProcessLc4jProvider {
-    String PROVIDER_KEY = "lc4j-in-process";
-    String CONFIG_ROOT = "langchain4j.providers.lc4j-in-process";
+final class InProcessLc4jProvider {
+    static final String PROVIDER_KEY = "lc4j-in-process";
+    static final String CONFIG_ROOT = "langchain4j.providers.lc4j-in-process";
+
+    private InProcessLc4jProvider() {
+    }
 }

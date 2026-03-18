@@ -18,9 +18,14 @@ package io.helidon.extensions.langchain4j.providers.mock;
 
 import io.helidon.extensions.langchain4j.AiProvider;
 
-@SuppressWarnings("checkstyle:InterfaceIsType")
 @AiProvider.CustomModelFactories
-interface MockLc4jProvider {
-    String PROVIDER_KEY = "helidon-mock";
-    String CONFIG_ROOT = "langchain4j.providers.helidon-mock";
+final class MockLc4jProvider {
+    /**
+     * Provider config key.
+     */
+    static final String PROVIDER_KEY = "helidon-mock";
+    static final String CONFIG_ROOT = "langchain4j.providers.helidon-mock";
+
+    private MockLc4jProvider() {
+    }
 }

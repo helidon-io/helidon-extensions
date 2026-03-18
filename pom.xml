@@ -84,7 +84,7 @@
         <checkstyle.skip>false</checkstyle.skip>
         <javadoc.fail-on-warnings>false</javadoc.fail-on-warnings>
 
-        <version.lib.checkstyle>10.12.5</version.lib.checkstyle>
+        <version.lib.checkstyle>13.3.0</version.lib.checkstyle>
         <version.lib.asm>9.9.1</version.lib.asm>
         <version.lib.hamcrest>1.3</version.lib.hamcrest>
         <version.lib.junit>5.9.3</version.lib.junit>
@@ -92,7 +92,7 @@
         <version.lib.testcontainers>1.19.8</version.lib.testcontainers>
 
         <version.plugin.build-helper>3.6.1</version.plugin.build-helper>
-        <version.plugin.checkstyle>3.3.1</version.plugin.checkstyle>
+        <version.plugin.checkstyle>3.6.0</version.plugin.checkstyle>
         <version.plugin.compiler>3.11.0</version.plugin.compiler>
         <version.plugin.dependency>3.6.0</version.plugin.dependency>
         <version.plugin.directory>1.0</version.plugin.directory>
