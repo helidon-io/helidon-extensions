@@ -90,7 +90,7 @@
         <version.lib.mockito>2.23.4</version.lib.mockito>
         <version.lib.testcontainers>1.19.8</version.lib.testcontainers>
 
-        <version.plugin.helidon-build-tools>4.0.6</version.plugin.helidon-build-tools>
+        <version.plugin.build-helper>3.6.1</version.plugin.build-helper>
         <version.plugin.checkstyle>3.3.1</version.plugin.checkstyle>
         <version.plugin.compiler>3.11.0</version.plugin.compiler>
         <version.plugin.dependency>3.6.0</version.plugin.dependency>
@@ -98,6 +98,8 @@
         <version.plugin.enforcer>3.3.0</version.plugin.enforcer>
         <version.plugin.exec>3.1.0</version.plugin.exec>
         <version.plugin.failsafe>3.5.5</version.plugin.failsafe>
+        <version.plugin.helidon-build-tools>4.0.6</version.plugin.helidon-build-tools>
+        <version.plugin.invoker>3.9.1</version.plugin.invoker>
         <version.plugin.jar>3.3.0</version.plugin.jar>
         <version.plugin.javadoc>3.6.2</version.plugin.javadoc>
         <version.plugin.license>1.16</version.plugin.license>
@@ -159,8 +161,18 @@
                 </plugin>
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>build-helper-maven-plugin</artifactId>
+                    <version>${version.plugin.build-helper}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
                     <artifactId>exec-maven-plugin</artifactId>
                     <version>${version.plugin.exec}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-invoker-plugin</artifactId>
+                    <version>${version.plugin.invoker}</version>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
