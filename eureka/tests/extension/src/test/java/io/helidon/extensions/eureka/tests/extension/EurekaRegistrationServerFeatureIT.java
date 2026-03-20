@@ -16,6 +16,7 @@
 package io.helidon.extensions.eureka.tests.extension;
 
 import io.helidon.config.Config;
+import io.helidon.extensions.eureka.EurekaRegistrationConfig;
 import io.helidon.extensions.eureka.EurekaRegistrationServerFeature;
 import io.helidon.json.JsonObject;
 import io.helidon.json.JsonValue;
@@ -32,6 +33,7 @@ import static io.helidon.http.HeaderNames.ACCEPT_ENCODING;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
 
 class EurekaRegistrationServerFeatureIT {
 
@@ -45,6 +47,7 @@ class EurekaRegistrationServerFeatureIT {
      * A {@link io.helidon.webclient.api.WebClient} to use to verify that Eureka service instance registration took place successfully.
      */
     private WebClient wc;
+    private EurekaRegistrationServerFeature feature;
 
     /**
      * Creates a new {@link EurekaRegistrationServerFeatureIT}.
@@ -82,7 +85,21 @@ class EurekaRegistrationServerFeatureIT {
                 .config(c.get("helidon.server"))
                 .routing(rb -> rb.get("/hello", (req, res) -> res.send("Hello World!")))
                 .build();
-        assertThat(this.ws.prototype().features().get(0), instanceOf(EurekaRegistrationServerFeature.class));
+
+        EurekaRegistrationServerFeature feature = null;
+
+        var serverFeatures = ws.prototype().features();
+        for (Object serverFeature : serverFeatures) {
+            if (serverFeature instanceof EurekaRegistrationServerFeature ersf) {
+                feature = ersf;
+            }
+        }
+
+        assertThat("Eureka Server Feature not registered with webserver", feature, notNullValue());
+        EurekaRegistrationConfig prototype = feature.prototype();
+        assertThat("Eureka Server Feature is not enabled", prototype.enabled(), is(true));
+        this.feature = feature;
+
         this.ws.start();
     }
 
@@ -101,11 +118,7 @@ class EurekaRegistrationServerFeatureIT {
         assertThat(this.ws.isRunning(), is(true));
         Thread.sleep(500L); // wait for the registration/renewal attempt to happen in the background
         try (var response = this.wc
-                .get("/v2/apps/" + (
-                        (EurekaRegistrationServerFeature) this.ws.prototype()
-                                .features()
-                                .get(0))
-                        .prototype()
+                .get("/v2/apps/" + feature.prototype()
                         .instanceInfo()
                         .appName())
                 .accept(APPLICATION_JSON)
