@@ -20,6 +20,7 @@ import java.util.List;
 import io.helidon.config.Config;
 import io.helidon.service.registry.Services;
 import io.helidon.webserver.WebServer;
+import io.helidon.webserver.spi.ServerFeature;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
 
 final class TestEurekaRegistrationServerFeatureInstallation {
 
@@ -60,9 +62,18 @@ final class TestEurekaRegistrationServerFeatureInstallation {
     void testEurekaRegistrationServerFeatureInstallationWasSuccessful() {
         assertThat(this.ws.isRunning(), is(true));
         List<?> serverFeatures = this.ws.prototype().features();
-        assertThat(serverFeatures.size(), is(1));
-        EurekaRegistrationConfig prototype = ((EurekaRegistrationServerFeature) serverFeatures.get(0)).prototype();
-        assertThat(prototype.enabled(), is(true));
+
+        EurekaRegistrationServerFeature feature = null;
+
+        for (Object serverFeature : serverFeatures) {
+            if (serverFeature instanceof EurekaRegistrationServerFeature ersf) {
+                feature = ersf;
+            }
+        }
+
+        assertThat("Eureka Server Feature not registered with webserver", feature, notNullValue());
+        EurekaRegistrationConfig prototype = feature.prototype();
+        assertThat("Eureka Server Feature is not enabled", prototype.enabled(), is(true));
     }
 
 }
