@@ -29,7 +29,24 @@ env:
     -Dcache.enabled=true
 
 jobs:
+  prime-build:
+    timeout-minutes: 30
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: '0'
+      - name: Helidon Priming build
+        uses: ./.github/actions/common
+        with:
+          free-space: true
+          build-cache: read-write
+          maven-cache: read-write
+          setup-latest-java: true
+          run: |
+            etc/scripts/prime-build.sh
   build:
+    needs: prime-build
     timeout-minutes: 15
     runs-on: ubuntu-22.04
     steps:
