@@ -29,6 +29,7 @@ import dev.langchain4j.mcp.client.McpClient;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.rag.RetrievalAugmentor;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import dev.langchain4j.service.tool.ToolProvider;
@@ -42,6 +43,7 @@ class AgentsConfigSupport {
      * Configures LangChain4j {@link dev.langchain4j.agentic.agent.AgentBuilder} from {@link AgentsConfig}.
      * <p>
      * This method resolves any configured service references (such as {@link dev.langchain4j.model.chat.ChatModel},
+     * {@link dev.langchain4j.model.chat.StreamingChatModel},
      * {@link dev.langchain4j.memory.ChatMemory}, {@link dev.langchain4j.memory.chat.ChatMemoryProvider},
      * {@link dev.langchain4j.rag.content.retriever.ContentRetriever},
      * {@link dev.langchain4j.rag.RetrievalAugmentor},
@@ -64,6 +66,8 @@ class AgentsConfigSupport {
 
         agentsConfig.chatModel().map(s -> serviceRegistry.getNamed(ChatModel.class, s))
                 .ifPresent(agentBuilder::chatModel);
+        agentsConfig.streamingChatModel().map(s -> serviceRegistry.getNamed(StreamingChatModel.class, s))
+                .ifPresent(agentBuilder::streamingChatModel);
 
         agentsConfig.name().ifPresent(agentBuilder::name);
         agentsConfig.description().ifPresent(agentBuilder::description);
