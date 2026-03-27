@@ -18,6 +18,7 @@ package io.helidon.extensions.langchain4j.tests.agentic;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
 import io.helidon.extensions.langchain4j.providers.mock.MockChatModel;
@@ -36,6 +37,7 @@ import dev.langchain4j.guardrail.GuardrailException;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.output.FinishReason;
+import dev.langchain4j.service.TokenStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 
@@ -138,5 +140,64 @@ public class AgentTest {
         assertTrue(guardrailRootCause.isPresent());
         assertThat(guardrailRootCause.get().getMessage(),
                    containsString("Inappropriate Helidon question! Prompt containing: reactive"));
+    }
+
+    @Test
+    void streamingAnnotatedAgentTest() {
+        var streamingHelidonExpert = Services.get(StreamingHelidonExpert.class);
+        var response = collect(streamingHelidonExpert.askExpert("streaming simple test"));
+        assertThat(response, is("Simple streaming response!"));
+    }
+
+    @Test
+    void streamingSequenceAgentTest() {
+        var streamingHelidonExpert = Services.get(StreamingHelidonSequenceAgent.class);
+        var response = collect(streamingHelidonExpert.askExpert("streaming sequence test"));
+        assertThat(response, is("Sequence streaming response!"));
+    }
+
+    @Test
+    void streamingSequenceOutputHandoffTest() {
+        var streamingHelidonExpert = Services.get(StreamingHelidonChainedSequenceAgent.class);
+        var response = collect(streamingHelidonExpert.askExpert("streaming chained handoff test"));
+        assertThat(response, is("Chained streaming response!"));
+    }
+
+    @Test
+    void streamingConfigDrivenAgentTest() {
+        var streamingHelidonExpert = Services.get(ConfigDrivenStreamingExpert.class);
+        var response = collect(streamingHelidonExpert.askExpert("streaming config test"));
+        assertThat(response, is("Config streaming response!"));
+    }
+
+    @Test
+    void streamingSupervisorRequiresChatModelTest() {
+        assertIllegalStateException(() -> Services.get(StreamingHelidonSupervisorAgent.class));
+    }
+
+    @Test
+    void streamingSummarizedContextSubAgentRequiresChatModelTest() {
+        assertIllegalStateException(() -> Services.get(StreamingHelidonSummarizedContextSequenceAgent.class));
+    }
+
+    void assertIllegalStateException(Executable executable) {
+        Throwable ex = assertThrows(Throwable.class, executable);
+        var illegalStateRootCause = Stream.iterate(ex, Objects::nonNull, Throwable::getCause)
+                .filter(e -> e instanceof IllegalStateException)
+                .findFirst()
+                .map(IllegalStateException.class::cast);
+        assertTrue(illegalStateRootCause.isPresent());
+        assertThat(illegalStateRootCause.get().getMessage(),
+                   containsString("requires chat-model"));
+    }
+
+    private static String collect(TokenStream tokenStream) {
+        CompletableFuture<String> response = new CompletableFuture<>();
+        StringBuilder builder = new StringBuilder();
+        tokenStream.onPartialResponse(builder::append)
+                .onCompleteResponse(ignored -> response.complete(builder.toString()))
+                .onError(response::completeExceptionally)
+                .start();
+        return response.join();
     }
 }

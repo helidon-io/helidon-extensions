@@ -71,6 +71,17 @@ final class LangchainTypes {
     static final TypeName LC_MCP_TOOL_PROVIDER = TypeName.create("dev.langchain4j.mcp.McpToolProvider");
     static final TypeName LC_MCP_CLIENT = TypeName.create("dev.langchain4j.mcp.client.McpClient");
     static final TypeName LC_AGENTIC_SERVICES = TypeName.create("dev.langchain4j.agentic.AgenticServices");
+    static final TypeName LC_AGENTIC_AGENT = TypeName.create("dev.langchain4j.agentic.Agent");
+    static final TypeName LC_SEQUENCE_AGENT = TypeName.create("dev.langchain4j.agentic.declarative.SequenceAgent");
+    static final TypeName LC_CONDITIONAL_AGENT = TypeName.create("dev.langchain4j.agentic.declarative.ConditionalAgent");
+    static final TypeName LC_LOOP_AGENT = TypeName.create("dev.langchain4j.agentic.declarative.LoopAgent");
+    static final TypeName LC_PARALLEL_AGENT = TypeName.create("dev.langchain4j.agentic.declarative.ParallelAgent");
+    static final TypeName LC_PARALLEL_MAPPER_AGENT = TypeName.create("dev.langchain4j.agentic.declarative.ParallelMapperAgent");
+    static final TypeName LC_PLANNER_AGENT = TypeName.create("dev.langchain4j.agentic.declarative.PlannerAgent");
+    static final TypeName LC_SUPERVISOR_AGENT = TypeName.create("dev.langchain4j.agentic.declarative.SupervisorAgent");
+    static final TypeName LC_HUMAN_IN_THE_LOOP = TypeName.create("dev.langchain4j.agentic.declarative.HumanInTheLoop");
+    static final TypeName LC_A2A_CLIENT_AGENT = TypeName.create("dev.langchain4j.agentic.declarative.A2AClientAgent");
+    static final TypeName LC_MCP_CLIENT_AGENT = TypeName.create("dev.langchain4j.agentic.declarative.McpClientAgent");
     static final TypeName LC_DECLARATIVE_AGENT_CREATION_CONTEXT = TypeName.create(
             "dev.langchain4j.agentic.AgenticServices.DeclarativeAgentCreationContext");
 

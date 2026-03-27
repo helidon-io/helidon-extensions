@@ -16,8 +16,8 @@
 
 package io.helidon.extensions.langchain4j.providers.mock;
 
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
@@ -27,6 +27,7 @@ import io.helidon.service.registry.Services;
 import io.helidon.testing.junit5.Testing;
 
 import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.SystemMessage;
 import org.junit.jupiter.api.Test;
 
@@ -66,9 +67,9 @@ public class MockStreamingTest {
                     return "Custom manually added response!";
                 }
             });
-            assertThat(aiService.chat("Custom rule match").collect(Collectors.joining()),
+            assertThat(join(aiService.chat("Custom rule match")),
                        is("Custom manually added response!"));
-            assertThat(aiService.chat("Custom rule match").toList(),
+            assertThat(tokens(aiService.chat("Custom rule match")),
                        contains("Custom manually added response!".splitWithDelimiters("\\s", 0)));
         } finally {
             model.resetRules();
@@ -80,7 +81,20 @@ public class MockStreamingTest {
     public interface HelidonSupportService {
 
         @SystemMessage("You are a Helidon expert!")
-        Stream<String> chat(String prompt);
+        TokenStream chat(String prompt);
     }
 
+    private static String join(TokenStream tokenStream) {
+        return String.join("", tokens(tokenStream));
+    }
+
+    private static List<String> tokens(TokenStream tokenStream) {
+        CompletableFuture<List<String>> response = new CompletableFuture<>();
+        List<String> tokens = new java.util.concurrent.CopyOnWriteArrayList<>();
+        tokenStream.onPartialResponse(tokens::add)
+                .onCompleteResponse(ignored -> response.complete(List.copyOf(tokens)))
+                .onError(response::completeExceptionally)
+                .start();
+        return response.join();
+    }
 }

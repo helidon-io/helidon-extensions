@@ -49,6 +49,7 @@ import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.AI_CHAT_M
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.AI_CONTENT_RETRIEVER;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.AI_MCP_CLIENTS;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.AI_RETRIEVER_AUGMENTOR;
+import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.AI_STREAMING_CHAT_MODEL;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.AI_TOOLS;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.AI_TOOL_PROVIDER;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.SVC_SERVICES_FACTORY;
@@ -65,6 +66,7 @@ class AgentMetadataSupplierBuilder {
         var m = new LinkedHashMap<TypeName, AnnotationMapper>();
         m.put(AI_AGENT, new AnnotationMapper("name", MapperType.STRING_VALUE));
         m.put(AI_CHAT_MODEL, new AnnotationMapper("chatModel", MapperType.STRING_VALUE));
+        m.put(AI_STREAMING_CHAT_MODEL, new AnnotationMapper("streamingChatModel", MapperType.STRING_VALUE));
         m.put(AI_CHAT_MEMORY, new AnnotationMapper("chatMemory", MapperType.STRING_VALUE));
         m.put(AI_CHAT_MEMORY_PROVIDER, new AnnotationMapper("chatMemoryProvider", MapperType.STRING_VALUE));
         m.put(AI_CONTENT_RETRIEVER, new AnnotationMapper("contentRetriever", MapperType.STRING_VALUE));

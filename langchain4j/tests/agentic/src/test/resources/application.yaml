@@ -20,6 +20,8 @@ app:
 
 langchain4j:
   agents:
+    config-driven-streaming-expert:
+      streaming-chat-model: streaming-mock-model
     flavor-classifier:
       chat-model: test-mock-model
     helidon-se-expert:
@@ -50,3 +52,16 @@ langchain4j:
           response: please retry me res
         - pattern: (?si).*imperative.*
           response: I am SE expert!
+    streaming-mock-model:
+      provider: helidon-mock
+      rules:
+        - pattern: (?si).*streaming simple test.*
+          response: Simple streaming response!
+        - pattern: (?si).*streaming sequence test.*
+          response: Sequence streaming response!
+        - pattern: (?si).*Create a short streaming Helidon draft.*streaming chained handoff test.*
+          response: intermediate streaming draft
+        - pattern: (?si).*Transform the streaming draft into the final Helidon response.*intermediate streaming draft.*
+          response: Chained streaming response!
+        - pattern: (?si).*streaming config test.*
+          response: Config streaming response!

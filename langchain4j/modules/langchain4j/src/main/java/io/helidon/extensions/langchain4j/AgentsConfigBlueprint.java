@@ -25,6 +25,7 @@ import io.helidon.service.registry.ServiceRegistry;
 
 import dev.langchain4j.guardrail.InputGuardrail;
 import dev.langchain4j.guardrail.OutputGuardrail;
+import dev.langchain4j.model.chat.StreamingChatModel;
 
 /**
  * Configuration for a single LangChain4j agent.
@@ -105,6 +106,16 @@ interface AgentsConfigBlueprint {
      */
     @Option.Configured
     Optional<String> chatModel();
+
+    /**
+     * Name of the {@link StreamingChatModel} service to use for this agent.
+     * <p>
+     * The value is resolved from the {@link ServiceRegistry}.
+     *
+     * @return configured name of the streaming chat model service, or empty if not configured
+     */
+    @Option.Configured
+    Optional<String> streamingChatModel();
 
     /**
      * Name of the {@link dev.langchain4j.memory.ChatMemory} service to use for this agent.
