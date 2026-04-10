@@ -39,4 +39,8 @@
         <maven.javadoc.skip>true</maven.javadoc.skip>
         <dependency-check.skip>true</dependency-check.skip>
     </properties>
+
+    <modules>
+        <module>agentic-chess</module>
+    </modules>
 </project>
