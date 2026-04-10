@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Agentic Chess</title>
+    <link rel="stylesheet" href="/chess/app.css">
+</head>
+<body>
+<div class="page-shell">
+    <header class="hero">
+        <div class="hero-copy">
+            <p class="eyebrow">Helidon Declarative AI with LanchChain4j</p>
+            <h1>Agentic Chess</h1>
+            <p class="subhead">
+                White is human-in-the-loop. Black is LLM-driven. The rules engine stays authoritative.
+            </p>
+        </div>
+        <div class="hero-actions">
+            <button id="new-game-button" class="primary-button" type="button">New Game</button>
+            <button id="reset-game-button" class="secondary-button" type="button" disabled>Reset</button>
+            <span id="status-pill" class="status-pill busy">Starting</span>
+        </div>
+    </header>
+
+    <main class="layout">
+        <section id="board-card" class="board-card card">
+            <div class="board-toolbar">
+                <div>
+                    <div class="toolbar-label">Session</div>
+                    <div id="session-text" class="toolbar-value">No active game</div>
+                </div>
+                <div>
+                    <div class="toolbar-label">Turn</div>
+                    <div id="turn-text" class="toolbar-value">White</div>
+                </div>
+            </div>
+
+            <div class="board-shell">
+                <div id="board" class="board" aria-label="Chess board"></div>
+                <div id="board-animation-layer" class="board-animation-layer" aria-hidden="true"></div>
+            </div>
+
+            <div class="board-status">
+                <p id="hint-text" class="hint-text">Preparing a new game for White.</p>
+                <p id="game-status-text" class="game-status-text"></p>
+            </div>
+        </section>
+
+        <aside id="sidebar" class="sidebar">
+            <section id="commentary-panel" class="card panel">
+                <div class="panel-head">
+                    <h2>Commentary</h2>
+                </div>
+                <div id="commentary-list" class="commentary-list"></div>
+            </section>
+
+            <section id="candidate-panel" class="card panel candidate-panel">
+                <div class="panel-head">
+                    <h2>Candidate Lines</h2>
+                </div>
+                <div id="candidate-lines" class="candidate-lines"></div>
+            </section>
+        </aside>
+    </main>
+</div>
+
+<template id="candidate-template">
+    <article class="candidate-card">
+        <div class="candidate-board"></div>
+        <div class="candidate-body">
+            <div class="candidate-summary"></div>
+            <div class="candidate-moves"></div>
+        </div>
+    </article>
+</template>
+
+<script type="module" src="/chess/app.js"></script>
+</body>
+</html>

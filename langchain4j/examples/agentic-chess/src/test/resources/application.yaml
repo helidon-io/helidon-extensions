@@ -1,0 +1,47 @@
+#
+# Copyright (c) 2026 Oracle and/or its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+server:
+  features:
+    static-content:
+      classpath:
+        - context: /chess
+          location: agentic-chess-ui
+          welcome: index.html
+
+langchain4j:
+  agents:
+    chess-opponent:
+      chat-model: agentic-chess-mock-chat-model
+      output-guardrails:
+        - io.helidon.extensions.langchain4j.examples.agentic.chess.ai.IllegalMoveOutputGuardrail
+      output-guardrails-config:
+        max-retries: 6
+
+  services:
+    chess-commentary:
+      streaming-chat-model: agentic-chess-mock-streaming-model
+
+  models:
+    agentic-chess-mock-chat-model:
+      provider: helidon-mock
+    agentic-chess-mock-streaming-model:
+      provider: helidon-mock
+
+  providers:
+    open-ai:
+      api-key: test-key
+      base-url: http://127.0.0.1:1
