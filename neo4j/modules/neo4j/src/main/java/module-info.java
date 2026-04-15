@@ -16,12 +16,10 @@
 
 import io.helidon.common.features.api.Features;
 import io.helidon.common.features.api.HelidonFlavor;
-import io.helidon.common.features.api.Preview;
 
 /**
  * Neo4j support module.
  */
-@Features.Preview
 @Features.Name("Neo4j integration")
 @Features.Description("Integration with Neo4j driver")
 @Features.Flavor(HelidonFlavor.SE)

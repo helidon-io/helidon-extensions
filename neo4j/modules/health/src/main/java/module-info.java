@@ -16,12 +16,10 @@
 
 import io.helidon.common.features.api.Features;
 import io.helidon.common.features.api.HelidonFlavor;
-import io.helidon.common.features.api.Preview;
 
 /**
  * Neo4j health checks module.
  */
-@Features.Preview
 @Features.Name("Neo4j Health")
 @Features.Description("Health check for Neo4j integration")
 @Features.Flavor(HelidonFlavor.SE)
