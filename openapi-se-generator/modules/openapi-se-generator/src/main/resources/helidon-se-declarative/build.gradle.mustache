@@ -1,0 +1,122 @@
+{{!
+Copyright (c) 2026 Oracle and/or its affiliates.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+}}
+
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = '{{groupId}}'
+version = '{{artifactVersion}}'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+def helidonVersion = '{{helidonVersion}}'
+
+dependencies {
+    implementation platform("io.helidon.applications:helidon-se:${helidonVersion}")
+    annotationProcessor platform("io.helidon.applications:helidon-se:${helidonVersion}")
+    testImplementation platform("io.helidon.applications:helidon-se:${helidonVersion}")
+
+    implementation 'io.helidon.webserver:helidon-webserver'
+    implementation 'io.helidon.service:helidon-service-registry'
+    implementation 'io.helidon.http.media:helidon-http-media-json-binding'
+
+    {{#hasValidation}}
+    implementation 'io.helidon.validation:helidon-validation'
+    {{/hasValidation}}
+
+    {{#corsEnabled}}
+    implementation 'io.helidon.webserver:helidon-webserver-cors'
+    {{/corsEnabled}}
+
+    {{#ftEnabled}}
+    implementation 'io.helidon.fault-tolerance:helidon-fault-tolerance'
+    {{/ftEnabled}}
+
+    {{#tracingEnabled}}
+    implementation 'io.helidon.tracing:helidon-tracing'
+    {{/tracingEnabled}}
+
+    {{#metricsEnabled}}
+    implementation 'io.helidon.metrics:helidon-metrics-api'
+    {{/metricsEnabled}}
+
+    {{#serverOpenApi}}
+    implementation 'io.helidon.openapi:helidon-openapi'
+    {{/serverOpenApi}}
+
+    implementation 'io.helidon.config:helidon-config-yaml'
+
+    {{#generateClient}}
+    implementation 'io.helidon.webclient:helidon-webclient-api'
+    {{/generateClient}}
+
+    {{#hasSecurity}}
+    implementation 'io.helidon.security:helidon-security'
+    implementation 'io.helidon.webserver:helidon-webserver-security'
+    implementation 'io.helidon.security.abac:helidon-security-abac-role'
+    implementation 'io.helidon.security:helidon-security-annotations'
+    runtimeOnly 'io.helidon.security.providers:helidon-security-providers-abac'
+    {{/hasSecurity}}
+
+    runtimeOnly 'io.helidon.logging:helidon-logging-jul'
+    runtimeOnly 'org.slf4j:slf4j-jdk14'
+
+    annotationProcessor "io.helidon.bundles:helidon-bundles-apt:${helidonVersion}"
+
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation 'org.hamcrest:hamcrest-all'
+    {{#generateClient}}
+    testImplementation 'io.helidon.webserver.testing.junit5:helidon-webserver-testing-junit5'
+    {{/generateClient}}
+}
+
+test {
+    useJUnitPlatform()
+}
+
+application {
+    mainClass = '{{invokerPackage}}.Main'
+}
+
+tasks.named('jar') {
+    manifest {
+        attributes(
+                'Main-Class': application.mainClass.get(),
+                'Class-Path': configurations.runtimeClasspath.files
+                        .collect { "../runtime-libs/${it.name}" }
+                        .join(' '))
+    }
+}
+
+tasks.register('copyRuntimeLibs', Copy) {
+    from configurations.runtimeClasspath
+    into layout.buildDirectory.dir('runtime-libs')
+}
+
+tasks.named('assemble') {
+    dependsOn tasks.named('copyRuntimeLibs')
+}

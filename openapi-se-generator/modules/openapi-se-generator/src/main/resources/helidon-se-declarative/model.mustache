@@ -1,0 +1,64 @@
+{{!
+Copyright (c) 2026 Oracle and/or its affiliates.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+}}
+
+{{#models}}
+package {{modelPackage}};
+
+import io.helidon.json.binding.Json;
+{{#imports}}
+import {{import}};
+{{/imports}}
+{{#model}}
+
+/**
+ * {{description}}{{^description}}{{classname}} model.{{/description}}
+ */
+@Json.Entity
+{{#isDeprecated}}@Deprecated
+{{/isDeprecated}}{{#vendorExtensions.x-has-validations}}@Validation.Validated
+{{/vendorExtensions.x-has-validations}}public class {{classname}} {
+
+{{#vars}}
+    {{#description}}/** {{description}} */
+    {{/description}}{{#vendorExtensions.x-validation-annotations}}{{{annotation}}}
+    {{/vendorExtensions.x-validation-annotations}}{{#vendorExtensions.x-json-required}}@Json.Required
+    {{/vendorExtensions.x-json-required}}private {{{datatypeWithEnum}}} {{name}}{{#vendorExtensions.x-default-value}} = {{{vendorExtensions.x-default-value}}}{{/vendorExtensions.x-default-value}};
+
+{{/vars}}
+    /** No-arg constructor. */
+    public {{classname}}() {
+    }
+
+{{#vars}}
+    public {{{datatypeWithEnum}}} {{getter}}() {
+        return {{name}};
+    }
+
+    public void {{setter}}({{{datatypeWithEnum}}} {{name}}) {
+        this.{{name}} = {{name}};
+    }
+
+{{/vars}}
+{{#vars}}{{#isEnum}}
+    public enum {{datatypeWithEnum}} {
+        {{#allowableValues}}{{#enumVars}}{{name}}{{^-last}},
+        {{/-last}}{{/enumVars}};{{/allowableValues}}
+    }
+
+{{/isEnum}}{{/vars}}
+}
+{{/model}}
+{{/models}}
