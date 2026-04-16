@@ -28,7 +28,7 @@ import io.helidon.service.registry.Service;
 
 import com.oracle.bmc.auth.BasicAuthenticationDetailsProvider;
 
-@Service.Provider
+@Service.Singleton
 @Service.ExternalContracts(BasicAuthenticationDetailsProvider.class)
 class AdpProvider implements Supplier<Optional<BasicAuthenticationDetailsProvider>> {
 

@@ -33,7 +33,7 @@ import com.oracle.bmc.auth.ResourcePrincipalAuthenticationDetailsProvider.Resour
  * Resource principal authentication method, uses the {@link com.oracle.bmc.auth.ResourcePrincipalAuthenticationDetailsProvider}.
  */
 @Weight(Weighted.DEFAULT_WEIGHT - 30)
-@Service.Provider
+@Service.Singleton
 class AuthenticationMethodResourcePrincipal implements OciAuthenticationMethod {
     private static final System.Logger LOGGER = System.getLogger(AuthenticationMethodResourcePrincipal.class.getName());
     private static final String RESOURCE_PRINCIPAL_VERSION_ENV_VAR = "OCI_RESOURCE_PRINCIPAL_VERSION";

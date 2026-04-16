@@ -27,7 +27,7 @@ import io.helidon.webserver.http.RestServer;
 /**
  * The Movie service.
  */
-@SuppressWarnings("deprecation")
+@SuppressWarnings({"deprecation", "helidon:api:incubating"})
 @RestServer.Endpoint
 @Http.Path("/api/movies")
 class MovieService {

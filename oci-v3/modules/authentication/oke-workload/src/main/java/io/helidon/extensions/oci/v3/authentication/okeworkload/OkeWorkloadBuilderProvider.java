@@ -29,7 +29,7 @@ import com.oracle.bmc.auth.okeworkloadidentity.OkeWorkloadIdentityAuthentication
  * OKE Workload Identity builder provider, uses the
  * {@link OkeWorkloadIdentityAuthenticationDetailsProviderBuilder}.
  */
-@Service.Provider
+@Service.Singleton
 class OkeWorkloadBuilderProvider implements Supplier<OkeWorkloadIdentityAuthenticationDetailsProviderBuilder> {
     private final OciConfig config;
 

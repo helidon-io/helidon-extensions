@@ -34,7 +34,7 @@ import com.oracle.bmc.auth.ConfigFileAuthenticationDetailsProvider;
 import com.oracle.bmc.auth.SessionTokenAuthenticationDetailsProvider;
 import com.oracle.bmc.auth.SessionTokenAuthenticationDetailsProvider.SessionTokenAuthenticationDetailsProviderBuilder;
 
-@Service.Provider
+@Service.Singleton
 class AdpSessionTokenBuilderProvider implements Supplier<SessionTokenAuthenticationDetailsProviderBuilder> {
     private static final LazyValue<ScheduledExecutorService> DEFAULT_SCHEDULER =
             LazyValue.create(Executors::newSingleThreadScheduledExecutor);

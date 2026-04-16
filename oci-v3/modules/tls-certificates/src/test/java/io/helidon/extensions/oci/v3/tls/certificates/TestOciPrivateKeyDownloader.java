@@ -28,7 +28,7 @@ import io.helidon.config.Config;
 import io.helidon.extensions.oci.v3.tls.certificates.spi.OciPrivateKeyDownloader;
 import io.helidon.service.registry.Service;
 
-@Service.Provider
+@Service.Singleton
 @Weight(Weighted.DEFAULT_WEIGHT + 1)
 class TestOciPrivateKeyDownloader implements OciPrivateKeyDownloader {
 

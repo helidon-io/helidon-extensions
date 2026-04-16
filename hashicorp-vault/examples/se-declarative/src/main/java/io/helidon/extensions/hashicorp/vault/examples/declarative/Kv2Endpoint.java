@@ -26,7 +26,7 @@ import io.helidon.http.Http;
 import io.helidon.service.registry.Service;
 import io.helidon.webserver.http.RestServer;
 
-@SuppressWarnings("deprecation")
+@SuppressWarnings({"deprecation", "helidon:api:incubating"})
 @Service.Singleton
 @RestServer.Endpoint
 @Http.Path("kv2")

@@ -29,7 +29,7 @@ import com.oracle.bmc.auth.ResourcePrincipalAuthenticationDetailsProvider.Resour
  * Resource principal builder provider, uses the
  * {@link ResourcePrincipalAuthenticationDetailsProviderBuilder}.
  */
-@Service.Provider
+@Service.Singleton
 class ResourcePrincipalBuilderProvider implements Supplier<ResourcePrincipalAuthenticationDetailsProviderBuilder> {
     private final OciConfig config;
 

@@ -25,7 +25,7 @@ import io.helidon.service.registry.Service;
 
 import com.oracle.bmc.ConfigFileReader;
 
-@Service.Provider
+@Service.Singleton
 @Service.ExternalContracts(ConfigFileReader.ConfigFile.class)
 class ConfigFileProvider implements Supplier<Optional<ConfigFileReader.ConfigFile>> {
     static final String DEFAULT_PROFILE_NAME = "DEFAULT";
