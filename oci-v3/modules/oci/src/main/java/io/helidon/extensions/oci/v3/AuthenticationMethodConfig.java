@@ -36,7 +36,7 @@ import com.oracle.bmc.auth.SimplePrivateKeySupplier;
  * Config based authentication method, uses the {@link com.oracle.bmc.auth.SimpleAuthenticationDetailsProvider}.
  */
 @Weight(Weighted.DEFAULT_WEIGHT - 10)
-@Service.Provider
+@Service.Singleton
 class AuthenticationMethodConfig implements OciAuthenticationMethod {
     static final String METHOD = "config";
 

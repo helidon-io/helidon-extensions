@@ -28,7 +28,7 @@ import io.helidon.config.ConfigSources;
 import io.helidon.metrics.api.Counter;
 import io.helidon.metrics.api.Meter;
 import io.helidon.metrics.api.MeterRegistry;
-import io.helidon.metrics.api.Metrics;
+import io.helidon.service.registry.Services;
 import io.helidon.webserver.WebServer;
 import io.helidon.webserver.http.HttpRouting;
 
@@ -59,7 +59,7 @@ class OciMetricsSupportTest {
     private static int noOfMetrics;
     private static String endPoint = "https://telemetry.DummyEndpoint.com";
     private static String postingEndPoint;
-    private static final MeterRegistry meterRegistry = Metrics.globalRegistry();
+    private static final MeterRegistry meterRegistry = Services.get(MeterRegistry.class);
 
     @BeforeAll
     static void mockSetGetEndpoints() {

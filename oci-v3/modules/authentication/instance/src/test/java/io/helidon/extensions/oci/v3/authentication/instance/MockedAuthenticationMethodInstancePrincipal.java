@@ -27,7 +27,7 @@ import io.helidon.service.registry.Service;
 import com.oracle.bmc.auth.InstancePrincipalsAuthenticationDetailsProvider.InstancePrincipalsAuthenticationDetailsProviderBuilder;
 
 @Weight(Weighted.DEFAULT_WEIGHT)
-@Service.Provider
+@Service.Singleton
 class MockedAuthenticationMethodInstancePrincipal extends AuthenticationMethodInstancePrincipal {
 
     private static InstancePrincipalsAuthenticationDetailsProviderBuilder providerBuilder;

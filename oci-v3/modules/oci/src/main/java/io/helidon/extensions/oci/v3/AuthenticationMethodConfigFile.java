@@ -33,7 +33,7 @@ import com.oracle.bmc.auth.ConfigFileAuthenticationDetailsProvider;
  * Config file based authentication method, uses the {@link com.oracle.bmc.auth.ConfigFileAuthenticationDetailsProvider}.
  */
 @Weight(Weighted.DEFAULT_WEIGHT - 20)
-@Service.Provider
+@Service.Singleton
 class AuthenticationMethodConfigFile implements OciAuthenticationMethod {
     static final String METHOD = "config-file";
 

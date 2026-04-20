@@ -29,7 +29,7 @@ import io.helidon.common.Weighted;
 import io.helidon.extensions.oci.v3.tls.certificates.spi.OciCertificatesDownloader;
 import io.helidon.service.registry.Service;
 
-@Service.Provider
+@Service.Singleton
 @Weight(Weighted.DEFAULT_WEIGHT + 1)
 class TestOciCertificatesDownloader implements OciCertificatesDownloader {
     static String version = "1";

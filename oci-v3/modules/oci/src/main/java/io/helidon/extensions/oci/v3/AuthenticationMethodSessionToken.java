@@ -35,7 +35,7 @@ import com.oracle.bmc.auth.SessionTokenAuthenticationDetailsProvider.SessionToke
  * Session token authentication method, uses the {@link com.oracle.bmc.auth.SessionTokenAuthenticationDetailsProvider}.
  */
 @Weight(Weighted.DEFAULT_WEIGHT - 15)
-@Service.Provider
+@Service.Singleton
 class AuthenticationMethodSessionToken implements OciAuthenticationMethod {
     static final String DEFAULT_PROFILE_NAME = "DEFAULT";
     static final String METHOD = "session-token";

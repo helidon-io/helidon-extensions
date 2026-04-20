@@ -32,9 +32,9 @@ import java.util.Set;
 import io.helidon.metrics.api.Counter;
 import io.helidon.metrics.api.Meter;
 import io.helidon.metrics.api.MeterRegistry;
-import io.helidon.metrics.api.Metrics;
 import io.helidon.metrics.api.Tag;
 import io.helidon.metrics.api.Timer;
+import io.helidon.service.registry.Services;
 
 import com.oracle.bmc.monitoring.model.MetricDataDetails;
 
@@ -42,7 +42,7 @@ class OciMetricsDataTest {
     private final OciMetricsSupport.NameFormatter nameFormatter = new OciMetricsSupport.NameFormatter() { };
     private final String dimensionScopeName = "scope";
 
-    private final MeterRegistry meterRegistry = Metrics.globalRegistry();
+    private final MeterRegistry meterRegistry = Services.get(MeterRegistry.class);
 
 
 

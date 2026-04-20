@@ -33,7 +33,7 @@ import com.oracle.bmc.auth.RegionProvider;
  * Region provider that uses an available OCI authentication method, if it yields an
  * authentication details provider that implements a region provider.
  */
-@Service.Provider
+@Service.Singleton
 @Weight(Weighted.DEFAULT_WEIGHT - 20)
 class RegionProviderAuthenticationMethod implements OciRegion {
     private final LazyValue<Optional<Region>> region;

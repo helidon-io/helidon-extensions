@@ -26,7 +26,7 @@ import io.helidon.service.registry.Service;
 import com.oracle.bmc.auth.okeworkloadidentity
         .OkeWorkloadIdentityAuthenticationDetailsProvider.OkeWorkloadIdentityAuthenticationDetailsProviderBuilder;
 
-@Service.Provider
+@Service.Singleton
 class MockedAuthenticationMethodOkeWorkload extends AuthenticationMethodOkeWorkload {
 
     private static OkeWorkloadIdentityAuthenticationDetailsProviderBuilder providerBuilder;

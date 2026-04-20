@@ -28,7 +28,7 @@ import io.helidon.service.registry.Service;
 
 import com.oracle.bmc.Region;
 
-@Service.Provider
+@Service.Singleton
 @Weight(Weighted.DEFAULT_WEIGHT - 100)
 class RegionProviderSdk implements OciRegion {
     private final LazyValue<Optional<Region>> region;
