@@ -27,6 +27,7 @@ import jakarta.json.JsonArray;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.neo4j.configuration.connectors.BoltConnectorInternalSettings;
 import org.neo4j.driver.Config;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.GraphDatabase;
@@ -98,6 +99,8 @@ public class MainTest {
         //Setup embedded Neo4j Server and inject in routing
         embeddedDatabaseServer = Neo4jBuilders.newInProcessBuilder()
                 .withDisabledServer()
+                // Netty local Bolt channels fail to start on Windows runners; the TCP Bolt listener is sufficient here.
+                .withConfig(BoltConnectorInternalSettings.enable_local_connector, false)
                 .withFixture(FIXTURE)
                 .build();
 
@@ -112,6 +115,8 @@ public class MainTest {
         //Setup embedded Neo4j Server and inject in routing
         embeddedDatabaseServer = Neo4jBuilders.newInProcessBuilder()
                 .withDisabledServer()
+                // Netty local Bolt channels fail to start on Windows runners; the TCP Bolt listener is sufficient here.
+                .withConfig(BoltConnectorInternalSettings.enable_local_connector, false)
                 .withFixture(FIXTURE)
                 .build();
 

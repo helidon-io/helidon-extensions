@@ -20,6 +20,7 @@ import java.lang.System.Logger;
 import java.math.BigDecimal;
 import java.net.ConnectException;
 import java.net.URI;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -75,11 +76,12 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
         // https://github.com/Netflix/eureka/blob/v2.0.4/eureka-client/src/main/java/com/netflix/appinfo/InstanceInfo.java#L892
         // https://github.com/Netflix/eureka/blob/v2.0.4/eureka-client/src/main/java/com/netflix/appinfo/PropertiesInstanceConfig.java#L233-L236
         // https://github.com/Netflix/eureka/blob/v2.0.4/eureka-client/src/main/java/com/netflix/appinfo/PropertyBasedInstanceConfigConstants.java#L12
-        instance.set("app", prototype.appName());
+        // Native Eureka uppercases these identifiers when it builds InstanceInfo.
+        instance.set("app", prototype.appName().toUpperCase(Locale.ROOT));
 
         // https://github.com/Netflix/eureka/blob/v2.0.4/eureka-client/src/main/java/com/netflix/appinfo/PropertyBasedInstanceConfigConstants.java#L13
         // https://github.com/Netflix/eureka/blob/v2.0.4/eureka-client/src/main/java/com/netflix/appinfo/PropertiesInstanceConfig.java#L238-L241
-        instance.set("appGroupName", prototype.appGroupName());
+        instance.set("appGroupName", prototype.appGroupName().toUpperCase(Locale.ROOT));
 
         instance.set("dataCenterInfo", JsonObject.builder()
                 .set("name", "MyOwn") // ! yes really
@@ -335,6 +337,8 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
                     .build();
             this.instanceInfo = instanceInfo; // volatile write
             this.client = client; // volatile write
+            // Native Eureka registers the instance before it enters the renewal loop.
+            this.register(instanceInfo);
             this.createAndStartRenewalLoop(instanceInfo, client);
         } else if (LOGGER.isLoggable(ERROR)) {
             LOGGER.log(ERROR,
@@ -469,40 +473,56 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
         if (payload == null) {
             return false;
         }
-        try (var response = this.client // volatile read
-                .post("/v2/apps/" + payload.objectValue("instance", null).stringValue("app", null))
-                .accept(APPLICATION_JSON) // needed? native client has it, but throws any entity away
-                .contentType(APPLICATION_JSON)
-                .header(ACCEPT_ENCODING, "gzip")
-                .submit(payload)) {
-            switch (response.status().code()) {
-            case 200:
-                if (LOGGER.isLoggable(DEBUG)) {
-                    if (response.entity().hasEntity()) {
-                        LOGGER.log(DEBUG,
-                                   "Registration succeeded: 200; " + response.entity().as(JsonObject.class));
+        try {
+            try (var response = this.client // volatile read
+                    .post("/v2/apps/" + payload.objectValue("instance", null).stringValue("app", null))
+                    .accept(APPLICATION_JSON) // needed? native client has it, but throws any entity away
+                    .contentType(APPLICATION_JSON)
+                    .header(ACCEPT_ENCODING, "gzip")
+                    .submit(payload)) {
+                switch (response.status().code()) {
+                case 200:
+                    if (LOGGER.isLoggable(DEBUG)) {
+                        if (response.entity().hasEntity()) {
+                            LOGGER.log(DEBUG,
+                                       "Registration succeeded: 200; " + response.entity().as(JsonObject.class));
+                        }
                     }
-                }
-                return true;
-            case 204:
-                return true;
-            default:
-                if (response.status().family() == SUCCESSFUL) {
                     return true;
-                }
-                if (LOGGER.isLoggable(WARNING)) {
-                    if (response.entity().hasEntity()) {
-                        LOGGER.log(WARNING,
-                                   "Registration failed: " + response.status()
-                                           + "; " + response.entity().as(JsonObject.class).stringValue("error", null));
-                    } else {
-                        LOGGER.log(WARNING,
-                                   "Registration failed: " + response.status());
+                case 204:
+                    return true;
+                default:
+                    if (response.status().family() == SUCCESSFUL) {
+                        return true;
                     }
+                    if (LOGGER.isLoggable(WARNING)) {
+                        if (response.entity().hasEntity()) {
+                            LOGGER.log(WARNING,
+                                       "Registration failed: " + response.status()
+                                               + "; " + response.entity().as(JsonObject.class).stringValue("error", null));
+                        } else {
+                            LOGGER.log(WARNING,
+                                       "Registration failed: " + response.status());
+                        }
+                    }
+                    return false;
                 }
-                return false;
+            }
+        } catch (UncheckedIOException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof ConnectException) {
+                if (LOGGER.isLoggable(WARNING)) {
+                    LOGGER.log(WARNING,
+                               "Eureka Server ("
+                                       + this.client.prototype().baseUri().orElse(null) // volatile read
+                                       + ") not reachable",
+                               e);
+                }
+            } else {
+                throw e;
             }
         }
+        return false;
     }
 
     /**

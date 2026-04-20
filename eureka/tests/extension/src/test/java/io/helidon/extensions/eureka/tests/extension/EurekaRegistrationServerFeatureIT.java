@@ -15,6 +15,8 @@
  */
 package io.helidon.extensions.eureka.tests.extension;
 
+import java.io.UncheckedIOException;
+import java.net.ConnectException;
 import java.util.concurrent.TimeUnit;
 
 import io.helidon.config.Config;
@@ -38,6 +40,7 @@ import static org.hamcrest.Matchers.notNullValue;
 
 class EurekaRegistrationServerFeatureIT {
 
+    private static final long EUREKA_READY_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(10);
     private static final long REGISTRATION_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(10);
     private static final long REGISTRATION_POLL_INTERVAL_MILLIS = 250L;
 
@@ -66,7 +69,7 @@ class EurekaRegistrationServerFeatureIT {
      * Sets up the verification {@link io.helidon.webclient.api.WebClient} and starts the {@link io.helidon.webserver.WebServer}.
      */
     @BeforeEach
-    void beforeEach() {
+    void beforeEach() throws InterruptedException {
         Config c = Services.get(Config.class);
 
         // Build the WebClient that will be used only by this test to verify that service instance registration
@@ -76,6 +79,9 @@ class EurekaRegistrationServerFeatureIT {
                 .config(c.get("helidon.server.features.eureka.client"))
                 .sendExpectContinue(false) // Spring/Eureka can't handle it
                 .build();
+
+        // The Spring Boot start goal can return before the Eureka registry endpoints accept traffic on Windows.
+        awaitEurekaServerReady();
 
         // Configuration: ../../../../../resources/application.properties
         //
@@ -154,5 +160,32 @@ class EurekaRegistrationServerFeatureIT {
                            .flatMap(it -> it.stringValue("status"))
                            .orElse(null),
                    is("UP"));
+    }
+
+    private void awaitEurekaServerReady() throws InterruptedException {
+        int statusCode = -1;
+        long deadline = System.nanoTime() + EUREKA_READY_TIMEOUT_NANOS;
+
+        do {
+            try (var response = this.wc
+                    .get("/v2/apps")
+                    .accept(APPLICATION_JSON)
+                    .header(ACCEPT_ENCODING, "gzip")
+                    .request()) {
+                statusCode = response.status().code();
+                if (statusCode == 200) {
+                    return;
+                }
+            } catch (UncheckedIOException e) {
+                if (!(e.getCause() instanceof ConnectException)) {
+                    throw e;
+                }
+            }
+            if (System.nanoTime() < deadline) {
+                Thread.sleep(REGISTRATION_POLL_INTERVAL_MILLIS);
+            }
+        } while (System.nanoTime() < deadline);
+
+        assertThat("Expected Eureka server to be ready before starting Helidon", statusCode, is(200));
     }
 }
