@@ -35,7 +35,7 @@ import com.oracle.bmc.auth.InstancePrincipalsAuthenticationDetailsProvider.Insta
  * {@link com.oracle.bmc.auth.InstancePrincipalsAuthenticationDetailsProvider}.
  */
 @Weight(Weighted.DEFAULT_WEIGHT - 40)
-@Service.Provider
+@Service.Singleton
 class AuthenticationMethodInstancePrincipal implements OciAuthenticationMethod {
     private static final System.Logger LOGGER = System.getLogger(AuthenticationMethodInstancePrincipal.class.getName());
     private static final String METHOD = "instance-principal";

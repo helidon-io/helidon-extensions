@@ -58,8 +58,8 @@ final class TestJsonSerializationFromConfig {
         json = json.objectValue("instance", null);
         assertThat(json, not(nullValue()));
         assertThat(json.stringValue("instanceId", null), is(getLocalHost().getHostName() + ":" + actualPort));
-        assertThat(json.stringValue("app", null), is("My Application")); // explicitly set
-        assertThat(json.stringValue("appGroupName", null), is("unknown"));
+        assertThat(json.stringValue("app", null), is("MY APPLICATION")); // native Eureka uppercases app names
+        assertThat(json.stringValue("appGroupName", null), is("UNKNOWN"));
         assertThat(json.objectValue("dataCenterInfo")
                            .flatMap(it -> it.stringValue("name"))
                            .orElse(null), is("MyOwn"));

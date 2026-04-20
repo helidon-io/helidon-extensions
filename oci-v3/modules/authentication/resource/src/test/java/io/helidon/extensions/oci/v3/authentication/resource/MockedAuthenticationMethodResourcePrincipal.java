@@ -25,7 +25,7 @@ import io.helidon.service.registry.Service;
 
 import com.oracle.bmc.auth.ResourcePrincipalAuthenticationDetailsProvider.ResourcePrincipalAuthenticationDetailsProviderBuilder;
 
-@Service.Provider
+@Service.Singleton
 class MockedAuthenticationMethodResourcePrincipal extends AuthenticationMethodResourcePrincipal {
 
     private static ResourcePrincipalAuthenticationDetailsProviderBuilder providerBuilder;

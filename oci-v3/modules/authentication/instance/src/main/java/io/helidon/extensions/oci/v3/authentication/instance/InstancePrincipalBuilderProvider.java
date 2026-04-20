@@ -29,7 +29,7 @@ import com.oracle.bmc.auth.InstancePrincipalsAuthenticationDetailsProvider.Insta
  * Instance principal builder provider, uses the
  * {@link InstancePrincipalsAuthenticationDetailsProviderBuilder}.
  */
-@Service.Provider
+@Service.PerLookup
 class InstancePrincipalBuilderProvider implements Supplier<InstancePrincipalsAuthenticationDetailsProviderBuilder> {
     private final OciConfig config;
 

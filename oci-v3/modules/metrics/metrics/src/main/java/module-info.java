@@ -21,6 +21,7 @@
 module io.helidon.extensions.oci.v3.metrics {
 
     requires io.helidon.http;
+    requires io.helidon.service.registry;
     requires oci.java.sdk.common;
 
     requires static io.helidon.config.metadata;

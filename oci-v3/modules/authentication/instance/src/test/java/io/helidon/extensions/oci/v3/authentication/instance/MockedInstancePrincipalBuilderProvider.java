@@ -30,7 +30,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 
 @Weight(Weighted.DEFAULT_WEIGHT + 10)
-@Service.Provider
+@Service.PerLookup
 class MockedInstancePrincipalBuilderProvider extends InstancePrincipalBuilderProvider
         implements Supplier<InstancePrincipalsAuthenticationDetailsProviderBuilder> {
     static final String INSTANCE_PRINCIPAL_INSTANTIATION_MESSAGE = "Instance Principal has been instantiated";

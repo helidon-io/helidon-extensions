@@ -33,7 +33,7 @@ env:
   JAVA_VERSION: 26
   JAVA_DISTRO: oracle
   MVN_ARGS: |
-    -B -fae -e
+    -B -fae -e -ntp
     -Dmaven.wagon.httpconnectionManager.ttlSeconds=60
     -Dmaven.wagon.http.retryHandler.count=3
     -Djdk.toolchain.version=${JAVA_VERSION}
@@ -356,4 +356,3 @@ jobs:
       - shell: bash
         run: |
           echo OK
-

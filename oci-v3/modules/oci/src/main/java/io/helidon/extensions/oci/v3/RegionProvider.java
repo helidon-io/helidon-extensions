@@ -25,7 +25,7 @@ import io.helidon.service.registry.Service;
 
 import com.oracle.bmc.Region;
 
-@Service.Provider
+@Service.Singleton
 @Service.ExternalContracts(Region.class)
 class RegionProvider implements Supplier<Optional<Region>> {
     private final List<OciRegion> regionProviders;

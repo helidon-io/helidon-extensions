@@ -46,7 +46,7 @@ import com.oracle.bmc.keymanagement.responses.ExportKeyResponse;
 /**
  * Implementation of the {@link OciPrivateKeyDownloader} that will use OCI's KMS to export a key.
  */
-@Service.Provider
+@Service.Singleton
 class DefaultOciPrivateKeyDownloader implements OciPrivateKeyDownloader {
     private final PrivateKey wrappingPrivateKey;
     private final String wrappingPublicKeyPem;

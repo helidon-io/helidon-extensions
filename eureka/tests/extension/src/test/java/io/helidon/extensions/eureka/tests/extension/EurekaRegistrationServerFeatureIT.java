@@ -15,6 +15,10 @@
  */
 package io.helidon.extensions.eureka.tests.extension;
 
+import java.io.UncheckedIOException;
+import java.net.ConnectException;
+import java.util.concurrent.TimeUnit;
+
 import io.helidon.config.Config;
 import io.helidon.extensions.eureka.EurekaRegistrationConfig;
 import io.helidon.extensions.eureka.EurekaRegistrationServerFeature;
@@ -31,11 +35,14 @@ import org.junit.jupiter.api.Test;
 import static io.helidon.common.media.type.MediaTypes.APPLICATION_JSON;
 import static io.helidon.http.HeaderNames.ACCEPT_ENCODING;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 
 class EurekaRegistrationServerFeatureIT {
+
+    private static final long EUREKA_READY_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(10);
+    private static final long REGISTRATION_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(10);
+    private static final long REGISTRATION_POLL_INTERVAL_MILLIS = 250L;
 
     /**
      * A {@link io.helidon.webserver.WebServer} emulating the usual Helidon Quickstart SE behavior that is used only as a vehicle for causing
@@ -62,7 +69,7 @@ class EurekaRegistrationServerFeatureIT {
      * Sets up the verification {@link io.helidon.webclient.api.WebClient} and starts the {@link io.helidon.webserver.WebServer}.
      */
     @BeforeEach
-    void beforeEach() {
+    void beforeEach() throws InterruptedException {
         Config c = Services.get(Config.class);
 
         // Build the WebClient that will be used only by this test to verify that service instance registration
@@ -72,6 +79,9 @@ class EurekaRegistrationServerFeatureIT {
                 .config(c.get("helidon.server.features.eureka.client"))
                 .sendExpectContinue(false) // Spring/Eureka can't handle it
                 .build();
+
+        // The Spring Boot start goal can return before the Eureka registry endpoints accept traffic on Windows.
+        awaitEurekaServerReady();
 
         // Configuration: ../../../../../resources/application.properties
         //
@@ -116,25 +126,66 @@ class EurekaRegistrationServerFeatureIT {
     @Test
     void test() throws InterruptedException {
         assertThat(this.ws.isRunning(), is(true));
-        Thread.sleep(500L); // wait for the registration/renewal attempt to happen in the background
-        try (var response = this.wc
-                .get("/v2/apps/" + feature.prototype()
-                        .instanceInfo()
-                        .appName())
-                .accept(APPLICATION_JSON)
-                .header(ACCEPT_ENCODING, "gzip")
-                .request()) {
-            assertThat(response.status().code(), is(200));
-            assertThat(response.entity().hasEntity(), is(true));
-            assertThat(response.entity().as(JsonObject.class)
-                               .objectValue("application")
-                               .flatMap(it -> it.arrayValue("instance"))
-                               .map(it -> it.values().getFirst())
-                               .map(JsonValue::asObject)
-                               .flatMap(it -> it.stringValue("status"))
-                               .orElse(null),
-                       is("UP"));
+        int statusCode = -1;
+        JsonObject responseEntity = null;
+        long deadline = System.nanoTime() + REGISTRATION_TIMEOUT_NANOS;
+        String appName = this.feature.prototype()
+                .instanceInfo()
+                .appName();
 
-        }
+        do {
+            try (var response = this.wc
+                    .get("/v2/apps/" + appName)
+                    .accept(APPLICATION_JSON)
+                    .header(ACCEPT_ENCODING, "gzip")
+                    .request()) {
+                statusCode = response.status().code();
+                if (statusCode == 200) {
+                    assertThat(response.entity().hasEntity(), is(true));
+                    responseEntity = response.entity().as(JsonObject.class);
+                    break;
+                }
+            }
+            if (System.nanoTime() < deadline) {
+                Thread.sleep(REGISTRATION_POLL_INTERVAL_MILLIS);
+            }
+        } while (System.nanoTime() < deadline);
+
+        assertThat("Expected Eureka registration to become visible", statusCode, is(200));
+        assertThat(responseEntity, notNullValue());
+        assertThat(responseEntity.objectValue("application")
+                           .flatMap(it -> it.arrayValue("instance"))
+                           .map(it -> it.values().getFirst())
+                           .map(JsonValue::asObject)
+                           .flatMap(it -> it.stringValue("status"))
+                           .orElse(null),
+                   is("UP"));
+    }
+
+    private void awaitEurekaServerReady() throws InterruptedException {
+        int statusCode = -1;
+        long deadline = System.nanoTime() + EUREKA_READY_TIMEOUT_NANOS;
+
+        do {
+            try (var response = this.wc
+                    .get("/v2/apps")
+                    .accept(APPLICATION_JSON)
+                    .header(ACCEPT_ENCODING, "gzip")
+                    .request()) {
+                statusCode = response.status().code();
+                if (statusCode == 200) {
+                    return;
+                }
+            } catch (UncheckedIOException e) {
+                if (!(e.getCause() instanceof ConnectException)) {
+                    throw e;
+                }
+            }
+            if (System.nanoTime() < deadline) {
+                Thread.sleep(REGISTRATION_POLL_INTERVAL_MILLIS);
+            }
+        } while (System.nanoTime() < deadline);
+
+        assertThat("Expected Eureka server to be ready before starting Helidon", statusCode, is(200));
     }
 }

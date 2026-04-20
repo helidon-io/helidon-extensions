@@ -27,7 +27,7 @@ import io.helidon.service.registry.Service;
 import jakarta.json.JsonObject;
 
 // the type must be fully qualified, as it is code generated
-@Service.Provider
+@Service.Singleton
 @Weight(Weighted.DEFAULT_WEIGHT - 100)
 class ImdsInstanceInfoProvider implements Supplier<Optional<io.helidon.extensions.oci.v3.ImdsInstanceInfo>> {
 

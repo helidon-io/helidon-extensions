@@ -30,8 +30,9 @@ import io.helidon.metrics.api.FunctionalCounter;
 import io.helidon.metrics.api.Gauge;
 import io.helidon.metrics.api.HistogramSnapshot;
 import io.helidon.metrics.api.Meter;
-import io.helidon.metrics.api.Metrics;
+import io.helidon.metrics.api.MeterRegistry;
 import io.helidon.metrics.api.Timer;
+import io.helidon.service.registry.Services;
 
 import com.oracle.bmc.monitoring.model.Datapoint;
 import com.oracle.bmc.monitoring.model.MetricDataDetails;
@@ -66,11 +67,15 @@ class OciMetricsData {
     List<MetricDataDetails> getMetricDataDetails() {
         boolean hasWildcardScope = scopes.contains("*");
         List<MetricDataDetails> allMetricDataDetails = new ArrayList<>();
-        Metrics.globalRegistry().meters().stream()
+        meterRegistry().meters().stream()
                 .filter(meter -> hasWildcardScope || (meter.scope().isPresent() && scopes.contains(meter.scope().get())))
                     .flatMap(this::metricDataDetails)
                     .forEach(allMetricDataDetails::add);
         return allMetricDataDetails;
+    }
+
+    private MeterRegistry meterRegistry() {
+        return Services.get(MeterRegistry.class);
     }
 
     Stream<MetricDataDetails> metricDataDetails(Meter metric) {

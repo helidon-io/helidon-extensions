@@ -44,7 +44,7 @@ import static io.helidon.extensions.oci.v3.tls.certificates.spi.OciCertificatesD
 /**
  * Implementation of the {@link OciCertificatesDownloader} that will use OCI's Certificates Service to download certs.
  */
-@Service.Provider
+@Service.Singleton
 @Weight(Weighted.DEFAULT_WEIGHT - 10)
 class DefaultOciCertificatesDownloader implements OciCertificatesDownloader {
     private final AbstractAuthenticationDetailsProvider authProvider;

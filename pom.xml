@@ -204,6 +204,7 @@
                         <forceJavacCompilerUse>true</forceJavacCompilerUse>
                         <compilerArgs>
                             <arg>-Xlint:unchecked</arg>
+                            <arg>-Ahelidon.api=ignore</arg>
                             <!--
                             https://issues.apache.org/jira/browse/MCOMPILER-368
                              -->
