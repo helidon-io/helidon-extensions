@@ -16,7 +16,7 @@
 version: 2
 updates:
   - package-ecosystem: "maven"
-    directory: "/dependencies"
+    directory: "/extensions/oci-v3"
     schedule:
       interval: "weekly"
     allow:
