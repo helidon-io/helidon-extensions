@@ -58,50 +58,41 @@
             <groupId>io.helidon.common</groupId>
             <artifactId>helidon-common-media-type</artifactId>
         </dependency>
-
         <dependency>
             <groupId>io.helidon.http</groupId>
             <artifactId>helidon-http</artifactId>
         </dependency>
-
         <dependency>
             <groupId>io.helidon.http.media</groupId>
             <artifactId>helidon-http-media</artifactId>
         </dependency>
-
         <dependency>
             <groupId>io.helidon.service</groupId>
             <artifactId>helidon-service-registry</artifactId>
         </dependency>
-
         <dependency>
             <groupId>io.helidon.webclient</groupId>
             <artifactId>helidon-webclient-api</artifactId>
         </dependency>
-
         <dependency>
             <groupId>io.helidon.webclient</groupId>
             <artifactId>helidon-webclient-http1</artifactId>
         </dependency>
-
         <dependency>
             <groupId>io.helidon.webserver</groupId>
             <artifactId>helidon-webserver</artifactId>
         </dependency>
-
         <dependency>
             <groupId>io.helidon.json</groupId>
             <artifactId>helidon-json</artifactId>
         </dependency>
 
         <!-- Runtime-scoped dependencies. -->
-
         <dependency>
             <groupId>io.helidon.http.encoding</groupId>
             <artifactId>helidon-http-encoding-gzip</artifactId>
             <scope>runtime</scope>
         </dependency>
-
         <dependency>
             <groupId>io.helidon.http.media</groupId>
             <artifactId>helidon-http-media-json</artifactId>
@@ -109,25 +100,21 @@
         </dependency>
 
         <!-- Test-scoped dependencies. -->
-
         <dependency>
             <groupId>io.helidon.config</groupId>
             <artifactId>helidon-config-yaml</artifactId>
             <scope>test</scope>
         </dependency>
-
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
             <scope>test</scope>
         </dependency>
-
         <dependency>
             <groupId>org.hamcrest</groupId>
             <artifactId>hamcrest-all</artifactId>
             <scope>test</scope>
         </dependency>
-
     </dependencies>
 
     <build>
@@ -202,5 +189,4 @@
             </plugin>
         </plugins>
     </build>
-
 </project>

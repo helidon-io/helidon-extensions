@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: "Nightly Build"
+name: "Nightly"
 
 on:
   schedule:
@@ -25,69 +25,63 @@ env:
     -B -fae -e -ntp
     -Dmaven.wagon.httpconnectionManager.ttlSeconds=60
     -Dmaven.wagon.http.retryHandler.count=3
-    -Djdk.toolchain.version=${JAVA_VERSION}
     -Dcache.enabled=true
 
 jobs:
+  resolve:
+    runs-on: ubuntu-22.04
+    outputs:
+      extensions: ${{ steps.resolve.outputs.extensions }}
+      versions: ${{ steps.resolve.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: resolve
+        shell: bash
+        run: |
+          etc/scripts/resolve.sh >> "${GITHUB_OUTPUT}"
   prime-build:
+    needs: resolve
     timeout-minutes: 30
     runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        version: ${{ fromJSON(needs.resolve.outputs.versions) }}
+    name: prime-build/${{ matrix.version }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: '0'
-      - name: Helidon Priming build
+      - uses: actions/checkout@v6
+      - name: Helidon priming build
         uses: ./.github/actions/common
         with:
           free-space: true
           build-cache: read-write
+          build-cache-id: ${{ matrix.version }}
           maven-cache: read-write
           setup-latest-java: true
           run: |
-            etc/scripts/prime-build.sh
+            etc/scripts/prime-build.sh --version ${{ matrix.version }}
   build:
-    needs: prime-build
-    timeout-minutes: 15
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-      - uses: ./.github/actions/common
-        with:
-          build-cache: read-write
-          maven-cache: read-write
-          setup-latest-java: true
-          run: |
-            mvn ${MVN_ARGS} --version
-            mvn ${MVN_ARGS} build-cache:go-offline
-            mvn ${MVN_ARGS} -T8 \
-              -Dorg.slf4j.simpleLogger.showThreadName=true \
-              -DskipTests \
-              -Ptests \
-              install
-  tests:
-    needs: build
+    needs: [ resolve, prime-build ]
     timeout-minutes: 30
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
-        os: [ ubuntu-22.04, windows-2022 ]
-        include:
-          - { os: ubuntu-22.04, platform: linux }
-          - { os: windows-2022, platform: windows }
-    runs-on: ${{ matrix.os }}
-    name: tests/{{{matrix.platform}}-latest-java
+        extension: ${{ fromJSON(needs.resolve.outputs.extensions) }}
+    name: ${{ matrix.extension.id }}/latest-java
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/common
         with:
           build-cache: read-only
+          build-cache-id: ${{ matrix.extension.helidon_version }}
+          maven-cache: read-only
           setup-latest-java: true
-          test-artifact-name: tests-${{ matrix.platform }}-latest-java
+          test-artifact-name: ${{ matrix.extension.id }}-latest-java
+          free-space: true
           run: |
             mvn --version
             mvn ${MVN_ARGS} \
-              -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
+              -f extensions/${{ matrix.extension.id }}/pom.xml \
+              -Dorg.slf4j.simpleLogger.showThreadName=true \
+              -Dsurefire.reportNameSuffix=latest-java \
+              -Ptests \
               verify

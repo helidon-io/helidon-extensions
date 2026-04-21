@@ -45,7 +45,7 @@ public class GeneratorCli {
      *
      * @param args CLI arguments
      */
-    public static void main(String[] args) {
+    static void main(String[] args) {
         // Only "generate" command is supported
         if (args.length == 0 || !"generate".equals(args[0])) {
             System.err.println("Usage: generate -g <generatorName> -i <spec> -o <output> [--additional-properties k=v,...]");

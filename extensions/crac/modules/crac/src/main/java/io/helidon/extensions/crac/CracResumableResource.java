@@ -23,6 +23,9 @@ import org.crac.Resource;
 
 import static java.lang.System.Logger.Level.TRACE;
 
+/**
+ * Resumable resource.
+ */
 class CracResumableResource implements Resource {
 
     private static final System.Logger LOGGER = System.getLogger(CracResumableResource.class.getName());

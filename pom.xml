@@ -29,8 +29,9 @@
         <version>1.0.0-SNAPSHOT</version>
         <relativePath>./parent/pom.xml</relativePath>
     </parent>
-
     <artifactId>helidon-extensions-project</artifactId>
+    <!--suppress MavenRedundantVersion -->
+    <version>1.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>Helidon Extensions Project</name>
@@ -112,7 +113,7 @@
             <dependency>
                 <groupId>org.junit.jupiter</groupId>
                 <artifactId>junit-jupiter-params</artifactId>
-                <version>${version.lib.junit}</version>
+                <version>1.0.1-SNAPSHOT</version>
             </dependency>
             <dependency>
                 <groupId>org.junit.jupiter</groupId>
@@ -183,7 +184,6 @@
                         <failOnWarnings>${javadoc.fail-on-warnings}</failOnWarnings>
                         <!-- we are not interested in each file that is generated -->
                         <quiet>true</quiet>
-                        <offline>true</offline>
                     </configuration>
                 </plugin>
                 <plugin>

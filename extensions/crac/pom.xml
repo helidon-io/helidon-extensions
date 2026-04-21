@@ -34,7 +34,7 @@
 
     <packaging>pom</packaging>
 
-    <name>Helidon Extensions Crac Project</name>
+    <name>Helidon Extensions Crac Project XXX</name>
 
     <modules>
         <module>bom</module>

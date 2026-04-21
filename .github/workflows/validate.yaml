@@ -1,0 +1,158 @@
+#
+# Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: "Validate"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Branch or tag ref used to resolve extensions when called as a reusable workflow.
+        required: false
+        type: string
+  pull_request:
+  push:
+    tags-ignore: [ '**' ]
+    branches-ignore: [ '*/release-*' ]
+
+env:
+  MVN_VERSION: 3.9.9
+  JAVA_VERSION: 26
+  JAVA_DISTRO: oracle
+  MVN_ARGS: |
+    -B -fae -e -ntp
+    -Dmaven.wagon.httpconnectionManager.ttlSeconds=60
+    -Dmaven.wagon.http.retryHandler.count=3
+    -Djdk.toolchain.version=${JAVA_VERSION}
+    -Dcache.enabled=true
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    runs-on: ubuntu-22.04
+    outputs:
+      extensions: ${{ steps.resolve.outputs.extensions }}
+      versions: ${{ steps.resolve.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+      - id: resolve
+        shell: bash
+        run: |
+          etc/scripts/resolve.sh \
+            --branch-name "${{ inputs.ref || github.ref_name }}" \
+            --base-sha "${{ github.event.pull_request.base.sha || '' }}" \
+            --source-sha "${{ github.event.pull_request.head.sha || '' }}" \
+            >> "${GITHUB_OUTPUT}"
+  prime-build:
+    needs: resolve
+    timeout-minutes: 30
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        version: ${{ fromJSON(needs.resolve.outputs.versions) }}
+    name: prime-build/${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Helidon priming build
+        uses: ./.github/actions/common
+        with:
+          free-space: true
+          build-cache: read-write
+          build-cache-id: ${{ matrix.version }}
+          maven-cache: read-write
+          run: |
+            etc/scripts/prime-build.sh --version ${{ matrix.version }}
+  copyright:
+    timeout-minutes: 10
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/common
+        with:
+          run: etc/scripts/copyright.sh
+  checkstyle:
+    timeout-minutes: 5
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/common
+        with:
+          maven-cache: none
+          setup-maven: false
+          run: etc/scripts/checkstyle.sh
+  shellcheck:
+    timeout-minutes: 5
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/common
+        with:
+          maven-cache: none
+          setup-maven: false
+          run: etc/scripts/shellcheck.sh
+  build:
+    needs: [ resolve, prime-build ]
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        extension: ${{ fromJSON(needs.resolve.outputs.extensions) }}
+        platform:
+          - os: ubuntu-22.04
+            name: linux
+          - os: windows-2022
+            name: windows
+    runs-on: ${{ matrix.platform.os }}
+    name: ${{ matrix.extension.id }}/${{ matrix.platform.name }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/common
+        with:
+          build-cache: read-only
+          build-cache-id: ${{ matrix.extension.helidon_version }}
+          maven-cache: read-only
+          test-artifact-name: ${{ matrix.extension.id }}-${{ matrix.platform.name }}
+          free-space: true
+          run: |
+            mvn --version
+            mvn ${MVN_ARGS} \
+              -f extensions/${{ matrix.extension.id }}/pom.xml \
+              -Dorg.slf4j.simpleLogger.showThreadName=true \
+              -Dsurefire.reportNameSuffix=${{ matrix.platform.name }} \
+              -Pspotbugs,javadoc,tests,examples \
+              verify
+  gate:
+    runs-on: ubuntu-22.04
+    needs: [ resolve, prime-build, copyright, checkstyle, shellcheck, build ]
+    steps:
+      - shell: bash
+        run: |
+          echo OK

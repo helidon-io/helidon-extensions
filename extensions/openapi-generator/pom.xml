@@ -43,6 +43,7 @@
 
     <properties>
         <helidon.version>4.4.1</helidon.version>
+        <version.java>21</version.java>
 
         <version.lib.openapi-generator>7.11.0</version.lib.openapi-generator>
         <version.lib.junit>5.11.4</version.lib.junit>
