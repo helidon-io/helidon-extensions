@@ -48,7 +48,8 @@ import io.helidon.security.abac.role.RoleValidator;
  * declarative REST client.</p>
  */
 @SuppressWarnings("deprecation")
-@Http.Path("{{helidonBasePath}}")
+{{#hasParamValidation}}@Validation.Validated
+{{/hasParamValidation}}@Http.Path("{{helidonBasePath}}")
 public interface {{classname}}Api {
 
 {{#operation}}
