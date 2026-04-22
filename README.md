@@ -16,6 +16,7 @@ See README for individual extensions.
 * [HashiCorp Vault](hashicorp-vault/docs/README.md)
 * [Eureka](eureka/docs/README.md)
 * [Langchain4j](langchain4j/docs/README.md)
+* [OpenAPI Generator](openapi-generator/docs/README.md)
 * [OCI SDK v3](oci-v3/docs/README.md)
 * [OpenAPI UI](openapi-ui/docs/README.md)
 * [gson](gson/docs/README.md)
@@ -49,4 +50,3 @@ Please consult the [security guide](./SECURITY.md) for our responsible security 
 
 Copyright (c) 2017, 2025 Oracle and/or its affiliates.
 Licensed under the Apache License, Version 2.0
-

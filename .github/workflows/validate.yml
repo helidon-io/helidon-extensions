@@ -317,6 +317,38 @@ jobs:
               -amd \
               -Pexamples,tests,spotbugs,javadoc \
               verify
+  openapi_generator:
+    needs: [ prime-build ]
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        os: [ ubuntu-22.04, windows-2022 ]
+        include:
+          - { os: ubuntu-22.04, platform: linux }
+          - { os: windows-2022, platform: windows }
+    runs-on: ${{ matrix.os }}
+    name: openapi-generator/${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/common
+        with:
+          build-cache: read-only
+          maven-cache: read-only
+          test-artifact-name: openapi-generator-${{ matrix.platform }}
+          free-space: true
+          run: |
+            mvn --version
+            mvn ${MVN_ARGS} build-cache:go-offline
+            mvn ${MVN_ARGS} \
+              -Dorg.slf4j.simpleLogger.showThreadName=true \
+              -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
+              -pl openapi-generator \
+              -am \
+              -amd \
+              -Pexamples,tests,spotbugs,javadoc \
+              verify
   gson:
     needs: [ prime-build ]
     timeout-minutes: 30
@@ -351,7 +383,7 @@ jobs:
               verify
   gate:
     runs-on: ubuntu-22.04
-    needs: [ prime-build, copyright, checkstyle, shellcheck, neo4j, langchain4j, hashicorp_vault, oci_v3, eureka, crac, openapi_ui, gson ]
+    needs: [ prime-build, copyright, checkstyle, shellcheck, neo4j, langchain4j, hashicorp_vault, oci_v3, eureka, crac, openapi_ui, openapi_generator, gson ]
     steps:
       - shell: bash
         run: |

@@ -1,0 +1,51 @@
+{{!
+Copyright (c) 2026 Oracle and/or its affiliates.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+}}
+
+package {{package}};
+
+import io.helidon.service.registry.Service;
+import io.helidon.webserver.http.ErrorHandler;
+{{#operations}}
+import {{package}}.{{classname}}Exception;
+{{/operations}}
+
+/**
+ * Registers an error handler for {@link {{classname}}Exception} with the Helidon WebServer.
+ *
+ * <p>Discovered automatically via the service registry ({@code @Service.Singleton}).
+ * Serialises the error as JSON using the spec's error schema and sets the HTTP status.</p>
+ */
+{{#operations}}
+@Service.Singleton
+public class {{classname}}ErrorHandler implements ErrorHandler<{{classname}}Exception> {
+
+    @Override
+    public void handle(io.helidon.webserver.http.ServerRequest req,
+                       io.helidon.webserver.http.ServerResponse res,
+                       {{classname}}Exception ex) {
+        // Build JSON manually — Helidon build-time binding only serialises @Json.Entity classes,
+        // not java.util.Map. Replace with res.send(new {{errorModel}}(...)) once the error
+        // model class has the right constructor.
+        String message = ex.getMessage() == null ? ""
+                : ex.getMessage().replace("\\", "\\\\").replace("\"", "\\\"");
+        String json = "{\"code\":" + ex.status().code()
+                + ",\"message\":\"" + message + "\"}";
+        res.status(ex.status());
+        res.headers().contentType(io.helidon.common.media.type.MediaTypes.APPLICATION_JSON);
+        res.send(json);
+    }
+}
+{{/operations}}

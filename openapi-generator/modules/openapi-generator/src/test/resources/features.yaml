@@ -1,0 +1,126 @@
+#
+# Copyright (c) 2026 Oracle and/or its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+---
+openapi: "3.0.0"
+info:
+  title: Features Test API
+  version: "1.0"
+servers:
+  - url: http://example.com/v1
+paths:
+  /things:
+    get:
+      summary: List all things
+      description: Returns a paginated list of things with optional filtering by status.
+      operationId: listThings
+      deprecated: true
+      tags:
+        - things
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 20
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 10
+            exclusiveMinimum: true
+            maximum: 20
+            exclusiveMaximum: true
+        - name: tags
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Thing'
+    post:
+      summary: Create a thing
+      description: Creates a new thing and returns it.
+      operationId: createThing
+      tags:
+        - things
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Thing'
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Thing'
+components:
+  schemas:
+    Thing:
+      type: object
+      description: A thing with various properties demonstrating generator features.
+      required:
+        - id
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Unique identifier.
+        status:
+          type: string
+          description: Current status of the thing.
+          enum:
+            - active
+            - inactive
+            - pending
+          default: active
+        count:
+          type: integer
+          format: int32
+          description: Item count.
+          default: 0
+        name:
+          type: string
+          nullable: true
+          description: Optional display name.
+        score:
+          type: number
+          format: double
+          description: Relevance score.
+          default: 1.0
