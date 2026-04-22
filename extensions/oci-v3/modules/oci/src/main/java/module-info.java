@@ -44,7 +44,7 @@
  *     <li>{@code instance-principal}: Instance principal, used for VMs (default-weight - 40)</li>
  * </ul>
  */
-module io.helidon.extensions.oci.v3x {
+module io.helidon.extensions.oci.v3 {
     requires static io.helidon.config.metadata;
 
     requires io.helidon.common.configurable;
