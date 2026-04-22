@@ -25,15 +25,19 @@
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-project</artifactId>
         <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
     </parent>
 
-    <groupId>io.helidon.extensions.openapi-ui</groupId>
-    <artifactId>helidon-extensions-openapi-ui-project</artifactId>
+    <groupId>io.helidon.extensions.oci.v3</groupId>
+    <artifactId>helidon-extensions-oci-v3-project</artifactId>
     <version>27.0.0-SNAPSHOT</version>
 
     <packaging>pom</packaging>
 
-    <name>Helidon Extensions Openapi-Ui Project</name>
+    <name>Helidon Extensions OCI SDK v3 Project</name>
+    <description>
+        Extension for integration with Oracle OCI using SDK v3
+    </description>
 
     <modules>
         <module>bom</module>
@@ -47,20 +51,24 @@
         - change it in all example POM files in parent section, as that cannot use a property
         -->
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
-
-        <version.lib.smallrye-openapi>3.3.4</version.lib.smallrye-openapi>
+        <!--
+        Align with lc4j extension
+        -->
+        <version.lib.oci>3.78.1</version.lib.oci>
     </properties>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>io.smallrye</groupId>
-                <artifactId>smallrye-open-api-ui</artifactId>
-                <version>${version.lib.smallrye-openapi}</version>
+                <groupId>com.oracle.oci.sdk</groupId>
+                <artifactId>oci-java-sdk-bom</artifactId>
+                <version>${version.lib.oci}</version>
+                <type>pom</type>
+                <scope>import</scope>
             </dependency>
             <dependency>
-                <groupId>io.helidon.extensions.openapi-ui</groupId>
-                <artifactId>helidon-extensions-openapi-ui-bom</artifactId>
+                <groupId>io.helidon.extensions.oci.v3</groupId>
+                <artifactId>helidon-extensions-oci-v3-bom</artifactId>
                 <version>${project.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
@@ -75,17 +83,35 @@
         </dependencies>
     </dependencyManagement>
 
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>io.helidon.build-tools</groupId>
+                <artifactId>helidon-services-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>generate-meta-inf-services</id>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>services</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
     <profiles>
-        <profile>
-            <id>tests</id>
-            <modules>
-                <module>tests</module>
-            </modules>
-        </profile>
         <profile>
             <id>examples</id>
             <modules>
                 <module>examples</module>
+            </modules>
+        </profile>
+        <profile>
+            <id>tests</id>
+            <modules>
+                <module>tests</module>
             </modules>
         </profile>
     </profiles>

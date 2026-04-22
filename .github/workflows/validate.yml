@@ -120,7 +120,7 @@ jobs:
             mvn ${MVN_ARGS} \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
-              -pl neo4j \
+              -pl extensions/neo4j \
               -am \
               -amd \
               -Pexamples,tests,spotbugs,javadoc \
@@ -152,7 +152,7 @@ jobs:
             mvn ${MVN_ARGS} \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
-              -pl hashicorp-vault \
+              -pl extensions/hashicorp-vault \
               -am \
               -amd \
               -Pexamples,tests,spotbugs,javadoc \
@@ -184,7 +184,7 @@ jobs:
             mvn ${MVN_ARGS} \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
-              -pl oci-v3 \
+              -pl extensions/oci-v3 \
               -am \
               -amd \
               -Pexamples,tests,spotbugs,javadoc \
@@ -216,7 +216,7 @@ jobs:
             mvn ${MVN_ARGS} \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
-              -pl langchain4j \
+              -pl extensions/langchain4j \
               -am \
               -amd \
               -Pexamples,tests,spotbugs,javadoc \
@@ -248,7 +248,7 @@ jobs:
             mvn ${MVN_ARGS} \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
-              -pl eureka \
+              -pl extensions/eureka \
               -am \
               -amd \
               -Pexamples,tests,spotbugs,javadoc \
@@ -280,7 +280,7 @@ jobs:
             mvn ${MVN_ARGS} \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
-              -pl crac \
+              -pl extensions/crac \
               -am \
               -amd \
               -Pexamples,tests,spotbugs,javadoc \
@@ -312,7 +312,7 @@ jobs:
             mvn ${MVN_ARGS} \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
-              -pl openapi-ui \
+              -pl extensions/openapi-ui \
               -am \
               -amd \
               -Pexamples,tests,spotbugs,javadoc \
@@ -344,7 +344,7 @@ jobs:
             mvn ${MVN_ARGS} \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
-              -pl openapi-generator \
+              -pl extensions/openapi-generator \
               -am \
               -amd \
               -Pexamples,tests,spotbugs,javadoc \
@@ -376,7 +376,7 @@ jobs:
             mvn ${MVN_ARGS} \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -Dsurefire.reportNameSuffix=${{ matrix.platform }} \
-              -pl gson \
+              -pl extensions/gson \
               -am \
               -amd \
               -Pexamples,tests,spotbugs,javadoc \

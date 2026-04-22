@@ -25,6 +25,7 @@
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-project</artifactId>
         <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <groupId>io.helidon.extensions.openapi-generator</groupId>

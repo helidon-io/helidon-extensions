@@ -12,14 +12,14 @@ Each extension is versioned independently. Please see the documentation for each
 
 See README for individual extensions.
 
-* [neo4j](neo4j/docs/README.md)
-* [HashiCorp Vault](hashicorp-vault/docs/README.md)
-* [Eureka](eureka/docs/README.md)
-* [Langchain4j](langchain4j/docs/README.md)
-* [OpenAPI Generator](openapi-generator/docs/README.md)
-* [OCI SDK v3](oci-v3/docs/README.md)
-* [OpenAPI UI](openapi-ui/docs/README.md)
-* [gson](gson/docs/README.md)
+* [neo4j](extensions/neo4j/docs/README.md)
+* [HashiCorp Vault](extensions/hashicorp-vault/docs/README.md)
+* [Eureka](extensions/eureka/docs/README.md)
+* [Langchain4j](extensions/langchain4j/docs/README.md)
+* [OpenAPI Generator](extensions/openapi-generator/docs/README.md)
+* [OCI SDK v3](extensions/oci-v3/docs/README.md)
+* [OpenAPI UI](extensions/openapi-ui/docs/README.md)
+* [gson](extensions/gson/docs/README.md)
 
 ## Examples
 
@@ -36,8 +36,8 @@ This project welcomes contributions from the community. Before submitting a pull
 
 When adding a new extension, the following things must be done:
 
-1. Create the extension directory (structure MUST be aligned with existing extensions)
-2. Add the extension module to root [pom.xml](pom.xml)
+1. Create the extension directory under [`extensions/`](extensions/) (structure MUST be aligned with existing extensions)
+2. Add the extension module to [`extensions/pom.xml`](extensions/pom.xml)
 3. Add a build step to [workflow](.github/workflows/validate.yml)
    1. Add a new job, aligned with existing extensions as a last job before `gate`
    2. Add the new job to the list of `needs` of the `gate` job 

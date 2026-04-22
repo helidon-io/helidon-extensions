@@ -25,15 +25,16 @@
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-project</artifactId>
         <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
     </parent>
 
-    <groupId>io.helidon.extensions.crac</groupId>
-    <artifactId>helidon-extensions-crac-project</artifactId>
+    <groupId>io.helidon.extensions.openapi-ui</groupId>
+    <artifactId>helidon-extensions-openapi-ui-project</artifactId>
     <version>27.0.0-SNAPSHOT</version>
 
     <packaging>pom</packaging>
 
-    <name>Helidon Extensions Crac Project</name>
+    <name>Helidon Extensions Openapi-Ui Project</name>
 
     <modules>
         <module>bom</module>
@@ -47,19 +48,20 @@
         - change it in all example POM files in parent section, as that cannot use a property
         -->
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
-        <version.lib.crac>1.5.0</version.lib.crac>
+
+        <version.lib.smallrye-openapi>3.3.4</version.lib.smallrye-openapi>
     </properties>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>org.crac</groupId>
-                <artifactId>crac</artifactId>
-                <version>${version.lib.crac}</version>
+                <groupId>io.smallrye</groupId>
+                <artifactId>smallrye-open-api-ui</artifactId>
+                <version>${version.lib.smallrye-openapi}</version>
             </dependency>
             <dependency>
-                <groupId>io.helidon.extensions.crac</groupId>
-                <artifactId>helidon-extensions-crac-bom</artifactId>
+                <groupId>io.helidon.extensions.openapi-ui</groupId>
+                <artifactId>helidon-extensions-openapi-ui-bom</artifactId>
                 <version>${project.version}</version>
                 <type>pom</type>
                 <scope>import</scope>

@@ -25,17 +25,18 @@
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-project</artifactId>
         <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
     </parent>
 
-    <groupId>io.helidon.extensions.oci.v3</groupId>
-    <artifactId>helidon-extensions-oci-v3-project</artifactId>
+    <groupId>io.helidon.extensions.langchain4j</groupId>
+    <artifactId>helidon-extensions-langchain4j-project</artifactId>
     <version>27.0.0-SNAPSHOT</version>
 
     <packaging>pom</packaging>
 
-    <name>Helidon Extensions OCI SDK v3 Project</name>
+    <name>Helidon Extensions Langchain4j Project</name>
     <description>
-        Extension for integration with Oracle OCI using SDK v3
+        Extension for integration with Langchain4j
     </description>
 
     <modules>
@@ -50,8 +51,12 @@
         - change it in all example POM files in parent section, as that cannot use a property
         -->
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
+        <version.lib.langchain4j>1.12.1</version.lib.langchain4j>
+        <version.lib.langchain4j-community>1.12.1-beta21</version.lib.langchain4j-community>
+        <version.lib.coherence>25.03.1</version.lib.coherence>
+        <langchain4j.extension.version>${project.version}</langchain4j.extension.version>
         <!--
-        Align with lc4j extension
+        Align with oci extension
         -->
         <version.lib.oci>3.78.1</version.lib.oci>
     </properties>
@@ -59,16 +64,23 @@
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>com.oracle.oci.sdk</groupId>
-                <artifactId>oci-java-sdk-bom</artifactId>
-                <version>${version.lib.oci}</version>
+                <groupId>io.helidon.extensions.langchain4j</groupId>
+                <artifactId>helidon-extensions-langchain4j-bom</artifactId>
+                <version>${project.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
             <dependency>
-                <groupId>io.helidon.extensions.oci.v3</groupId>
-                <artifactId>helidon-extensions-oci-v3-bom</artifactId>
-                <version>${project.version}</version>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-bom</artifactId>
+                <version>${version.lib.langchain4j}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-community-bom</artifactId>
+                <version>${version.lib.langchain4j-community}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -76,6 +88,20 @@
                 <groupId>io.helidon</groupId>
                 <artifactId>helidon-dependencies</artifactId>
                 <version>${helidon.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.oracle.coherence.ce</groupId>
+                <artifactId>coherence-bom</artifactId>
+                <version>${version.lib.coherence}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.oracle.oci.sdk</groupId>
+                <artifactId>oci-java-sdk-bom</artifactId>
+                <version>${version.lib.oci}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

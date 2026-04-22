@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright (c) 2026 Oracle and/or its affiliates.
+    Copyright (c) 2021, 2026 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -21,19 +21,22 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
+
     <parent>
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-project</artifactId>
         <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
     </parent>
 
-    <groupId>io.helidon.extensions.gson</groupId>
-    <artifactId>helidon-extensions-gson-project</artifactId>
+    <groupId>io.helidon.extensions.hashicorp.vault</groupId>
+    <artifactId>helidon-extensions-hashicorp-vault-project</artifactId>
     <version>27.0.0-SNAPSHOT</version>
 
     <packaging>pom</packaging>
 
-    <name>Helidon Extensions Gson Project</name>
+    <name>Helidon Extensions Hashicorp Vault Project</name>
+    <description>Extension for HashiCorp Vault</description>
 
     <modules>
         <module>bom</module>
@@ -47,20 +50,13 @@
         - change it in all example POM files in parent section, as that cannot use a property
         -->
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
-
-        <version.lib.gson>2.13.2</version.lib.gson>
     </properties>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>com.google.code.gson</groupId>
-                <artifactId>gson</artifactId>
-                <version>${version.lib.gson}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.helidon.extensions.gson</groupId>
-                <artifactId>helidon-extensions-gson-bom</artifactId>
+                <groupId>io.helidon.extensions.hashicorp.vault</groupId>
+                <artifactId>helidon-extensions-hashicorp-vault-bom</artifactId>
                 <version>${project.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
@@ -77,15 +73,15 @@
 
     <profiles>
         <profile>
-            <id>tests</id>
-            <modules>
-                <module>tests</module>
-            </modules>
-        </profile>
-        <profile>
             <id>examples</id>
             <modules>
                 <module>examples</module>
+            </modules>
+        </profile>
+        <profile>
+            <id>tests</id>
+            <modules>
+                <module>tests</module>
             </modules>
         </profile>
     </profiles>

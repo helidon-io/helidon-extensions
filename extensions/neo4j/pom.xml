@@ -21,21 +21,20 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-
     <parent>
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-project</artifactId>
         <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
     </parent>
 
-    <groupId>io.helidon.extensions.hashicorp.vault</groupId>
-    <artifactId>helidon-extensions-hashicorp-vault-project</artifactId>
+    <groupId>io.helidon.extensions.neo4j</groupId>
+    <artifactId>helidon-extensions-neo4j-project</artifactId>
     <version>27.0.0-SNAPSHOT</version>
 
     <packaging>pom</packaging>
 
-    <name>Helidon Extensions Hashicorp Vault Project</name>
-    <description>Extension for HashiCorp Vault</description>
+    <name>Helidon Extensions Neo4j Project</name>
 
     <modules>
         <module>bom</module>
@@ -49,13 +48,21 @@
         - change it in all example POM files in parent section, as that cannot use a property
         -->
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
+        <version.lib.neo4j>6.0.2</version.lib.neo4j>
     </properties>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>io.helidon.extensions.hashicorp.vault</groupId>
-                <artifactId>helidon-extensions-hashicorp-vault-bom</artifactId>
+                <groupId>org.neo4j.driver</groupId>
+                <artifactId>neo4j-java-driver-bom</artifactId>
+                <version>${version.lib.neo4j}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.neo4j</groupId>
+                <artifactId>helidon-extensions-neo4j-bom</artifactId>
                 <version>${project.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
@@ -75,12 +82,6 @@
             <id>examples</id>
             <modules>
                 <module>examples</module>
-            </modules>
-        </profile>
-        <profile>
-            <id>tests</id>
-            <modules>
-                <module>tests</module>
             </modules>
         </profile>
     </profiles>

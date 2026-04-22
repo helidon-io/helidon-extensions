@@ -16,24 +16,25 @@
     limitations under the License.
 
 -->
-<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xmlns="http://maven.apache.org/POM/4.0.0"
-        xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-project</artifactId>
         <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
     </parent>
 
-    <groupId>io.helidon.extensions.eureka</groupId>
-    <artifactId>helidon-extensions-eureka-project</artifactId>
+    <groupId>io.helidon.extensions.crac</groupId>
+    <artifactId>helidon-extensions-crac-project</artifactId>
     <version>27.0.0-SNAPSHOT</version>
 
     <packaging>pom</packaging>
 
-    <name>Helidon Extensions Eureka Project</name>
+    <name>Helidon Extensions Crac Project</name>
 
     <modules>
         <module>bom</module>
@@ -47,14 +48,19 @@
         - change it in all example POM files in parent section, as that cannot use a property
         -->
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
-        <version.lib.eureka>6.0.2</version.lib.eureka>
+        <version.lib.crac>1.5.0</version.lib.crac>
     </properties>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>io.helidon.extensions.eureka</groupId>
-                <artifactId>helidon-extensions-eureka-bom</artifactId>
+                <groupId>org.crac</groupId>
+                <artifactId>crac</artifactId>
+                <version>${version.lib.crac}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.crac</groupId>
+                <artifactId>helidon-extensions-crac-bom</artifactId>
                 <version>${project.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
