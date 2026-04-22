@@ -50,11 +50,15 @@ mvn -pl openapi-generator/modules/openapi-generator package
 This produces:
 
 ```text
-openapi-generator/modules/openapi-generator/target/helidon-extensions-openapi-generator-27.0.0-SNAPSHOT.jar
+openapi-generator/modules/openapi-generator/target/helidon-extensions-openapi-generator-4.0.0-SNAPSHOT.jar
 ```
 
 The module is packaged as a thin jar. Runtime dependencies are copied to
 `target/libs`, and the jar manifest points to them.
+
+In the examples below, `4.0.0-SNAPSHOT` is the version of this extension artifact.
+The separate `helidonVersion` option controls which Helidon version is written
+into generated Maven and Gradle projects, and its current default is `4.4.1`.
 
 ## Maven Plugin Usage
 
@@ -87,7 +91,7 @@ Add the generator as a dependency of `openapi-generator-maven-plugin`:
         <dependency>
             <groupId>io.helidon.extensions.openapi-generator</groupId>
             <artifactId>helidon-extensions-openapi-generator</artifactId>
-            <version>27.0.0-SNAPSHOT</version>
+            <version>4.0.0-SNAPSHOT</version>
         </dependency>
     </dependencies>
 </plugin>
@@ -99,12 +103,17 @@ Then run:
 mvn generate-sources
 ```
 
+In that example:
+
+- `4.0.0-SNAPSHOT` is the version of `helidon-extensions-openapi-generator`
+- `4.4.1` is the Helidon version used in the generated project
+
 ## CLI Usage
 
 The module also exposes a minimal Java CLI:
 
 ```bash
-java -jar openapi-generator/modules/openapi-generator/target/helidon-extensions-openapi-generator-27.0.0-SNAPSHOT.jar \
+java -jar openapi-generator/modules/openapi-generator/target/helidon-extensions-openapi-generator-4.0.0-SNAPSHOT.jar \
   generate \
   -g helidon-declarative \
   -i /path/to/openapi.yaml \
@@ -112,10 +121,13 @@ java -jar openapi-generator/modules/openapi-generator/target/helidon-extensions-
   --additional-properties helidonVersion=4.4.1,apiPackage=com.example.api,modelPackage=com.example.model,invokerPackage=com.example
 ```
 
+Here again, the jar version (`4.0.0-SNAPSHOT`) is the generator version, while
+`helidonVersion=4.4.1` controls the generated project.
+
 Example with the optional-list flag enabled:
 
 ```bash
-java -jar openapi-generator/modules/openapi-generator/target/helidon-extensions-openapi-generator-27.0.0-SNAPSHOT.jar \
+java -jar openapi-generator/modules/openapi-generator/target/helidon-extensions-openapi-generator-4.0.0-SNAPSHOT.jar \
   generate \
   -g helidon-declarative \
   -i /path/to/openapi.yaml \

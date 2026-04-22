@@ -29,7 +29,7 @@
 
     <groupId>io.helidon.extensions.openapi-generator</groupId>
     <artifactId>helidon-extensions-openapi-generator-project</artifactId>
-    <version>27.0.0-SNAPSHOT</version>
+    <version>4.0.0-SNAPSHOT</version>
 
     <packaging>pom</packaging>
 
@@ -41,12 +41,7 @@
     </modules>
 
     <properties>
-        <!--
-        - When changing Helidon base version:
-        - change it here to version manage Helidon dependencies
-        - change it in all example POM files in parent section, as that cannot use a property
-        -->
-        <helidon.version>27.0.0-SNAPSHOT</helidon.version>
+        <helidon.version>4.4.1</helidon.version>
 
         <version.lib.openapi-generator>7.11.0</version.lib.openapi-generator>
         <version.lib.junit>5.11.4</version.lib.junit>
