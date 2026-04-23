@@ -18,6 +18,7 @@ package io.helidon.extensions.oci.v3.authentication.instance;
 
 import java.util.Properties;
 
+import io.helidon.common.media.type.MediaTypes;
 import io.helidon.webserver.WebServer;
 import io.helidon.webserver.http.HttpRules;
 import io.helidon.webserver.http.ServerRequest;
@@ -103,6 +104,7 @@ public class AuthenticationMethodInstancePrincipalTest {
                 """;
 
         private static void emulateImdsInstance(ServerRequest req, ServerResponse res) {
+            res.headers().contentType(MediaTypes.APPLICATION_JSON);
             res.send(IMDS_INSTANCE_RESPONSE);
         }
     }
