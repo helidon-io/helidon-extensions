@@ -81,6 +81,7 @@ jobs:
           ref: ${{ inputs.ref }}
       - uses: ./.github/actions/common
         with:
+          build-cache: read-only
           run: etc/scripts/checkstyle.sh
   shellcheck:
     timeout-minutes: 5
