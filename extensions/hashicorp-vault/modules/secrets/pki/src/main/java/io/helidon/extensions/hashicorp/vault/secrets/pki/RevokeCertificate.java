@@ -22,7 +22,6 @@ import java.time.Instant;
 import io.helidon.extensions.hashicorp.vault.VaultRequest;
 import io.helidon.extensions.hashicorp.vault.VaultResponse;
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
-
 import io.helidon.json.JsonObject;
 
 /**

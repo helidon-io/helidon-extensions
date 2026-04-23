@@ -25,7 +25,6 @@ import io.helidon.extensions.hashicorp.vault.VaultResponse;
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
 import io.helidon.extensions.hashicorp.vault.rest.ApiException;
 import io.helidon.extensions.hashicorp.vault.rest.ApiJsonBuilder;
-
 import io.helidon.json.JsonArray;
 import io.helidon.json.JsonObject;
 import io.helidon.json.JsonValue;

@@ -29,10 +29,7 @@ import io.helidon.extensions.hashicorp.vault.VaultApiException;
 import io.helidon.extensions.hashicorp.vault.VaultRequest;
 import io.helidon.extensions.hashicorp.vault.rest.ApiException;
 import io.helidon.extensions.hashicorp.vault.rest.ApiJsonParser;
-
 import io.helidon.json.JsonObject;
-import io.helidon.json.JsonValue;
-import io.helidon.json.JsonValueType;
 
 /**
  * Get Certificate request and response.

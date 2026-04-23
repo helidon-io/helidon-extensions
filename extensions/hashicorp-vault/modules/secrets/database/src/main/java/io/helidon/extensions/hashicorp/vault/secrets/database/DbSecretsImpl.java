@@ -20,7 +20,6 @@ import io.helidon.extensions.hashicorp.vault.ListSecrets;
 import io.helidon.extensions.hashicorp.vault.Vault;
 import io.helidon.extensions.hashicorp.vault.VaultOptionalResponse;
 import io.helidon.extensions.hashicorp.vault.rest.RestApi;
-
 import io.helidon.json.JsonObject;
 
 class DbSecretsImpl implements DbSecrets {

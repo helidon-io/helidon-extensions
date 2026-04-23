@@ -17,7 +17,6 @@
 package io.helidon.extensions.hashicorp.vault.auths.token;
 
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
-
 import io.helidon.json.JsonObject;
 
 /**

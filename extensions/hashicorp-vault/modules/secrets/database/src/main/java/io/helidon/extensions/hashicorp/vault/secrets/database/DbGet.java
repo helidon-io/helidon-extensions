@@ -22,7 +22,6 @@ import java.util.Optional;
 import io.helidon.extensions.hashicorp.vault.VaultApiException;
 import io.helidon.extensions.hashicorp.vault.VaultRequest;
 import io.helidon.extensions.hashicorp.vault.rest.ApiJsonParser;
-
 import io.helidon.json.JsonObject;
 
 /**

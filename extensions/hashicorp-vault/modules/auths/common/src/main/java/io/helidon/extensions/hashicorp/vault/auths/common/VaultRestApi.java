@@ -29,9 +29,8 @@ import io.helidon.extensions.hashicorp.vault.rest.ResponseBuilder;
 import io.helidon.extensions.hashicorp.vault.rest.RestApi;
 import io.helidon.extensions.hashicorp.vault.rest.RestApiBase;
 import io.helidon.http.Method;
-import io.helidon.webclient.api.HttpClientResponse;
-
 import io.helidon.json.JsonObject;
+import io.helidon.webclient.api.HttpClientResponse;
 
 /**
  * REST API implementation with Vault specific features.

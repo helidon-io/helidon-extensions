@@ -25,7 +25,6 @@ import io.helidon.extensions.hashicorp.vault.VaultApiException;
 import io.helidon.extensions.hashicorp.vault.VaultOptionalResponse;
 import io.helidon.extensions.hashicorp.vault.VaultRestException;
 import io.helidon.extensions.hashicorp.vault.rest.RestApi;
-
 import io.helidon.json.JsonObject;
 
 class CubbyholeSecretsImpl implements CubbyholeSecrets {

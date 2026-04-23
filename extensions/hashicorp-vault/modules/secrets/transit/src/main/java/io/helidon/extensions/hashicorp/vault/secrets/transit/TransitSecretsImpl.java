@@ -21,7 +21,6 @@ import io.helidon.extensions.hashicorp.vault.Vault;
 import io.helidon.extensions.hashicorp.vault.VaultOptionalResponse;
 import io.helidon.extensions.hashicorp.vault.rest.RestApi;
 import io.helidon.http.Method;
-
 import io.helidon.json.JsonObject;
 
 class TransitSecretsImpl implements TransitSecrets {

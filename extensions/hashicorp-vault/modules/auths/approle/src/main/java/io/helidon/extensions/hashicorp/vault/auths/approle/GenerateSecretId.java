@@ -20,11 +20,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 import io.helidon.extensions.hashicorp.vault.VaultResponse;
-import io.helidon.extensions.hashicorp.vault.rest.ApiException;
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
+import io.helidon.extensions.hashicorp.vault.rest.ApiException;
 import io.helidon.json.JsonObject;
-import io.helidon.json.JsonValue;
-import io.helidon.json.JsonValueType;
 
 /**
  * Generate secret ID request and response.
@@ -116,7 +114,8 @@ public final class GenerateSecretId {
             this.secretId = data.stringValue("secret_id")
                     .orElseThrow(() -> new ApiException("Expected JSON property \"secret_id\" to be present in " + data));
             this.secretIdAccessor = data.stringValue("secret_id_accessor")
-                    .orElseThrow(() -> new ApiException("Expected JSON property \"secret_id_accessor\" to be present in " + data));
+                    .orElseThrow(() ->
+                            new ApiException("Expected JSON property \"secret_id_accessor\" to be present in " + data));
         }
 
         static Builder builder() {

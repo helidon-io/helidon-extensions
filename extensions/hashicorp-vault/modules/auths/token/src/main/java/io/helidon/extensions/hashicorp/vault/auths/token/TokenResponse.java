@@ -23,11 +23,9 @@ import java.util.Map;
 import io.helidon.extensions.hashicorp.vault.VaultResponse;
 import io.helidon.extensions.hashicorp.vault.VaultToken;
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
-
 import io.helidon.json.JsonObject;
 
 import static io.helidon.extensions.hashicorp.vault.VaultUtil.arrayToList;
-import static io.helidon.extensions.hashicorp.vault.VaultUtil.toMap;
 
 /**
  * Response returning a token.

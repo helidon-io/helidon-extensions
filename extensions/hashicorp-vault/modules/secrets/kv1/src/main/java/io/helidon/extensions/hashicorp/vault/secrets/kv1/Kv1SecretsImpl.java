@@ -24,7 +24,6 @@ import io.helidon.extensions.hashicorp.vault.Vault;
 import io.helidon.extensions.hashicorp.vault.VaultApiException;
 import io.helidon.extensions.hashicorp.vault.VaultOptionalResponse;
 import io.helidon.extensions.hashicorp.vault.rest.RestApi;
-
 import io.helidon.json.JsonObject;
 
 class Kv1SecretsImpl implements Kv1Secrets {

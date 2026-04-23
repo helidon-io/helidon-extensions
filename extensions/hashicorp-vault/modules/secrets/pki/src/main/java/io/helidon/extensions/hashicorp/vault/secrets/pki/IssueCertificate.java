@@ -24,7 +24,6 @@ import java.security.cert.X509Certificate;
 import io.helidon.common.LazyValue;
 import io.helidon.extensions.hashicorp.vault.VaultApiException;
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
-
 import io.helidon.json.JsonObject;
 
 /**
