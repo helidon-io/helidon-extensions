@@ -192,6 +192,9 @@ import {{import}};
 
 }
 {{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}@Json.Entity
+{{#vendorExtensions.x-has-polymorphic-subtypes}}@Json.Polymorphic(key = "{{vendorExtensions.x-polymorphic-key}}")
+{{#vendorExtensions.x-polymorphic-subtypes}}@Json.Subtype(alias = "{{alias}}", value = {{name}}.class)
+{{/vendorExtensions.x-polymorphic-subtypes}}{{/vendorExtensions.x-has-polymorphic-subtypes}}
 {{#isDeprecated}}@Deprecated
 {{/isDeprecated}}{{#vendorExtensions.x-has-validations}}@Validation.Validated
 {{/vendorExtensions.x-has-validations}}public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendorExtensions.x-extends-model}}{{/vendorExtensions.x-extends-model}}{{#vendorExtensions.x-has-implements-models}} implements {{#vendorExtensions.x-implements-models}}{{name}}{{^last}}, {{/last}}{{/vendorExtensions.x-implements-models}}{{/vendorExtensions.x-has-implements-models}} {
@@ -204,6 +207,8 @@ import {{import}};
 {{/vendorExtensions.x-render-vars}}
     /** No-arg constructor. */
     public {{classname}}() {
+{{#vendorExtensions.x-has-allof-discriminator-setter}}        {{vendorExtensions.x-allof-discriminator-setter}}("{{vendorExtensions.x-allof-discriminator-value}}");
+{{/vendorExtensions.x-has-allof-discriminator-setter}}
     }
 
 {{#vendorExtensions.x-render-vars}}

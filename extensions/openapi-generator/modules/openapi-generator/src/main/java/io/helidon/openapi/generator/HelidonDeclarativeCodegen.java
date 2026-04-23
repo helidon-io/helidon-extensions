@@ -382,6 +382,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         model.imports.remove("JsonInclude");
         model.imports.remove("JsonProperty");
         model.imports.remove("JsonNullable");   // openApiNullable wrapper — not used in our template
+        String allOfDiscriminatorValue = extractAllOfDiscriminatorValue(schema);
+        if (allOfDiscriminatorValue != null) {
+            model.vendorExtensions.put("x-allof-discriminator-value", allOfDiscriminatorValue);
+        }
         return model;
     }
 
@@ -770,6 +774,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         Map<String, LinkedHashSet<String>> unionInterfacesByMember = new LinkedHashMap<>();
         normalizeComposedModels(models, modelsByClassname, unionInterfacesByMember);
         applyUnionInterfaces(models, unionInterfacesByMember);
+        applyAllOfDiscriminatorHierarchy(models, modelsByClassname);
 
         boolean anyValidation = false;
         for (Map.Entry<String, ModelsMap> entry : result.entrySet()) {
@@ -916,6 +921,72 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             model.vendorExtensions.put("x-has-implements-models", Boolean.TRUE);
             model.vendorExtensions.put("x-implements-models", toNamedList(new ArrayList<>(implementedInterfaces)));
         }
+    }
+
+    private void applyAllOfDiscriminatorHierarchy(List<CodegenModel> models,
+                                                  Map<String, CodegenModel> modelsByClassname) {
+        Map<String, List<Map<String, Object>>> subtypesByParent = new LinkedHashMap<>();
+
+        for (CodegenModel model : models) {
+            String parentType = (String) model.vendorExtensions.get("x-extends-model");
+            if (parentType == null || parentType.isBlank()) {
+                continue;
+            }
+
+            CodegenModel parentModel = modelsByClassname.get(parentType);
+            if (parentModel == null || parentModel.discriminator == null) {
+                continue;
+            }
+
+            String discriminatorKey = parentModel.discriminator.getPropertyBaseName();
+            if (discriminatorKey == null || discriminatorKey.isBlank()) {
+                discriminatorKey = parentModel.discriminator.getPropertyName();
+            }
+            if (discriminatorKey == null || discriminatorKey.isBlank()) {
+                continue;
+            }
+
+            String discriminatorAlias = allOfDiscriminatorAlias(model, parentModel);
+            String discriminatorSetter = discriminatorSetter(parentModel, discriminatorKey);
+
+            model.vendorExtensions.put("x-allof-discriminator-key", discriminatorKey);
+            model.vendorExtensions.put("x-allof-discriminator-value", discriminatorAlias);
+            if (discriminatorSetter != null) {
+                model.vendorExtensions.put("x-allof-discriminator-setter", discriminatorSetter);
+                model.vendorExtensions.put("x-has-allof-discriminator-setter", Boolean.TRUE);
+            }
+
+            subtypesByParent.computeIfAbsent(parentType, ignored -> new ArrayList<>())
+                    .add(new LinkedHashMap<>(Map.of(
+                            "alias", discriminatorAlias,
+                            "name", model.classname)));
+        }
+
+        subtypesByParent.forEach((parentType, subtypes) -> {
+            CodegenModel parentModel = modelsByClassname.get(parentType);
+            if (parentModel == null || parentModel.discriminator == null || subtypes.isEmpty()) {
+                return;
+            }
+
+            String discriminatorKey = parentModel.discriminator.getPropertyBaseName();
+            if (discriminatorKey == null || discriminatorKey.isBlank()) {
+                discriminatorKey = parentModel.discriminator.getPropertyName();
+            }
+            if (discriminatorKey == null || discriminatorKey.isBlank()) {
+                return;
+            }
+
+            List<Map<String, Object>> sortedSubtypes = subtypes.stream()
+                    .sorted((left, right) -> left.get("alias").toString().compareTo(right.get("alias").toString()))
+                    .collect(Collectors.toCollection(ArrayList::new));
+            for (int i = 0; i < sortedSubtypes.size(); i++) {
+                sortedSubtypes.get(i).put("last", i == sortedSubtypes.size() - 1);
+            }
+
+            parentModel.vendorExtensions.put("x-has-polymorphic-subtypes", Boolean.TRUE);
+            parentModel.vendorExtensions.put("x-polymorphic-key", discriminatorKey);
+            parentModel.vendorExtensions.put("x-polymorphic-subtypes", sortedSubtypes);
+        });
     }
 
     private Set<String> localAllOfPropertyNames(List<CodegenProperty> allOfSchemas,
@@ -1079,6 +1150,74 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
     private String toJavaStringLiteral(String value) {
         return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    private String extractAllOfDiscriminatorValue(Schema<?> schema) {
+        if (schema == null) {
+            return null;
+        }
+
+        Object topLevel = extensionValue(schema, "x-discriminator-value");
+        if (topLevel != null) {
+            return topLevel.toString();
+        }
+
+        if (schema.getAllOf() != null) {
+            for (Schema<?> member : schema.getAllOf()) {
+                Object value = extensionValue(member, "x-discriminator-value");
+                if (value != null) {
+                    return value.toString();
+                }
+            }
+        }
+        return null;
+    }
+
+    private Object extensionValue(Schema<?> schema, String name) {
+        if (schema == null || schema.getExtensions() == null) {
+            return null;
+        }
+        return schema.getExtensions().get(name);
+    }
+
+    private String allOfDiscriminatorAlias(CodegenModel model, CodegenModel parentModel) {
+        Object explicitValue = model.vendorExtensions.get("x-allof-discriminator-value");
+        if (explicitValue instanceof String value && !value.isBlank()) {
+            return value;
+        }
+
+        if (parentModel.discriminator != null) {
+            Map<String, String> mapping = parentModel.discriminator.getMapping();
+            if (mapping != null) {
+                for (Map.Entry<String, String> entry : mapping.entrySet()) {
+                    String modelName = modelNameFromSchemaRef(entry.getValue());
+                    if (model.classname.equals(modelName)) {
+                        return entry.getKey();
+                    }
+                }
+            }
+        }
+
+        return model.classname;
+    }
+
+    private String discriminatorSetter(CodegenModel parentModel, String discriminatorKey) {
+        List<CodegenProperty> properties = parentModel.allVars != null && !parentModel.allVars.isEmpty()
+                ? parentModel.allVars
+                : parentModel.vars;
+        if (properties == null) {
+            return null;
+        }
+
+        for (CodegenProperty property : properties) {
+            if (property == null) {
+                continue;
+            }
+            if (discriminatorKey.equals(property.baseName) || discriminatorKey.equals(property.name)) {
+                return property.setter;
+            }
+        }
+        return null;
     }
 
     /**

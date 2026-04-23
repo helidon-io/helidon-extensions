@@ -1,0 +1,46 @@
+openapi: 3.0.3
+info:
+  title: discriminator-allof-repro
+  version: 1.0.0
+
+paths: {}
+
+components:
+  schemas:
+    ApplicableScope:
+      type: object
+      properties:
+        value:
+          type: string
+
+    ChangeFreezeDetails:
+      type: object
+      properties:
+        name:
+          type: string
+
+    CreateConditionShapeDetails:
+      type: object
+      discriminator:
+        propertyName: conditionShape
+      properties:
+        conditionShape:
+          type: string
+        applicableScopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApplicableScope'
+      required:
+        - conditionShape
+
+    CreateChangeFreezeConditionShape:
+      description: Create change-freeze subtype
+      allOf:
+        - $ref: '#/components/schemas/CreateConditionShapeDetails'
+        - type: object
+          properties:
+            changeFreezeDetails:
+              $ref: '#/components/schemas/ChangeFreezeDetails'
+          required:
+            - changeFreezeDetails
+          x-discriminator-value: CHANGE_FREEZE

@@ -224,6 +224,9 @@ existing Helidon-oriented templates:
 - `allOf`
   - when exactly one referenced component schema participates, the generated model
     extends that parent and emits only locally owned properties
+  - when that parent schema declares a discriminator, the base model is annotated
+    with generated Helidon polymorphism metadata and child models can initialize
+    inherited discriminator values from `x-discriminator-value`
   - otherwise the generator falls back to a flattened model containing the merged
     properties exposed by `openapi-generator`
 - `oneOf`

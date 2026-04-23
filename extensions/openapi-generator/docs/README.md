@@ -196,7 +196,10 @@ Supporting files:
 The generator supports these schema-composition keywords:
 
 - `allOf`: generates an inherited model when there is a single referenced parent
-  component; otherwise falls back to a flattened merged model
+  component; otherwise falls back to a flattened merged model. When the parent
+  schema declares a discriminator, the generator also emits `@Json.Polymorphic`
+  and `@Json.Subtype` metadata on the base model and initializes discriminator
+  values for `allOf` subtypes that provide `x-discriminator-value`
 - `oneOf`: generates a Java interface for the composed schema, attaches a
   generated `@Json.Converter`, makes member models implement it, and requires
   exactly one matching subtype during deserialization
