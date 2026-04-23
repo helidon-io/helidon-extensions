@@ -151,8 +151,11 @@ Notable behavior:
 - model validation annotations are emitted on getter methods rather than private fields
 - composed schemas are normalized into template-friendly flags:
   - `allOf` prefers Java inheritance when there is a single referenced parent
-  - `oneOf` and `anyOf` generate marker-style model interfaces
+  - `oneOf` and `anyOf` generate model interfaces annotated with a generated
+    `@Json.Converter`
   - union member models implement the generated interface(s)
+  - generated converters deserialize using discriminator aliases when present,
+    then fall back to structural matching by declared properties
 
 ### `postProcessOperationsWithModels`
 
@@ -224,14 +227,21 @@ existing Helidon-oriented templates:
   - otherwise the generator falls back to a flattened model containing the merged
     properties exposed by `openapi-generator`
 - `oneOf`
-  - the composed schema is generated as a Java interface
+  - the composed schema is generated as a Java interface with a generated
+    `@Json.Converter`
   - each referenced member model implements that interface
+  - generated deserialization requires exactly one matching subtype
+  - when a discriminator is present, converter dispatch prefers discriminator aliases
 - `anyOf`
-  - the composed schema is generated as a Java interface
+  - the composed schema is generated as a Java interface with a generated
+    `@Json.Converter`
   - each referenced member model implements that interface
+  - generated deserialization requires at least one matching subtype
+  - ambiguous structural matches are rejected instead of picking an arbitrary model
 
 This keeps generated source compilable and preserves assignability between
-concrete member models and the composed OpenAPI type used by operations.
+concrete member models and the composed OpenAPI type used by operations while
+making the generated request/response types usable with Helidon JSON binding.
 
 Project-level support:
 

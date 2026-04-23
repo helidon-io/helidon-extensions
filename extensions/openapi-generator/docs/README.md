@@ -197,10 +197,16 @@ The generator supports these schema-composition keywords:
 
 - `allOf`: generates an inherited model when there is a single referenced parent
   component; otherwise falls back to a flattened merged model
-- `oneOf`: generates a Java interface for the composed schema and makes member
-  models implement it
-- `anyOf`: generates a Java interface for the composed schema and makes member
-  models implement it
+- `oneOf`: generates a Java interface for the composed schema, attaches a
+  generated `@Json.Converter`, makes member models implement it, and requires
+  exactly one matching subtype during deserialization
+- `anyOf`: generates a Java interface for the composed schema, attaches a
+  generated `@Json.Converter`, makes member models implement it, and rejects
+  ambiguous structural matches during deserialization
+
+For union schemas, generated converters use the OpenAPI discriminator when one is
+present. Without a discriminator, they fall back to structural matching based on
+the member models' required and declared properties.
 
 ### Parameters
 
