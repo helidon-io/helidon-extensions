@@ -18,6 +18,18 @@ limitations under the License.
 package {{modelPackage}};
 
 import io.helidon.json.binding.Json;
+{{#model}}{{#vendorExtensions.x-is-union-interface}}import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
+import java.util.List;
+import io.helidon.common.GenericType;
+import io.helidon.json.JsonGenerator;
+import io.helidon.json.JsonObject;
+import io.helidon.json.JsonParser;
+import io.helidon.json.binding.JsonBindingConfigurator;
+import io.helidon.json.binding.JsonConverter;
+import io.helidon.json.binding.JsonDeserializer;
+import io.helidon.json.binding.JsonSerializer;
+{{/vendorExtensions.x-is-union-interface}}{{/model}}
 {{#imports}}
 import {{import}};
 {{/imports}}
@@ -26,8 +38,157 @@ import {{import}};
 /**
  * {{description}}{{^description}}{{classname}} model.{{/description}}
  */
-{{#vendorExtensions.x-is-union-interface}}{{#isDeprecated}}@Deprecated
+{{#vendorExtensions.x-is-union-interface}}@Json.Converter({{classname}}.{{classname}}JsonConverter.class)
+{{#isDeprecated}}@Deprecated
 {{/isDeprecated}}public interface {{classname}} {
+
+    final class {{classname}}JsonConverter implements JsonConverter<{{classname}}> {
+{{#vendorExtensions.x-union-members}}
+        private JsonDeserializer<{{name}}> {{deserializerField}};
+        private JsonSerializer<{{name}}> {{serializerField}};
+{{/vendorExtensions.x-union-members}}
+
+        @Override
+        public GenericType<{{classname}}> type() {
+            return new GenericType<>() {
+            };
+        }
+
+        @Override
+        public void configure(JsonBindingConfigurator jsonBindingConfigurator) {
+{{#vendorExtensions.x-union-members}}
+            this.{{deserializerField}} = jsonBindingConfigurator.deserializer({{name}}.class);
+            this.{{serializerField}} = jsonBindingConfigurator.serializer({{name}}.class);
+{{/vendorExtensions.x-union-members}}
+        }
+
+        @Override
+        public {{classname}} deserialize(JsonParser parser) {
+            JsonObject jsonObject = parser.readJsonObject();
+{{#vendorExtensions.x-has-union-discriminator}}
+            String discriminatorValue = jsonObject.stringValue("{{vendorExtensions.x-union-discriminator-key}}").orElse(null);
+            if (discriminatorValue != null) {
+                {{classname}} discriminatorMatch = deserializeByAlias(discriminatorValue, jsonObject);
+                if (discriminatorMatch != null) {
+                    return discriminatorMatch;
+                }
+                throw new IllegalArgumentException("Unsupported discriminator value '" + discriminatorValue
+                        + "' for {{classname}}");
+            }
+{{/vendorExtensions.x-has-union-discriminator}}
+            return deserializeStructurally(jsonObject);
+        }
+
+        @Override
+        public void serialize(JsonGenerator generator, {{classname}} instance, boolean writeNulls) {
+            if (instance == null) {
+                serializeNull(generator);
+                return;
+            }
+            generator.write(serializeMember(instance, writeNulls));
+        }
+
+        private {{classname}} deserializeByAlias(String alias, JsonObject jsonObject) {
+            return switch (alias) {
+{{#vendorExtensions.x-union-members}}
+                case "{{alias}}" -> deserialize{{name}}(jsonObject);
+{{/vendorExtensions.x-union-members}}
+                default -> null;
+            };
+        }
+
+        private {{classname}} deserializeStructurally(JsonObject jsonObject) {
+            List<UnionMatch> matches = new ArrayList<>();
+{{#vendorExtensions.x-union-members}}
+            int {{deserializerField}}Score = matchScore(jsonObject, {{{propertyNamesLiteral}}});
+            if (matchesMember(jsonObject, {{{requiredPropertiesLiteral}}}, {{deserializerField}}Score)) {
+                matches.add(new UnionMatch("{{name}}", {{deserializerField}}Score));
+            }
+{{/vendorExtensions.x-union-members}}
+            if (matches.isEmpty()) {
+                throw new IllegalArgumentException("No matching subtype found for {{classname}}");
+            }
+{{#vendorExtensions.x-union-requires-exactly-one}}
+            if (matches.size() != 1) {
+                throw new IllegalArgumentException("Expected exactly one matching subtype for {{classname}}, but found "
+                        + matches.size());
+            }
+            return deserializeByType(matches.get(0).type(), jsonObject);
+{{/vendorExtensions.x-union-requires-exactly-one}}{{#vendorExtensions.x-union-requires-unique-best-match}}
+            if (matches.size() == 1) {
+                return deserializeByType(matches.get(0).type(), jsonObject);
+            }
+            matches.sort((left, right) -> Integer.compare(right.score(), left.score()));
+            if (matches.get(0).score() > matches.get(1).score()) {
+                return deserializeByType(matches.get(0).type(), jsonObject);
+            }
+            throw new IllegalArgumentException("Ambiguous anyOf match for {{classname}}");
+{{/vendorExtensions.x-union-requires-unique-best-match}}
+        }
+
+        private boolean matchesMember(JsonObject jsonObject, String[] requiredProperties, int score) {
+            for (String requiredProperty : requiredProperties) {
+                if (!jsonObject.containsKey(requiredProperty)) {
+                    return false;
+                }
+            }
+            return score > 0 || requiredProperties.length > 0;
+        }
+
+        private int matchScore(JsonObject jsonObject, String[] propertyNames) {
+            int score = 0;
+            for (String propertyName : propertyNames) {
+                if (jsonObject.containsKey(propertyName)) {
+                    score++;
+                }
+            }
+            return score;
+        }
+
+        private {{classname}} deserializeByType(String type, JsonObject jsonObject) {
+            return switch (type) {
+{{#vendorExtensions.x-union-members}}
+                case "{{name}}" -> deserialize{{name}}(jsonObject);
+{{/vendorExtensions.x-union-members}}
+                default -> throw new IllegalArgumentException("Unsupported subtype '" + type + "' for {{classname}}");
+            };
+        }
+
+        private JsonObject serializeMember({{classname}} instance, boolean writeNulls) {
+{{#vendorExtensions.x-union-members}}
+            if (instance instanceof {{name}} value) {
+                return serialize{{name}}(value, writeNulls);
+            }
+{{/vendorExtensions.x-union-members}}
+            throw new IllegalArgumentException("Unsupported subtype '" + instance.getClass().getName()
+                    + "' for {{classname}}");
+        }
+
+{{#vendorExtensions.x-union-members}}
+        private {{classname}} deserialize{{name}}(JsonObject jsonObject) {
+            return {{deserializerField}}.deserialize(JsonParser.create(jsonObject));
+        }
+
+        private JsonObject serialize{{name}}({{name}} instance, boolean writeNulls) {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            try (JsonGenerator delegate = JsonGenerator.create(outputStream)) {
+                {{serializerField}}.serialize(delegate, instance, writeNulls);
+            }
+            JsonObject jsonObject = JsonParser.create(outputStream.toByteArray()).readJsonObject();
+{{#vendorExtensions.x-has-union-discriminator}}
+            return JsonObject.builder()
+                    .from(jsonObject)
+                    .set("{{vendorExtensions.x-union-discriminator-key}}", "{{alias}}")
+                    .build();
+{{/vendorExtensions.x-has-union-discriminator}}{{^vendorExtensions.x-has-union-discriminator}}
+            return jsonObject;
+{{/vendorExtensions.x-has-union-discriminator}}
+        }
+{{/vendorExtensions.x-union-members}}
+
+        private record UnionMatch(String type, int score) {
+        }
+    }
 
 }
 {{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}@Json.Entity

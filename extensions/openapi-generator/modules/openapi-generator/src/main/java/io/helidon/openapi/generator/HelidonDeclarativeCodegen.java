@@ -831,7 +831,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             model.vendorExtensions.put("x-render-vars", model.vars);
 
             if (!model.oneOf.isEmpty() || !model.anyOf.isEmpty()) {
-                normalizeUnionModel(model, unionInterfacesByMember);
+                normalizeUnionModel(model, modelsByClassname, unionInterfacesByMember);
             } else if (!model.allOf.isEmpty()) {
                 normalizeAllOfModel(model, modelsByClassname);
             }
@@ -839,6 +839,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     }
 
     private void normalizeUnionModel(CodegenModel model,
+                                     Map<String, CodegenModel> modelsByClassname,
                                      Map<String, LinkedHashSet<String>> unionInterfacesByMember) {
         String kind = !model.oneOf.isEmpty() ? "oneOf" : "anyOf";
         List<String> members = new ArrayList<>(!model.oneOf.isEmpty() ? model.oneOf : model.anyOf);
@@ -857,8 +858,15 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
         model.vendorExtensions.put("x-is-union-interface", Boolean.TRUE);
         model.vendorExtensions.put("x-composition-kind", kind);
-        model.vendorExtensions.put("x-union-members", toNamedList(members));
+        model.vendorExtensions.put("x-union-members", buildUnionMembers(model, members, modelsByClassname));
+        String discriminatorKey = model.discriminator != null ? model.discriminator.getPropertyBaseName() : null;
+        if (discriminatorKey != null && !discriminatorKey.isBlank()) {
+            model.vendorExtensions.put("x-union-discriminator-key", discriminatorKey);
+            model.vendorExtensions.put("x-has-union-discriminator", Boolean.TRUE);
+        }
         model.vendorExtensions.put("x-render-vars", List.of());
+        model.vendorExtensions.put("x-union-requires-exactly-one", "oneOf".equals(kind));
+        model.vendorExtensions.put("x-union-requires-unique-best-match", "anyOf".equals(kind));
 
         for (String member : members) {
             unionInterfacesByMember.computeIfAbsent(member, ignored -> new LinkedHashSet<>())
@@ -978,6 +986,99 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     "last", i == names.size() - 1));
         }
         return result;
+    }
+
+    private List<Map<String, Object>> buildUnionMembers(CodegenModel unionModel,
+                                                        List<String> members,
+                                                        Map<String, CodegenModel> modelsByClassname) {
+        Map<String, String> aliasesByModel = unionAliasesByModel(unionModel, members);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (int i = 0; i < members.size(); i++) {
+            String member = members.get(i);
+            CodegenModel memberModel = modelsByClassname.get(member);
+            List<String> requiredProperties = propertyNames(memberModel != null ? memberModel.requiredVars : List.of());
+            List<String> allProperties = propertyNames(memberModel != null ? memberModel.allVars : List.of());
+            String alias = aliasesByModel.getOrDefault(member, member);
+            String fieldBase = toVarName(member);
+
+            result.add(Map.of(
+                    "name", member,
+                    "alias", alias,
+                    "serializerField", fieldBase + "Serializer",
+                    "deserializerField", fieldBase + "Deserializer",
+                    "requiredPropertiesLiteral", toStringArrayLiteral(requiredProperties),
+                    "propertyNamesLiteral", toStringArrayLiteral(allProperties),
+                    "last", i == members.size() - 1));
+        }
+        return result;
+    }
+
+    private Map<String, String> unionAliasesByModel(CodegenModel unionModel, List<String> members) {
+        Map<String, String> aliasesByModel = new LinkedHashMap<>();
+        if (unionModel.discriminator != null) {
+            Map<String, String> mapping = unionModel.discriminator.getMapping();
+            if (mapping != null) {
+                mapping.forEach((alias, schemaRef) -> {
+                    String modelName = modelNameFromSchemaRef(schemaRef);
+                    if (modelName != null && members.contains(modelName)) {
+                        aliasesByModel.putIfAbsent(modelName, alias);
+                    }
+                });
+            }
+            if (unionModel.discriminator.getMappedModels() != null) {
+                unionModel.discriminator.getMappedModels().forEach(mappedModel -> {
+                    String modelName = mappedModel.getModelName();
+                    String alias = mappedModel.getMappingName();
+                    if (modelName != null && alias != null && members.contains(modelName)) {
+                        aliasesByModel.putIfAbsent(modelName, alias);
+                    }
+                });
+            }
+        }
+
+        for (String member : members) {
+            aliasesByModel.putIfAbsent(member, member);
+        }
+        return aliasesByModel;
+    }
+
+    private String modelNameFromSchemaRef(String schemaRef) {
+        if (schemaRef == null || schemaRef.isBlank()) {
+            return null;
+        }
+        int slash = schemaRef.lastIndexOf('/');
+        String schemaName = slash >= 0 ? schemaRef.substring(slash + 1) : schemaRef;
+        return toModelName(schemaName);
+    }
+
+    private List<String> propertyNames(List<CodegenProperty> properties) {
+        if (properties == null) {
+            return List.of();
+        }
+
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (CodegenProperty property : properties) {
+            if (property != null && property.name != null && !property.name.isBlank()) {
+                names.add(property.name);
+            }
+        }
+        return new ArrayList<>(names);
+    }
+
+    private String toStringArrayLiteral(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return "new String[0]";
+        }
+
+        return "new String[] {"
+                + values.stream()
+                        .map(this::toJavaStringLiteral)
+                        .collect(Collectors.joining(", "))
+                + "}";
+    }
+
+    private String toJavaStringLiteral(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
     /**

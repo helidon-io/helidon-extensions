@@ -74,6 +74,10 @@ class ComposedSchemasGenerationIT {
         String content = read(modelFile("Pet.java"));
         assertThat(content, containsString("public interface Pet"));
         assertThat(content, not(containsString("@Json.Entity")));
+        assertThat(content, containsString("@Json.Converter(Pet.PetJsonConverter.class)"));
+        assertThat(content, containsString("final class PetJsonConverter implements JsonConverter<Pet>"));
+        assertThat(content, containsString("String discriminatorValue = jsonObject.stringValue(\"kind\").orElse(null);"));
+        assertThat(content, containsString(".set(\"kind\", \"cat\")"));
     }
 
     @Test
@@ -87,6 +91,9 @@ class ComposedSchemasGenerationIT {
         String content = read(modelFile("Contact.java"));
         assertThat(content, containsString("public interface Contact"));
         assertThat(content, not(containsString("@Json.Entity")));
+        assertThat(content, containsString("final class ContactJsonConverter implements JsonConverter<Contact>"));
+        assertThat(content, containsString("return deserializeStructurally(jsonObject);"));
+        assertThat(content, containsString("throw new IllegalArgumentException(\"Ambiguous anyOf match for Contact\")"));
     }
 
     @Test
@@ -101,6 +108,11 @@ class ComposedSchemasGenerationIT {
         assertThat(content, containsString("Pet savePet("));
         assertThat(content, containsString("Contact saveContact("));
         assertThat(content, containsString("Extended getExtended("));
+    }
+
+    @Test
+    void generatedProjectBuildsWithMavenWhenEnabled() throws IOException, InterruptedException {
+        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
     }
 
     private static File apiFile(String fileName) {
