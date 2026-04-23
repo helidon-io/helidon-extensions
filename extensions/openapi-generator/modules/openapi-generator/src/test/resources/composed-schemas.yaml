@@ -1,0 +1,118 @@
+openapi: 3.0.3
+info:
+  title: Composed Schema API
+  version: 1.0.0
+paths:
+  /extended:
+    get:
+      tags: [composed]
+      operationId: getExtended
+      responses:
+        '200':
+          description: Extended model
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Extended'
+  /pets:
+    post:
+      tags: [composed]
+      operationId: savePet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pet'
+      responses:
+        '200':
+          description: Saved pet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+  /contacts:
+    post:
+      tags: [composed]
+      operationId: saveContact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Contact'
+      responses:
+        '200':
+          description: Saved contact
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+components:
+  schemas:
+    Base:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          description: Shared identifier
+    Extended:
+      allOf:
+        - $ref: '#/components/schemas/Base'
+        - type: object
+          required:
+            - name
+          properties:
+            name:
+              type: string
+              description: Extended name
+    Cat:
+      type: object
+      required:
+        - kind
+        - whiskers
+      properties:
+        kind:
+          type: string
+        whiskers:
+          type: integer
+          format: int32
+    Dog:
+      type: object
+      required:
+        - kind
+        - bark
+      properties:
+        kind:
+          type: string
+        bark:
+          type: boolean
+    Pet:
+      oneOf:
+        - $ref: '#/components/schemas/Cat'
+        - $ref: '#/components/schemas/Dog'
+      discriminator:
+        propertyName: kind
+        mapping:
+          cat: '#/components/schemas/Cat'
+          dog: '#/components/schemas/Dog'
+    EmailContact:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+    PhoneContact:
+      type: object
+      required:
+        - phone
+      properties:
+        phone:
+          type: string
+    Contact:
+      anyOf:
+        - $ref: '#/components/schemas/EmailContact'
+        - $ref: '#/components/schemas/PhoneContact'

@@ -26,22 +26,26 @@ import {{import}};
 /**
  * {{description}}{{^description}}{{classname}} model.{{/description}}
  */
-@Json.Entity
+{{#vendorExtensions.x-is-union-interface}}{{#isDeprecated}}@Deprecated
+{{/isDeprecated}}public interface {{classname}} {
+
+}
+{{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}@Json.Entity
 {{#isDeprecated}}@Deprecated
 {{/isDeprecated}}{{#vendorExtensions.x-has-validations}}@Validation.Validated
-{{/vendorExtensions.x-has-validations}}public class {{classname}} {
+{{/vendorExtensions.x-has-validations}}public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendorExtensions.x-extends-model}}{{/vendorExtensions.x-extends-model}}{{#vendorExtensions.x-has-implements-models}} implements {{#vendorExtensions.x-implements-models}}{{name}}{{^last}}, {{/last}}{{/vendorExtensions.x-implements-models}}{{/vendorExtensions.x-has-implements-models}} {
 
-{{#vars}}
+{{#vendorExtensions.x-render-vars}}
     {{#description}}/** {{description}} */
     {{/description}}{{#vendorExtensions.x-json-required}}@Json.Required
     {{/vendorExtensions.x-json-required}}private {{{datatypeWithEnum}}} {{name}}{{#vendorExtensions.x-default-value}} = {{{vendorExtensions.x-default-value}}}{{/vendorExtensions.x-default-value}};
 
-{{/vars}}
+{{/vendorExtensions.x-render-vars}}
     /** No-arg constructor. */
     public {{classname}}() {
     }
 
-{{#vars}}
+{{#vendorExtensions.x-render-vars}}
 {{#vendorExtensions.x-validation-annotations}}    {{{annotation}}}
 {{/vendorExtensions.x-validation-annotations}}    public {{{datatypeWithEnum}}} {{getter}}() {
         return {{name}};
@@ -51,14 +55,15 @@ import {{import}};
         this.{{name}} = {{name}};
     }
 
-{{/vars}}
-{{#vars}}{{#isEnum}}
+{{/vendorExtensions.x-render-vars}}
+{{#vendorExtensions.x-render-vars}}{{#isEnum}}
     public enum {{datatypeWithEnum}} {
         {{#allowableValues}}{{#enumVars}}{{name}}{{^-last}},
         {{/-last}}{{/enumVars}};{{/allowableValues}}
     }
 
-{{/isEnum}}{{/vars}}
+{{/isEnum}}{{/vendorExtensions.x-render-vars}}
 }
+{{/vendorExtensions.x-is-union-interface}}
 {{/model}}
 {{/models}}

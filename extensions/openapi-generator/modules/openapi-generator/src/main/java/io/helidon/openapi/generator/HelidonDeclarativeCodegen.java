@@ -24,16 +24,21 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.servers.Server;
+import org.openapitools.codegen.CodegenComposedSchemas;
 import org.openapitools.codegen.CodegenModel;
 import org.openapitools.codegen.CodegenOperation;
 import org.openapitools.codegen.CodegenParameter;
@@ -751,14 +756,35 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     @Override
     public Map<String, ModelsMap> postProcessAllModels(Map<String, ModelsMap> objs) {
         Map<String, ModelsMap> result = super.postProcessAllModels(objs);
+        Map<String, CodegenModel> modelsByClassname = new LinkedHashMap<>();
+        List<CodegenModel> models = new ArrayList<>();
+
+        for (ModelsMap modelsMap : result.values()) {
+            for (ModelMap modelContainer : modelsMap.getModels()) {
+                CodegenModel model = modelContainer.getModel();
+                modelsByClassname.put(model.classname, model);
+                models.add(model);
+            }
+        }
+
+        Map<String, LinkedHashSet<String>> unionInterfacesByMember = new LinkedHashMap<>();
+        normalizeComposedModels(models, modelsByClassname, unionInterfacesByMember);
+        applyUnionInterfaces(models, unionInterfacesByMember);
+
         boolean anyValidation = false;
         for (Map.Entry<String, ModelsMap> entry : result.entrySet()) {
             ModelsMap modelsMap = entry.getValue();
             for (ModelMap modelContainer : modelsMap.getModels()) {
                 var model = modelContainer.getModel();
-                boolean modelHasValidation = false;
+                if (Boolean.TRUE.equals(model.vendorExtensions.get("x-is-union-interface"))) {
+                    model.vendorExtensions.put("x-render-vars", List.of());
+                    continue;
+                }
 
-                for (CodegenProperty prop : model.vars) {
+                boolean modelHasValidation = false;
+                List<CodegenProperty> renderVars = renderVars(model);
+
+                for (CodegenProperty prop : renderVars) {
                     // Mark required properties for @Json.Required
                     if (prop.required) {
                         prop.vendorExtensions.put("x-json-required", Boolean.TRUE);
@@ -794,6 +820,162 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         }
         if (anyValidation) {
             additionalProperties.put("hasValidation", Boolean.TRUE);
+        }
+        return result;
+    }
+
+    private void normalizeComposedModels(List<CodegenModel> models,
+                                         Map<String, CodegenModel> modelsByClassname,
+                                         Map<String, LinkedHashSet<String>> unionInterfacesByMember) {
+        for (CodegenModel model : models) {
+            model.vendorExtensions.put("x-render-vars", model.vars);
+
+            if (!model.oneOf.isEmpty() || !model.anyOf.isEmpty()) {
+                normalizeUnionModel(model, unionInterfacesByMember);
+            } else if (!model.allOf.isEmpty()) {
+                normalizeAllOfModel(model, modelsByClassname);
+            }
+        }
+    }
+
+    private void normalizeUnionModel(CodegenModel model,
+                                     Map<String, LinkedHashSet<String>> unionInterfacesByMember) {
+        String kind = !model.oneOf.isEmpty() ? "oneOf" : "anyOf";
+        List<String> members = new ArrayList<>(!model.oneOf.isEmpty() ? model.oneOf : model.anyOf);
+        CodegenComposedSchemas composedSchemas = model.getComposedSchemas();
+        if (members.isEmpty() && composedSchemas != null) {
+            List<CodegenProperty> composedMembers = "oneOf".equals(kind)
+                    ? composedSchemas.getOneOf()
+                    : composedSchemas.getAnyOf();
+            if (composedMembers != null) {
+                members = composedMembers.stream()
+                        .map(CodegenProperty::getDataType)
+                        .filter(type -> type != null && !type.isBlank())
+                        .collect(Collectors.toCollection(ArrayList::new));
+            }
+        }
+
+        model.vendorExtensions.put("x-is-union-interface", Boolean.TRUE);
+        model.vendorExtensions.put("x-composition-kind", kind);
+        model.vendorExtensions.put("x-union-members", toNamedList(members));
+        model.vendorExtensions.put("x-render-vars", List.of());
+
+        for (String member : members) {
+            unionInterfacesByMember.computeIfAbsent(member, ignored -> new LinkedHashSet<>())
+                    .add(model.classname);
+        }
+    }
+
+    private void normalizeAllOfModel(CodegenModel model, Map<String, CodegenModel> modelsByClassname) {
+        CodegenComposedSchemas composedSchemas = model.getComposedSchemas();
+        if (composedSchemas == null || composedSchemas.getAllOf() == null || composedSchemas.getAllOf().isEmpty()) {
+            model.vendorExtensions.put("x-render-vars", model.vars);
+            return;
+        }
+
+        List<CodegenProperty> allOfSchemas = composedSchemas.getAllOf();
+        List<CodegenProperty> referencedModels = allOfSchemas.stream()
+                .filter(member -> member.getRef() != null && member.getDataType() != null)
+                .toList();
+
+        model.vendorExtensions.put("x-composition-kind", "allOf");
+
+        if (referencedModels.size() == 1) {
+            CodegenProperty parentMember = referencedModels.get(0);
+            String parentType = parentMember.getDataType();
+            model.vendorExtensions.put("x-extends-model", parentType);
+
+            Set<String> localPropertyNames = localAllOfPropertyNames(allOfSchemas, parentMember, modelsByClassname);
+            List<CodegenProperty> localProperties = selectPropertiesByName(model.vars, localPropertyNames);
+            if (localProperties.isEmpty()) {
+                CodegenModel parentModel = modelsByClassname.get(parentType);
+                localProperties = excludeInheritedProperties(model.vars, parentModel);
+            }
+            model.vendorExtensions.put("x-render-vars", localProperties);
+        } else {
+            model.vendorExtensions.put("x-render-vars", model.vars);
+        }
+    }
+
+    private void applyUnionInterfaces(List<CodegenModel> models,
+                                      Map<String, LinkedHashSet<String>> unionInterfacesByMember) {
+        for (CodegenModel model : models) {
+            LinkedHashSet<String> implementedInterfaces = unionInterfacesByMember.get(model.classname);
+            if (implementedInterfaces == null || implementedInterfaces.isEmpty()) {
+                continue;
+            }
+
+            model.vendorExtensions.put("x-has-implements-models", Boolean.TRUE);
+            model.vendorExtensions.put("x-implements-models", toNamedList(new ArrayList<>(implementedInterfaces)));
+        }
+    }
+
+    private Set<String> localAllOfPropertyNames(List<CodegenProperty> allOfSchemas,
+                                                CodegenProperty parentMember,
+                                                Map<String, CodegenModel> modelsByClassname) {
+        Set<String> names = new LinkedHashSet<>();
+        for (CodegenProperty member : allOfSchemas) {
+            if (member == parentMember) {
+                continue;
+            }
+
+            if (member.vars != null && !member.vars.isEmpty()) {
+                member.vars.stream()
+                        .map(CodegenProperty::getName)
+                        .forEach(names::add);
+                continue;
+            }
+
+            CodegenModel referencedModel = modelsByClassname.get(member.getDataType());
+            if (referencedModel != null && referencedModel.vars != null) {
+                referencedModel.vars.stream()
+                        .map(CodegenProperty::getName)
+                        .forEach(names::add);
+            }
+        }
+        return names;
+    }
+
+    private List<CodegenProperty> selectPropertiesByName(List<CodegenProperty> properties, Collection<String> names) {
+        if (names == null || names.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> wanted = new HashSet<>(names);
+        return properties.stream()
+                .filter(prop -> wanted.contains(prop.name))
+                .toList();
+    }
+
+    private List<CodegenProperty> excludeInheritedProperties(List<CodegenProperty> properties, CodegenModel parentModel) {
+        if (parentModel == null || parentModel.vars == null || parentModel.vars.isEmpty()) {
+            return properties;
+        }
+
+        Set<String> inheritedNames = parentModel.vars.stream()
+                .map(CodegenProperty::getName)
+                .collect(Collectors.toCollection(HashSet::new));
+
+        return properties.stream()
+                .filter(prop -> !inheritedNames.contains(prop.name))
+                .toList();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<CodegenProperty> renderVars(CodegenModel model) {
+        Object renderVars = model.vendorExtensions.get("x-render-vars");
+        if (renderVars instanceof List<?> vars) {
+            return (List<CodegenProperty>) vars;
+        }
+        return model.vars;
+    }
+
+    private List<Map<String, Object>> toNamedList(List<String> names) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (int i = 0; i < names.size(); i++) {
+            result.add(Map.of(
+                    "name", names.get(i),
+                    "last", i == names.size() - 1));
         }
         return result;
     }

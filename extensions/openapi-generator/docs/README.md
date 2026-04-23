@@ -191,6 +191,17 @@ Supporting files:
 
 ## OpenAPI Mapping Notes
 
+### Composed Schemas
+
+The generator supports these schema-composition keywords:
+
+- `allOf`: generates an inherited model when there is a single referenced parent
+  component; otherwise falls back to a flattened merged model
+- `oneOf`: generates a Java interface for the composed schema and makes member
+  models implement it
+- `anyOf`: generates a Java interface for the composed schema and makes member
+  models implement it
+
 ### Parameters
 
 | OpenAPI | Generated |

@@ -149,6 +149,10 @@ Notable behavior:
 - default values are converted into Java literals
 - validation annotations are derived from OpenAPI constraints
 - model validation annotations are emitted on getter methods rather than private fields
+- composed schemas are normalized into template-friendly flags:
+  - `allOf` prefers Java inheritance when there is a single referenced parent
+  - `oneOf` and `anyOf` generate marker-style model interfaces
+  - union member models implement the generated interface(s)
 
 ### `postProcessOperationsWithModels`
 
@@ -208,6 +212,26 @@ Per tag:
 Per schema:
 
 - `{Model}.java`
+
+### Composed Schemas
+
+The generator supports OpenAPI composed schemas using Java shapes that fit the
+existing Helidon-oriented templates:
+
+- `allOf`
+  - when exactly one referenced component schema participates, the generated model
+    extends that parent and emits only locally owned properties
+  - otherwise the generator falls back to a flattened model containing the merged
+    properties exposed by `openapi-generator`
+- `oneOf`
+  - the composed schema is generated as a Java interface
+  - each referenced member model implements that interface
+- `anyOf`
+  - the composed schema is generated as a Java interface
+  - each referenced member model implements that interface
+
+This keeps generated source compilable and preserves assignability between
+concrete member models and the composed OpenAPI type used by operations.
 
 Project-level support:
 
