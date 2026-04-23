@@ -18,8 +18,7 @@ package io.helidon.extensions.oci.v3;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
-
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 /**
  * Information about the instance retrieved from Imds.
@@ -94,8 +93,8 @@ interface ImdsInstanceInfoBlueprint {
     /**
      * Instance Data.
      *
-     * @return Full information about the Instance as a {@link jakarta.json.JsonObject}
+     * @return Full information about the instance as a {@link JsonObject}
      */
     @Option.Configured
-    JsonObject jsonObject();
+    JsonObject json();
 }

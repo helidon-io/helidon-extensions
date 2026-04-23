@@ -22,9 +22,8 @@ import java.util.function.Supplier;
 import io.helidon.common.LazyValue;
 import io.helidon.common.Weight;
 import io.helidon.common.Weighted;
+import io.helidon.json.JsonObject;
 import io.helidon.service.registry.Service;
-
-import jakarta.json.JsonObject;
 
 // the type must be fully qualified, as it is code generated
 @Service.Singleton
@@ -55,16 +54,33 @@ class ImdsInstanceInfoProvider implements Supplier<Optional<io.helidon.extension
     ImdsInstanceInfo loadInstanceMetadata(OciConfig ociConfig) {
         JsonObject metadataJson = HelidonOci.imdsContent(ociConfig, HelidonOci.imdsUri(ociConfig));
         if (metadataJson != null) {
+            String displayName = metadataJson.stringValue(DISPLAY_NAME)
+                    .orElseThrow(() -> new IllegalStateException("Missing IMDS metadata field: " + DISPLAY_NAME));
+            String hostName = metadataJson.stringValue(HOST_NAME)
+                    .orElseThrow(() -> new IllegalStateException("Missing IMDS metadata field: " + HOST_NAME));
+            String canonicalRegionName = metadataJson.stringValue(CANONICAL_REGION_NAME)
+                    .orElseThrow(() -> new IllegalStateException("Missing IMDS metadata field: " + CANONICAL_REGION_NAME));
+            String region = metadataJson.stringValue(REGION)
+                    .orElseThrow(() -> new IllegalStateException("Missing IMDS metadata field: " + REGION));
+            String ociAdName = metadataJson.stringValue(OCI_AD_NAME)
+                    .orElseThrow(() -> new IllegalStateException("Missing IMDS metadata field: " + OCI_AD_NAME));
+            String faultDomain = metadataJson.stringValue(FAULT_DOMAIN)
+                    .orElseThrow(() -> new IllegalStateException("Missing IMDS metadata field: " + FAULT_DOMAIN));
+            String compartmentId = metadataJson.stringValue(COMPARTMENT_ID)
+                    .orElseThrow(() -> new IllegalStateException("Missing IMDS metadata field: " + COMPARTMENT_ID));
+            String tenantId = metadataJson.stringValue(TENANT_ID)
+                    .orElseThrow(() -> new IllegalStateException("Missing IMDS metadata field: " + TENANT_ID));
+
             return ImdsInstanceInfo.builder()
-                    .displayName(metadataJson.getString(DISPLAY_NAME))
-                    .hostName(metadataJson.getString(HOST_NAME))
-                    .canonicalRegionName(metadataJson.getString(CANONICAL_REGION_NAME))
-                    .region(metadataJson.getString(REGION))
-                    .ociAdName(metadataJson.getString(OCI_AD_NAME))
-                    .faultDomain(metadataJson.getString(FAULT_DOMAIN))
-                    .compartmentId(metadataJson.getString(COMPARTMENT_ID))
-                    .tenantId(metadataJson.getString(TENANT_ID))
-                    .jsonObject(metadataJson)
+                    .displayName(displayName)
+                    .hostName(hostName)
+                    .canonicalRegionName(canonicalRegionName)
+                    .region(region)
+                    .ociAdName(ociAdName)
+                    .faultDomain(faultDomain)
+                    .compartmentId(compartmentId)
+                    .tenantId(tenantId)
+                    .json(metadataJson)
                     .build();
         }
         return null;

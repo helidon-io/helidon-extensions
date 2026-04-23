@@ -50,13 +50,13 @@ module io.helidon.extensions.oci.v3 {
     requires io.helidon.common.configurable;
     requires io.helidon.service.registry;
     requires io.helidon.webclient;
+    // needed for IMDS (instance metadata service) JSON processing
+    requires io.helidon.http.media.json;
+    requires io.helidon.json;
 
     requires transitive io.helidon.config;
 
     requires oci.java.sdk.common;
-
-    // needed for IMDS (instance metadata service) processing
-    requires jakarta.json;
 
     exports io.helidon.extensions.oci.v3;
     exports io.helidon.extensions.oci.v3.spi;

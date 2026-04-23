@@ -19,16 +19,18 @@ package io.helidon.extensions.oci.v3;
 import java.net.URI;
 import java.util.Map;
 
+import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
+import io.helidon.json.JsonNull;
+import io.helidon.json.JsonObject;
+import io.helidon.service.registry.ServiceRegistry;
+import io.helidon.service.registry.ServiceRegistryManager;
 import io.helidon.webserver.http.HttpRules;
 import io.helidon.webserver.http.ServerRequest;
 import io.helidon.webserver.http.ServerResponse;
 import io.helidon.webserver.testing.junit5.ServerTest;
 import io.helidon.webserver.testing.junit5.SetUpRoute;
-import io.helidon.service.registry.ServiceRegistry;
-import io.helidon.service.registry.ServiceRegistryManager;
-
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -73,44 +75,119 @@ class InstanceInfoProviderTest {
         setUp(config);
 
         ImdsInstanceInfo instanceInfo = registry.get(ImdsInstanceInfo.class);
-        assertInstanceInfoValues(
-                instanceInfo.canonicalRegionName(),
-                instanceInfo.displayName(),
-                instanceInfo.hostName(),
-                instanceInfo.region(),
-                instanceInfo.ociAdName(),
-                instanceInfo.faultDomain(),
-                instanceInfo.compartmentId(),
-                instanceInfo.tenantId());
-        assertInstanceInfoValues(
-                instanceInfo.jsonObject().getString(ImdsInstanceInfoProvider.CANONICAL_REGION_NAME),
-                instanceInfo.jsonObject().getString(ImdsInstanceInfoProvider.DISPLAY_NAME),
-                instanceInfo.jsonObject().getString(ImdsInstanceInfoProvider.HOST_NAME),
-                instanceInfo.jsonObject().getString(ImdsInstanceInfoProvider.REGION),
-                instanceInfo.jsonObject().getString(ImdsInstanceInfoProvider.OCI_AD_NAME),
-                instanceInfo.jsonObject().getString(ImdsInstanceInfoProvider.FAULT_DOMAIN),
-                instanceInfo.jsonObject().getString(ImdsInstanceInfoProvider.COMPARTMENT_ID),
-                instanceInfo.jsonObject().getString(ImdsInstanceInfoProvider.TENANT_ID));
+        assertInstanceInfoValues(instanceInfo);
+        assertMetadataJson(instanceInfo.json(), ImdsEmulator.DISPLAY_NAME);
+        assertThat(instanceInfo.json()
+                           .objectValue("agentConfig")
+                           .flatMap(it -> it.booleanValue("allPluginsDisabled"))
+                           .orElseThrow(),
+                   is(false));
+        assertThat(instanceInfo.json()
+                           .objectValue("shapeConfig")
+                           .flatMap(it -> it.numberValue("memoryInGBs"))
+                           .orElseThrow()
+                           .doubleValue(),
+                   is(12.0));
     }
 
-    private static void assertInstanceInfoValues(String canonicalRegionName,
-                                                 String displayName,
-                                                 String hostName, String region,
-                                                 String ociAdName,
-                                                 String faultDomain,
-                                                 String compartmentId,
-                                                 String tenantId) {
-        assertThat(canonicalRegionName, is(ImdsEmulator.CANONICAL_REGION_NAME));
-        assertThat(displayName, is(ImdsEmulator.DISPLAY_NAME));
-        assertThat(hostName, is(ImdsEmulator.HOST_NAME));
-        assertThat(region, is(ImdsEmulator.REGION));
-        assertThat(ociAdName, is(ImdsEmulator.OCI_AD_NAME));
-        assertThat(faultDomain, is(ImdsEmulator.FAULT_DOMAIN));
-        assertThat(compartmentId, is(ImdsEmulator.COMPARTMENT_ID));
-        assertThat(tenantId, is(ImdsEmulator.TENANT_ID));
+    @Test
+    void testHelidonJsonBuilderRetainsConfiguredJson() {
+        JsonObject metadataJson = metadataJson("helidon-json");
+
+        ImdsInstanceInfo instanceInfo = instanceInfoBuilder()
+                .json(metadataJson)
+                .build();
+
+        assertThat(instanceInfo.json(), is(metadataJson));
+        assertMetadataJson(instanceInfo.json(), "helidon-json");
+        assertStructuredJson(instanceInfo.json());
     }
 
-    public static class ImdsEmulator {
+    private static ImdsInstanceInfo.Builder instanceInfoBuilder() {
+        return ImdsInstanceInfo.builder()
+                .canonicalRegionName(ImdsEmulator.CANONICAL_REGION_NAME)
+                .displayName(ImdsEmulator.DISPLAY_NAME)
+                .hostName(ImdsEmulator.HOST_NAME)
+                .region(ImdsEmulator.REGION)
+                .ociAdName(ImdsEmulator.OCI_AD_NAME)
+                .faultDomain(ImdsEmulator.FAULT_DOMAIN)
+                .compartmentId(ImdsEmulator.COMPARTMENT_ID)
+                .tenantId(ImdsEmulator.TENANT_ID);
+    }
+
+    private static JsonObject metadataJson(String displayName) {
+        return JsonObject.builder()
+                .set(ImdsInstanceInfoProvider.CANONICAL_REGION_NAME, ImdsEmulator.CANONICAL_REGION_NAME)
+                .set(ImdsInstanceInfoProvider.DISPLAY_NAME, displayName)
+                .set(ImdsInstanceInfoProvider.HOST_NAME, ImdsEmulator.HOST_NAME)
+                .set(ImdsInstanceInfoProvider.REGION, ImdsEmulator.REGION)
+                .set(ImdsInstanceInfoProvider.OCI_AD_NAME, ImdsEmulator.OCI_AD_NAME)
+                .set(ImdsInstanceInfoProvider.FAULT_DOMAIN, ImdsEmulator.FAULT_DOMAIN)
+                .set(ImdsInstanceInfoProvider.COMPARTMENT_ID, ImdsEmulator.COMPARTMENT_ID)
+                .set(ImdsInstanceInfoProvider.TENANT_ID, ImdsEmulator.TENANT_ID)
+                .set("agentConfig", JsonObject.builder()
+                        .set("allPluginsDisabled", false)
+                        .set("managementDisabled", false)
+                        .build())
+                .set("shapeConfig", JsonObject.builder()
+                        .set("maxVnicAttachments", 2)
+                        .set("memoryInGBs", 12.0)
+                        .build())
+                .set("metadata", JsonObject.builder()
+                        .set("nullable", JsonNull.instance())
+                        .build())
+                .build();
+    }
+
+    private static void assertInstanceInfoValues(ImdsInstanceInfo instanceInfo) {
+        assertThat(instanceInfo.canonicalRegionName(), is(ImdsEmulator.CANONICAL_REGION_NAME));
+        assertThat(instanceInfo.displayName(), is(ImdsEmulator.DISPLAY_NAME));
+        assertThat(instanceInfo.hostName(), is(ImdsEmulator.HOST_NAME));
+        assertThat(instanceInfo.region(), is(ImdsEmulator.REGION));
+        assertThat(instanceInfo.ociAdName(), is(ImdsEmulator.OCI_AD_NAME));
+        assertThat(instanceInfo.faultDomain(), is(ImdsEmulator.FAULT_DOMAIN));
+        assertThat(instanceInfo.compartmentId(), is(ImdsEmulator.COMPARTMENT_ID));
+        assertThat(instanceInfo.tenantId(), is(ImdsEmulator.TENANT_ID));
+    }
+
+    private static void assertMetadataJson(JsonObject metadataJson, String displayName) {
+        assertThat(metadataJson.stringValue(ImdsInstanceInfoProvider.CANONICAL_REGION_NAME).orElseThrow(),
+                   is(ImdsEmulator.CANONICAL_REGION_NAME));
+        assertThat(metadataJson.stringValue(ImdsInstanceInfoProvider.DISPLAY_NAME).orElseThrow(), is(displayName));
+        assertThat(metadataJson.stringValue(ImdsInstanceInfoProvider.HOST_NAME).orElseThrow(), is(ImdsEmulator.HOST_NAME));
+        assertThat(metadataJson.stringValue(ImdsInstanceInfoProvider.REGION).orElseThrow(), is(ImdsEmulator.REGION));
+        assertThat(metadataJson.stringValue(ImdsInstanceInfoProvider.OCI_AD_NAME).orElseThrow(),
+                   is(ImdsEmulator.OCI_AD_NAME));
+        assertThat(metadataJson.stringValue(ImdsInstanceInfoProvider.FAULT_DOMAIN).orElseThrow(),
+                   is(ImdsEmulator.FAULT_DOMAIN));
+        assertThat(metadataJson.stringValue(ImdsInstanceInfoProvider.COMPARTMENT_ID).orElseThrow(),
+                   is(ImdsEmulator.COMPARTMENT_ID));
+        assertThat(metadataJson.stringValue(ImdsInstanceInfoProvider.TENANT_ID).orElseThrow(),
+                   is(ImdsEmulator.TENANT_ID));
+    }
+
+    private static void assertStructuredJson(JsonObject metadataJson) {
+        assertThat(metadataJson.objectValue("agentConfig")
+                           .flatMap(it -> it.booleanValue("allPluginsDisabled"))
+                           .orElseThrow(),
+                   is(false));
+        assertThat(metadataJson.objectValue("shapeConfig")
+                           .flatMap(it -> it.numberValue("maxVnicAttachments"))
+                           .orElseThrow()
+                           .intValueExact(),
+                   is(2));
+        assertThat(metadataJson.objectValue("shapeConfig")
+                           .flatMap(it -> it.numberValue("memoryInGBs"))
+                           .orElseThrow()
+                           .doubleValue(),
+                   is(12.0));
+        assertThat(metadataJson.objectValue("metadata")
+                           .flatMap(it -> it.value("nullable"))
+                           .orElseThrow(),
+                   is(JsonNull.instance()));
+    }
+
+    static class ImdsEmulator {
         static String CANONICAL_REGION_NAME = "us-helidon-1";
         static String DISPLAY_NAME = "helidon-server";
         static String HOST_NAME = DISPLAY_NAME;
@@ -178,6 +255,7 @@ class InstanceInfoProviderTest {
                               TENANT_ID);
 
         private static void emulateImds(ServerRequest req, ServerResponse res) {
+            res.headers().contentType(MediaTypes.APPLICATION_JSON);
             res.send(IMDS_RESPONSE);
         }
     }
