@@ -948,9 +948,11 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
             String discriminatorAlias = allOfDiscriminatorAlias(model, parentModel);
             String discriminatorSetter = discriminatorSetter(parentModel, discriminatorKey);
+            String discriminatorValueExpression = discriminatorValueExpression(parentModel, discriminatorKey, discriminatorAlias);
 
             model.vendorExtensions.put("x-allof-discriminator-key", discriminatorKey);
             model.vendorExtensions.put("x-allof-discriminator-value", discriminatorAlias);
+            model.vendorExtensions.put("x-allof-discriminator-value-expression", discriminatorValueExpression);
             if (discriminatorSetter != null) {
                 model.vendorExtensions.put("x-allof-discriminator-setter", discriminatorSetter);
                 model.vendorExtensions.put("x-has-allof-discriminator-setter", Boolean.TRUE);
@@ -1202,6 +1204,30 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     }
 
     private String discriminatorSetter(CodegenModel parentModel, String discriminatorKey) {
+        CodegenProperty property = discriminatorProperty(parentModel, discriminatorKey);
+        if (property == null) {
+            return null;
+        }
+        return property.setter;
+    }
+
+    private String discriminatorValueExpression(CodegenModel parentModel,
+                                                String discriminatorKey,
+                                                String discriminatorAlias) {
+        CodegenProperty property = discriminatorProperty(parentModel, discriminatorKey);
+        if (property == null) {
+            return toJavaStringLiteral(discriminatorAlias);
+        }
+
+        if (property.isEnum && property.datatypeWithEnum != null && !property.datatypeWithEnum.isBlank()) {
+            String enumConstant = toEnumVarName(discriminatorAlias, "String");
+            return parentModel.classname + "." + property.datatypeWithEnum + "." + enumConstant;
+        }
+
+        return toJavaStringLiteral(discriminatorAlias);
+    }
+
+    private CodegenProperty discriminatorProperty(CodegenModel parentModel, String discriminatorKey) {
         List<CodegenProperty> properties = parentModel.allVars != null && !parentModel.allVars.isEmpty()
                 ? parentModel.allVars
                 : parentModel.vars;
@@ -1214,7 +1240,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 continue;
             }
             if (discriminatorKey.equals(property.baseName) || discriminatorKey.equals(property.name)) {
-                return property.setter;
+                return property;
             }
         }
         return null;

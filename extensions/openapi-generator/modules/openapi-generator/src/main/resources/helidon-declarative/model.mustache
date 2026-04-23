@@ -207,7 +207,7 @@ import {{import}};
 {{/vendorExtensions.x-render-vars}}
     /** No-arg constructor. */
     public {{classname}}() {
-{{#vendorExtensions.x-has-allof-discriminator-setter}}        {{vendorExtensions.x-allof-discriminator-setter}}("{{vendorExtensions.x-allof-discriminator-value}}");
+{{#vendorExtensions.x-has-allof-discriminator-setter}}        {{vendorExtensions.x-allof-discriminator-setter}}({{{vendorExtensions.x-allof-discriminator-value-expression}}});
 {{/vendorExtensions.x-has-allof-discriminator-setter}}
     }
 

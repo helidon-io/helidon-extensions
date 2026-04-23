@@ -1,0 +1,29 @@
+openapi: 3.0.3
+info:
+  title: discriminator-enum-repro
+  version: 1.0.0
+
+paths: {}
+
+components:
+  schemas:
+    MqlCheckDetails:
+      type: object
+      required:
+        - category
+      discriminator:
+        propertyName: category
+      properties:
+        category:
+          type: string
+          enum:
+            - REGION_HEALTH_CHECK
+
+    RegionHealthCheckCategoryDetails:
+      allOf:
+        - $ref: '#/components/schemas/MqlCheckDetails'
+        - type: object
+          x-discriminator-value: REGION_HEALTH_CHECK
+          properties:
+            regionHealthCheckDetails:
+              type: string
