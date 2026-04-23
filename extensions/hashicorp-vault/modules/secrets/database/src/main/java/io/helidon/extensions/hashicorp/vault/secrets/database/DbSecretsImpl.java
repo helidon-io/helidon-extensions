@@ -21,7 +21,7 @@ import io.helidon.extensions.hashicorp.vault.Vault;
 import io.helidon.extensions.hashicorp.vault.VaultOptionalResponse;
 import io.helidon.extensions.hashicorp.vault.rest.RestApi;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 class DbSecretsImpl implements DbSecrets {
     private final RestApi restApi;

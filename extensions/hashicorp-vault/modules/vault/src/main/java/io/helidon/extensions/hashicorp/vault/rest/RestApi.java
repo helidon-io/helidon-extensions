@@ -17,7 +17,6 @@
 package io.helidon.extensions.hashicorp.vault.rest;
 
 import java.io.InputStream;
-import java.util.Map;
 import java.util.function.Consumer;
 
 import io.helidon.common.socket.SocketOptions;
@@ -26,16 +25,11 @@ import io.helidon.extensions.hashicorp.vault.rest.ApiOptionalResponse.BuilderBas
 import io.helidon.faulttolerance.FaultTolerance;
 import io.helidon.faulttolerance.FtHandler;
 import io.helidon.http.Method;
-import io.helidon.http.media.jsonp.JsonpSupport;
+import io.helidon.http.media.json.JsonSupport;
+import io.helidon.json.JsonObject;
 import io.helidon.webclient.api.WebClient;
 import io.helidon.webclient.api.WebClientConfig;
 import io.helidon.webclient.http1.Http1Client;
-
-import jakarta.json.Json;
-import jakarta.json.JsonBuilderFactory;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonReaderFactory;
-import jakarta.json.JsonWriterFactory;
 
 /**
  * JSON based REST API operations.
@@ -267,9 +261,6 @@ public interface RestApi {
                 .followRedirects(true)
                 .keepAlive(true);
         private FtHandler ftHandler = FaultTolerance.builder().build();
-        private JsonBuilderFactory jsonBuilderFactory;
-        private JsonReaderFactory jsonReaderFactory;
-        private JsonWriterFactory jsonWriterFactory;
         private WebClient webClient;
 
         /**
@@ -294,8 +285,7 @@ public interface RestApi {
 
         /**
          * Configure this builder from config.
-         * Uses {@code webclient} key to configure the {@link Http1Client} builder, and {@code jsonp} key
-         * to configure the JSON factories.
+         * Uses the {@code webclient} key to configure the {@link Http1Client} builder.
          *
          * @param config configuration on the node of this rest API
          * @return updated builder
@@ -303,20 +293,6 @@ public interface RestApi {
         public B config(Config config) {
 
             webClientBuilder.config(config.get("webclient"));
-            Map<String, String> jsonConfig = config.get("jsonp")
-                    .asMap()
-                    .orElseGet(Map::of);
-
-            if (jsonBuilderFactory == null) {
-                jsonBuilderFactory = Json.createBuilderFactory(jsonConfig);
-            }
-            if (jsonReaderFactory == null) {
-                jsonReaderFactory = Json.createReaderFactory(jsonConfig);
-            }
-            if (jsonWriterFactory == null) {
-                jsonWriterFactory = Json.createWriterFactory(jsonConfig);
-            }
-
             return me();
         }
 
@@ -356,19 +332,10 @@ public interface RestApi {
 
         /**
          * Pre build method.
-         * This implementation builds the web client and sets up JSON factories.
+         * This implementation builds the web client and registers Helidon JSON media support.
          */
         protected void preBuild() {
-            webClient = webClientBuilder.addMediaSupport(JsonpSupport.create()).build();
-            if (jsonBuilderFactory == null) {
-                jsonBuilderFactory = Json.createBuilderFactory(Map.of());
-            }
-            if (jsonReaderFactory == null) {
-                jsonReaderFactory = Json.createReaderFactory(Map.of());
-            }
-            if (jsonWriterFactory == null) {
-                jsonWriterFactory = Json.createWriterFactory(Map.of());
-            }
+            webClient = webClientBuilder.addMediaSupport(JsonSupport.create()).build();
         }
 
         /**
@@ -403,31 +370,5 @@ public interface RestApi {
             return ftHandler;
         }
 
-        /**
-         * JSON builder factory.
-         *
-         * @return builder factory
-         */
-        protected JsonBuilderFactory jsonBuilderFactory() {
-            return jsonBuilderFactory;
-        }
-
-        /**
-         * JSON reader factory.
-         *
-         * @return reader factory
-         */
-        protected JsonReaderFactory jsonReaderFactory() {
-            return jsonReaderFactory;
-        }
-
-        /**
-         * JSON writer factory.
-         *
-         * @return writer factory
-         */
-        protected JsonWriterFactory jsonWriterFactory() {
-            return jsonWriterFactory;
-        }
     }
 }

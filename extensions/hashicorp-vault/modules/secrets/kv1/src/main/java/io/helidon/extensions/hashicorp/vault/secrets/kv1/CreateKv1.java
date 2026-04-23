@@ -41,7 +41,7 @@ public final class CreateKv1 {
         /**
          * Fluent API builder for configuring a request.
          * The request builder is passed as is, without a build method.
-         * The equivalent of a build method is {@link #toJson(jakarta.json.JsonBuilderFactory)}.
+         * The equivalent of a build method is {@link #toJson()}.
          *
          * @return new request builder
          */

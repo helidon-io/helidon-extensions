@@ -23,7 +23,7 @@ import io.helidon.extensions.hashicorp.vault.VaultRequest;
 import io.helidon.extensions.hashicorp.vault.VaultResponse;
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 /**
  * Key/Value Version 2 Secret request and response.
@@ -44,7 +44,7 @@ public final class UpdateKv2 {
         /**
          * Fluent API builder for configuring a request.
          * The request builder is passed as is, without a build method.
-         * The equivalent of a build method is {@link #toJson(jakarta.json.JsonBuilderFactory)}
+         * The equivalent of a build method is {@link #toJson()}
          * used by the {@link io.helidon.extensions.hashicorp.vault.rest.RestApi}.
          *
          * @return new request builder
@@ -115,7 +115,10 @@ public final class UpdateKv2 {
 
         private Response(Builder builder) {
             super(builder);
-            this.version = builder.entity().getJsonObject("data").getInt("version");
+            this.version = builder.entity()
+                    .objectValue("data")
+                    .flatMap(it -> it.intValue("version"))
+                    .orElseThrow();
         }
 
         static Builder builder() {

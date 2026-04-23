@@ -25,7 +25,7 @@ import io.helidon.extensions.hashicorp.vault.VaultRestException;
 import io.helidon.extensions.hashicorp.vault.rest.RestApi;
 import io.helidon.http.Method;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 class PkiSecretsImpl implements PkiSecrets {
     private final RestApi restApi;

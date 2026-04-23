@@ -24,7 +24,7 @@ import io.helidon.extensions.hashicorp.vault.VaultRequest;
 import io.helidon.extensions.hashicorp.vault.VaultUtil;
 import io.helidon.extensions.hashicorp.vault.rest.ApiJsonParser;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 /**
  * Get KV2 secret request and response.
@@ -45,7 +45,7 @@ public final class GetKv2 {
         /**
          * Fluent API builder for configuring a request.
          * The request builder is passed as is, without a build method.
-         * The equivalent of a build method is {@link #toJson(jakarta.json.JsonBuilderFactory)}
+         * The equivalent of a build method is {@link #toJson()}
          * used by the {@link io.helidon.extensions.hashicorp.vault.rest.RestApi}.
          *
          * @return new request builder
@@ -103,8 +103,8 @@ public final class GetKv2 {
 
         private Response(String path, JsonObject json) {
             this.path = path;
-            JsonObject mainData = json.getJsonObject("data");
-            this.metadata = Kv2Metadata.create(mainData.getJsonObject("metadata"));
+            JsonObject mainData = json.objectValue("data").orElseThrow();
+            this.metadata = Kv2Metadata.create(mainData.objectValue("metadata").orElseThrow());
             this.values = VaultUtil.toMap(mainData, "data");
         }
 

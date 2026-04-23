@@ -23,9 +23,7 @@ import java.util.List;
 import java.util.Map;
 
 import io.helidon.extensions.hashicorp.vault.rest.ApiJsonRequest;
-
-import jakarta.json.JsonBuilderFactory;
-import jakarta.json.JsonObjectBuilder;
+import io.helidon.json.JsonObject;
 
 /**
  * Common helper methods for Vault Requests.
@@ -67,9 +65,9 @@ public abstract class VaultRequest<T extends VaultRequest<T>> extends ApiJsonReq
      * @param name   name of the property
      * @param values list of values
      */
-    protected static void addCommaDelimitedArray(JsonObjectBuilder json, String name, List<String> values) {
+    protected static void addCommaDelimitedArray(JsonObject.Builder json, String name, List<String> values) {
         if (!values.isEmpty()) {
-            json.add(name, String.join(",", values));
+            json.set(name, String.join(",", values));
         }
     }
 
@@ -98,8 +96,8 @@ public abstract class VaultRequest<T extends VaultRequest<T>> extends ApiJsonReq
     }
 
     @Override
-    protected void preBuild(JsonBuilderFactory factory, JsonObjectBuilder payload) {
+    protected void preBuild(JsonObject.Builder payload) {
         commaDelimitedArrays.forEach((key, value) -> addCommaDelimitedArray(payload, key, value));
-        super.preBuild(factory, payload);
+        super.preBuild(payload);
     }
 }

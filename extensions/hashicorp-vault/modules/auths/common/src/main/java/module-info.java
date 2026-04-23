@@ -21,7 +21,7 @@ module io.helidon.extensions.hashicorp.vault.auths.common {
 
     requires io.helidon.http;
     requires io.helidon.webclient;
-    requires jakarta.json;
+    requires io.helidon.json;
 
     requires transitive io.helidon.extensions.hashicorp.vault;
 

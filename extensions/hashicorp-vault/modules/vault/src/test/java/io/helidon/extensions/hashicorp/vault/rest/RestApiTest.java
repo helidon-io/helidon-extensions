@@ -24,7 +24,10 @@ import java.util.function.Function;
 import io.helidon.http.ServerRequestHeaders;
 import io.helidon.http.Status;
 import io.helidon.http.media.MediaContext;
-import io.helidon.http.media.jsonp.JsonpSupport;
+import io.helidon.http.media.json.JsonSupport;
+import io.helidon.json.JsonObject;
+import io.helidon.json.JsonValue;
+import io.helidon.json.JsonValueType;
 import io.helidon.webserver.WebServer;
 import io.helidon.webserver.WebServerConfig;
 import io.helidon.webserver.http.HttpRules;
@@ -34,10 +37,6 @@ import io.helidon.webserver.http.ServerResponse;
 import io.helidon.webserver.testing.junit5.ServerTest;
 import io.helidon.webserver.testing.junit5.SetUpServer;
 
-import jakarta.json.Json;
-import jakarta.json.JsonBuilderFactory;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonObjectBuilder;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -50,14 +49,12 @@ import static org.hamcrest.Matchers.not;
 
 @ServerTest
 class RestApiTest {
-    private static final JsonBuilderFactory JSON = Json.createBuilderFactory(Map.of());
-
     private static RestApi restApi;
 
     @SetUpServer
     static void setupServer(WebServerConfig.Builder serverBuilder) {
         serverBuilder.routing(routing -> routing.register("/api", TestApiService::new))
-                .mediaContext(MediaContext.builder().addMediaSupport(JsonpSupport.create()).build());
+                .mediaContext(MediaContext.builder().addMediaSupport(JsonSupport.create()).build());
     }
 
     @BeforeAll
@@ -99,8 +96,8 @@ class RestApiTest {
         assertThat(response.echoedEntity.isPresent(), is(true));
         JsonObject jsonObject = response.echoedEntity.get();
 
-        assertThat(jsonObject.getInt("anInt"), is(42));
-        assertThat(jsonObject.getString("aString"), is("value"));
+        assertThat(jsonObject.intValue("anInt").orElseThrow(), is(42));
+        assertThat(jsonObject.stringValue("aString").orElseThrow(), is("value"));
 
     }
 
@@ -137,29 +134,29 @@ class RestApiTest {
         }
 
         private void echo(ServerRequest req, ServerResponse res, JsonObject entity) {
-            res.send(common(req).add("entity", entity).build());
+            res.send(common(req).set("entity", entity).build());
         }
 
         private void echoNoEntity(ServerRequest req, ServerResponse res) {
             res.send(common(req).build());
         }
 
-        private JsonObjectBuilder common(ServerRequest req) {
-            JsonObjectBuilder objectBuilder = JSON.createObjectBuilder();
-            objectBuilder.add("path", req.path().absolute().rawPath());
+        private JsonObject.Builder common(ServerRequest req) {
+            JsonObject.Builder objectBuilder = JsonObject.builder();
+            objectBuilder.set("path", req.path().absolute().rawPath());
 
             Map<String, List<String>> queryParams = req.query().toMap();
             if (!queryParams.isEmpty()) {
-                JsonObjectBuilder queryParamsBuilder = JSON.createObjectBuilder();
-                queryParams.forEach((key, values) -> queryParamsBuilder.add(key, values.iterator().next()));
-                objectBuilder.add("params", queryParamsBuilder);
+                JsonObject.Builder queryParamsBuilder = JsonObject.builder();
+                queryParams.forEach((key, values) -> queryParamsBuilder.set(key, values.iterator().next()));
+                objectBuilder.set("params", queryParamsBuilder.build());
             }
 
             ServerRequestHeaders headers = req.headers();
             if (headers.size() > 0) {
-                JsonObjectBuilder headersBuilder = JSON.createObjectBuilder();
-                headers.forEach(header -> headersBuilder.add(header.name(), header.get()));
-                objectBuilder.add("headers", headersBuilder);
+                JsonObject.Builder headersBuilder = JsonObject.builder();
+                headers.forEach(header -> headersBuilder.set(header.name(), header.get()));
+                objectBuilder.set("headers", headersBuilder.build());
             }
 
             return objectBuilder;
@@ -176,10 +173,12 @@ class RestApiTest {
         private EchoResponse(Builder builder) {
             super(builder);
             JsonObject json = builder.entity();
-            this.echoedPath = json.getString("path");
+            this.echoedPath = json.stringValue("path").orElseThrow();
             this.echoedQueryParams = toMap(json, "params");
             this.echoedHeaders = toMap(json, "headers");
-            this.echoedEntity = toObject(json, "entity");
+            this.echoedEntity = json.value("entity")
+                    .filter(value -> value.type() != JsonValueType.NULL)
+                    .map(JsonValue::asObject);
         }
 
         static Builder builder() {

@@ -22,7 +22,7 @@ import io.helidon.extensions.hashicorp.vault.VaultOptionalResponse;
 import io.helidon.extensions.hashicorp.vault.rest.RestApi;
 import io.helidon.http.Method;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 class TransitSecretsImpl implements TransitSecrets {
     private final RestApi restApi;

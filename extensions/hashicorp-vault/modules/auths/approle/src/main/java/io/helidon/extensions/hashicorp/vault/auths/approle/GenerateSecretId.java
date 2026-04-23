@@ -16,18 +16,15 @@
 
 package io.helidon.extensions.hashicorp.vault.auths.approle;
 
-import java.io.StringWriter;
 import java.util.HashMap;
 import java.util.Map;
 
 import io.helidon.extensions.hashicorp.vault.VaultResponse;
+import io.helidon.extensions.hashicorp.vault.rest.ApiException;
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
-
-import jakarta.json.Json;
-import jakarta.json.JsonBuilderFactory;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonObjectBuilder;
-import jakarta.json.JsonWriterFactory;
+import io.helidon.json.JsonObject;
+import io.helidon.json.JsonValue;
+import io.helidon.json.JsonValueType;
 
 /**
  * Generate secret ID request and response.
@@ -42,7 +39,6 @@ public final class GenerateSecretId {
      * Request object. Can be configured with additional headers, query parameters etc.
      */
     public static class Request extends AppRoleRequestBase<Request> {
-        private static final JsonWriterFactory JSON_WRITER_FACTORY = Json.createWriterFactory(Map.of());
         private final Map<String, String> metadata = new HashMap<>();
 
         private Request() {
@@ -51,7 +47,7 @@ public final class GenerateSecretId {
         /**
          * Fluent API builder for configuring a request.
          * The request builder is passed as is, without a build method.
-         * The equivalent of a build method is {@link #toJson(jakarta.json.JsonBuilderFactory)}
+         * The equivalent of a build method is {@link #toJson()}
          * used by the {@link io.helidon.extensions.hashicorp.vault.rest.RestApi}.
          *
          * @return new request builder
@@ -95,17 +91,11 @@ public final class GenerateSecretId {
         }
 
         @Override
-        protected void postBuild(JsonBuilderFactory factory, JsonObjectBuilder payload) {
+        protected void postBuild(JsonObject.Builder payload) {
             if (!metadata.isEmpty()) {
-                JsonObjectBuilder metaJson = factory.createObjectBuilder();
-                metadata.forEach(metaJson::add);
-
-                StringWriter sw = new StringWriter();
-                JSON_WRITER_FACTORY.createWriter(sw)
-                        .writeObject(metaJson.build());
-                String serialized = sw.toString();
-
-                payload.add("meta", serialized);
+                JsonObject.Builder metaJson = JsonObject.builder();
+                metadata.forEach(metaJson::set);
+                payload.set("meta", metaJson.build().toString());
             }
         }
     }
@@ -120,9 +110,13 @@ public final class GenerateSecretId {
         private Response(Builder builder) {
             super(builder);
 
-            JsonObject data = builder.entity().getJsonObject("data");
-            this.secretId = data.getString("secret_id");
-            this.secretIdAccessor = data.getString("secret_id_accessor");
+            JsonObject entity = builder.entity();
+            JsonObject data = entity.objectValue("data")
+                    .orElseThrow(() -> new ApiException("Expected JSON property \"data\" to be present in " + entity));
+            this.secretId = data.stringValue("secret_id")
+                    .orElseThrow(() -> new ApiException("Expected JSON property \"secret_id\" to be present in " + data));
+            this.secretIdAccessor = data.stringValue("secret_id_accessor")
+                    .orElseThrow(() -> new ApiException("Expected JSON property \"secret_id_accessor\" to be present in " + data));
         }
 
         static Builder builder() {

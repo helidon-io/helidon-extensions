@@ -16,19 +16,20 @@
 
 package io.helidon.extensions.hashicorp.vault.rest;
 
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Consumer;
 
 import io.helidon.common.Base64Value;
-
-import jakarta.json.JsonArrayBuilder;
-import jakarta.json.JsonBuilderFactory;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonObjectBuilder;
+import io.helidon.json.JsonArray;
+import io.helidon.json.JsonBoolean;
+import io.helidon.json.JsonNumber;
+import io.helidon.json.JsonObject;
+import io.helidon.json.JsonString;
+import io.helidon.json.JsonValue;
 
 /**
  * Common base class for builders that construct a JSON object.
@@ -36,11 +37,11 @@ import jakarta.json.JsonObjectBuilder;
  * @param <T> type of the subclass
  */
 public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
-    private final Map<String, Consumer<JsonObjectBuilder>> values = new HashMap<>();
-    private final Map<String, ApiJsonBuilder<?>> objects = new HashMap<>();
-    private final Map<String, List<Consumer<JsonArrayBuilder>>> arrays = new HashMap<>();
-    private final Map<String, List<ApiJsonBuilder<?>>> objectArrays = new HashMap<>();
-    private final Map<String, Map<String, Consumer<JsonObjectBuilder>>> objectsAsMaps = new HashMap<>();
+    private final Map<String, JsonValue> values = new LinkedHashMap<>();
+    private final Map<String, ApiJsonBuilder<?>> objects = new LinkedHashMap<>();
+    private final Map<String, List<JsonValue>> arrays = new LinkedHashMap<>();
+    private final Map<String, List<ApiJsonBuilder<?>>> objectArrays = new LinkedHashMap<>();
+    private final Map<String, Map<String, JsonValue>> objectsAsMaps = new LinkedHashMap<>();
 
     /**
      * Default constructor.
@@ -52,22 +53,21 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
     /**
      * Create a JSON object from this builder.
      *
-     * @param factory builder factory to create objects
      * @return JSON object or empty
      */
-    public Optional<JsonObject> toJson(JsonBuilderFactory factory) {
-        JsonObjectBuilder payload = factory.createObjectBuilder();
-        preBuild(factory, payload);
-        values.forEach((key, value) -> value.accept(payload));
-        objects.forEach((key, value) -> value.toJson(factory).ifPresent(it -> payload.add(key, it)));
-        arrays.forEach((key, value) -> addArray(payload, factory, key, value));
-        objectArrays.forEach((key, value) -> addObjectArray(payload, factory, key, value));
+    public Optional<JsonObject> toJson() {
+        JsonObject.Builder payload = JsonObject.builder();
+        preBuild(payload);
+        values.forEach(payload::set);
+        objects.forEach((key, value) -> value.toJson().ifPresent(it -> payload.set(key, it)));
+        arrays.forEach((key, value) -> payload.set(key, JsonArray.create(List.copyOf(value))));
+        objectArrays.forEach((key, value) -> addObjectArray(payload, key, value));
         objectsAsMaps.forEach((key, value) -> {
-            JsonObjectBuilder childObject = factory.createObjectBuilder();
-            value.forEach((childKey, childValue) -> childValue.accept(childObject));
-            payload.add(key, childObject);
+            JsonObject.Builder childObject = JsonObject.builder();
+            value.forEach(childObject::set);
+            payload.set(key, childObject.build());
         });
-        postBuild(factory, payload);
+        postBuild(payload);
         return Optional.of(payload.build());
     }
 
@@ -84,19 +84,17 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
     /**
      * Called before adding properties defined in this request.
      *
-     * @param factory json factory
      * @param payload payload builder
      */
-    protected void preBuild(JsonBuilderFactory factory, JsonObjectBuilder payload) {
+    protected void preBuild(JsonObject.Builder payload) {
     }
 
     /**
      * Called after adding properties defined in this request.
      *
-     * @param factory json factory
      * @param payload payload builder
      */
-    protected void postBuild(JsonBuilderFactory factory, JsonObjectBuilder payload) {
+    protected void postBuild(JsonObject.Builder payload) {
     }
 
     /**
@@ -108,7 +106,7 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      */
     protected T addToArray(String name, String element) {
         arrays.computeIfAbsent(name, it -> new LinkedList<>())
-                .add(it -> it.add(element));
+                .add(JsonString.create(element));
 
         return me();
     }
@@ -122,7 +120,7 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      */
     protected T addToArray(String name, int element) {
         arrays.computeIfAbsent(name, it -> new LinkedList<>())
-                .add(it -> it.add(element));
+                .add(JsonNumber.create(element));
 
         return me();
     }
@@ -136,7 +134,7 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      */
     protected T addToArray(String name, long element) {
         arrays.computeIfAbsent(name, it -> new LinkedList<>())
-                .add(it -> it.add(element));
+                .add(JsonNumber.create(element));
 
         return me();
     }
@@ -150,7 +148,7 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      */
     protected T addToArray(String name, double element) {
         arrays.computeIfAbsent(name, it -> new LinkedList<>())
-                .add(it -> it.add(element));
+                .add(JsonNumber.create(element));
 
         return me();
     }
@@ -164,7 +162,7 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      */
     protected T addToArray(String name, boolean element) {
         arrays.computeIfAbsent(name, it -> new LinkedList<>())
-                .add(it -> it.add(element));
+                .add(JsonBoolean.create(element));
 
         return me();
     }
@@ -178,7 +176,8 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      * @return updated request
      */
     protected T add(String name, String value) {
-        return add(name, builder -> builder.add(name, value));
+        values.put(name, JsonString.create(value));
+        return me();
     }
 
     /**
@@ -190,7 +189,8 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      * @return updated request
      */
     protected T add(String name, int value) {
-        return add(name, builder -> builder.add(name, value));
+        values.put(name, JsonNumber.create(value));
+        return me();
     }
 
     /**
@@ -202,7 +202,8 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      * @return updated request
      */
     protected T add(String name, double value) {
-        return add(name, builder -> builder.add(name, value));
+        values.put(name, JsonNumber.create(value));
+        return me();
     }
 
     /**
@@ -214,7 +215,8 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      * @return updated request
      */
     protected T add(String name, long value) {
-        return add(name, builder -> builder.add(name, value));
+        values.put(name, JsonNumber.create(value));
+        return me();
     }
 
     /**
@@ -226,7 +228,8 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      * @return updated request
      */
     protected T add(String name, boolean value) {
-        return add(name, builder -> builder.add(name, value));
+        values.put(name, JsonBoolean.create(value));
+        return me();
     }
 
     /**
@@ -286,8 +289,8 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      * @return updated builder
      */
     protected T addToObject(String name, String key, String value) {
-        objectsAsMaps.computeIfAbsent(name, it -> new HashMap<>())
-                .put(key, builder -> builder.add(key, value));
+        objectsAsMaps.computeIfAbsent(name, it -> new LinkedHashMap<>())
+                .put(key, JsonString.create(value));
 
         return me();
     }
@@ -301,8 +304,8 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      * @return updated builder
      */
     protected T addToObject(String name, String key, int value) {
-        objectsAsMaps.computeIfAbsent(name, it -> new HashMap<>())
-                .put(key, builder -> builder.add(key, value));
+        objectsAsMaps.computeIfAbsent(name, it -> new LinkedHashMap<>())
+                .put(key, JsonNumber.create(value));
 
         return me();
     }
@@ -316,8 +319,8 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      * @return updated builder
      */
     protected T addToObject(String name, String key, long value) {
-        objectsAsMaps.computeIfAbsent(name, it -> new HashMap<>())
-                .put(key, builder -> builder.add(key, value));
+        objectsAsMaps.computeIfAbsent(name, it -> new LinkedHashMap<>())
+                .put(key, JsonNumber.create(value));
 
         return me();
     }
@@ -331,8 +334,8 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      * @return updated builder
      */
     protected T addToObject(String name, String key, double value) {
-        objectsAsMaps.computeIfAbsent(name, it -> new HashMap<>())
-                .put(key, builder -> builder.add(key, value));
+        objectsAsMaps.computeIfAbsent(name, it -> new LinkedHashMap<>())
+                .put(key, JsonNumber.create(value));
 
         return me();
     }
@@ -346,27 +349,13 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      * @return updated builder
      */
     protected T addToObject(String name, String key, boolean value) {
-        objectsAsMaps.computeIfAbsent(name, it -> new HashMap<>())
-                .put(key, builder -> builder.add(key, value));
+        objectsAsMaps.computeIfAbsent(name, _ -> new LinkedHashMap<>())
+                .put(key, JsonBoolean.create(value));
 
         return me();
     }
 
-    private void addArray(JsonObjectBuilder payloadBuilder,
-                          JsonBuilderFactory json,
-                          String name,
-                          List<Consumer<JsonArrayBuilder>> values) {
-
-        JsonArrayBuilder arrayBuilder = json.createArrayBuilder();
-        for (Consumer<JsonArrayBuilder> value : values) {
-            value.accept(arrayBuilder);
-        }
-
-        payloadBuilder.add(name, arrayBuilder);
-    }
-
-    private void addObjectArray(JsonObjectBuilder payloadBuilder,
-                                JsonBuilderFactory json,
+    private void addObjectArray(JsonObject.Builder payloadBuilder,
                                 String name,
                                 List<ApiJsonBuilder<?>> values) {
 
@@ -374,17 +363,11 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
             return;
         }
 
-        JsonArrayBuilder arrayBuilder = json.createArrayBuilder();
+        List<JsonValue> arrayValues = new ArrayList<>();
         for (ApiJsonBuilder<?> element : values) {
-            element.toJson(json).ifPresent(arrayBuilder::add);
+            element.toJson().ifPresent(arrayValues::add);
         }
 
-        payloadBuilder.add(name, arrayBuilder);
-    }
-
-    private T add(String name, Consumer<JsonObjectBuilder> consumer) {
-        values.put(name, consumer);
-
-        return me();
+        payloadBuilder.set(name, JsonArray.create(arrayValues));
     }
 }

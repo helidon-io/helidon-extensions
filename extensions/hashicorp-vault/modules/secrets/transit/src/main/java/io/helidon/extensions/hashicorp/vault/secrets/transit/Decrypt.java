@@ -22,7 +22,7 @@ import io.helidon.extensions.hashicorp.vault.VaultResponse;
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
 import io.helidon.extensions.hashicorp.vault.rest.ApiException;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 /**
  * Decrypt request and response.
@@ -43,7 +43,7 @@ public final class Decrypt {
         /**
          * Fluent API builder for configuring a request.
          * The request builder is passed as is, without a build method.
-         * The equivalent of a build method is {@link #toJson(jakarta.json.JsonBuilderFactory)}
+         * The equivalent of a build method is {@link #toJson()}
          * used by the {@link io.helidon.extensions.hashicorp.vault.rest.RestApi}.
          *
          * @return new request builder
@@ -111,8 +111,8 @@ public final class Decrypt {
 
         private Response(Builder builder) {
             super(builder);
-            JsonObject data = builder.entity().getJsonObject("data");
-            this.decrypted = Base64Value.createFromEncoded(data.getString("plaintext"));
+            JsonObject data = builder.entity().objectValue("data").orElseThrow();
+            this.decrypted = Base64Value.createFromEncoded(data.stringValue("plaintext").orElseThrow());
         }
 
         static Builder builder() {

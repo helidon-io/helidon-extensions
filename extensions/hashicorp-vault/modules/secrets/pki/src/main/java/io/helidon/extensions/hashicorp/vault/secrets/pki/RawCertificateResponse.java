@@ -22,7 +22,7 @@ import java.util.Base64;
 
 import io.helidon.extensions.hashicorp.vault.VaultResponse;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 /**
  * Bytes of certificates as obtained from the server.
@@ -42,15 +42,15 @@ abstract class RawCertificateResponse extends VaultResponse {
 
         this.format = format;
 
-        JsonObject data = builder.entity().getJsonObject("data");
+        JsonObject data = builder.entity().objectValue("data").orElseThrow();
 
-        this.expiration = Instant.ofEpochSecond(data.getJsonNumber("expiration").longValue());
-        this.serialNumber = data.getString("serial_number");
-        this.privateKeyType = data.getString("private_key_type");
+        this.expiration = Instant.ofEpochSecond(data.numberValue("expiration").orElseThrow().longValue());
+        this.serialNumber = data.stringValue("serial_number").orElseThrow();
+        this.privateKeyType = data.stringValue("private_key_type").orElseThrow();
 
-        String certificate = data.getString("certificate");
-        String privateKey = data.getString("private_key");
-        String issuingCa = data.getString("issuing_ca");
+        String certificate = data.stringValue("certificate").orElseThrow();
+        String privateKey = data.stringValue("private_key").orElseThrow();
+        String issuingCa = data.stringValue("issuing_ca").orElseThrow();
 
         if (format == PkiFormat.DER) {
             // DER is base64 encoded

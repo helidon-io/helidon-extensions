@@ -31,7 +31,7 @@ import io.helidon.extensions.hashicorp.vault.rest.RestApiBase;
 import io.helidon.http.Method;
 import io.helidon.webclient.api.HttpClientResponse;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 /**
  * REST API implementation with Vault specific features.
@@ -68,7 +68,7 @@ public class VaultRestApi extends RestApiBase {
             try {
                 JsonObject json = response.entity()
                         .as(JsonObject.class);
-                List<String> errors = VaultUtil.arrayToList(json.getJsonArray("errors"));
+                List<String> errors = VaultUtil.arrayToList(json.arrayValue("errors").orElse(null));
                 return (T) ((VaultOptionalResponse.Builder<?, ?>) responseBuilder)
                         .errors(errors)
                         .headers(response.headers())
@@ -98,7 +98,7 @@ public class VaultRestApi extends RestApiBase {
 
         List<String> vaultErrors = new LinkedList<>();
         try {
-            vaultErrors.addAll(VaultUtil.arrayToList(entity.getJsonArray("errors")));
+            vaultErrors.addAll(VaultUtil.arrayToList(entity.arrayValue("errors").orElse(null)));
         } catch (Exception e) {
             LOGGER.log(Level.DEBUG, "Failed to read error response", e);
             vaultErrors.add("Failed to read errors, entity: " + entity);

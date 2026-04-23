@@ -25,9 +25,10 @@ import io.helidon.extensions.hashicorp.vault.VaultResponse;
 import io.helidon.extensions.hashicorp.vault.VaultToken;
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 import static io.helidon.extensions.hashicorp.vault.VaultUtil.arrayToList;
+import static io.helidon.extensions.hashicorp.vault.VaultUtil.toMap;
 
 /**
  * Login request and response.
@@ -46,7 +47,7 @@ public final class Login {
         /**
          * Fluent API builder for configuring a request.
          * The request builder is passed as is, without a build method.
-         * The equivalent of a build method is {@link #toJson(jakarta.json.JsonBuilderFactory)}
+         * The equivalent of a build method is {@link #toJson()}
          * used by the {@link io.helidon.extensions.hashicorp.vault.rest.RestApi}.
          *
          * @return new request builder
@@ -101,15 +102,15 @@ public final class Login {
         private Response(Builder builder) {
             super(builder);
 
-            JsonObject auth = builder.entity().getJsonObject("auth");
+            JsonObject auth = builder.entity().objectValue("auth").orElseThrow();
 
-            this.accessor = auth.getString("accessor");
-            this.policies = arrayToList(auth.getJsonArray("policies"));
+            this.accessor = auth.stringValue("accessor").orElseThrow();
+            this.policies = arrayToList(auth.arrayValue("policies").orElse(null));
             this.metadata = toMap(auth, "metadata");
             this.token = VaultToken.builder()
-                    .token(auth.getString("client_token"))
-                    .leaseDuration(Duration.ofSeconds(auth.getJsonNumber("lease_duration").longValue()))
-                    .renewable(auth.getBoolean("renewable"))
+                    .token(auth.stringValue("client_token").orElseThrow())
+                    .leaseDuration(Duration.ofSeconds(auth.numberValue("lease_duration").orElseThrow().longValue()))
+                    .renewable(auth.booleanValue("renewable").orElseThrow())
                     .build();
         }
 

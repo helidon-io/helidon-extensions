@@ -23,9 +23,7 @@ import io.helidon.extensions.hashicorp.vault.VaultApiException;
 import io.helidon.extensions.hashicorp.vault.VaultRequest;
 import io.helidon.extensions.hashicorp.vault.rest.ApiJsonBuilder;
 
-import jakarta.json.JsonBuilderFactory;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonObjectBuilder;
+import io.helidon.json.JsonObject;
 
 /**
  * A builder for {@link Sys#enableEngine(io.helidon.extensions.hashicorp.vault.sys.EnableEngine.Request)}
@@ -134,12 +132,12 @@ abstract class MountRequest<T extends MountRequest<T>> extends VaultRequest<T> {
     }
 
     @Override
-    protected void postBuild(JsonBuilderFactory factory, JsonObjectBuilder payload) {
-        JsonObject configJson = config.toJson(factory).get();
-        if (configJson.isEmpty()) {
-            payload.addNull("config");
+    protected void postBuild(JsonObject.Builder payload) {
+        JsonObject configJson = config.toJson().orElseThrow();
+        if (configJson.keysAsStrings().isEmpty()) {
+            payload.setNull("config");
         } else {
-            payload.add("config", configJson);
+            payload.set("config", configJson);
         }
     }
 

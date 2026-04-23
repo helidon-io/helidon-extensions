@@ -29,7 +29,7 @@ import io.helidon.common.features.api.HelidonFlavor;
 module io.helidon.extensions.hashicorp.vault.secrets.transit {
 
     requires io.helidon.http;
-    requires jakarta.json;
+    requires io.helidon.json;
 
     requires static io.helidon.common.features.api;
 

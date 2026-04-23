@@ -30,7 +30,7 @@ module io.helidon.extensions.hashicorp.vault.secrets.kvone {
 
     requires transitive io.helidon.extensions.hashicorp.vault;
     requires transitive io.helidon.security;
-    requires jakarta.json;
+    requires io.helidon.json;
 
     exports io.helidon.extensions.hashicorp.vault.secrets.kv1;
 

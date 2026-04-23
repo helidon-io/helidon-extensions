@@ -16,13 +16,14 @@
 
 package io.helidon.extensions.hashicorp.vault.secrets.pki;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 
 import io.helidon.extensions.hashicorp.vault.VaultRequest;
 import io.helidon.extensions.hashicorp.vault.VaultResponse;
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 /**
  * Revoke certificate request and response.
@@ -41,7 +42,7 @@ public final class RevokeCertificate {
         /**
          * Fluent API builder for configuring a request.
          * The request builder is passed as is, without a build method.
-         * The equivalent of a build method is {@link #toJson(jakarta.json.JsonBuilderFactory)}
+         * The equivalent of a build method is {@link #toJson()}
          * used by the {@link io.helidon.extensions.hashicorp.vault.rest.RestApi}.
          *
          * @return new request builder
@@ -71,9 +72,10 @@ public final class RevokeCertificate {
             super(builder);
 
             this.revocationTime = Instant.ofEpochSecond(builder.entity()
-                                                                .getJsonObject("data")
-                                                                .getJsonNumber("revocation_time")
-                                                                .longValue());
+                                                                .objectValue("data")
+                                                                .flatMap(it -> it.numberValue("revocation_time"))
+                                                                .map(BigDecimal::longValue)
+                                                                .orElseThrow());
         }
 
         static Builder builder() {

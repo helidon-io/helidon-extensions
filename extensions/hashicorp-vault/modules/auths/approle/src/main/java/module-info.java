@@ -33,7 +33,7 @@ module io.helidon.extensions.hashicorp.vault.auths.approle {
     requires static io.helidon.common.features.api;
 
     requires transitive io.helidon.extensions.hashicorp.vault;
-    requires jakarta.json;
+    requires io.helidon.json;
 
     exports io.helidon.extensions.hashicorp.vault.auths.approle;
 

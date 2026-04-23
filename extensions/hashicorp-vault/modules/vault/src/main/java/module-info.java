@@ -29,13 +29,13 @@ module io.helidon.extensions.hashicorp.vault {
     requires static io.helidon.config.metadata;
 
     requires transitive io.helidon.config;
+    requires transitive io.helidon.json;
     requires transitive io.helidon.webclient;
-    requires transitive jakarta.json;
 
     requires io.helidon.common;
     requires io.helidon.faulttolerance;
+    requires io.helidon.http.media.json;
     requires io.helidon.tracing;
-    requires io.helidon.http.media.jsonp;
 
     exports io.helidon.extensions.hashicorp.vault;
     exports io.helidon.extensions.hashicorp.vault.rest;

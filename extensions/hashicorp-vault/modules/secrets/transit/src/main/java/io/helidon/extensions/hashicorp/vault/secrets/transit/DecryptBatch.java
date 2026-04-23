@@ -26,9 +26,9 @@ import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
 import io.helidon.extensions.hashicorp.vault.rest.ApiException;
 import io.helidon.extensions.hashicorp.vault.rest.ApiJsonBuilder;
 
-import jakarta.json.JsonArray;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonValue;
+import io.helidon.json.JsonArray;
+import io.helidon.json.JsonObject;
+import io.helidon.json.JsonValue;
 
 /**
  * Decrypt Batch request and response.
@@ -49,7 +49,7 @@ public final class DecryptBatch {
         /**
          * Fluent API builder for configuring a request.
          * The request builder is passed as is, without a build method.
-         * The equivalent of a build method is {@link #toJson(jakarta.json.JsonBuilderFactory)}
+         * The equivalent of a build method is {@link #toJson()}
          * used by the {@link io.helidon.extensions.hashicorp.vault.rest.RestApi}.
          *
          * @return new request builder
@@ -97,11 +97,13 @@ public final class DecryptBatch {
 
         private Response(Builder builder) {
             super(builder);
-            JsonObject data = builder.entity().getJsonObject("data");
+            JsonObject data = builder.entity().objectValue("data").orElseThrow();
             List<Base64Value> batchResults = new LinkedList<>();
-            JsonArray jsonArray = data.getJsonArray("batch_results");
-            for (JsonValue jsonValue : jsonArray) {
-                batchResults.add(Base64Value.createFromEncoded(((JsonObject) jsonValue).getString("plaintext")));
+            JsonArray jsonArray = data.arrayValue("batch_results").orElseThrow();
+            for (JsonValue jsonValue : jsonArray.values()) {
+                batchResults.add(Base64Value.createFromEncoded(jsonValue.asObject()
+                                                                       .stringValue("plaintext")
+                                                                       .orElseThrow()));
             }
             this.batchResult = List.copyOf(batchResults);
         }

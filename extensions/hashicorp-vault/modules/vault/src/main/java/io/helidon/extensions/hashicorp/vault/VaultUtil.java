@@ -22,10 +22,10 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
-import jakarta.json.JsonArray;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonString;
-import jakarta.json.JsonValue;
+import io.helidon.json.JsonArray;
+import io.helidon.json.JsonObject;
+import io.helidon.json.JsonValue;
+import io.helidon.json.JsonValueType;
 
 /**
  * Utility class for Vault API.
@@ -45,7 +45,7 @@ public final class VaultUtil {
             return List.of();
         }
         List<String> result = new LinkedList<>();
-        array.forEach(it -> result.add(stringValue(it)));
+        array.values().forEach(it -> result.add(stringValue(it)));
         return List.copyOf(result);
     }
 
@@ -57,10 +57,10 @@ public final class VaultUtil {
      * @return keys as a list of strings
      */
     public static List<String> processListDataResponse(JsonObject response) {
-        JsonObject data = response.getJsonObject("data");
-        JsonArray keys = data.getJsonArray("keys");
-        List<String> result = new ArrayList<>(keys.size());
-        keys.forEach(it -> result.add(((JsonString) it).getString()));
+        JsonObject data = response.objectValue("data").orElseThrow();
+        JsonArray keys = data.arrayValue("keys").orElseThrow();
+        List<String> result = new ArrayList<>(keys.values().size());
+        keys.values().forEach(it -> result.add(it.asString().value()));
         return result;
     }
 
@@ -74,9 +74,11 @@ public final class VaultUtil {
      */
     public static Map<String, String> toMap(JsonObject object, String name) {
         Map<String, String> result = new HashMap<>();
-        if (!object.isNull(name) && object.containsKey(name)) {
-            JsonObject subObject = object.getJsonObject(name);
-            subObject.forEach((key, value) -> result.put(key, stringValue(value)));
+        if (object.containsKey(name)
+                && object.value(name).map(it -> it.type() != JsonValueType.NULL).orElse(false)) {
+            JsonObject subObject = object.objectValue(name).orElseThrow();
+            subObject.keysAsStrings()
+                    .forEach(key -> result.put(key, stringValue(subObject.value(key).orElseThrow())));
         }
         return Map.copyOf(result);
     }
@@ -89,12 +91,11 @@ public final class VaultUtil {
      * @throws VaultRestException in case the value is array or object
      */
     private static String stringValue(JsonValue value) {
-        return switch (value.getValueType()) {
+        return switch (value.type()) {
             case ARRAY -> throw new VaultApiException("Cannot create a simple String from an array: " + value);
             case OBJECT -> throw new VaultApiException("Cannot create a simple String from an object: " + value);
-            case STRING -> ((JsonString) value).getString();
-            case TRUE -> "true";
-            case FALSE -> "false";
+            case STRING -> value.asString().value();
+            case BOOLEAN -> Boolean.toString(value.asBoolean().value());
             case NULL -> "null";
             default -> value.toString();
         };

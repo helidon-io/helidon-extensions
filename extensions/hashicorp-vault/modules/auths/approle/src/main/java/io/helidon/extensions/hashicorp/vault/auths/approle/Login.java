@@ -25,7 +25,9 @@ import io.helidon.extensions.hashicorp.vault.VaultResponse;
 import io.helidon.extensions.hashicorp.vault.VaultToken;
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
+
+import static io.helidon.extensions.hashicorp.vault.VaultUtil.toMap;
 
 /**
  * AppRole Login request and response.
@@ -44,7 +46,7 @@ public final class Login {
         /**
          * Fluent API builder for configuring a request.
          * The request builder is passed as is, without a build method.
-         * The equivalent of a build method is {@link #toJson(jakarta.json.JsonBuilderFactory)}
+         * The equivalent of a build method is {@link #toJson()}
          * used by the {@link io.helidon.extensions.hashicorp.vault.rest.RestApi}.
          *
          * @return new request builder
@@ -100,15 +102,15 @@ public final class Login {
             super(builder);
 
             JsonObject json = builder.entity();
-            JsonObject auth = json.getJsonObject("auth");
+            JsonObject auth = json.objectValue("auth").orElseThrow();
 
             this.metadata = toMap(auth, "metadata");
             this.tokenPolicies = toList(auth, "token_policies");
-            this.accessor = auth.getString("accessor");
+            this.accessor = auth.stringValue("accessor").orElseThrow();
             this.token = VaultToken.builder()
-                    .token(auth.getString("client_token"))
-                    .renewable(auth.getBoolean("renewable"))
-                    .leaseDuration(Duration.ofSeconds(auth.getInt("lease_duration")))
+                    .token(auth.stringValue("client_token").orElseThrow())
+                    .renewable(auth.booleanValue("renewable").orElseThrow())
+                    .leaseDuration(Duration.ofSeconds(auth.intValue("lease_duration").orElseThrow()))
                     .build();
         }
 

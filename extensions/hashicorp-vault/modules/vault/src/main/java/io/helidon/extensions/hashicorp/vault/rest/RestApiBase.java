@@ -18,7 +18,6 @@ package io.helidon.extensions.hashicorp.vault.rest;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.StringReader;
 import java.lang.System.Logger;
 import java.util.List;
 import java.util.Map;
@@ -35,15 +34,12 @@ import io.helidon.faulttolerance.FtHandler;
 import io.helidon.http.HeaderNames;
 import io.helidon.http.Method;
 import io.helidon.http.Status;
+import io.helidon.json.JsonObject;
+import io.helidon.json.JsonParser;
 import io.helidon.tracing.SpanContext;
 import io.helidon.webclient.api.HttpClientRequest;
 import io.helidon.webclient.api.HttpClientResponse;
 import io.helidon.webclient.api.WebClient;
-
-import jakarta.json.JsonBuilderFactory;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonReaderFactory;
-import jakarta.json.JsonWriterFactory;
 
 /**
  * Base REST API implementation.
@@ -54,9 +50,6 @@ public abstract class RestApiBase implements RestApi {
     private static final System.Logger LOGGER = System.getLogger(RestApiBase.class.getName());
     private final WebClient webClient;
     private final FtHandler ftHandler;
-    private final JsonBuilderFactory jsonBuilderFactory;
-    private final JsonReaderFactory jsonReaderFactory;
-    private final JsonWriterFactory jsonWriterFactory;
 
     /**
      * A new instance, requires a subclass of the {@link RestApi.Builder}.
@@ -66,9 +59,6 @@ public abstract class RestApiBase implements RestApi {
     protected RestApiBase(RestApi.Builder<?, ?> builder) {
         webClient = builder.webClient();
         ftHandler = builder.ftHandler();
-        jsonBuilderFactory = builder.jsonBuilderFactory();
-        jsonReaderFactory = builder.jsonReaderFactory();
-        jsonWriterFactory = builder.jsonWriterFactory();
     }
 
     @Override
@@ -191,7 +181,7 @@ public abstract class RestApiBase implements RestApi {
         HttpClientRequest requestBuilder = webClient.method(method).path(path);
         addHeaders(requestBuilder, request.headers());
         addQueryParams(requestBuilder, request.queryParams());
-        Optional<JsonObject> payload = request.toJson(jsonBuilderFactory);
+        Optional<JsonObject> payload = request.toJson();
 
         Supplier<HttpClientResponse> responseSupplier;
 
@@ -567,8 +557,7 @@ public abstract class RestApiBase implements RestApi {
         try {
             String entity = response.entity().as(String.class);
             try {
-                JsonObject json = jsonReaderFactory.createReader(new StringReader(entity))
-                        .readObject();
+                JsonObject json = JsonParser.create(entity).readJsonObject();
                 return readError(path, request, method, requestId, response, json);
             } catch (Throwable ex) {
                 return readError(path, request, method, requestId, response, entity);
@@ -927,36 +916,6 @@ public abstract class RestApiBase implements RestApi {
     @SuppressWarnings("unused")
     protected FtHandler ftHandler() {
         return ftHandler;
-    }
-
-    /**
-     * JSON builder factory.
-     *
-     * @return builder factory
-     */
-    @SuppressWarnings("unused")
-    protected JsonBuilderFactory jsonBuilderFactory() {
-        return jsonBuilderFactory;
-    }
-
-    /**
-     * JSON reader factory.
-     *
-     * @return reader factory
-     */
-    @SuppressWarnings("unused")
-    protected JsonReaderFactory jsonReaderFactory() {
-        return jsonReaderFactory;
-    }
-
-    /**
-     * JSON writer factory.
-     *
-     * @return writer factory
-     */
-    @SuppressWarnings("unused")
-    protected JsonWriterFactory jsonWriterFactory() {
-        return jsonWriterFactory;
     }
 
     private ResponseState responseState(String path,

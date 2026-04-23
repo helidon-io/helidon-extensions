@@ -17,8 +17,8 @@
 package io.helidon.extensions.hashicorp.vault;
 
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
-
-import jakarta.json.JsonObject;
+import io.helidon.extensions.hashicorp.vault.rest.ApiException;
+import io.helidon.json.JsonObject;
 
 /**
  * Response from Vault, always expects a JSON entity.
@@ -33,7 +33,9 @@ public abstract class VaultResponse extends ApiEntityResponse {
      */
     protected VaultResponse(ApiEntityResponse.Builder<?, ? extends VaultResponse, JsonObject> builder) {
         super(builder);
-        this.requestId = builder.entity().getString("request_id");
+        JsonObject entity = builder.entity();
+        this.requestId = entity.stringValue("request_id")
+                .orElseThrow(() -> new ApiException("Expected JSON property \"request_id\" to be present in " + entity));
     }
 
     /**

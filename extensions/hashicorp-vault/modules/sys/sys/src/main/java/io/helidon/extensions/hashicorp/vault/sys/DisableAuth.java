@@ -23,8 +23,7 @@ import io.helidon.extensions.hashicorp.vault.VaultApiException;
 import io.helidon.extensions.hashicorp.vault.VaultRequest;
 import io.helidon.extensions.hashicorp.vault.rest.ApiResponse;
 
-import jakarta.json.JsonBuilderFactory;
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 /**
  * Disable authentication method request and response.
@@ -45,7 +44,7 @@ public final class DisableAuth {
         /**
          * Fluent API builder for configuring a request.
          * The request builder is passed as is, without a build method.
-         * The equivalent of a build method is {@link #toJson(jakarta.json.JsonBuilderFactory)}
+         * The equivalent of a build method is {@link #toJson()}
          * used by the {@link io.helidon.extensions.hashicorp.vault.rest.RestApi}.
          *
          * @return new request builder
@@ -77,7 +76,7 @@ public final class DisableAuth {
         }
 
         @Override
-        public Optional<JsonObject> toJson(JsonBuilderFactory factory) {
+        public Optional<JsonObject> toJson() {
             return Optional.empty();
         }
 

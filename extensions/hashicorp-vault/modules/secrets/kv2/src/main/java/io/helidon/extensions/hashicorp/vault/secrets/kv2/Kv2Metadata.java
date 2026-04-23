@@ -21,8 +21,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 
 import io.helidon.extensions.hashicorp.vault.rest.ApiJsonParser;
-
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 /**
  * Metadata of a KV version 2 secret.
@@ -36,10 +35,10 @@ public class Kv2Metadata extends ApiJsonParser {
     private final boolean destroyed;
 
     private Kv2Metadata(JsonObject metadata) {
-        this.createdTime = Instant.from(FORMATTER.parse(metadata.getString("created_time")));
-        this.version = metadata.getInt("version");
+        this.createdTime = Instant.from(FORMATTER.parse(metadata.stringValue("created_time").orElseThrow()));
+        this.version = metadata.intValue("version").orElseThrow();
         this.deletedTime = toInstant(metadata, "deletion_time", FORMATTER);
-        this.destroyed = metadata.getBoolean("destroyed");
+        this.destroyed = metadata.booleanValue("destroyed").orElseThrow();
     }
 
     /**

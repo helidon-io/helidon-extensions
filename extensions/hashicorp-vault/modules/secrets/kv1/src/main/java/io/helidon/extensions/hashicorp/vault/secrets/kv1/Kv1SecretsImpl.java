@@ -25,7 +25,7 @@ import io.helidon.extensions.hashicorp.vault.VaultApiException;
 import io.helidon.extensions.hashicorp.vault.VaultOptionalResponse;
 import io.helidon.extensions.hashicorp.vault.rest.RestApi;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 class Kv1SecretsImpl implements Kv1Secrets {
     private final RestApi restApi;

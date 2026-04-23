@@ -25,18 +25,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import jakarta.json.JsonArray;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonString;
-import jakarta.json.JsonValue;
+import io.helidon.json.JsonObject;
+import io.helidon.json.JsonValue;
+import io.helidon.json.JsonValueType;
 
 /**
  * Helper methods to process a returned JSON.
  */
 public abstract class ApiJsonParser {
-    private static final Optional<Boolean> EMPTY = Optional.empty();
-    private static final Optional<Boolean> PRESENT = Optional.of(true);
-
     /**
      * Get a string value from a json value.
      *
@@ -45,23 +41,14 @@ public abstract class ApiJsonParser {
      * @throws io.helidon.extensions.hashicorp.vault.rest.ApiException in case the value is array or object
      */
     protected static String stringValue(JsonValue value) {
-        switch (value.getValueType()) {
-        case ARRAY:
-            throw new ApiException("Cannot create a simple String from an array: " + value);
-        case OBJECT:
-            throw new ApiException("Cannot create a simple String from an object: " + value);
-        case STRING:
-            return ((JsonString) value).getString();
-        case TRUE:
-            return "true";
-        case FALSE:
-            return "false";
-        case NULL:
-            return "null";
-        case NUMBER:
-        default:
-            return value.toString();
-        }
+        return switch (value.type()) {
+            case ARRAY -> throw new ApiException("Cannot create a simple String from an array: " + value);
+            case OBJECT -> throw new ApiException("Cannot create a simple String from an object: " + value);
+            case STRING -> value.asString().value();
+            case BOOLEAN, NUMBER -> value.toString();
+            case NULL -> "null";
+            default -> throw new ApiException("Cannot create a simple String from an unknown value: " + value);
+        };
     }
 
     /**
@@ -72,11 +59,11 @@ public abstract class ApiJsonParser {
      * @return list from the array, or empty if the array does not exist or is null
      */
     protected static List<String> toList(JsonObject json, String name) {
-        return isPresent(json, name)
-                .map(ignored -> {
+        return optionalValue(json, name)
+                .map(JsonValue::asArray)
+                .map(jsonArray -> {
                     List<String> result = new LinkedList<>();
-                    JsonArray jsonArray = json.getJsonArray(name);
-                    for (JsonValue jsonValue : jsonArray) {
+                    for (JsonValue jsonValue : jsonArray.values()) {
                         result.add(stringValue(jsonValue));
                     }
                     return List.copyOf(result);
@@ -91,8 +78,8 @@ public abstract class ApiJsonParser {
      * @return bytes or empty if the property does not exist or is null
      */
     protected static Optional<byte[]> toBytesBase64(JsonObject json, String name) {
-        return isPresent(json, name)
-                .map(ignored -> Base64.getDecoder().decode(json.getString(name)));
+        return optionalValue(json, name)
+                .map(value -> Base64.getDecoder().decode(value.asString().value()));
     }
 
     /**
@@ -103,8 +90,8 @@ public abstract class ApiJsonParser {
      * @return JSON object or empty if the property does not exist or is null
      */
     protected static Optional<JsonObject> toObject(JsonObject json, String name) {
-        return isPresent(json, name)
-                .map(ignored -> json.getJsonObject(name));
+        return optionalValue(json, name)
+                .map(JsonValue::asObject);
     }
 
     /**
@@ -115,8 +102,8 @@ public abstract class ApiJsonParser {
      * @return string or empty if the property does not exist or is null
      */
     protected static Optional<String> toString(JsonObject json, String name) {
-        return isPresent(json, name)
-                .map(ignored -> json.getString(name));
+        return optionalValue(json, name)
+                .map(value -> value.asString().value());
     }
 
     /**
@@ -127,8 +114,8 @@ public abstract class ApiJsonParser {
      * @return int or empty if the property does not exist or is null
      */
     protected static Optional<Integer> toInt(JsonObject json, String name) {
-        return isPresent(json, name)
-                .map(ignored -> json.getInt(name));
+        return optionalValue(json, name)
+                .map(value -> value.asNumber().intValue());
     }
 
     /**
@@ -139,8 +126,8 @@ public abstract class ApiJsonParser {
      * @return long or empty if the property does not exist or is null
      */
     protected static Optional<Long> toLong(JsonObject json, String name) {
-        return isPresent(json, name)
-                .map(ignored -> json.getJsonNumber(name).longValue());
+        return optionalValue(json, name)
+                .map(value -> value.asNumber().longValue());
     }
 
     /**
@@ -151,8 +138,8 @@ public abstract class ApiJsonParser {
      * @return double or empty if the property does not exist or is null
      */
     protected static Optional<Double> toDouble(JsonObject json, String name) {
-        return isPresent(json, name)
-                .map(ignored -> json.getJsonNumber(name).doubleValue());
+        return optionalValue(json, name)
+                .map(value -> value.asNumber().doubleValue());
     }
 
     /**
@@ -163,8 +150,8 @@ public abstract class ApiJsonParser {
      * @return boolean or empty if the property does not exist or is null
      */
     protected static Optional<Boolean> toBoolean(JsonObject json, String name) {
-        return isPresent(json, name)
-                .map(ignored -> json.getBoolean(name));
+        return optionalValue(json, name)
+                .map(value -> value.asBoolean().value());
     }
 
     /**
@@ -176,9 +163,9 @@ public abstract class ApiJsonParser {
      * @return instant or empty if the property does not exist or is null
      */
     protected static Optional<Instant> toInstant(JsonObject json, String name, DateTimeFormatter formatter) {
-        return isPresent(json, name)
-                .flatMap(ignored -> {
-                    String timeString = json.getString(name);
+        return optionalValue(json, name)
+                .map(value -> value.asString().value())
+                .flatMap(timeString -> {
                     if (timeString.isBlank()) {
                         return Optional.empty();
                     }
@@ -194,12 +181,12 @@ public abstract class ApiJsonParser {
      * @return map with property key/value pairs, or empty if the property does not exist or is null
      */
     protected static Map<String, String> toMap(JsonObject json, String name) {
-        return isPresent(json, name)
-                .map(ignored -> {
+        return optionalValue(json, name)
+                .map(JsonValue::asObject)
+                .map(nested -> {
                     Map<String, String> map = new HashMap<>();
-
-                    json.getJsonObject(name)
-                            .forEach((key, value) -> map.put(key, stringValue(value)));
+                    nested.keysAsStrings()
+                            .forEach(key -> map.put(key, stringValue(nested.value(key).orElseThrow())));
 
                     return Map.copyOf(map);
                 }).orElseGet(Map::of);
@@ -215,9 +202,12 @@ public abstract class ApiJsonParser {
      * @return non-empty optional if the property exists and is not null
      */
     protected static Optional<Boolean> isPresent(JsonObject json, String name) {
-        if (!json.containsKey(name) || json.isNull(name)) {
-            return EMPTY;
-        }
-        return PRESENT;
+        return optionalValue(json, name)
+                .map(ignored -> true);
+    }
+
+    private static Optional<JsonValue> optionalValue(JsonObject json, String name) {
+        return json.value(name)
+                .filter(value -> value.type() != JsonValueType.NULL);
     }
 }

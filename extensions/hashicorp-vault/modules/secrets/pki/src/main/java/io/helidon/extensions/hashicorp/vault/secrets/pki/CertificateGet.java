@@ -27,10 +27,12 @@ import java.util.Optional;
 import io.helidon.common.LazyValue;
 import io.helidon.extensions.hashicorp.vault.VaultApiException;
 import io.helidon.extensions.hashicorp.vault.VaultRequest;
+import io.helidon.extensions.hashicorp.vault.rest.ApiException;
 import io.helidon.extensions.hashicorp.vault.rest.ApiJsonParser;
 
-import jakarta.json.JsonBuilderFactory;
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
+import io.helidon.json.JsonValue;
+import io.helidon.json.JsonValueType;
 
 /**
  * Get Certificate request and response.
@@ -52,7 +54,7 @@ public final class CertificateGet {
         /**
          * Fluent API builder for configuring a request.
          * The request builder is passed as is, without a build method.
-         * The equivalent of a build method is {@link #toJson(jakarta.json.JsonBuilderFactory)}
+         * The equivalent of a build method is {@link #toJson()}
          * used by the {@link io.helidon.extensions.hashicorp.vault.rest.RestApi}.
          *
          * @return new request builder
@@ -93,7 +95,7 @@ public final class CertificateGet {
         }
 
         @Override
-        public Optional<JsonObject> toJson(JsonBuilderFactory factory) {
+        public Optional<JsonObject> toJson() {
             return Optional.empty();
         }
 
@@ -121,7 +123,11 @@ public final class CertificateGet {
         });
 
         private Response(JsonObject object) {
-            this.certBytes = object.getJsonObject("data").getString("certificate").getBytes(StandardCharsets.UTF_8);
+            JsonObject data = object.objectValue("data")
+                    .orElseThrow(() -> new ApiException("Expected JSON property \"data\" to be present in " + object));
+            this.certBytes = data.stringValue("certificate")
+                    .orElseThrow(() -> new ApiException("Expected JSON property \"certificate\" to be present in " + data))
+                    .getBytes(StandardCharsets.UTF_8);
         }
 
         static Response create(JsonObject json) {

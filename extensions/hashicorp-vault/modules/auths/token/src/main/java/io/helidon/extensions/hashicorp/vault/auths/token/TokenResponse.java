@@ -24,9 +24,10 @@ import io.helidon.extensions.hashicorp.vault.VaultResponse;
 import io.helidon.extensions.hashicorp.vault.VaultToken;
 import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 import static io.helidon.extensions.hashicorp.vault.VaultUtil.arrayToList;
+import static io.helidon.extensions.hashicorp.vault.VaultUtil.toMap;
 
 /**
  * Response returning a token.
@@ -44,19 +45,19 @@ public abstract class TokenResponse extends VaultResponse {
     protected TokenResponse(ApiEntityResponse.Builder<?, ? extends VaultResponse, JsonObject> builder) {
         super(builder);
 
-        JsonObject auth = builder.entity().getJsonObject("auth");
+        JsonObject auth = builder.entity().objectValue("auth").orElseThrow();
 
-        this.accessor = auth.getString("accessor");
-        this.policies = arrayToList(auth.getJsonArray("policies"));
-        this.tokenPolicies = arrayToList(auth.getJsonArray("token_policies"));
+        this.accessor = auth.stringValue("accessor").orElseThrow();
+        this.policies = arrayToList(auth.arrayValue("policies").orElse(null));
+        this.tokenPolicies = arrayToList(auth.arrayValue("token_policies").orElse(null));
         this.metadata = toMap(auth, "metadata");
-        this.entityId = auth.getString("entity_id");
-        this.tokenType = auth.getString("token_type");
-        this.orphan = auth.getBoolean("orphan");
+        this.entityId = auth.stringValue("entity_id").orElseThrow();
+        this.tokenType = auth.stringValue("token_type").orElseThrow();
+        this.orphan = auth.booleanValue("orphan").orElseThrow();
         this.token = VaultToken.builder()
-                .token(auth.getString("client_token"))
-                .leaseDuration(Duration.ofSeconds(auth.getInt("lease_duration")))
-                .renewable(auth.getBoolean("renewable"))
+                .token(auth.stringValue("client_token").orElseThrow())
+                .leaseDuration(Duration.ofSeconds(auth.intValue("lease_duration").orElseThrow()))
+                .renewable(auth.booleanValue("renewable").orElseThrow())
                 .build();
     }
 

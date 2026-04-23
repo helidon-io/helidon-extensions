@@ -23,7 +23,7 @@ import io.helidon.extensions.hashicorp.vault.rest.ApiEntityResponse;
 import io.helidon.extensions.hashicorp.vault.rest.ApiException;
 import io.helidon.extensions.hashicorp.vault.rest.ApiJsonParser;
 
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 /**
  * Encrypt request and response.
@@ -44,7 +44,7 @@ public final class Encrypt {
         /**
          * Fluent API builder for configuring a request.
          * The request builder is passed as is, without a build method.
-         * The equivalent of a build method is {@link #toJson(jakarta.json.JsonBuilderFactory)}
+         * The equivalent of a build method is {@link #toJson()}
          * used by the {@link io.helidon.extensions.hashicorp.vault.rest.RestApi}.
          *
          * @return new request builder
@@ -157,7 +157,7 @@ public final class Encrypt {
 
         private Response(Builder builder) {
             super(builder);
-            JsonObject data = builder.entity().getJsonObject("data");
+            JsonObject data = builder.entity().objectValue("data").orElseThrow();
             this.singleResult = new Encrypted(data);
         }
 
@@ -193,8 +193,8 @@ public final class Encrypt {
         private final int keyVersion;
 
         Encrypted(JsonObject json) {
-            this.cipherText = json.getString("ciphertext");
-            this.keyVersion = json.getInt("key_version");
+            this.cipherText = json.stringValue("ciphertext").orElseThrow();
+            this.keyVersion = json.intValue("key_version").orElseThrow();
         }
 
         /**

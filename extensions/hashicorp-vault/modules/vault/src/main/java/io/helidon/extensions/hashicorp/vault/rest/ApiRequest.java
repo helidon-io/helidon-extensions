@@ -21,9 +21,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import io.helidon.common.media.type.MediaType;
-
-import jakarta.json.JsonBuilderFactory;
-import jakarta.json.JsonObject;
+import io.helidon.json.JsonObject;
 
 /**
  * Common base class for REST requests.
@@ -99,10 +97,9 @@ public interface ApiRequest<T extends ApiRequest<T>> {
      * The default implementation returns an
      * empty optional that can be used for GET, HEAD, DELETE methods (and other methods without an entity).
      *
-     * @param factory builder factory to construct JSON object
      * @return JSON if available on this request
      */
-    default Optional<JsonObject> toJson(JsonBuilderFactory factory) {
+    default Optional<JsonObject> toJson() {
         return Optional.empty();
     }
 
