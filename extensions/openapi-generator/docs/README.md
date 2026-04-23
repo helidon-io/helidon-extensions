@@ -174,7 +174,7 @@ Per schema:
 
 | File | Description |
 |------|-------------|
-| `{Model}.java` | Helidon JSON model type with generated validation and enum support |
+| `{Model}.java` | Helidon JSON model type with generated validation, enum support, and composed-schema handling |
 
 Supporting files:
 
@@ -190,6 +190,18 @@ Supporting files:
 | `src/main/resources/META-INF/openapi.yaml` | Copied spec, if `serverOpenApi=true` |
 
 ## OpenAPI Mapping Notes
+
+### Composed Schemas
+
+The generator supports OpenAPI composed schemas:
+
+- `allOf` generates a single POJO with merged properties and combined required fields
+- `oneOf` generates a wrapper model with generated typed accessors, factory methods, and exact-one validation
+- `anyOf` generates a wrapper model with generated typed accessors, factory methods, and at-least-one validation
+
+For `oneOf` and `anyOf`, the generated model stores the raw JSON payload and uses a generated
+Helidon `@Json.Converter` to preserve composed-schema semantics during serialization and
+deserialization. This avoids flattening distinct variants into a single permissive POJO.
 
 ### Parameters
 
@@ -226,6 +238,7 @@ and covers:
 
 - petstore-style generation
 - feature coverage and validation
+- composed-schema support (`oneOf`, `anyOf`, `allOf`)
 - form and multipart handling
 - security
 - observability options

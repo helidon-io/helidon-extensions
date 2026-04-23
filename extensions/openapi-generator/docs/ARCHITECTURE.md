@@ -122,6 +122,12 @@ imports that are not appropriate for the Helidon-generated output, such as Swagg
 annotation shorthands and Jackson-specific nullable wrappers that are not used by the
 templates.
 
+This stage also detects composed schemas:
+
+- `allOf` continues through the normal model path and is rendered as a merged POJO
+- `oneOf` and `anyOf` are marked for wrapper-style rendering using generated vendor
+  extensions derived from upstream `CodegenComposedSchemas`
+
 ### `fromOperation`
 
 Operation processing enriches each `CodegenOperation` with Helidon-specific vendor
@@ -192,6 +198,8 @@ Current templates:
 - `api.mustache` emits the endpoint stub implementation.
 - `restClient.mustache` extends the shared API contract to reuse HTTP annotations.
 - `model.mustache` generates model classes rather than records.
+- `model.mustache` renders `oneOf` and `anyOf` schemas as wrapper models with generated
+  Helidon `@Json.Converter` implementations and typed variant accessors.
 - `api.mustache` does not emit `@RestServer.Listener`, because the default listener is
   already implied.
 
@@ -208,6 +216,9 @@ Per tag:
 Per schema:
 
 - `{Model}.java`
+  For plain schemas and `allOf`, this is a standard POJO.
+  For `oneOf` and `anyOf`, this is a wrapper model around `JsonValue` with variant-aware
+  matching and serialization support.
 
 Project-level support:
 
@@ -247,6 +258,7 @@ Representative tests:
 - `PetstoreGenerationIT`
 - `FeaturesGenerationIT`
 - `FeaturesAvoidOptionalListParamsIT`
+- `ComposedSchemaGenerationIT`
 - `FormGenerationIT`
 - `ValidationGenerationIT`
 - `ValidationPrivateFieldIT`

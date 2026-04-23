@@ -22,6 +22,258 @@ import io.helidon.json.binding.Json;
 import {{import}};
 {{/imports}}
 {{#model}}
+{{#vendorExtensions.x-is-composed-wrapper}}
+import java.util.Objects;
+import java.util.Optional;
+
+import io.helidon.common.GenericType;
+import io.helidon.json.JsonGenerator;
+import io.helidon.json.JsonObject;
+import io.helidon.json.JsonParser;
+import io.helidon.json.JsonValue;
+import io.helidon.json.JsonValueType;
+import io.helidon.json.binding.JsonBinding;
+import io.helidon.json.binding.JsonConverter;
+
+/**
+ * {{description}}{{^description}}{{classname}} {{vendorExtensions.x-composed-kind}} wrapper.{{/description}}
+ *
+ * <p>This generated model preserves {{vendorExtensions.x-composed-kind}} semantics by storing
+ * the raw JSON value and exposing typed accessors for each supported variant.</p>
+ */
+@Json.Converter({{classname}}.{{classname}}JsonConverter.class)
+{{#isDeprecated}}@Deprecated
+{{/isDeprecated}}public final class {{classname}} {
+
+    private static final JsonBinding JSON_BINDING = JsonBinding.create();
+    private static final GenericType<{{classname}}> SELF_TYPE = new GenericType<{{classname}}>() { };
+{{#vendorExtensions.x-composed-variants}}
+    private static final GenericType<{{{dataType}}}> {{typeConstantName}} = new GenericType<{{{dataType}}}>() { };
+{{/vendorExtensions.x-composed-variants}}
+
+    private final JsonValue value;
+
+    private {{classname}}(JsonValue value) {
+        this.value = Objects.requireNonNull(value, "value");
+    }
+
+    /**
+     * Creates a validated wrapper from a raw JSON value.
+     *
+     * @param value JSON value
+     * @return typed wrapper
+     */
+    public static {{classname}} fromJsonValue(JsonValue value) {
+        validateJsonValue(value, "jsonValue");
+        return new {{classname}}(value);
+    }
+
+    /**
+     * Returns the raw JSON payload.
+     *
+     * @return raw JSON value
+     */
+    public JsonValue jsonValue() {
+        return value;
+    }
+
+{{#vendorExtensions.x-composed-variants}}
+    /**
+     * Creates a {{classname}} wrapper from a {{displayName}} value.
+     *
+     * @param value variant value
+     * @return typed wrapper
+     */
+    public static {{classname}} {{factoryMethodName}}({{{dataType}}} value) {
+        return new {{classname}}(toJsonValue(Objects.requireNonNull(value, "{{displayName}} value"), {{typeConstantName}}));
+    }
+
+    /**
+     * Returns whether the payload matches {{displayName}}.
+     *
+     * @return {@code true} if the payload matches {{displayName}}
+     */
+    public boolean {{predicateMethodName}}() {
+        return {{matcherMethodName}}(value);
+    }
+
+    /**
+     * Attempts to deserialize the payload as {{displayName}}.
+     *
+     * @return optional {{displayName}} view of the payload
+     */
+    public Optional<{{{dataType}}}> {{accessorMethodName}}() {
+        return {{predicateMethodName}}()
+                ? Optional.ofNullable(JSON_BINDING.deserialize(value, {{typeConstantName}}))
+                : Optional.empty();
+    }
+
+{{/vendorExtensions.x-composed-variants}}
+    /**
+     * Returns whether the JSON value matches this composed schema.
+     *
+     * @param jsonValue JSON value to validate
+     * @return {@code true} if the value matches this schema
+     */
+    public static boolean matchesJsonValue(JsonValue jsonValue) {
+        int matches = variantMatchCount(jsonValue);
+{{#vendorExtensions.x-is-oneof-wrapper}}
+        return matches == 1;
+{{/vendorExtensions.x-is-oneof-wrapper}}
+{{#vendorExtensions.x-is-anyof-wrapper}}
+        return matches >= 1;
+{{/vendorExtensions.x-is-anyof-wrapper}}
+    }
+
+    @Override
+    public int hashCode() {
+        return value.hashCode();
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (!(obj instanceof {{classname}} other)) {
+            return false;
+        }
+        return value.equals(other.value);
+    }
+
+    @Override
+    public String toString() {
+        return value.toString();
+    }
+
+    private static void validateJsonValue(JsonValue jsonValue, String sourceName) {
+        int matches = variantMatchCount(jsonValue);
+{{#vendorExtensions.x-is-oneof-wrapper}}
+        if (matches != 1) {
+            throw new IllegalArgumentException(sourceName
+                    + " must match exactly one of [{{#vendorExtensions.x-composed-variants}}{{displayName}}{{^-last}}, {{/-last}}{{/vendorExtensions.x-composed-variants}}], but matched "
+                    + matches);
+        }
+{{/vendorExtensions.x-is-oneof-wrapper}}
+{{#vendorExtensions.x-is-anyof-wrapper}}
+        if (matches < 1) {
+            throw new IllegalArgumentException(sourceName
+                    + " must match at least one of [{{#vendorExtensions.x-composed-variants}}{{displayName}}{{^-last}}, {{/-last}}{{/vendorExtensions.x-composed-variants}}]");
+        }
+{{/vendorExtensions.x-is-anyof-wrapper}}
+    }
+
+    private static int variantMatchCount(JsonValue jsonValue) {
+        int matches = 0;
+{{#vendorExtensions.x-composed-variants}}
+        if ({{matcherMethodName}}(jsonValue)) {
+            matches++;
+        }
+{{/vendorExtensions.x-composed-variants}}
+        return matches;
+    }
+
+{{#vendorExtensions.x-composed-variants}}
+    private static boolean {{matcherMethodName}}(JsonValue jsonValue) {
+        if (jsonValue == null) {
+            return false;
+        }
+        if (jsonValue.type() == JsonValueType.NULL) {
+            return {{nullable}};
+        }
+{{#usesComposedMatcher}}
+        if (!{{{dataType}}}.matchesJsonValue(jsonValue)) {
+            return false;
+        }
+{{/usesComposedMatcher}}
+{{#isObjectVariant}}
+        if (!matchesObjectShape(
+                jsonValue,
+                {{#hasDiscriminatorProperty}}"{{discriminatorProperty}}"{{/hasDiscriminatorProperty}}{{^hasDiscriminatorProperty}}null{{/hasDiscriminatorProperty}},
+                {{#hasDiscriminatorAliases}}java.util.Set.of({{#discriminatorAliases}}"{{value}}"{{^-last}}, {{/-last}}{{/discriminatorAliases}}){{/hasDiscriminatorAliases}}{{^hasDiscriminatorAliases}}java.util.Set.of(){{/hasDiscriminatorAliases}},
+                {{#hasRequiredProperties}}java.util.Set.of({{#requiredProperties}}"{{value}}"{{^-last}}, {{/-last}}{{/requiredProperties}}){{/hasRequiredProperties}}{{^hasRequiredProperties}}java.util.Set.of(){{/hasRequiredProperties}},
+                {{#hasKnownProperties}}java.util.Set.of({{#knownProperties}}"{{value}}"{{^-last}}, {{/-last}}{{/knownProperties}}){{/hasKnownProperties}}{{^hasKnownProperties}}java.util.Set.of(){{/hasKnownProperties}},
+                {{explicitAdditionalPropertiesFalse}})) {
+            return false;
+        }
+{{/isObjectVariant}}
+{{^usesComposedMatcher}}{{^isObjectVariant}}
+        if (!matchesJsonType(jsonValue, JsonValueType.{{jsonType}}, {{integralNumber}})) {
+            return false;
+        }
+{{/isObjectVariant}}{{/usesComposedMatcher}}
+        try {
+            JSON_BINDING.deserialize(jsonValue, {{typeConstantName}});
+            return true;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
+{{/vendorExtensions.x-composed-variants}}
+    private static boolean matchesJsonType(JsonValue jsonValue, JsonValueType expectedType, boolean integralNumber) {
+        if (jsonValue == null || jsonValue.type() != expectedType) {
+            return false;
+        }
+        return !integralNumber || jsonValue.asNumber().bigDecimalValue().stripTrailingZeros().scale() <= 0;
+    }
+
+    private static boolean matchesObjectShape(JsonValue jsonValue,
+                                              String discriminatorProperty,
+                                              java.util.Set<String> discriminatorValues,
+                                              java.util.Set<String> requiredProperties,
+                                              java.util.Set<String> knownProperties,
+                                              boolean explicitAdditionalPropertiesFalse) {
+        if (jsonValue == null || jsonValue.type() != JsonValueType.OBJECT) {
+            return false;
+        }
+
+        JsonObject object = jsonValue.asObject();
+        if (discriminatorProperty != null) {
+            String discriminatorValue = object.stringValue(discriminatorProperty, null);
+            if (discriminatorValue == null || !discriminatorValues.contains(discriminatorValue)) {
+                return false;
+            }
+        }
+        if (!object.keysAsStrings().containsAll(requiredProperties)) {
+            return false;
+        }
+        return !explicitAdditionalPropertiesFalse || knownProperties.containsAll(object.keysAsStrings());
+    }
+
+    private static <T> JsonValue toJsonValue(T value, GenericType<T> type) {
+        return JsonParser.create(JSON_BINDING.serialize(value, type)).readJsonValue();
+    }
+
+    /**
+     * Helidon JSON converter for {{classname}}.
+     */
+    public static final class {{classname}}JsonConverter implements JsonConverter<{{classname}}> {
+
+        @Override
+        public GenericType<{{classname}}> type() {
+            return SELF_TYPE;
+        }
+
+        @Override
+        public {{classname}} deserialize(JsonParser parser) {
+            JsonValue jsonValue = parser.readJsonValue();
+            validateJsonValue(jsonValue, "JSON payload");
+            return new {{classname}}(jsonValue);
+        }
+
+        @Override
+        public void serialize(JsonGenerator generator, {{classname}} value, boolean serializeNulls) {
+            if (value == null || value.value == null) {
+                generator.writeNull();
+                return;
+            }
+            value.value.toJson(generator);
+        }
+    }
+}
+{{/vendorExtensions.x-is-composed-wrapper}}
+{{^vendorExtensions.x-is-composed-wrapper}}
 
 /**
  * {{description}}{{^description}}{{classname}} model.{{/description}}
@@ -60,5 +312,6 @@ import {{import}};
 
 {{/isEnum}}{{/vars}}
 }
+{{/vendorExtensions.x-is-composed-wrapper}}
 {{/model}}
 {{/models}}

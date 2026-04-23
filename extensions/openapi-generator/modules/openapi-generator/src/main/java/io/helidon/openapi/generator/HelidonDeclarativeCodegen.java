@@ -26,14 +26,19 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
+import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
+import io.swagger.v3.oas.models.media.ComposedSchema;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.servers.Server;
+import org.openapitools.codegen.CodegenComposedSchemas;
 import org.openapitools.codegen.CodegenModel;
 import org.openapitools.codegen.CodegenOperation;
 import org.openapitools.codegen.CodegenParameter;
@@ -93,6 +98,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private boolean metricsEnabled = false;
     private boolean avoidOptionalListParams = false;
     private List<SecurityRequirement> globalSecurityRequirements = List.of();
+    private OpenAPI currentOpenAPI;
 
     /**
      * Creates a new generator with default options and template mappings.
@@ -327,6 +333,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     @Override
     public void preprocessOpenAPI(io.swagger.v3.oas.models.OpenAPI openAPI) {
         super.preprocessOpenAPI(openAPI);
+        currentOpenAPI = openAPI;
         globalSecurityRequirements = openAPI.getSecurity() == null
                 ? List.of()
                 : new ArrayList<>(openAPI.getSecurity());
@@ -377,6 +384,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         model.imports.remove("JsonInclude");
         model.imports.remove("JsonProperty");
         model.imports.remove("JsonNullable");   // openApiNullable wrapper — not used in our template
+        applyComposedModelMetadata(model);
         return model;
     }
 
@@ -756,6 +764,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             ModelsMap modelsMap = entry.getValue();
             for (ModelMap modelContainer : modelsMap.getModels()) {
                 var model = modelContainer.getModel();
+                if (Boolean.TRUE.equals(model.vendorExtensions.get("x-is-composed-wrapper"))) {
+                    continue;
+                }
                 boolean modelHasValidation = false;
 
                 for (CodegenProperty prop : model.vars) {
@@ -1095,5 +1106,352 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         } catch (ArithmeticException | NumberFormatException ignored) {
             return null;
         }
+    }
+
+    private void applyComposedModelMetadata(CodegenModel model) {
+        CodegenComposedSchemas composedSchemas = model.getComposedSchemas();
+        if (composedSchemas == null) {
+            return;
+        }
+
+        String composedKind;
+        List<CodegenProperty> variants;
+        if (composedSchemas.getOneOf() != null && !composedSchemas.getOneOf().isEmpty()) {
+            composedKind = "oneOf";
+            variants = composedSchemas.getOneOf();
+        } else if (composedSchemas.getAnyOf() != null && !composedSchemas.getAnyOf().isEmpty()) {
+            composedKind = "anyOf";
+            variants = composedSchemas.getAnyOf();
+        } else {
+            return;
+        }
+
+        List<Map<String, Object>> composedVariants = new ArrayList<>();
+        Set<String> usedSuffixes = new LinkedHashSet<>();
+        for (int i = 0; i < variants.size(); i++) {
+            CodegenProperty variant = variants.get(i);
+            composedVariants.add(buildComposedVariantMetadata(model, variant, i, usedSuffixes));
+        }
+        markLast(composedVariants);
+
+        model.vendorExtensions.put("x-is-composed-wrapper", Boolean.TRUE);
+        model.vendorExtensions.put("x-composed-kind", composedKind);
+        model.vendorExtensions.put("x-is-oneof-wrapper", "oneOf".equals(composedKind));
+        model.vendorExtensions.put("x-is-anyof-wrapper", "anyOf".equals(composedKind));
+        model.vendorExtensions.put("x-composed-variants", composedVariants);
+    }
+
+    private Map<String, Object> buildComposedVariantMetadata(CodegenModel model,
+                                                             CodegenProperty variant,
+                                                             int index,
+                                                             Set<String> usedSuffixes) {
+        Map<String, Object> result = new HashMap<>();
+        String rawTypeName = variant.complexType != null && !variant.complexType.isBlank()
+                ? variant.complexType
+                : variant.dataType;
+        String methodSuffix = uniqueVariantMethodSuffix(rawTypeName, index, usedSuffixes);
+        String schemaName = schemaNameForVariant(variant);
+        String typeConstantName = "TYPE_" + methodSuffix.toUpperCase();
+        SchemaMatchInfo matchInfo = schemaMatchInfo(variant, schemaName);
+
+        result.put("dataType", variant.dataType);
+        result.put("methodSuffix", methodSuffix);
+        result.put("typeConstantName", typeConstantName);
+        result.put("matcherMethodName", "matches" + methodSuffix);
+        result.put("factoryMethodName", "of" + methodSuffix);
+        result.put("predicateMethodName", "is" + methodSuffix);
+        result.put("accessorMethodName", "as" + methodSuffix);
+        result.put("displayName", rawTypeName);
+        result.put("jsonType", matchInfo.jsonType());
+        result.put("integralNumber", matchInfo.integralNumber());
+        result.put("nullable", matchInfo.nullable());
+        result.put("usesComposedMatcher", matchInfo.usesComposedMatcher());
+        result.put("isObjectVariant", "OBJECT".equals(matchInfo.jsonType()) && !matchInfo.usesComposedMatcher());
+        result.put("explicitAdditionalPropertiesFalse", matchInfo.explicitAdditionalPropertiesFalse());
+        String discriminatorProperty = discriminatorProperty(model);
+        List<String> discriminatorAliases = discriminatorAliases(model, schemaName);
+        result.put("discriminatorProperty", discriminatorProperty);
+        result.put("hasDiscriminatorProperty", discriminatorProperty != null);
+        result.put("discriminatorAliases", toTemplateStrings(discriminatorAliases));
+        result.put("hasDiscriminatorAliases", !discriminatorAliases.isEmpty());
+        result.put("requiredProperties", toTemplateStrings(matchInfo.requiredProperties()));
+        result.put("hasRequiredProperties", !matchInfo.requiredProperties().isEmpty());
+        result.put("knownProperties", toTemplateStrings(matchInfo.knownProperties()));
+        result.put("hasKnownProperties", !matchInfo.knownProperties().isEmpty());
+        return result;
+    }
+
+    private List<Map<String, String>> toTemplateStrings(List<String> values) {
+        List<Map<String, String>> result = new ArrayList<>();
+        for (int i = 0; i < values.size(); i++) {
+            Map<String, String> entry = new HashMap<>();
+            entry.put("value", values.get(i));
+            entry.put("-last", String.valueOf(i == values.size() - 1));
+            result.add(entry);
+        }
+        return result;
+    }
+
+    private void markLast(List<Map<String, Object>> entries) {
+        for (int i = 0; i < entries.size(); i++) {
+            entries.get(i).put("-last", i == entries.size() - 1);
+        }
+    }
+
+    private String uniqueVariantMethodSuffix(String rawTypeName, int index, Set<String> usedSuffixes) {
+        String candidate = camelize(sanitizeName(rawTypeName == null ? "" : rawTypeName));
+        if (candidate == null || candidate.isBlank()) {
+            candidate = "Variant" + (index + 1);
+        }
+
+        String unique = candidate;
+        int suffix = 2;
+        while (!usedSuffixes.add(unique)) {
+            unique = candidate + suffix;
+            suffix++;
+        }
+        return unique;
+    }
+
+    private String schemaNameForVariant(CodegenProperty variant) {
+        if (variant.getRef() != null && !variant.getRef().isBlank()) {
+            return variant.getRef().substring(variant.getRef().lastIndexOf('/') + 1);
+        }
+        if (variant.complexType != null && !variant.complexType.isBlank()
+                && currentOpenAPI != null
+                && currentOpenAPI.getComponents() != null
+                && currentOpenAPI.getComponents().getSchemas() != null
+                && currentOpenAPI.getComponents().getSchemas().containsKey(variant.complexType)) {
+            return variant.complexType;
+        }
+        return null;
+    }
+
+    private SchemaMatchInfo schemaMatchInfo(CodegenProperty variant, String schemaName) {
+        if (schemaName != null) {
+            Schema schema = resolveSchemaByName(schemaName);
+            if (schema != null) {
+                return schemaMatchInfo(schemaName, schema, new LinkedHashSet<>());
+            }
+        }
+
+        if (variant.isArray) {
+            return new SchemaMatchInfo("ARRAY", false, false, false,
+                    null, List.of(), List.of());
+        }
+        if (variant.isBoolean) {
+            return new SchemaMatchInfo("BOOLEAN", false, false, false,
+                    null, List.of(), List.of());
+        }
+        if (variant.isInteger || variant.isLong || variant.isShort || variant.isUnboundedInteger) {
+            return new SchemaMatchInfo("NUMBER", true, false, false,
+                    null, List.of(), List.of());
+        }
+        if (variant.isNumber || variant.isFloat || variant.isDouble || variant.isDecimal) {
+            return new SchemaMatchInfo("NUMBER", false, false, false,
+                    null, List.of(), List.of());
+        }
+        if (variant.isString || variant.isDate || variant.isDateTime || variant.isUuid || variant.isUri) {
+            return new SchemaMatchInfo("STRING", false, false, false,
+                    null, List.of(), List.of());
+        }
+        if (variant.isMap || variant.isFreeFormObject) {
+            return new SchemaMatchInfo("OBJECT", false, false, false,
+                    null, List.of(), List.of());
+        }
+        return new SchemaMatchInfo("UNKNOWN", false, false, false,
+                null, List.of(), List.of());
+    }
+
+    private SchemaMatchInfo schemaMatchInfo(String schemaName, Schema schema, Set<String> seenSchemas) {
+        Schema resolvedSchema = dereferenceSchema(schema, seenSchemas);
+        if (resolvedSchema == null) {
+            return new SchemaMatchInfo("UNKNOWN", false, false, false,
+                    null, List.of(), List.of());
+        }
+
+        boolean nullable = Boolean.TRUE.equals(resolvedSchema.getNullable());
+        if (isUnionSchema(resolvedSchema)) {
+            return new SchemaMatchInfo("UNKNOWN", false, nullable, true,
+                    null, List.of(), List.of());
+        }
+
+        if (isObjectSchema(resolvedSchema)) {
+            ObjectShape objectShape = objectShape(resolvedSchema, new LinkedHashSet<>(seenSchemas));
+            return new SchemaMatchInfo("OBJECT",
+                    false,
+                    nullable,
+                    false,
+                    null,
+                    List.of(),
+                    new ArrayList<>(objectShape.requiredProperties()),
+                    new ArrayList<>(objectShape.knownProperties()),
+                    objectShape.explicitAdditionalPropertiesFalse());
+        }
+
+        String type = resolvedSchema.getType();
+        if ("array".equals(type)) {
+            return new SchemaMatchInfo("ARRAY", false, nullable, false,
+                    null, List.of(), List.of());
+        }
+        if ("boolean".equals(type)) {
+            return new SchemaMatchInfo("BOOLEAN", false, nullable, false,
+                    null, List.of(), List.of());
+        }
+        if ("integer".equals(type)) {
+            return new SchemaMatchInfo("NUMBER", true, nullable, false,
+                    null, List.of(), List.of());
+        }
+        if ("number".equals(type)) {
+            return new SchemaMatchInfo("NUMBER", false, nullable, false,
+                    null, List.of(), List.of());
+        }
+        if ("string".equals(type)) {
+            return new SchemaMatchInfo("STRING", false, nullable, false,
+                    null, List.of(), List.of());
+        }
+
+        return new SchemaMatchInfo("UNKNOWN", false, nullable, false,
+                null, List.of(), List.of());
+    }
+
+    private Schema dereferenceSchema(Schema schema, Set<String> seenSchemas) {
+        if (schema == null || currentOpenAPI == null || currentOpenAPI.getComponents() == null
+                || currentOpenAPI.getComponents().getSchemas() == null) {
+            return schema;
+        }
+
+        if (schema.get$ref() == null || schema.get$ref().isBlank()) {
+            return schema;
+        }
+
+        String schemaName = schema.get$ref().substring(schema.get$ref().lastIndexOf('/') + 1);
+        if (!seenSchemas.add(schemaName)) {
+            return schema;
+        }
+
+        return currentOpenAPI.getComponents().getSchemas().getOrDefault(schemaName, schema);
+    }
+
+    private Schema resolveSchemaByName(String schemaName) {
+        if (currentOpenAPI == null || currentOpenAPI.getComponents() == null
+                || currentOpenAPI.getComponents().getSchemas() == null) {
+            return null;
+        }
+        return currentOpenAPI.getComponents().getSchemas().get(schemaName);
+    }
+
+    private boolean isUnionSchema(Schema schema) {
+        if (!(schema instanceof ComposedSchema composedSchema)) {
+            return false;
+        }
+        return (composedSchema.getOneOf() != null && !composedSchema.getOneOf().isEmpty())
+                || (composedSchema.getAnyOf() != null && !composedSchema.getAnyOf().isEmpty());
+    }
+
+    private boolean isObjectSchema(Schema schema) {
+        if (schema == null) {
+            return false;
+        }
+        if ("object".equals(schema.getType())) {
+            return true;
+        }
+        if (schema.getProperties() != null && !schema.getProperties().isEmpty()) {
+            return true;
+        }
+        if (schema instanceof ComposedSchema composedSchema
+                && composedSchema.getAllOf() != null
+                && !composedSchema.getAllOf().isEmpty()) {
+            return true;
+        }
+        return schema.getAdditionalProperties() != null;
+    }
+
+    private ObjectShape objectShape(Schema schema, Set<String> seenSchemas) {
+        Schema resolvedSchema = dereferenceSchema(schema, seenSchemas);
+        if (resolvedSchema == null) {
+            return new ObjectShape(Set.of(), Set.of(), false);
+        }
+
+        Set<String> requiredProperties = new LinkedHashSet<>();
+        Set<String> knownProperties = new LinkedHashSet<>();
+        boolean explicitAdditionalPropertiesFalse = Boolean.FALSE.equals(resolvedSchema.getAdditionalProperties());
+
+        if (resolvedSchema.getRequired() != null) {
+            requiredProperties.addAll(resolvedSchema.getRequired());
+        }
+        if (resolvedSchema.getProperties() != null) {
+            knownProperties.addAll(resolvedSchema.getProperties().keySet());
+        }
+
+        if (resolvedSchema instanceof ComposedSchema composedSchema
+                && composedSchema.getAllOf() != null) {
+            for (Schema nestedSchema : composedSchema.getAllOf()) {
+                ObjectShape nestedShape = objectShape(nestedSchema, new LinkedHashSet<>(seenSchemas));
+                requiredProperties.addAll(nestedShape.requiredProperties());
+                knownProperties.addAll(nestedShape.knownProperties());
+                explicitAdditionalPropertiesFalse =
+                        explicitAdditionalPropertiesFalse || nestedShape.explicitAdditionalPropertiesFalse();
+            }
+        }
+
+        return new ObjectShape(requiredProperties, knownProperties, explicitAdditionalPropertiesFalse);
+    }
+
+    private String discriminatorProperty(CodegenModel model) {
+        if (model.discriminator == null) {
+            return null;
+        }
+        if (model.discriminator.getPropertyBaseName() != null && !model.discriminator.getPropertyBaseName().isBlank()) {
+            return model.discriminator.getPropertyBaseName();
+        }
+        return model.discriminator.getPropertyName();
+    }
+
+    private List<String> discriminatorAliases(CodegenModel model, String schemaName) {
+        if (model.discriminator == null || schemaName == null) {
+            return List.of();
+        }
+
+        Set<String> aliases = new LinkedHashSet<>();
+        Map<String, String> mapping = model.discriminator.getMapping();
+        if (mapping != null) {
+            String schemaRef = "#/components/schemas/" + schemaName;
+            mapping.forEach((alias, target) -> {
+                if (schemaName.equals(target) || schemaRef.equals(target)) {
+                    aliases.add(alias);
+                }
+            });
+        }
+        if (aliases.isEmpty()) {
+            aliases.add(schemaName);
+        }
+        return new ArrayList<>(aliases);
+    }
+
+    private record SchemaMatchInfo(String jsonType,
+                                   boolean integralNumber,
+                                   boolean nullable,
+                                   boolean usesComposedMatcher,
+                                   String discriminatorProperty,
+                                   List<String> discriminatorAliases,
+                                   List<String> requiredProperties,
+                                   List<String> knownProperties,
+                                   boolean explicitAdditionalPropertiesFalse) {
+        private SchemaMatchInfo(String jsonType,
+                                boolean integralNumber,
+                                boolean nullable,
+                                boolean usesComposedMatcher,
+                                String discriminatorProperty,
+                                List<String> requiredProperties,
+                                List<String> knownProperties) {
+            this(jsonType, integralNumber, nullable, usesComposedMatcher,
+                    discriminatorProperty, List.of(), requiredProperties, knownProperties, false);
+        }
+    }
+
+    private record ObjectShape(Set<String> requiredProperties,
+                               Set<String> knownProperties,
+                               boolean explicitAdditionalPropertiesFalse) {
     }
 }
