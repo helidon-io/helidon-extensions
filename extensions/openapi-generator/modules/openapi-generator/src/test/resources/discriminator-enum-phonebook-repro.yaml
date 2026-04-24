@@ -1,0 +1,33 @@
+openapi: 3.0.3
+info:
+  title: discriminator-phonebook-reproducer
+  version: 1.0.0
+paths: {}
+components:
+  schemas:
+    ApplicableScope:
+      type: object
+      required:
+        - scopeType
+      discriminator:
+        propertyName: scopeType
+      properties:
+        scopeType:
+          type: string
+          enum:
+            - REALM_SCOPE
+            - SERVICE_PHONEBOOK_SCOPE
+
+    RealmScope:
+      allOf:
+        - $ref: '#/components/schemas/ApplicableScope'
+        - type: object
+
+    ServicePhoneBookScope:
+      allOf:
+        - $ref: '#/components/schemas/ApplicableScope'
+        - type: object
+          x-discriminator-value: SERVICE_PHONEBOOK_SCOPE
+          properties:
+            serviceName:
+              type: string

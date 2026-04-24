@@ -965,12 +965,12 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 continue;
             }
 
-            String discriminatorAlias = allOfDiscriminatorAlias(model, parentModel, discriminatorKey);
+            String discriminatorValue = allOfDiscriminatorValue(model, parentModel, discriminatorKey);
             String discriminatorSetter = discriminatorSetter(parentModel, discriminatorKey);
-            String discriminatorValueExpression = discriminatorValueExpression(parentModel, discriminatorKey, discriminatorAlias);
+            String discriminatorValueExpression = discriminatorValueExpression(parentModel, discriminatorKey, discriminatorValue);
 
             model.vendorExtensions.put("x-allof-discriminator-key", discriminatorKey);
-            model.vendorExtensions.put("x-allof-discriminator-value", discriminatorAlias);
+            model.vendorExtensions.put("x-allof-discriminator-value", discriminatorValue);
             model.vendorExtensions.put("x-allof-discriminator-value-expression", discriminatorValueExpression);
             if (discriminatorSetter != null) {
                 model.vendorExtensions.put("x-allof-discriminator-setter", discriminatorSetter);
@@ -979,7 +979,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
             subtypesByParent.computeIfAbsent(parentType, ignored -> new ArrayList<>())
                     .add(new LinkedHashMap<>(Map.of(
-                            "alias", discriminatorAlias,
+                            "alias", discriminatorValue,
                             "name", model.classname)));
         }
 
@@ -1201,7 +1201,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return schema.getExtensions().get(name);
     }
 
-    private String allOfDiscriminatorAlias(CodegenModel model,
+    private String allOfDiscriminatorValue(CodegenModel model,
                                            CodegenModel parentModel,
                                            String discriminatorKey) {
         Object explicitValue = model.vendorExtensions.get("x-allof-discriminator-value");
@@ -1450,18 +1450,29 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
     private String discriminatorValueExpression(CodegenModel parentModel,
                                                 String discriminatorKey,
-                                                String discriminatorAlias) {
+                                                String discriminatorValue) {
         CodegenProperty property = discriminatorProperty(parentModel, discriminatorKey);
         if (property == null) {
-            return toJavaStringLiteral(discriminatorAlias);
+            return toJavaStringLiteral(discriminatorValue);
         }
 
         if (property.isEnum && property.datatypeWithEnum != null && !property.datatypeWithEnum.isBlank()) {
-            String enumConstant = toEnumVarName(discriminatorAlias, "String");
+            String enumConstant = parentEnumConstant(property, discriminatorValue);
             return parentModel.classname + "." + property.datatypeWithEnum + "." + enumConstant;
         }
 
-        return toJavaStringLiteral(discriminatorAlias);
+        return toJavaStringLiteral(discriminatorValue);
+    }
+
+    private String parentEnumConstant(CodegenProperty property, String discriminatorValue) {
+        String normalizedDiscriminatorValue = toEnumVarName(discriminatorValue, "String");
+        for (String enumValue : discriminatorEnumValues(property)) {
+            String enumConstant = toEnumVarName(enumValue, "String");
+            if (enumValue.equals(discriminatorValue) || enumConstant.equals(normalizedDiscriminatorValue)) {
+                return enumConstant;
+            }
+        }
+        return normalizedDiscriminatorValue;
     }
 
     private CodegenProperty discriminatorProperty(CodegenModel parentModel, String discriminatorKey) {

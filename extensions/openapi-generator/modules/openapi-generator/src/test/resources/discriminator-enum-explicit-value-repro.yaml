@@ -1,0 +1,39 @@
+openapi: 3.0.3
+info:
+  title: discriminator-explicit-value-reproducer
+  version: 1.0.0
+paths: {}
+components:
+  schemas:
+    ApprovalInvalidationTypeDetails:
+      type: object
+      required:
+        - approvalInvalidationType
+      discriminator:
+        propertyName: approvalInvalidationType
+      properties:
+        approvalInvalidationType:
+          type: string
+          enum:
+            - NON_EXPIRING
+            - AUTHOR_DEFINED_TIME_EXPIRY
+            - MISSING_PEER_APPROVAL
+
+    NonExpiringApprovalInvalidationTypeDetails:
+      allOf:
+        - $ref: '#/components/schemas/ApprovalInvalidationTypeDetails'
+        - type: object
+
+    ConditionAuthorDefinedExpiringApprovalInvalidationTypeDetails:
+      allOf:
+        - $ref: '#/components/schemas/ApprovalInvalidationTypeDetails'
+        - type: object
+          x-discriminator-value: AUTHOR_DEFINED_TIME_EXPIRY
+          properties:
+            expiryDuration:
+              type: integer
+
+    MissingPeerApprovalInvalidationTypeDetails:
+      allOf:
+        - $ref: '#/components/schemas/ApprovalInvalidationTypeDetails'
+        - type: object

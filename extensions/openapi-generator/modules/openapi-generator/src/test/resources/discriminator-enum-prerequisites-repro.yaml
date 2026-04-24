@@ -1,0 +1,33 @@
+openapi: 3.0.3
+info:
+  title: discriminator-prerequisites-reproducer
+  version: 1.0.0
+paths: {}
+components:
+  schemas:
+    ConditionShapeDetails:
+      type: object
+      required:
+        - conditionShape
+      discriminator:
+        propertyName: conditionShape
+      properties:
+        conditionShape:
+          type: string
+          enum:
+            - CHANGE_FREEZE
+            - CM_PREREQUISITES_VIOLATION
+
+    ChangeFreezeConditionShape:
+      allOf:
+        - $ref: '#/components/schemas/ConditionShapeDetails'
+        - type: object
+
+    CmPreRequisiteViolationConditionShape:
+      allOf:
+        - $ref: '#/components/schemas/ConditionShapeDetails'
+        - type: object
+          x-discriminator-value: CM_PREREQUISITES_VIOLATION
+          properties:
+            details:
+              type: string

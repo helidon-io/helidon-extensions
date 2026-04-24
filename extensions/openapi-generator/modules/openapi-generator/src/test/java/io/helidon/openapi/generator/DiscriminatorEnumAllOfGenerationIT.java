@@ -101,6 +101,45 @@ class DiscriminatorEnumAllOfGenerationIT {
         GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
     }
 
+    @Test
+    void explicitDiscriminatorValueWinsOverSubtypeSchemaName() throws Exception {
+        Path outputDir = generate("discriminator-enum-explicit-value-repro.yaml");
+
+        String parent = read(modelFile(outputDir, "ApprovalInvalidationTypeDetails.java"));
+        assertThat(parent, containsString("AUTHOR_DEFINED_TIME_EXPIRY"));
+
+        String explicitSubtype = read(modelFile(outputDir, "ConditionAuthorDefinedExpiringApprovalInvalidationTypeDetails.java"));
+        assertThat(explicitSubtype, containsString("setApprovalInvalidationType("
+                + "ApprovalInvalidationTypeDetails.ApprovalInvalidationTypeEnum.AUTHOR_DEFINED_TIME_EXPIRY);"));
+        assertThat(explicitSubtype,
+                not(containsString("CONDITION_AUTHOR_DEFINED_EXPIRING_APPROVAL_INVALIDATION_TYPE_DETAILS")));
+    }
+
+    @Test
+    void explicitDiscriminatorValuePreservesPhonebookNormalization() throws Exception {
+        Path outputDir = generate("discriminator-enum-phonebook-repro.yaml");
+
+        String parent = read(modelFile(outputDir, "ApplicableScope.java"));
+        assertThat(parent, containsString("SERVICE_PHONEBOOK_SCOPE"));
+
+        String subtype = read(modelFile(outputDir, "ServicePhoneBookScope.java"));
+        assertThat(subtype, containsString("setScopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
+        assertThat(subtype, not(containsString("SERVICE_PHONE_BOOK_SCOPE")));
+    }
+
+    @Test
+    void explicitDiscriminatorValuePreservesPrerequisitesCanonicalization() throws Exception {
+        Path outputDir = generate("discriminator-enum-prerequisites-repro.yaml");
+
+        String parent = read(modelFile(outputDir, "ConditionShapeDetails.java"));
+        assertThat(parent, containsString("CM_PREREQUISITES_VIOLATION"));
+
+        String subtype = read(modelFile(outputDir, "CmPreRequisiteViolationConditionShape.java"));
+        assertThat(subtype, containsString("setConditionShape("
+                + "ConditionShapeDetails.ConditionShapeEnum.CM_PREREQUISITES_VIOLATION);"));
+        assertThat(subtype, not(containsString("CM_PRE_REQUISITE_VIOLATION_CONDITION_SHAPE")));
+    }
+
     private Path generate(String resourceName) throws Exception {
         URL resource = DiscriminatorEnumAllOfGenerationIT.class
                 .getClassLoader()
