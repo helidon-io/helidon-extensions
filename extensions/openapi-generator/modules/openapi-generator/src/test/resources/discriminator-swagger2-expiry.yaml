@@ -1,0 +1,35 @@
+swagger: '2.0'
+info:
+  title: discriminator-swagger2-expiry
+  version: '1.0'
+paths: {}
+definitions:
+  ApprovalInvalidationTypeDetails:
+    type: object
+    required:
+      - approvalInvalidationType
+    properties:
+      approvalInvalidationType:
+        type: string
+        enum:
+          - NON_EXPIRING
+          - AUTHOR_DEFINED_TIME_EXPIRY
+    discriminator: approvalInvalidationType
+
+  NonExpiringDetails:
+    allOf:
+      - $ref: '#/definitions/ApprovalInvalidationTypeDetails'
+      - discriminator: NON_EXPIRING
+        type: object
+        properties:
+          note:
+            type: string
+
+  ConditionAuthorDefinedExpiringApprovalInvalidationTypeDetails:
+    allOf:
+      - $ref: '#/definitions/ApprovalInvalidationTypeDetails'
+      - discriminator: AUTHOR_DEFINED_TIME_EXPIRY
+        type: object
+        properties:
+          expiryDuration:
+            type: integer

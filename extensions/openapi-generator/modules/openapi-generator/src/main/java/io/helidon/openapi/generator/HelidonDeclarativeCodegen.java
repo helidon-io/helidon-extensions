@@ -1219,22 +1219,29 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             String specContent = Files.readString(specPath, StandardCharsets.UTF_8);
             ObjectMapper mapper = looksLikeJson(specPath, specContent) ? Json.mapper() : Yaml.mapper();
             JsonNode root = mapper.readTree(specContent);
-            JsonNode schemas = root.path("components").path("schemas");
-            if (!schemas.isObject()) {
+            Map<String, String> result = new LinkedHashMap<>();
+            collectRawAllOfDiscriminatorValues(root.path("components").path("schemas"), result);
+            collectRawAllOfDiscriminatorValues(root.path("definitions"), result);
+            if (result.isEmpty()) {
                 return Map.of();
             }
-
-            Map<String, String> result = new LinkedHashMap<>();
-            schemas.fields().forEachRemaining(entry -> {
-                String discriminatorValue = rawAllOfDiscriminatorValue(entry.getValue());
-                if (discriminatorValue != null && !discriminatorValue.isBlank()) {
-                    result.put(entry.getKey(), discriminatorValue);
-                }
-            });
             return result;
         } catch (Exception ignored) {
             return Map.of();
         }
+    }
+
+    private void collectRawAllOfDiscriminatorValues(JsonNode schemasNode, Map<String, String> result) {
+        if (schemasNode == null || !schemasNode.isObject()) {
+            return;
+        }
+
+        schemasNode.fields().forEachRemaining(entry -> {
+            String discriminatorValue = rawAllOfDiscriminatorValue(entry.getValue());
+            if (discriminatorValue != null && !discriminatorValue.isBlank()) {
+                result.putIfAbsent(entry.getKey(), discriminatorValue);
+            }
+        });
     }
 
     private boolean looksLikeJson(Path specPath, String specContent) {

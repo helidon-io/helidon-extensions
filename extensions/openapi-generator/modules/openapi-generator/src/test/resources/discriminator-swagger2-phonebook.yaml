@@ -1,0 +1,35 @@
+swagger: '2.0'
+info:
+  title: discriminator-swagger2-phonebook
+  version: '1.0'
+paths: {}
+definitions:
+  ApplicableScope:
+    type: object
+    required:
+      - scopeType
+    properties:
+      scopeType:
+        type: string
+        enum:
+          - PROJECT_SCOPE
+          - SERVICE_PHONEBOOK_SCOPE
+    discriminator: scopeType
+
+  ProjectScope:
+    allOf:
+      - $ref: '#/definitions/ApplicableScope'
+      - discriminator: PROJECT_SCOPE
+        type: object
+        properties:
+          projectId:
+            type: string
+
+  ServicePhoneBookScope:
+    allOf:
+      - $ref: '#/definitions/ApplicableScope'
+      - discriminator: SERVICE_PHONEBOOK_SCOPE
+        type: object
+        properties:
+          dummy:
+            type: string

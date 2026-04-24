@@ -250,6 +250,47 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(subtype, not(containsString("AUTHOR_DEFINED_EXPIRY_DETAILS")));
     }
 
+    @Test
+    void swagger2ShorthandDiscriminatorValueSupportsNameDrift() throws Exception {
+        Path outputDir = generate("discriminator-swagger2-name-drift.yaml", false);
+
+        String parent = read(modelFile(outputDir, "ConditionShapeDetails.java"));
+        assertThat(parent, containsString("CM_PREREQUISITES_VIOLATION"));
+        assertThat(parent, containsString("@Json.Subtype(alias = \"CM_PREREQUISITES_VIOLATION\", value = CmPreRequisiteViolationConditionShape.class)"));
+
+        String subtype = read(modelFile(outputDir, "CmPreRequisiteViolationConditionShape.java"));
+        assertThat(subtype, containsString("setConditionShape("
+                + "ConditionShapeDetails.ConditionShapeEnum.CM_PREREQUISITES_VIOLATION);"));
+        assertThat(subtype, not(containsString("CM_PRE_REQUISITE_VIOLATION_CONDITION_SHAPE")));
+    }
+
+    @Test
+    void swagger2ShorthandDiscriminatorValueSupportsCompoundWordNormalization() throws Exception {
+        Path outputDir = generate("discriminator-swagger2-phonebook.yaml", false);
+
+        String parent = read(modelFile(outputDir, "ApplicableScope.java"));
+        assertThat(parent, containsString("SERVICE_PHONEBOOK_SCOPE"));
+        assertThat(parent, containsString("@Json.Subtype(alias = \"SERVICE_PHONEBOOK_SCOPE\", value = ServicePhoneBookScope.class)"));
+
+        String subtype = read(modelFile(outputDir, "ServicePhoneBookScope.java"));
+        assertThat(subtype, containsString("setScopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
+        assertThat(subtype, not(containsString("SERVICE_PHONE_BOOK_SCOPE")));
+    }
+
+    @Test
+    void swagger2ShorthandDiscriminatorValueSupportsExplicitValueDifferentFromClassName() throws Exception {
+        Path outputDir = generate("discriminator-swagger2-expiry.yaml", false);
+
+        String parent = read(modelFile(outputDir, "ApprovalInvalidationTypeDetails.java"));
+        assertThat(parent, containsString("AUTHOR_DEFINED_TIME_EXPIRY"));
+        assertThat(parent, containsString("@Json.Subtype(alias = \"AUTHOR_DEFINED_TIME_EXPIRY\", value = ConditionAuthorDefinedExpiringApprovalInvalidationTypeDetails.class)"));
+
+        String subtype = read(modelFile(outputDir, "ConditionAuthorDefinedExpiringApprovalInvalidationTypeDetails.java"));
+        assertThat(subtype, containsString("setApprovalInvalidationType("
+                + "ApprovalInvalidationTypeDetails.ApprovalInvalidationTypeEnum.AUTHOR_DEFINED_TIME_EXPIRY);"));
+        assertThat(subtype, not(containsString("CONDITION_AUTHOR_DEFINED_EXPIRING_APPROVAL_INVALIDATION_TYPE_DETAILS")));
+    }
+
     private Path generate(String resourceName) throws Exception {
         return generate(resourceName, true);
     }

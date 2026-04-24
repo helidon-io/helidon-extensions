@@ -1,0 +1,35 @@
+swagger: '2.0'
+info:
+  title: discriminator-swagger2-name-drift
+  version: '1.0'
+paths: {}
+definitions:
+  ConditionShapeDetails:
+    type: object
+    required:
+      - conditionShape
+    properties:
+      conditionShape:
+        type: string
+        enum:
+          - CHANGE_FREEZE
+          - CM_PREREQUISITES_VIOLATION
+    discriminator: conditionShape
+
+  ChangeFreezeConditionShape:
+    allOf:
+      - $ref: '#/definitions/ConditionShapeDetails'
+      - discriminator: CHANGE_FREEZE
+        type: object
+        properties:
+          note:
+            type: string
+
+  CmPreRequisiteViolationConditionShape:
+    allOf:
+      - $ref: '#/definitions/ConditionShapeDetails'
+      - discriminator: CM_PREREQUISITES_VIOLATION
+        type: object
+        properties:
+          detail:
+            type: string
