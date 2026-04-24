@@ -1,0 +1,39 @@
+openapi: 3.0.3
+info:
+  title: discriminator-enum-reproducer-2
+  version: 1.0.0
+paths: {}
+components:
+  schemas:
+    UserConfig:
+      type: object
+      required:
+        - type
+      discriminator:
+        propertyName: type
+        mapping:
+          UserConfigStringValue: '#/components/schemas/UserConfigStringValue'
+          UserConfigInstantValue: '#/components/schemas/UserConfigInstantValue'
+      properties:
+        type:
+          type: string
+          enum:
+            - STRING
+            - INSTANT
+
+    UserConfigStringValue:
+      allOf:
+        - $ref: '#/components/schemas/UserConfig'
+        - type: object
+          properties:
+            value:
+              type: string
+
+    UserConfigInstantValue:
+      allOf:
+        - $ref: '#/components/schemas/UserConfig'
+        - type: object
+          properties:
+            timeValue:
+              type: string
+              format: date-time

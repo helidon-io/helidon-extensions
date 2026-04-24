@@ -86,6 +86,25 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     static final String OPT_TRACING_ENABLED = "tracingEnabled";
     static final String OPT_METRICS_ENABLED = "metricsEnabled";
     static final String OPT_AVOID_OPTIONAL_LIST_PARAMS = "avoidOptionalListParams";
+    private static final Set<String> MODEL_SUFFIX_TOKENS = Set.of(
+            "DETAIL",
+            "DETAILS",
+            "SHAPE",
+            "SHAPES",
+            "VALUE",
+            "VALUES",
+            "TYPE",
+            "TYPES",
+            "CONFIG",
+            "CONFIGS",
+            "CATEGORY",
+            "CATEGORIES",
+            "MODEL",
+            "MODELS",
+            "REQUEST",
+            "REQUESTS",
+            "RESPONSE",
+            "RESPONSES");
 
     private String helidonVersion = "4.4.1";
     private boolean generateClient = true;
@@ -946,7 +965,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 continue;
             }
 
-            String discriminatorAlias = allOfDiscriminatorAlias(model, parentModel);
+            String discriminatorAlias = allOfDiscriminatorAlias(model, parentModel, discriminatorKey);
             String discriminatorSetter = discriminatorSetter(parentModel, discriminatorKey);
             String discriminatorValueExpression = discriminatorValueExpression(parentModel, discriminatorKey, discriminatorAlias);
 
@@ -1182,25 +1201,243 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return schema.getExtensions().get(name);
     }
 
-    private String allOfDiscriminatorAlias(CodegenModel model, CodegenModel parentModel) {
+    private String allOfDiscriminatorAlias(CodegenModel model,
+                                           CodegenModel parentModel,
+                                           String discriminatorKey) {
         Object explicitValue = model.vendorExtensions.get("x-allof-discriminator-value");
         if (explicitValue instanceof String value && !value.isBlank()) {
             return value;
         }
 
-        if (parentModel.discriminator != null) {
-            Map<String, String> mapping = parentModel.discriminator.getMapping();
-            if (mapping != null) {
-                for (Map.Entry<String, String> entry : mapping.entrySet()) {
-                    String modelName = modelNameFromSchemaRef(entry.getValue());
-                    if (model.classname.equals(modelName)) {
-                        return entry.getKey();
-                    }
-                }
-            }
+        String mappedAlias = mappedDiscriminatorAlias(model, parentModel);
+        String inferredEnumValue = inferEnumDiscriminatorValue(model, parentModel, discriminatorKey, mappedAlias);
+        if (inferredEnumValue != null) {
+            return inferredEnumValue;
+        }
+
+        if (mappedAlias != null) {
+            return mappedAlias;
         }
 
         return model.classname;
+    }
+
+    private String mappedDiscriminatorAlias(CodegenModel model, CodegenModel parentModel) {
+        if (parentModel.discriminator == null) {
+            return null;
+        }
+
+        Map<String, String> mapping = parentModel.discriminator.getMapping();
+        if (mapping == null) {
+            return null;
+        }
+
+        for (Map.Entry<String, String> entry : mapping.entrySet()) {
+            String modelName = modelNameFromSchemaRef(entry.getValue());
+            if (model.classname.equals(modelName)) {
+                return entry.getKey();
+            }
+        }
+
+        return null;
+    }
+
+    private String inferEnumDiscriminatorValue(CodegenModel model,
+                                               CodegenModel parentModel,
+                                               String discriminatorKey,
+                                               String mappedAlias) {
+        CodegenProperty property = discriminatorProperty(parentModel, discriminatorKey);
+        if (property == null || !property.isEnum) {
+            return null;
+        }
+
+        List<String> enumValues = discriminatorEnumValues(property);
+        if (enumValues.isEmpty()) {
+            return null;
+        }
+
+        LinkedHashSet<String> discriminatorCandidates = discriminatorCandidates(model, parentModel, mappedAlias);
+        if (discriminatorCandidates.isEmpty()) {
+            return null;
+        }
+
+        for (String candidate : discriminatorCandidates) {
+            if (enumValues.contains(candidate)) {
+                return candidate;
+            }
+        }
+
+        String bestValue = null;
+        int bestScore = -1;
+        boolean ambiguous = false;
+        for (String enumValue : enumValues) {
+            int score = discriminatorMatchScore(enumValue, discriminatorCandidates);
+            if (score > bestScore) {
+                bestValue = enumValue;
+                bestScore = score;
+                ambiguous = false;
+            } else if (score > 0 && score == bestScore) {
+                ambiguous = true;
+            }
+        }
+
+        return ambiguous || bestScore <= 0 ? null : bestValue;
+    }
+
+    private LinkedHashSet<String> discriminatorCandidates(CodegenModel model,
+                                                           CodegenModel parentModel,
+                                                           String mappedAlias) {
+        LinkedHashSet<String> discriminatorCandidates = new LinkedHashSet<>();
+        if (mappedAlias != null && !mappedAlias.isBlank()) {
+            discriminatorCandidates.add(mappedAlias);
+        }
+        if (model.classname != null && !model.classname.isBlank()) {
+            discriminatorCandidates.add(model.classname);
+        }
+        if (model.schemaName != null && !model.schemaName.isBlank()) {
+            discriminatorCandidates.add(model.schemaName);
+        }
+
+        List<String> parentTokens = enumNameTokens(parentModel.classname);
+        for (String candidate : new ArrayList<>(discriminatorCandidates)) {
+            List<String> trimmedTokens = trimSharedBoundaryTokens(enumNameTokens(candidate), parentTokens);
+            trimmedTokens = trimModelSuffixTokens(trimmedTokens);
+            if (!trimmedTokens.isEmpty()) {
+                discriminatorCandidates.add(String.join("_", trimmedTokens));
+            }
+        }
+        return discriminatorCandidates;
+    }
+
+    private List<String> trimSharedBoundaryTokens(List<String> candidateTokens, List<String> parentTokens) {
+        if (candidateTokens.isEmpty() || parentTokens.isEmpty()) {
+            return candidateTokens;
+        }
+
+        int start = 0;
+        int end = candidateTokens.size();
+
+        int prefixLength = sharedPrefixLength(candidateTokens, parentTokens);
+        if (prefixLength > 0 && prefixLength < end) {
+            start = prefixLength;
+        }
+
+        int suffixLength = sharedSuffixLength(candidateTokens.subList(start, end), parentTokens);
+        if (suffixLength > 0 && start < end - suffixLength) {
+            end -= suffixLength;
+        }
+
+        return candidateTokens.subList(start, end);
+    }
+
+    private int sharedPrefixLength(List<String> left, List<String> right) {
+        int max = Math.min(left.size(), right.size());
+        int index = 0;
+        while (index < max && left.get(index).equals(right.get(index))) {
+            index++;
+        }
+        return index;
+    }
+
+    private int sharedSuffixLength(List<String> left, List<String> right) {
+        int max = Math.min(left.size(), right.size());
+        int index = 0;
+        while (index < max
+                && left.get(left.size() - 1 - index).equals(right.get(right.size() - 1 - index))) {
+            index++;
+        }
+        return index;
+    }
+
+    private List<String> trimModelSuffixTokens(List<String> tokens) {
+        int end = tokens.size();
+        while (end > 1 && MODEL_SUFFIX_TOKENS.contains(tokens.get(end - 1))) {
+            end--;
+        }
+        return tokens.subList(0, end);
+    }
+
+    private int discriminatorMatchScore(String enumValue, Collection<String> candidates) {
+        List<String> enumTokens = enumNameTokens(enumValue);
+        if (enumTokens.isEmpty()) {
+            return 0;
+        }
+
+        int bestScore = 0;
+        for (String candidate : candidates) {
+            List<String> candidateTokens = enumNameTokens(candidate);
+            if (candidateTokens.equals(enumTokens)) {
+                return 10_000 + enumTokens.size();
+            }
+
+            int subsequenceStart = tokenSubsequenceStart(candidateTokens, enumTokens);
+            if (subsequenceStart >= 0) {
+                int prefixBonus = subsequenceStart == 0 ? 100 : 0;
+                int exactBonus = candidateTokens.size() == enumTokens.size() ? 1_000 : 0;
+                bestScore = Math.max(bestScore, (enumTokens.size() * 10) + prefixBonus + exactBonus);
+            }
+        }
+        return bestScore;
+    }
+
+    private List<String> enumNameTokens(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+
+        String enumName = toEnumVarName(value, "String");
+        if (enumName == null || enumName.isBlank()) {
+            return List.of();
+        }
+
+        return List.of(enumName.split("_")).stream()
+                .filter(token -> !token.isBlank())
+                .toList();
+    }
+
+    private int tokenSubsequenceStart(List<String> candidateTokens, List<String> expectedTokens) {
+        if (candidateTokens.isEmpty() || expectedTokens.isEmpty() || expectedTokens.size() > candidateTokens.size()) {
+            return -1;
+        }
+
+        for (int start = 0; start <= candidateTokens.size() - expectedTokens.size(); start++) {
+            boolean matches = true;
+            for (int offset = 0; offset < expectedTokens.size(); offset++) {
+                if (!candidateTokens.get(start + offset).equals(expectedTokens.get(offset))) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                return start;
+            }
+        }
+        return -1;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> discriminatorEnumValues(CodegenProperty property) {
+        if (property == null) {
+            return List.of();
+        }
+
+        if (property._enum != null && !property._enum.isEmpty()) {
+            return property._enum;
+        }
+
+        if (property.allowableValues == null) {
+            return List.of();
+        }
+
+        Object values = property.allowableValues.get("values");
+        if (values instanceof List<?> enumValues) {
+            return enumValues.stream()
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .toList();
+        }
+
+        return List.of();
     }
 
     private String discriminatorSetter(CodegenModel parentModel, String discriminatorKey) {
