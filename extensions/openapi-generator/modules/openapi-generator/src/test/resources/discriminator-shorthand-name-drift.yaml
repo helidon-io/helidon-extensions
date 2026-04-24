@@ -1,0 +1,40 @@
+openapi: 3.0.3
+info:
+  title: discriminator-name-drift
+  version: 1.0.0
+paths: {}
+components:
+  schemas:
+    ConditionShapeDetails:
+      type: object
+      required:
+        - conditionShape
+      properties:
+        conditionShape:
+          type: string
+          enum:
+            - CHANGE_FREEZE
+            - CM_PREREQUISITES_VIOLATION
+      discriminator:
+        propertyName: conditionShape
+      oneOf:
+        - $ref: '#/components/schemas/ChangeFreezeConditionShape'
+        - $ref: '#/components/schemas/CmPreRequisiteViolationConditionShape'
+
+    ChangeFreezeConditionShape:
+      allOf:
+        - $ref: '#/components/schemas/ConditionShapeDetails'
+        - type: object
+          properties:
+            note:
+              type: string
+          x-discriminator-value: CHANGE_FREEZE
+
+    CmPreRequisiteViolationConditionShape:
+      allOf:
+        - $ref: '#/components/schemas/ConditionShapeDetails'
+        - type: object
+          discriminator: CM_PREREQUISITES_VIOLATION
+          properties:
+            detail:
+              type: string

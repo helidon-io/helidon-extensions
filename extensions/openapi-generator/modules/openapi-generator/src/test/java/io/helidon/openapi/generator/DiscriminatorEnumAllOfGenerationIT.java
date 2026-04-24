@@ -209,7 +209,52 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(subtype, not(containsString("SERVICE_PHONE_BOOK_SCOPE")));
     }
 
+    @Test
+    void shorthandDiscriminatorValueSupportsNameDrift() throws Exception {
+        Path outputDir = generate("discriminator-shorthand-name-drift.yaml", false);
+
+        String parent = read(modelFile(outputDir, "ConditionShapeDetails.java"));
+        assertThat(parent, containsString("CM_PREREQUISITES_VIOLATION"));
+        assertThat(parent, containsString("@Json.Subtype(alias = \"CM_PREREQUISITES_VIOLATION\", value = CmPreRequisiteViolationConditionShape.class)"));
+
+        String subtype = read(modelFile(outputDir, "CmPreRequisiteViolationConditionShape.java"));
+        assertThat(subtype, containsString("setConditionShape("
+                + "ConditionShapeDetails.ConditionShapeEnum.CM_PREREQUISITES_VIOLATION);"));
+        assertThat(subtype, not(containsString("CM_PRE_REQUISITE_VIOLATION_CONDITION_SHAPE")));
+    }
+
+    @Test
+    void shorthandDiscriminatorValueSupportsCompoundWordNormalization() throws Exception {
+        Path outputDir = generate("discriminator-shorthand-compound-word.yaml", false);
+
+        String parent = read(modelFile(outputDir, "ApplicableScope.java"));
+        assertThat(parent, containsString("SERVICE_PHONEBOOK_SCOPE"));
+        assertThat(parent, containsString("@Json.Subtype(alias = \"SERVICE_PHONEBOOK_SCOPE\", value = ServicePhoneBookScope.class)"));
+
+        String subtype = read(modelFile(outputDir, "ServicePhoneBookScope.java"));
+        assertThat(subtype, containsString("setScopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
+        assertThat(subtype, not(containsString("SERVICE_PHONE_BOOK_SCOPE")));
+    }
+
+    @Test
+    void shorthandDiscriminatorValueSupportsExplicitValueDifferentFromClassName() throws Exception {
+        Path outputDir = generate("discriminator-shorthand-explicit-value.yaml", false);
+
+        String parent = read(modelFile(outputDir, "ApprovalInvalidationTypeDetails.java"));
+        assertThat(parent, containsString("AUTHOR_DEFINED_TIME_EXPIRY"));
+        assertThat(parent, containsString("@Json.Subtype(alias = \"AUTHOR_DEFINED_TIME_EXPIRY\", value = AuthorDefinedExpiryDetails.class)"));
+
+        String subtype = read(modelFile(outputDir, "AuthorDefinedExpiryDetails.java"));
+        assertThat(subtype, containsString("setApprovalInvalidationType("
+                + "ApprovalInvalidationTypeDetails.ApprovalInvalidationTypeEnum.AUTHOR_DEFINED_TIME_EXPIRY);"));
+        assertThat(subtype, not(containsString("AUTHOR_DEFINED_EXPIRY_DETAILS")));
+    }
+
     private Path generate(String resourceName) throws Exception {
+        return generate(resourceName, true);
+    }
+
+    private Path generate(String resourceName, boolean validateSpec) throws Exception {
         URL resource = DiscriminatorEnumAllOfGenerationIT.class
                 .getClassLoader()
                 .getResource(resourceName);
@@ -220,6 +265,7 @@ class DiscriminatorEnumAllOfGenerationIT {
                 .setGeneratorName("helidon-declarative")
                 .setInputSpec(specPath)
                 .setOutputDir(outputDir.toString())
+                .setValidateSpec(validateSpec)
                 .addAdditionalProperty("helidonVersion", "4.4.1")
                 .addAdditionalProperty("apiPackage", "io.helidon.example.api")
                 .addAdditionalProperty("modelPackage", "io.helidon.example.model")

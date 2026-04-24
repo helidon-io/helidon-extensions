@@ -1,0 +1,40 @@
+openapi: 3.0.3
+info:
+  title: discriminator-explicit-value
+  version: 1.0.0
+paths: {}
+components:
+  schemas:
+    ApprovalInvalidationTypeDetails:
+      type: object
+      required:
+        - approvalInvalidationType
+      properties:
+        approvalInvalidationType:
+          type: string
+          enum:
+            - NON_EXPIRING
+            - AUTHOR_DEFINED_TIME_EXPIRY
+      discriminator:
+        propertyName: approvalInvalidationType
+      oneOf:
+        - $ref: '#/components/schemas/NonExpiringDetails'
+        - $ref: '#/components/schemas/AuthorDefinedExpiryDetails'
+
+    NonExpiringDetails:
+      allOf:
+        - $ref: '#/components/schemas/ApprovalInvalidationTypeDetails'
+        - type: object
+          properties:
+            note:
+              type: string
+          x-discriminator-value: NON_EXPIRING
+
+    AuthorDefinedExpiryDetails:
+      allOf:
+        - $ref: '#/components/schemas/ApprovalInvalidationTypeDetails'
+        - type: object
+          discriminator: AUTHOR_DEFINED_TIME_EXPIRY
+          properties:
+            expiryDuration:
+              type: integer

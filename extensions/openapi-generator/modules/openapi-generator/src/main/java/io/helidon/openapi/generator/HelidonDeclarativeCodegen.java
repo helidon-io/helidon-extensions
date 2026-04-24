@@ -34,10 +34,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.servers.Server;
+import io.swagger.v3.core.util.Json;
+import io.swagger.v3.core.util.Yaml;
 import org.openapitools.codegen.CodegenComposedSchemas;
 import org.openapitools.codegen.CodegenModel;
 import org.openapitools.codegen.CodegenOperation;
@@ -117,6 +121,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private boolean metricsEnabled = false;
     private boolean avoidOptionalListParams = false;
     private List<SecurityRequirement> globalSecurityRequirements = List.of();
+    private Map<String, String> rawAllOfDiscriminatorValuesBySchema = Map.of();
 
     /**
      * Creates a new generator with default options and template mappings.
@@ -354,6 +359,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         globalSecurityRequirements = openAPI.getSecurity() == null
                 ? List.of()
                 : new ArrayList<>(openAPI.getSecurity());
+        rawAllOfDiscriminatorValuesBySchema = loadRawAllOfDiscriminatorValues();
 
         if (openAPI.getServers() != null && !openAPI.getServers().isEmpty()) {
             String serverUrl = openAPI.getServers().get(0).getUrl();
@@ -404,6 +410,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         boolean hasDeclaredProperties = hasDeclaredProperties(schema);
         model.vendorExtensions.put("x-has-declared-properties", hasDeclaredProperties);
         String allOfDiscriminatorValue = extractAllOfDiscriminatorValue(schema);
+        if (allOfDiscriminatorValue == null) {
+            allOfDiscriminatorValue = rawAllOfDiscriminatorValuesBySchema.get(name);
+        }
         if (allOfDiscriminatorValue != null) {
             model.vendorExtensions.put("x-allof-discriminator-value", allOfDiscriminatorValue);
         }
@@ -1195,6 +1204,74 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 if (value != null) {
                     return value.toString();
                 }
+            }
+        }
+        return null;
+    }
+
+    private Map<String, String> loadRawAllOfDiscriminatorValues() {
+        if (inputSpec == null || inputSpec.isBlank()) {
+            return Map.of();
+        }
+
+        try {
+            Path specPath = Path.of(inputSpec);
+            String specContent = Files.readString(specPath, StandardCharsets.UTF_8);
+            ObjectMapper mapper = looksLikeJson(specPath, specContent) ? Json.mapper() : Yaml.mapper();
+            JsonNode root = mapper.readTree(specContent);
+            JsonNode schemas = root.path("components").path("schemas");
+            if (!schemas.isObject()) {
+                return Map.of();
+            }
+
+            Map<String, String> result = new LinkedHashMap<>();
+            schemas.fields().forEachRemaining(entry -> {
+                String discriminatorValue = rawAllOfDiscriminatorValue(entry.getValue());
+                if (discriminatorValue != null && !discriminatorValue.isBlank()) {
+                    result.put(entry.getKey(), discriminatorValue);
+                }
+            });
+            return result;
+        } catch (Exception ignored) {
+            return Map.of();
+        }
+    }
+
+    private boolean looksLikeJson(Path specPath, String specContent) {
+        String filename = specPath.getFileName() != null ? specPath.getFileName().toString().toLowerCase() : "";
+        if (filename.endsWith(".json")) {
+            return true;
+        }
+        String trimmed = specContent == null ? "" : specContent.stripLeading();
+        return trimmed.startsWith("{");
+    }
+
+    private String rawAllOfDiscriminatorValue(JsonNode schemaNode) {
+        if (schemaNode == null || schemaNode.isMissingNode() || schemaNode.isNull()) {
+            return null;
+        }
+
+        JsonNode topLevel = schemaNode.get("x-discriminator-value");
+        if (topLevel != null && topLevel.isValueNode()) {
+            return topLevel.asText();
+        }
+
+        JsonNode allOf = schemaNode.get("allOf");
+        if (allOf == null || !allOf.isArray()) {
+            return null;
+        }
+
+        for (JsonNode member : allOf) {
+            if (member == null || !member.isObject()) {
+                continue;
+            }
+            JsonNode extensionValue = member.get("x-discriminator-value");
+            if (extensionValue != null && extensionValue.isValueNode()) {
+                return extensionValue.asText();
+            }
+            JsonNode shorthandValue = member.get("discriminator");
+            if (shorthandValue != null && shorthandValue.isTextual()) {
+                return shorthandValue.asText();
             }
         }
         return null;
