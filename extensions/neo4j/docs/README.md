@@ -30,9 +30,13 @@ A separate health module adds a Helidon health check backed by the same driver.
 
 ## Maven Coordinates
 
-Import the BOM if you use more than one Neo4j extension artifact:
+If you use more than one Neo4j extension artifact, declare the version property in your POM and import the BOM:
 
 ```xml
+<properties>
+    <helidon.extensions.neo4j.version>27.0.0-SNAPSHOT</helidon.extensions.neo4j.version>
+</properties>
+
 <dependencyManagement>
     <dependencies>
         <dependency>
@@ -164,8 +168,9 @@ end-to-end testing:
    docker run --publish=7474:7474 --publish=7687:7687 -e 'NEO4J_AUTH=neo4j/secret' neo4j:<tag>
    ```
 
-2. In the Neo4j browser, load the Movies sample graph using `:play movies`.
-3. Build one of the example applications, for example:
+2. In the Neo4j browser, run `:play movies` to open the Movies guide, then execute the guide's sample-data Cypher
+   statements to import the Movies graph.
+3. Using JDK 26, build one of the example applications from the repository root, for example:
 
    ```shell
    mvn -Pexamples -pl extensions/neo4j/examples/se-imperative -am package
