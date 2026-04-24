@@ -401,6 +401,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         model.imports.remove("JsonInclude");
         model.imports.remove("JsonProperty");
         model.imports.remove("JsonNullable");   // openApiNullable wrapper — not used in our template
+        boolean hasDeclaredProperties = schema != null
+                && schema.getProperties() != null
+                && !schema.getProperties().isEmpty();
+        model.vendorExtensions.put("x-has-declared-properties", hasDeclaredProperties);
         String allOfDiscriminatorValue = extractAllOfDiscriminatorValue(schema);
         if (allOfDiscriminatorValue != null) {
             model.vendorExtensions.put("x-allof-discriminator-value", allOfDiscriminatorValue);
@@ -854,12 +858,17 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         for (CodegenModel model : models) {
             model.vendorExtensions.put("x-render-vars", model.vars);
 
-            if (!model.oneOf.isEmpty() || !model.anyOf.isEmpty()) {
+            if ((!model.oneOf.isEmpty() || !model.anyOf.isEmpty()) && shouldRenderAsUnionInterface(model)) {
                 normalizeUnionModel(model, modelsByClassname, unionInterfacesByMember);
             } else if (!model.allOf.isEmpty()) {
                 normalizeAllOfModel(model, modelsByClassname);
             }
         }
+    }
+
+    private boolean shouldRenderAsUnionInterface(CodegenModel model) {
+        Object hasDeclaredProperties = model.vendorExtensions.get("x-has-declared-properties");
+        return !Boolean.TRUE.equals(hasDeclaredProperties);
     }
 
     private void normalizeUnionModel(CodegenModel model,
@@ -965,7 +974,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 continue;
             }
 
-            String discriminatorValue = allOfDiscriminatorValue(model, parentModel, discriminatorKey);
+            String discriminatorValue = resolvedDiscriminatorValue(model, parentModel, discriminatorKey);
             String discriminatorSetter = discriminatorSetter(parentModel, discriminatorKey);
             String discriminatorValueExpression = discriminatorValueExpression(parentModel, discriminatorKey, discriminatorValue);
 
@@ -1083,7 +1092,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private List<Map<String, Object>> buildUnionMembers(CodegenModel unionModel,
                                                         List<String> members,
                                                         Map<String, CodegenModel> modelsByClassname) {
-        Map<String, String> aliasesByModel = unionAliasesByModel(unionModel, members);
+        Map<String, String> aliasesByModel = unionAliasesByModel(unionModel, members, modelsByClassname);
         List<Map<String, Object>> result = new ArrayList<>();
         for (int i = 0; i < members.size(); i++) {
             String member = members.get(i);
@@ -1105,26 +1114,25 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return result;
     }
 
-    private Map<String, String> unionAliasesByModel(CodegenModel unionModel, List<String> members) {
+    private Map<String, String> unionAliasesByModel(CodegenModel unionModel,
+                                                    List<String> members,
+                                                    Map<String, CodegenModel> modelsByClassname) {
         Map<String, String> aliasesByModel = new LinkedHashMap<>();
-        if (unionModel.discriminator != null) {
-            Map<String, String> mapping = unionModel.discriminator.getMapping();
-            if (mapping != null) {
-                mapping.forEach((alias, schemaRef) -> {
-                    String modelName = modelNameFromSchemaRef(schemaRef);
-                    if (modelName != null && members.contains(modelName)) {
-                        aliasesByModel.putIfAbsent(modelName, alias);
-                    }
-                });
+        String discriminatorKey = unionModel.discriminator != null
+                ? unionModel.discriminator.getPropertyBaseName()
+                : null;
+        if (discriminatorKey == null || discriminatorKey.isBlank()) {
+            discriminatorKey = unionModel.discriminator != null ? unionModel.discriminator.getPropertyName() : null;
+        }
+
+        for (String member : members) {
+            CodegenModel memberModel = modelsByClassname.get(member);
+            if (memberModel == null) {
+                continue;
             }
-            if (unionModel.discriminator.getMappedModels() != null) {
-                unionModel.discriminator.getMappedModels().forEach(mappedModel -> {
-                    String modelName = mappedModel.getModelName();
-                    String alias = mappedModel.getMappingName();
-                    if (modelName != null && alias != null && members.contains(modelName)) {
-                        aliasesByModel.putIfAbsent(modelName, alias);
-                    }
-                });
+            String alias = resolvedDiscriminatorValue(memberModel, unionModel, discriminatorKey);
+            if (alias != null && !alias.isBlank()) {
+                aliasesByModel.putIfAbsent(member, alias);
             }
         }
 
@@ -1201,9 +1209,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return schema.getExtensions().get(name);
     }
 
-    private String allOfDiscriminatorValue(CodegenModel model,
-                                           CodegenModel parentModel,
-                                           String discriminatorKey) {
+    private String resolvedDiscriminatorValue(CodegenModel model,
+                                              CodegenModel parentModel,
+                                              String discriminatorKey) {
         Object explicitValue = model.vendorExtensions.get("x-allof-discriminator-value");
         if (explicitValue instanceof String value && !value.isBlank()) {
             return value;
@@ -1228,14 +1236,25 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         }
 
         Map<String, String> mapping = parentModel.discriminator.getMapping();
-        if (mapping == null) {
-            return null;
+        if (mapping != null) {
+            for (Map.Entry<String, String> entry : mapping.entrySet()) {
+                String modelName = modelNameFromSchemaRef(entry.getValue());
+                if (model.classname.equals(modelName)) {
+                    return entry.getKey();
+                }
+            }
         }
 
-        for (Map.Entry<String, String> entry : mapping.entrySet()) {
-            String modelName = modelNameFromSchemaRef(entry.getValue());
-            if (model.classname.equals(modelName)) {
-                return entry.getKey();
+        if (parentModel.discriminator.getMappedModels() != null) {
+            for (var mappedModel : parentModel.discriminator.getMappedModels()) {
+                if (mappedModel == null) {
+                    continue;
+                }
+                String modelName = mappedModel.getModelName();
+                String alias = mappedModel.getMappingName();
+                if (model.classname.equals(modelName) && alias != null && !alias.isBlank()) {
+                    return alias;
+                }
             }
         }
 
@@ -1246,6 +1265,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                                                CodegenModel parentModel,
                                                String discriminatorKey,
                                                String mappedAlias) {
+        if (discriminatorKey == null || discriminatorKey.isBlank()) {
+            return null;
+        }
+
         CodegenProperty property = discriminatorProperty(parentModel, discriminatorKey);
         if (property == null || !property.isEnum) {
             return null;

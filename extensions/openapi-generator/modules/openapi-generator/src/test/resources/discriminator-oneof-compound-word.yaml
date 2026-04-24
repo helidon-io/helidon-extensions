@@ -1,0 +1,40 @@
+openapi: 3.0.3
+info:
+  title: discriminator-compound-word
+  version: 1.0.0
+paths: {}
+components:
+  schemas:
+    ApplicableScope:
+      type: object
+      required:
+        - scopeType
+      properties:
+        scopeType:
+          type: string
+          enum:
+            - SERVICE_PHONEBOOK_SCOPE
+            - PROJECT_SCOPE
+      discriminator:
+        propertyName: scopeType
+      oneOf:
+        - $ref: '#/components/schemas/ServicePhoneBookScope'
+        - $ref: '#/components/schemas/ProjectScope'
+
+    ServicePhoneBookScope:
+      allOf:
+        - $ref: '#/components/schemas/ApplicableScope'
+        - type: object
+          properties:
+            dummy:
+              type: string
+          x-discriminator-value: SERVICE_PHONEBOOK_SCOPE
+
+    ProjectScope:
+      allOf:
+        - $ref: '#/components/schemas/ApplicableScope'
+        - type: object
+          properties:
+            projectId:
+              type: string
+          x-discriminator-value: PROJECT_SCOPE
