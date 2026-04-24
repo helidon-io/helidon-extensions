@@ -401,9 +401,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         model.imports.remove("JsonInclude");
         model.imports.remove("JsonProperty");
         model.imports.remove("JsonNullable");   // openApiNullable wrapper — not used in our template
-        boolean hasDeclaredProperties = schema != null
-                && schema.getProperties() != null
-                && !schema.getProperties().isEmpty();
+        boolean hasDeclaredProperties = hasDeclaredProperties(schema);
         model.vendorExtensions.put("x-has-declared-properties", hasDeclaredProperties);
         String allOfDiscriminatorValue = extractAllOfDiscriminatorValue(schema);
         if (allOfDiscriminatorValue != null) {
@@ -1209,6 +1207,28 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return schema.getExtensions().get(name);
     }
 
+    private boolean hasDeclaredProperties(Schema<?> schema) {
+        if (schema == null) {
+            return false;
+        }
+
+        if (schema.getProperties() != null && !schema.getProperties().isEmpty()) {
+            return true;
+        }
+
+        if (schema.getAllOf() == null || schema.getAllOf().isEmpty()) {
+            return false;
+        }
+
+        for (Schema<?> member : schema.getAllOf()) {
+            if (member != null && member.get$ref() == null && hasDeclaredProperties(member)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private String resolvedDiscriminatorValue(CodegenModel model,
                                               CodegenModel parentModel,
                                               String discriminatorKey) {
@@ -1481,6 +1501,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
         if (property.isEnum && property.datatypeWithEnum != null && !property.datatypeWithEnum.isBlank()) {
             String enumConstant = parentEnumConstant(property, discriminatorValue);
+            if (enumConstant == null) {
+                throw new IllegalStateException("Unable to resolve discriminator value '"
+                        + discriminatorValue + "' to an enum constant for property '" + property.name + "'");
+            }
             return parentModel.classname + "." + property.datatypeWithEnum + "." + enumConstant;
         }
 
@@ -1488,6 +1512,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     }
 
     private String parentEnumConstant(CodegenProperty property, String discriminatorValue) {
+        if (discriminatorValue == null || discriminatorValue.isBlank()) {
+            return null;
+        }
+
         String normalizedDiscriminatorValue = toEnumVarName(discriminatorValue, "String");
         for (String enumValue : discriminatorEnumValues(property)) {
             String enumConstant = toEnumVarName(enumValue, "String");
@@ -1495,7 +1523,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 return enumConstant;
             }
         }
-        return normalizedDiscriminatorValue;
+        return null;
     }
 
     private CodegenProperty discriminatorProperty(CodegenModel parentModel, String discriminatorKey) {

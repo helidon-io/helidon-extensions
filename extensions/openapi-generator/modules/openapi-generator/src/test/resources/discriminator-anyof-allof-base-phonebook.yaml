@@ -1,0 +1,41 @@
+openapi: 3.0.3
+info:
+  title: discriminator-anyof-allof-base-phonebook
+  version: 1.0.0
+paths: {}
+components:
+  schemas:
+    ApplicableScope:
+      allOf:
+        - type: object
+          required:
+            - scopeType
+          properties:
+            scopeType:
+              type: string
+              enum:
+                - PROJECT_SCOPE
+                - SERVICE_PHONEBOOK_SCOPE
+        - anyOf:
+            - $ref: '#/components/schemas/ProjectScope'
+            - $ref: '#/components/schemas/ServicePhoneBookScope'
+      discriminator:
+        propertyName: scopeType
+
+    ProjectScope:
+      allOf:
+        - $ref: '#/components/schemas/ApplicableScope'
+        - type: object
+          properties:
+            projectId:
+              type: string
+          x-discriminator-value: PROJECT_SCOPE
+
+    ServicePhoneBookScope:
+      allOf:
+        - $ref: '#/components/schemas/ApplicableScope'
+        - type: object
+          properties:
+            serviceName:
+              type: string
+          x-discriminator-value: SERVICE_PHONEBOOK_SCOPE

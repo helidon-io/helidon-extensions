@@ -178,6 +178,37 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(subtype, not(containsString("CM_PRE_REQUISITE_VIOLATION_CONDITION_SHAPE")));
     }
 
+    @Test
+    void anyOfParentDeclaredViaAllOfUsesCanonicalExplicitDiscriminatorValue() throws Exception {
+        Path outputDir = generate("discriminator-anyof-allof-base-explicit-value.yaml");
+
+        String parent = read(modelFile(outputDir, "ApprovalInvalidationTypeDetails.java"));
+        assertThat(parent, containsString("public class ApprovalInvalidationTypeDetails"));
+        assertThat(parent, containsString("AUTHOR_DEFINED_TIME_EXPIRY"));
+        assertThat(parent, containsString("@Json.Subtype(alias = \"AUTHOR_DEFINED_TIME_EXPIRY\", value = AuthorDefinedExpiryDetails.class)"));
+
+        String subtype = read(modelFile(outputDir, "AuthorDefinedExpiryDetails.java"));
+        assertThat(subtype, containsString("public class AuthorDefinedExpiryDetails extends ApprovalInvalidationTypeDetails"));
+        assertThat(subtype, containsString("setApprovalInvalidationType("
+                + "ApprovalInvalidationTypeDetails.ApprovalInvalidationTypeEnum.AUTHOR_DEFINED_TIME_EXPIRY);"));
+        assertThat(subtype, not(containsString("AUTHOR_DEFINED_EXPIRY_DETAILS")));
+    }
+
+    @Test
+    void anyOfParentDeclaredViaAllOfPreservesCompoundWordEnumValue() throws Exception {
+        Path outputDir = generate("discriminator-anyof-allof-base-phonebook.yaml");
+
+        String parent = read(modelFile(outputDir, "ApplicableScope.java"));
+        assertThat(parent, containsString("public class ApplicableScope"));
+        assertThat(parent, containsString("SERVICE_PHONEBOOK_SCOPE"));
+        assertThat(parent, containsString("@Json.Subtype(alias = \"SERVICE_PHONEBOOK_SCOPE\", value = ServicePhoneBookScope.class)"));
+
+        String subtype = read(modelFile(outputDir, "ServicePhoneBookScope.java"));
+        assertThat(subtype, containsString("public class ServicePhoneBookScope extends ApplicableScope"));
+        assertThat(subtype, containsString("setScopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
+        assertThat(subtype, not(containsString("SERVICE_PHONE_BOOK_SCOPE")));
+    }
+
     private Path generate(String resourceName) throws Exception {
         URL resource = DiscriminatorEnumAllOfGenerationIT.class
                 .getClassLoader()
