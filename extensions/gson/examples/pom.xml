@@ -39,5 +39,7 @@
     </properties>
 
     <modules>
+        <module>se-imperative</module>
+        <module>se-declarative</module>
     </modules>
 </project>
