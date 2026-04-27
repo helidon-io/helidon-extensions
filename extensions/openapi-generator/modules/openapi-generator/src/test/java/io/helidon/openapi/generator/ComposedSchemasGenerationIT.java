@@ -55,6 +55,7 @@ class ComposedSchemasGenerationIT {
                 .addAdditionalProperty("invokerPackage", "io.helidon.example");
 
         new DefaultGenerator().opts(configurator.toClientOptInput()).generate();
+        writeJsonBindingRoundTripTest();
     }
 
     @Test
@@ -77,7 +78,9 @@ class ComposedSchemasGenerationIT {
         assertThat(content, containsString("@Json.Converter(Pet.PetJsonConverter.class)"));
         assertThat(content, containsString("final class PetJsonConverter implements JsonConverter<Pet>"));
         assertThat(content, containsString("String discriminatorValue = jsonObject.stringValue(\"kind\").orElse(null);"));
-        assertThat(content, containsString(".set(\"kind\", \"cat\")"));
+        assertThat(content, containsString("case \"cat&special\" -> deserializeCat(jsonObject);"));
+        assertThat(content, containsString(".set(\"kind\", \"cat&special\")"));
+        assertThat(content, not(containsString("cat&amp;special")));
     }
 
     @Test
@@ -108,11 +111,25 @@ class ComposedSchemasGenerationIT {
         assertThat(content, containsString("Pet savePet("));
         assertThat(content, containsString("Contact saveContact("));
         assertThat(content, containsString("Extended getExtended("));
+        assertThat(content, containsString("Problem saveProblem("));
+    }
+
+    @Test
+    void unmappedDiscriminatorDefaultsToSchemaName() throws IOException {
+        String content = read(modelFile("Problem.java"));
+        assertThat(content, containsString("case \"Error\" -> deserializeApiError(jsonObject);"));
+        assertThat(content, containsString(".set(\"kind\", \"Error\")"));
+        assertThat(content, not(containsString(".set(\"kind\", \"ApiError\")")));
     }
 
     @Test
     void generatedProjectBuildsWithMavenWhenEnabled() throws IOException, InterruptedException {
         GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
+    }
+
+    @Test
+    void generatedJsonBindingRoundTripsWhenEnabled() throws IOException, InterruptedException {
+        GeneratedProjectBuildSupport.assertMavenTestSucceeds(outputDir);
     }
 
     private static File apiFile(String fileName) {
@@ -125,5 +142,69 @@ class ComposedSchemasGenerationIT {
 
     private static String read(File file) throws IOException {
         return Files.readString(file.toPath());
+    }
+
+    private static void writeJsonBindingRoundTripTest() throws IOException {
+        Path testFile = outputDir.resolve("src/test/java/io/helidon/example/model/ComposedJsonBindingTest.java");
+        Files.createDirectories(testFile.getParent());
+        Files.writeString(testFile, """
+                /*
+                 * Copyright (c) 2026 Oracle and/or its affiliates.
+                 *
+                 * Licensed under the Apache License, Version 2.0 (the "License");
+                 * you may not use this file except in compliance with the License.
+                 * You may obtain a copy of the License at
+                 *
+                 *     http://www.apache.org/licenses/LICENSE-2.0
+                 *
+                 * Unless required by applicable law or agreed to in writing, software
+                 * distributed under the License is distributed on an "AS IS" BASIS,
+                 * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+                 * See the License for the specific language governing permissions and
+                 * limitations under the License.
+                 */
+
+                package io.helidon.example.model;
+
+                import io.helidon.json.binding.JsonBinding;
+                import org.junit.jupiter.api.Test;
+
+                import static org.hamcrest.CoreMatchers.containsString;
+                import static org.hamcrest.CoreMatchers.instanceOf;
+                import static org.hamcrest.CoreMatchers.is;
+                import static org.hamcrest.MatcherAssert.assertThat;
+
+                class ComposedJsonBindingTest {
+
+                    private final JsonBinding jsonBinding = JsonBinding.create();
+
+                    @Test
+                    void oneOfDiscriminatorRoundTrip() {
+                        Cat cat = new Cat();
+                        cat.setWhiskers(7);
+
+                        String json = jsonBinding.serialize((Pet) cat, Pet.class);
+                        assertThat(json, containsString("\\\"kind\\\":\\\"cat&special\\\""));
+                        assertThat(json, containsString("\\\"whiskers\\\":7"));
+
+                        Pet pet = jsonBinding.deserialize("{\\\"kind\\\":\\\"cat&special\\\",\\\"whiskers\\\":7}", Pet.class);
+                        assertThat(pet, instanceOf(Cat.class));
+                        assertThat(((Cat) pet).getWhiskers(), is(7));
+                    }
+
+                    @Test
+                    void anyOfStructuralRoundTrip() {
+                        EmailContact emailContact = new EmailContact();
+                        emailContact.setEmail("user@example.com");
+
+                        String json = jsonBinding.serialize((Contact) emailContact, Contact.class);
+                        assertThat(json, containsString("\\\"email\\\":\\\"user@example.com\\\""));
+
+                        Contact contact = jsonBinding.deserialize("{\\\"email\\\":\\\"user@example.com\\\"}", Contact.class);
+                        assertThat(contact, instanceOf(EmailContact.class));
+                        assertThat(((EmailContact) contact).getEmail(), is("user@example.com"));
+                    }
+                }
+                """);
     }
 }

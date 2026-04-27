@@ -66,7 +66,7 @@ import {{import}};
         public {{classname}} deserialize(JsonParser parser) {
             JsonObject jsonObject = parser.readJsonObject();
 {{#vendorExtensions.x-has-union-discriminator}}
-            String discriminatorValue = jsonObject.stringValue("{{vendorExtensions.x-union-discriminator-key}}").orElse(null);
+            String discriminatorValue = jsonObject.stringValue({{{vendorExtensions.x-union-discriminator-key-literal}}}).orElse(null);
             if (discriminatorValue != null) {
                 {{classname}} discriminatorMatch = deserializeByAlias(discriminatorValue, jsonObject);
                 if (discriminatorMatch != null) {
@@ -91,7 +91,7 @@ import {{import}};
         private {{classname}} deserializeByAlias(String alias, JsonObject jsonObject) {
             return switch (alias) {
 {{#vendorExtensions.x-union-members}}
-                case "{{alias}}" -> deserialize{{name}}(jsonObject);
+                case {{{aliasLiteral}}} -> deserialize{{name}}(jsonObject);
 {{/vendorExtensions.x-union-members}}
                 default -> null;
             };
@@ -178,7 +178,7 @@ import {{import}};
 {{#vendorExtensions.x-has-union-discriminator}}
             return JsonObject.builder()
                     .from(jsonObject)
-                    .set("{{vendorExtensions.x-union-discriminator-key}}", "{{alias}}")
+                    .set({{{vendorExtensions.x-union-discriminator-key-literal}}}, {{{aliasLiteral}}})
                     .build();
 {{/vendorExtensions.x-has-union-discriminator}}{{^vendorExtensions.x-has-union-discriminator}}
             return jsonObject;
@@ -192,8 +192,8 @@ import {{import}};
 
 }
 {{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}@Json.Entity
-{{#vendorExtensions.x-has-polymorphic-subtypes}}@Json.Polymorphic(key = "{{vendorExtensions.x-polymorphic-key}}")
-{{#vendorExtensions.x-polymorphic-subtypes}}@Json.Subtype(alias = "{{alias}}", value = {{name}}.class)
+{{#vendorExtensions.x-has-polymorphic-subtypes}}@Json.Polymorphic(key = {{{vendorExtensions.x-polymorphic-key-literal}}})
+{{#vendorExtensions.x-polymorphic-subtypes}}@Json.Subtype(alias = {{{aliasLiteral}}}, value = {{name}}.class)
 {{/vendorExtensions.x-polymorphic-subtypes}}{{/vendorExtensions.x-has-polymorphic-subtypes}}
 {{#isDeprecated}}@Deprecated
 {{/isDeprecated}}{{#vendorExtensions.x-has-validations}}@Validation.Validated

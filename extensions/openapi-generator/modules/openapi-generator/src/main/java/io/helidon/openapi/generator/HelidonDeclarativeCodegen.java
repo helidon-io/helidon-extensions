@@ -17,6 +17,8 @@
 package io.helidon.openapi.generator;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
@@ -902,6 +904,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         String discriminatorKey = model.discriminator != null ? model.discriminator.getPropertyBaseName() : null;
         if (discriminatorKey != null && !discriminatorKey.isBlank()) {
             model.vendorExtensions.put("x-union-discriminator-key", discriminatorKey);
+            model.vendorExtensions.put("x-union-discriminator-key-literal", toJavaStringLiteral(discriminatorKey));
             model.vendorExtensions.put("x-has-union-discriminator", Boolean.TRUE);
         }
         model.vendorExtensions.put("x-render-vars", List.of());
@@ -996,6 +999,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             subtypesByParent.computeIfAbsent(parentType, ignored -> new ArrayList<>())
                     .add(new LinkedHashMap<>(Map.of(
                             "alias", discriminatorValue,
+                            "aliasLiteral", toJavaStringLiteral(discriminatorValue),
                             "name", model.classname)));
         }
 
@@ -1022,6 +1026,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
             parentModel.vendorExtensions.put("x-has-polymorphic-subtypes", Boolean.TRUE);
             parentModel.vendorExtensions.put("x-polymorphic-key", discriminatorKey);
+            parentModel.vendorExtensions.put("x-polymorphic-key-literal", toJavaStringLiteral(discriminatorKey));
             parentModel.vendorExtensions.put("x-polymorphic-subtypes", sortedSubtypes);
         });
     }
@@ -1112,6 +1117,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             result.add(Map.of(
                     "name", member,
                     "alias", alias,
+                    "aliasLiteral", toJavaStringLiteral(alias),
                     "serializerField", fieldBase + "Serializer",
                     "deserializerField", fieldBase + "Deserializer",
                     "requiredPropertiesLiteral", toStringArrayLiteral(requiredProperties),
@@ -1185,7 +1191,21 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     }
 
     private String toJavaStringLiteral(String value) {
-        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        StringBuilder result = new StringBuilder("\"");
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            switch (ch) {
+                case '\\' -> result.append("\\\\");
+                case '"' -> result.append("\\\"");
+                case '\n' -> result.append("\\n");
+                case '\r' -> result.append("\\r");
+                case '\t' -> result.append("\\t");
+                case '\b' -> result.append("\\b");
+                case '\f' -> result.append("\\f");
+                default -> result.append(ch);
+            }
+        }
+        return result.append('"').toString();
     }
 
     private String extractAllOfDiscriminatorValue(Schema<?> schema) {
@@ -1215,9 +1235,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         }
 
         try {
-            Path specPath = Path.of(inputSpec);
-            String specContent = Files.readString(specPath, StandardCharsets.UTF_8);
-            ObjectMapper mapper = looksLikeJson(specPath, specContent) ? Json.mapper() : Yaml.mapper();
+            String specContent = readInputSpecContent();
+            ObjectMapper mapper = looksLikeJson(inputSpec, specContent) ? Json.mapper() : Yaml.mapper();
             JsonNode root = mapper.readTree(specContent);
             Map<String, String> result = new LinkedHashMap<>();
             collectRawAllOfDiscriminatorValues(root.path("components").path("schemas"), result);
@@ -1229,6 +1248,21 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         } catch (Exception ignored) {
             return Map.of();
         }
+    }
+
+    private String readInputSpecContent() throws IOException {
+        URI uri = toUri(inputSpec);
+        if (uri != null && uri.getScheme() != null) {
+            if ("file".equalsIgnoreCase(uri.getScheme())) {
+                return Files.readString(Path.of(uri), StandardCharsets.UTF_8);
+            }
+
+            try (InputStream inputStream = uri.toURL().openStream()) {
+                return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+            }
+        }
+
+        return Files.readString(Path.of(inputSpec), StandardCharsets.UTF_8);
     }
 
     private void collectRawAllOfDiscriminatorValues(JsonNode schemasNode, Map<String, String> result) {
@@ -1244,8 +1278,20 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         });
     }
 
-    private boolean looksLikeJson(Path specPath, String specContent) {
-        String filename = specPath.getFileName() != null ? specPath.getFileName().toString().toLowerCase() : "";
+    private URI toUri(String value) {
+        try {
+            return URI.create(value);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private boolean looksLikeJson(String specLocation, String specContent) {
+        String filename = "";
+        if (specLocation != null) {
+            int slash = Math.max(specLocation.lastIndexOf('/'), specLocation.lastIndexOf('\\'));
+            filename = (slash >= 0 ? specLocation.substring(slash + 1) : specLocation).toLowerCase();
+        }
         if (filename.endsWith(".json")) {
             return true;
         }
@@ -1331,6 +1377,13 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             return mappedAlias;
         }
 
+        return defaultDiscriminatorValue(model);
+    }
+
+    private String defaultDiscriminatorValue(CodegenModel model) {
+        if (model.schemaName != null && !model.schemaName.isBlank()) {
+            return model.schemaName;
+        }
         return model.classname;
     }
 

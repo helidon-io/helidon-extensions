@@ -265,6 +265,22 @@ class DiscriminatorEnumAllOfGenerationIT {
     }
 
     @Test
+    void swagger2ShorthandDiscriminatorValueSupportsUrlInputSpec() throws Exception {
+        URL resource = DiscriminatorEnumAllOfGenerationIT.class
+                .getClassLoader()
+                .getResource("discriminator-swagger2-name-drift.yaml");
+        Path outputDir = generate(resource.toExternalForm(), "discriminator-swagger2-name-drift-url", false);
+
+        String parent = read(modelFile(outputDir, "ConditionShapeDetails.java"));
+        assertThat(parent, containsString("@Json.Subtype(alias = \"CM_PREREQUISITES_VIOLATION\", value = CmPreRequisiteViolationConditionShape.class)"));
+
+        String subtype = read(modelFile(outputDir, "CmPreRequisiteViolationConditionShape.java"));
+        assertThat(subtype, containsString("setConditionShape("
+                + "ConditionShapeDetails.ConditionShapeEnum.CM_PREREQUISITES_VIOLATION);"));
+        assertThat(subtype, not(containsString("CM_PRE_REQUISITE_VIOLATION_CONDITION_SHAPE")));
+    }
+
+    @Test
     void swagger2ShorthandDiscriminatorValueSupportsCompoundWordNormalization() throws Exception {
         Path outputDir = generate("discriminator-swagger2-phonebook.yaml", false);
 
@@ -300,11 +316,14 @@ class DiscriminatorEnumAllOfGenerationIT {
                 .getClassLoader()
                 .getResource(resourceName);
         String specPath = Paths.get(resource.toURI()).toAbsolutePath().toString();
-        Path outputDir = tempDir.resolve(resourceName.replace(".yaml", ""));
+        return generate(specPath, resourceName.replace(".yaml", ""), validateSpec);
+    }
 
+    private Path generate(String inputSpec, String outputName, boolean validateSpec) {
+        Path outputDir = tempDir.resolve(outputName);
         CodegenConfigurator configurator = new CodegenConfigurator()
                 .setGeneratorName("helidon-declarative")
-                .setInputSpec(specPath)
+                .setInputSpec(inputSpec)
                 .setOutputDir(outputDir.toString())
                 .setValidateSpec(validateSpec)
                 .addAdditionalProperty("helidonVersion", "4.4.1")

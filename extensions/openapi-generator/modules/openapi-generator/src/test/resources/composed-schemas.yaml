@@ -48,6 +48,23 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Contact'
+  /problems:
+    post:
+      tags: [composed]
+      operationId: saveProblem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Problem'
+      responses:
+        '200':
+          description: Saved problem
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 components:
   schemas:
     Base:
@@ -96,7 +113,7 @@ components:
       discriminator:
         propertyName: kind
         mapping:
-          cat: '#/components/schemas/Cat'
+          cat&special: '#/components/schemas/Cat'
           dog: '#/components/schemas/Dog'
     EmailContact:
       type: object
@@ -116,3 +133,18 @@ components:
       anyOf:
         - $ref: '#/components/schemas/EmailContact'
         - $ref: '#/components/schemas/PhoneContact'
+    Error:
+      type: object
+      required:
+        - kind
+        - message
+      properties:
+        kind:
+          type: string
+        message:
+          type: string
+    Problem:
+      oneOf:
+        - $ref: '#/components/schemas/Error'
+      discriminator:
+        propertyName: kind
