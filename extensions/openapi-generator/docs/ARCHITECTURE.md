@@ -156,6 +156,9 @@ Notable behavior:
   - union member models implement the generated interface(s)
   - generated converters deserialize using discriminator aliases when present,
     then fall back to structural matching by declared properties
+  - union interface generation is limited to referenced object model members;
+    primitive, array, map, and inline members fail generation with a clear
+    unsupported-shape message
 
 ### `postProcessOperationsWithModels`
 
@@ -235,12 +238,16 @@ existing Helidon-oriented templates:
   - each referenced member model implements that interface
   - generated deserialization requires exactly one matching subtype
   - when a discriminator is present, converter dispatch prefers discriminator aliases
+  - primitive, array, map, and inline members are rejected with a clear
+    unsupported-shape message instead of generating invalid Java
 - `anyOf`
   - the composed schema is generated as a Java interface with a generated
     `@Json.Converter`
   - each referenced member model implements that interface
   - generated deserialization requires at least one matching subtype
   - ambiguous structural matches are rejected instead of picking an arbitrary model
+  - primitive, array, map, and inline members are rejected with a clear
+    unsupported-shape message instead of generating invalid Java
 
 This keeps generated source compilable and preserves assignability between
 concrete member models and the composed OpenAPI type used by operations while

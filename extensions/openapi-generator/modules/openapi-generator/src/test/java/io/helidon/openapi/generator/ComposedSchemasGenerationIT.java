@@ -32,6 +32,7 @@ import org.openapitools.codegen.config.CodegenConfigurator;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ComposedSchemasGenerationIT {
 
@@ -130,6 +131,46 @@ class ComposedSchemasGenerationIT {
     @Test
     void generatedJsonBindingRoundTripsWhenEnabled() throws IOException, InterruptedException {
         GeneratedProjectBuildSupport.assertMavenTestSucceeds(outputDir);
+    }
+
+    @Test
+    void nonObjectUnionMembersFailClearly(@TempDir Path tempDir) throws IOException {
+        Path spec = tempDir.resolve("unsupported-union.yaml");
+        Files.writeString(spec, """
+                openapi: 3.0.3
+                info:
+                  title: Unsupported Union API
+                  version: 1.0.0
+                paths: {}
+                components:
+                  schemas:
+                    StringValue:
+                      type: string
+                    NumberValue:
+                      type: integer
+                      format: int32
+                    PrimitiveChoice:
+                      oneOf:
+                        - $ref: '#/components/schemas/StringValue'
+                        - $ref: '#/components/schemas/NumberValue'
+                """);
+
+        CodegenConfigurator configurator = new CodegenConfigurator()
+                .setGeneratorName("helidon-declarative")
+                .setInputSpec(spec.toString())
+                .setOutputDir(tempDir.resolve("generated").toString())
+                .addAdditionalProperty("helidonVersion", "4.4.1")
+                .addAdditionalProperty("apiPackage", "io.helidon.example.api")
+                .addAdditionalProperty("modelPackage", "io.helidon.example.model")
+                .addAdditionalProperty("invokerPackage", "io.helidon.example");
+
+        RuntimeException exception = assertThrows(RuntimeException.class,
+                                                  () -> new DefaultGenerator()
+                                                          .opts(configurator.toClientOptInput())
+                                                          .generate());
+
+        assertThat(exception.getMessage(), containsString("Unsupported oneOf member"));
+        assertThat(exception.getMessage(), containsString("PrimitiveChoice"));
     }
 
     private static File apiFile(String fileName) {

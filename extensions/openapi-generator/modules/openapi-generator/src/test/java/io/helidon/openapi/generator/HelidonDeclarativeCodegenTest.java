@@ -16,12 +16,16 @@
 
 package io.helidon.openapi.generator;
 
+import java.io.IOException;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openapitools.codegen.CodegenType;
 
+import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Unit tests for {@link HelidonDeclarativeCodegen} — verifies naming conventions,
@@ -154,6 +158,22 @@ class HelidonDeclarativeCodegenTest {
         assertThat(codegen.apiDocTemplateFiles().isEmpty(), is(true));
         assertThat(".java".equals(codegen.apiTestTemplateFiles().get("api-test.mustache")), is(true));
         assertThat(codegen.modelTestTemplateFiles().isEmpty(), is(true));
+    }
+
+    @Test
+    void javaStringLiteralEscapesUncommonControlCharacters() {
+        String value = "a" + (char) 0 + (char) 0x1B + "b";
+
+        assertThat(HelidonDeclarativeCodegen.toJavaStringLiteral(value),
+                   is("\"a" + "\\u0000" + "\\u001b" + "b\""));
+    }
+
+    @Test
+    void rawSpecReadRejectsUnsupportedUriSchemes() {
+        codegen.setInputSpec("jar:https://example.com/spec.yaml");
+
+        IOException exception = assertThrows(IOException.class, codegen::readInputSpecContent);
+        assertThat(exception.getMessage(), containsString("Unsupported input spec URI scheme"));
     }
 
     // -------------------------------------------------------------------------

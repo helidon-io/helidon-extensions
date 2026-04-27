@@ -22,6 +22,7 @@ import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
+import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -92,6 +93,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     static final String OPT_TRACING_ENABLED = "tracingEnabled";
     static final String OPT_METRICS_ENABLED = "metricsEnabled";
     static final String OPT_AVOID_OPTIONAL_LIST_PARAMS = "avoidOptionalListParams";
+    private static final int INPUT_SPEC_CONNECT_TIMEOUT_MILLIS = 10_000;
+    private static final int INPUT_SPEC_READ_TIMEOUT_MILLIS = 30_000;
+    private static final int RAW_INPUT_SPEC_MAX_BYTES = 64 * 1024 * 1024;
     private static final Set<String> MODEL_SUFFIX_TOKENS = Set.of(
             "DETAIL",
             "DETAILS",
@@ -900,6 +904,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
         model.vendorExtensions.put("x-is-union-interface", Boolean.TRUE);
         model.vendorExtensions.put("x-composition-kind", kind);
+        assertSupportedUnionMembers(model, kind, members, modelsByClassname);
         model.vendorExtensions.put("x-union-members", buildUnionMembers(model, members, modelsByClassname));
         String discriminatorKey = model.discriminator != null ? model.discriminator.getPropertyBaseName() : null;
         if (discriminatorKey != null && !discriminatorKey.isBlank()) {
@@ -915,6 +920,35 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             unionInterfacesByMember.computeIfAbsent(member, ignored -> new LinkedHashSet<>())
                     .add(model.classname);
         }
+    }
+
+    private void assertSupportedUnionMembers(CodegenModel unionModel,
+                                             String kind,
+                                             List<String> members,
+                                             Map<String, CodegenModel> modelsByClassname) {
+        for (String member : members) {
+            CodegenModel memberModel = modelsByClassname.get(member);
+            if (isSupportedUnionObjectMember(memberModel)) {
+                continue;
+            }
+
+            throw new IllegalStateException("Unsupported " + kind + " member '" + member
+                    + "' for composed schema '" + unionModel.classname + "'. "
+                    + "Helidon declarative composed schema converters currently support only referenced object "
+                    + "model members.");
+        }
+    }
+
+    private boolean isSupportedUnionObjectMember(CodegenModel model) {
+        return model != null
+                && !model.isAlias
+                && !model.isPrimitiveType
+                && !model.isArray
+                && !model.isMap
+                && !model.isEnum
+                && !model.isFreeFormObject
+                && model.oneOf.isEmpty()
+                && model.anyOf.isEmpty();
     }
 
     private void normalizeAllOfModel(CodegenModel model, Map<String, CodegenModel> modelsByClassname) {
@@ -1185,12 +1219,12 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
         return "new String[] {"
                 + values.stream()
-                        .map(this::toJavaStringLiteral)
+                        .map(HelidonDeclarativeCodegen::toJavaStringLiteral)
                         .collect(Collectors.joining(", "))
                 + "}";
     }
 
-    private String toJavaStringLiteral(String value) {
+    static String toJavaStringLiteral(String value) {
         StringBuilder result = new StringBuilder("\"");
         for (int i = 0; i < value.length(); i++) {
             char ch = value.charAt(i);
@@ -1202,7 +1236,15 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 case '\t' -> result.append("\\t");
                 case '\b' -> result.append("\\b");
                 case '\f' -> result.append("\\f");
-                default -> result.append(ch);
+                default -> {
+                    if (Character.isISOControl(ch)) {
+                        result.append("\\u");
+                        String hex = Integer.toHexString(ch);
+                        result.append("0".repeat(4 - hex.length())).append(hex);
+                    } else {
+                        result.append(ch);
+                    }
+                }
             }
         }
         return result.append('"').toString();
@@ -1250,19 +1292,44 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         }
     }
 
-    private String readInputSpecContent() throws IOException {
+    String readInputSpecContent() throws IOException {
         URI uri = toUri(inputSpec);
-        if (uri != null && uri.getScheme() != null) {
-            if ("file".equalsIgnoreCase(uri.getScheme())) {
+        if (uri != null && uri.getScheme() != null && !isWindowsDrivePath(inputSpec)) {
+            String scheme = uri.getScheme().toLowerCase();
+            if ("file".equals(scheme)) {
                 return Files.readString(Path.of(uri), StandardCharsets.UTF_8);
             }
 
-            try (InputStream inputStream = uri.toURL().openStream()) {
-                return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+            if (!"http".equals(scheme) && !"https".equals(scheme)) {
+                throw new IOException("Unsupported input spec URI scheme for raw discriminator recovery: " + scheme);
+            }
+
+            URLConnection connection = uri.toURL().openConnection();
+            connection.setConnectTimeout(INPUT_SPEC_CONNECT_TIMEOUT_MILLIS);
+            connection.setReadTimeout(INPUT_SPEC_READ_TIMEOUT_MILLIS);
+            connection.setUseCaches(false);
+            try (InputStream inputStream = connection.getInputStream()) {
+                return readBoundedInputSpecContent(inputStream);
             }
         }
 
         return Files.readString(Path.of(inputSpec), StandardCharsets.UTF_8);
+    }
+
+    private String readBoundedInputSpecContent(InputStream inputStream) throws IOException {
+        byte[] content = inputStream.readNBytes(RAW_INPUT_SPEC_MAX_BYTES + 1);
+        if (content.length > RAW_INPUT_SPEC_MAX_BYTES) {
+            throw new IOException("Input spec exceeds raw discriminator recovery limit of "
+                    + RAW_INPUT_SPEC_MAX_BYTES + " bytes");
+        }
+        return new String(content, StandardCharsets.UTF_8);
+    }
+
+    private boolean isWindowsDrivePath(String value) {
+        return value != null
+                && value.length() >= 2
+                && Character.isLetter(value.charAt(0))
+                && value.charAt(1) == ':';
     }
 
     private void collectRawAllOfDiscriminatorValues(JsonNode schemasNode, Map<String, String> result) {

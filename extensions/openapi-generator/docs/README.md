@@ -202,10 +202,14 @@ The generator supports these schema-composition keywords:
   values for `allOf` subtypes that provide `x-discriminator-value`
 - `oneOf`: generates a Java interface for the composed schema, attaches a
   generated `@Json.Converter`, makes member models implement it, and requires
-  exactly one matching subtype during deserialization
+  exactly one matching subtype during deserialization. Members must be referenced
+  object model schemas; primitive, array, map, and inline members fail generation
+  with a clear unsupported-shape message.
 - `anyOf`: generates a Java interface for the composed schema, attaches a
   generated `@Json.Converter`, makes member models implement it, and rejects
-  ambiguous structural matches during deserialization
+  ambiguous structural matches during deserialization. Members must be referenced
+  object model schemas; primitive, array, map, and inline members fail generation
+  with a clear unsupported-shape message.
 
 For union schemas, generated converters use the OpenAPI discriminator when one is
 present. Without a discriminator, they fall back to structural matching based on
