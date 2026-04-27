@@ -19,12 +19,16 @@ package {{modelPackage}};
 
 import io.helidon.json.binding.Json;
 {{#model}}{{#vendorExtensions.x-is-union-interface}}import java.io.ByteArrayOutputStream;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import io.helidon.common.GenericType;
 import io.helidon.json.JsonGenerator;
 import io.helidon.json.JsonObject;
 import io.helidon.json.JsonParser;
+import io.helidon.json.JsonValue;
+import io.helidon.json.JsonValueType;
 import io.helidon.json.binding.JsonBindingConfigurator;
 import io.helidon.json.binding.JsonConverter;
 import io.helidon.json.binding.JsonDeserializer;
@@ -101,7 +105,8 @@ import {{import}};
             List<UnionMatch> matches = new ArrayList<>();
 {{#vendorExtensions.x-union-members}}
             int {{deserializerField}}Score = matchScore(jsonObject, {{{propertyNamesLiteral}}});
-            if (matchesMember(jsonObject, {{{requiredPropertiesLiteral}}}, {{deserializerField}}Score)) {
+            if (matchesMember(jsonObject, {{{requiredPropertiesLiteral}}}, {{deserializerField}}Score)
+                    && matchesConstraints(jsonObject, {{{constraintsLiteral}}})) {
                 matches.add(new UnionMatch("{{name}}", {{deserializerField}}Score));
             }
 {{/vendorExtensions.x-union-members}}
@@ -133,6 +138,111 @@ import {{import}};
                 }
             }
             return score > 0 || requiredProperties.length > 0;
+        }
+
+        private boolean matchesConstraints(JsonObject jsonObject, List<UnionConstraint> constraints) {
+            for (UnionConstraint constraint : constraints) {
+                JsonValue value = jsonObject.value(constraint.propertyName()).orElse(null);
+                if (value == null) {
+                    continue;
+                }
+                if (value.type() == JsonValueType.NULL) {
+                    if (constraint.nullable()) {
+                        continue;
+                    }
+                    return false;
+                }
+                if (constraint.jsonType() != null && value.type() != constraint.jsonType()) {
+                    return false;
+                }
+                if (!matchesEnum(value, constraint.enumValues())
+                        || !matchesStringConstraints(value, constraint)
+                        || !matchesNumberConstraints(value, constraint)
+                        || !matchesArrayConstraints(value, constraint)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private boolean matchesEnum(JsonValue value, String[] enumValues) {
+            if (enumValues.length == 0) {
+                return true;
+            }
+            String scalarValue = scalarValue(value);
+            if (scalarValue == null) {
+                return false;
+            }
+            for (String enumValue : enumValues) {
+                if (enumValue.equals(scalarValue)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private String scalarValue(JsonValue value) {
+            return switch (value.type()) {
+                case STRING -> value.asString().value();
+                case NUMBER -> value.asNumber().bigDecimalValue().stripTrailingZeros().toPlainString();
+                case BOOLEAN -> Boolean.toString(value.asBoolean().value());
+                default -> null;
+            };
+        }
+
+        private boolean matchesStringConstraints(JsonValue value, UnionConstraint constraint) {
+            if (constraint.minLength() == null && constraint.maxLength() == null && constraint.pattern() == null) {
+                return true;
+            }
+            if (value.type() != JsonValueType.STRING) {
+                return false;
+            }
+            String stringValue = value.asString().value();
+            if (constraint.minLength() != null && stringValue.length() < constraint.minLength()) {
+                return false;
+            }
+            if (constraint.maxLength() != null && stringValue.length() > constraint.maxLength()) {
+                return false;
+            }
+            return constraint.pattern() == null || Pattern.compile(constraint.pattern()).matcher(stringValue).find();
+        }
+
+        private boolean matchesNumberConstraints(JsonValue value, UnionConstraint constraint) {
+            if (constraint.minimum() == null && constraint.maximum() == null && constraint.multipleOf() == null) {
+                return true;
+            }
+            if (value.type() != JsonValueType.NUMBER) {
+                return false;
+            }
+            BigDecimal number = value.asNumber().bigDecimalValue();
+            if (constraint.minimum() != null) {
+                int comparison = number.compareTo(constraint.minimum());
+                if (comparison < 0 || (comparison == 0 && constraint.exclusiveMinimum())) {
+                    return false;
+                }
+            }
+            if (constraint.maximum() != null) {
+                int comparison = number.compareTo(constraint.maximum());
+                if (comparison > 0 || (comparison == 0 && constraint.exclusiveMaximum())) {
+                    return false;
+                }
+            }
+            return constraint.multipleOf() == null
+                    || number.remainder(constraint.multipleOf()).compareTo(BigDecimal.ZERO) == 0;
+        }
+
+        private boolean matchesArrayConstraints(JsonValue value, UnionConstraint constraint) {
+            if (constraint.minItems() == null && constraint.maxItems() == null) {
+                return true;
+            }
+            if (value.type() != JsonValueType.ARRAY) {
+                return false;
+            }
+            int size = value.asArray().values().size();
+            if (constraint.minItems() != null && size < constraint.minItems()) {
+                return false;
+            }
+            return constraint.maxItems() == null || size <= constraint.maxItems();
         }
 
         private int matchScore(JsonObject jsonObject, String[] propertyNames) {
@@ -187,6 +297,22 @@ import {{import}};
 {{/vendorExtensions.x-union-members}}
 
         private record UnionMatch(String type, int score) {
+        }
+
+        private record UnionConstraint(String propertyName,
+                                       JsonValueType jsonType,
+                                       boolean nullable,
+                                       String[] enumValues,
+                                       Integer minLength,
+                                       Integer maxLength,
+                                       String pattern,
+                                       BigDecimal minimum,
+                                       boolean exclusiveMinimum,
+                                       BigDecimal maximum,
+                                       boolean exclusiveMaximum,
+                                       BigDecimal multipleOf,
+                                       Integer minItems,
+                                       Integer maxItems) {
         }
     }
 

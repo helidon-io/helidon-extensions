@@ -81,6 +81,23 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /constraint-choices:
+    post:
+      tags: [composed]
+      operationId: saveConstraintChoice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConstraintChoice'
+      responses:
+        '200':
+          description: Saved constrained choice
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConstraintChoice'
 components:
   schemas:
     Base:
@@ -164,3 +181,73 @@ components:
         - $ref: '#/components/schemas/Error'
       discriminator:
         propertyName: kind
+    SmallCode:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: string
+          enum:
+            - small
+          minLength: 5
+          maxLength: 5
+    LargeCode:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: string
+          enum:
+            - large
+          minLength: 5
+          maxLength: 5
+    ConstraintChoice:
+      oneOf:
+        - $ref: '#/components/schemas/SmallCode'
+        - $ref: '#/components/schemas/LargeCode'
+    LowScore:
+      type: object
+      required:
+        - score
+      properties:
+        score:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 9
+    HighScore:
+      type: object
+      required:
+        - score
+      properties:
+        score:
+          type: integer
+          format: int32
+          minimum: 10
+          maximum: 99
+    ScoreChoice:
+      oneOf:
+        - $ref: '#/components/schemas/LowScore'
+        - $ref: '#/components/schemas/HighScore'
+    AlphaCode:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          pattern: '^[A-Z]+$'
+    NumericCode:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          pattern: '^[0-9]+$'
+    PatternChoice:
+      oneOf:
+        - $ref: '#/components/schemas/AlphaCode'
+        - $ref: '#/components/schemas/NumericCode'

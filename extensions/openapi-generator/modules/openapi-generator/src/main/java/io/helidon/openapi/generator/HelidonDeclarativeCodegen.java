@@ -1153,6 +1153,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     "deserializerField", fieldBase + "Deserializer",
                     "requiredPropertiesLiteral", toStringArrayLiteral(requiredProperties),
                     "propertyNamesLiteral", toStringArrayLiteral(allProperties),
+                    "constraintsLiteral", UnionBranchConstraints.toConstraintListLiteral(memberModel),
                     "last", i == members.size() - 1));
         }
         return result;

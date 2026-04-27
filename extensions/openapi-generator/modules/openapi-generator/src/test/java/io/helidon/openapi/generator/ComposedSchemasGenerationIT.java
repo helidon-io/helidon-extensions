@@ -107,12 +107,23 @@ class ComposedSchemasGenerationIT {
     }
 
     @Test
+    void structuralOneOfUsesPropertyConstraints() throws IOException {
+        String content = read(modelFile("ConstraintChoice.java"));
+        assertThat(content, containsString("public interface ConstraintChoice"));
+        assertThat(content, containsString("new UnionConstraint(\"value\", JsonValueType.STRING, false, "
+                                                   + "new String[] {\"small\"}"));
+        assertThat(content, containsString("new UnionConstraint(\"value\", JsonValueType.STRING, false, "
+                                                   + "new String[] {\"large\"}"));
+    }
+
+    @Test
     void apiMethodsUseComposedSchemaTypes() throws IOException {
         String content = read(apiFile("ComposedApi.java"));
         assertThat(content, containsString("Pet savePet("));
         assertThat(content, containsString("Contact saveContact("));
         assertThat(content, containsString("Extended getExtended("));
         assertThat(content, containsString("Problem saveProblem("));
+        assertThat(content, containsString("ConstraintChoice saveConstraintChoice("));
     }
 
     @Test
@@ -244,6 +255,31 @@ class ComposedSchemasGenerationIT {
                         Contact contact = jsonBinding.deserialize("{\\\"email\\\":\\\"user@example.com\\\"}", Contact.class);
                         assertThat(contact, instanceOf(EmailContact.class));
                         assertThat(((EmailContact) contact).getEmail(), is("user@example.com"));
+                    }
+
+                    @Test
+                    void constrainedOneOfStructuralDeserializesUniqueBranch() {
+                        ConstraintChoice small = jsonBinding.deserialize("{\\\"value\\\":\\\"small\\\"}",
+                                                                         ConstraintChoice.class);
+                        assertThat(small, instanceOf(SmallCode.class));
+
+                        ConstraintChoice large = jsonBinding.deserialize("{\\\"value\\\":\\\"large\\\"}",
+                                                                         ConstraintChoice.class);
+                        assertThat(large, instanceOf(LargeCode.class));
+
+                        ScoreChoice lowScore = jsonBinding.deserialize("{\\\"score\\\":9}", ScoreChoice.class);
+                        assertThat(lowScore, instanceOf(LowScore.class));
+
+                        ScoreChoice highScore = jsonBinding.deserialize("{\\\"score\\\":10}", ScoreChoice.class);
+                        assertThat(highScore, instanceOf(HighScore.class));
+
+                        PatternChoice alphaCode = jsonBinding.deserialize("{\\\"code\\\":\\\"ABC\\\"}",
+                                                                          PatternChoice.class);
+                        assertThat(alphaCode, instanceOf(AlphaCode.class));
+
+                        PatternChoice numericCode = jsonBinding.deserialize("{\\\"code\\\":\\\"123\\\"}",
+                                                                            PatternChoice.class);
+                        assertThat(numericCode, instanceOf(NumericCode.class));
                     }
                 }
                 """);
