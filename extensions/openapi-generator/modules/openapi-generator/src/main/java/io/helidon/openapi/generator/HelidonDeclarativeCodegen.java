@@ -18,11 +18,9 @@ package io.helidon.openapi.generator;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
-import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,12 +37,12 @@ import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.swagger.v3.core.util.Json;
+import io.swagger.v3.core.util.Yaml;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.servers.Server;
-import io.swagger.v3.core.util.Json;
-import io.swagger.v3.core.util.Yaml;
 import org.openapitools.codegen.CodegenComposedSchemas;
 import org.openapitools.codegen.CodegenModel;
 import org.openapitools.codegen.CodegenOperation;
@@ -93,9 +91,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     static final String OPT_TRACING_ENABLED = "tracingEnabled";
     static final String OPT_METRICS_ENABLED = "metricsEnabled";
     static final String OPT_AVOID_OPTIONAL_LIST_PARAMS = "avoidOptionalListParams";
-    private static final int INPUT_SPEC_CONNECT_TIMEOUT_MILLIS = 10_000;
-    private static final int INPUT_SPEC_READ_TIMEOUT_MILLIS = 30_000;
-    private static final int RAW_INPUT_SPEC_MAX_BYTES = 64 * 1024 * 1024;
     private static final Set<String> MODEL_SUFFIX_TOKENS = Set.of(
             "DETAIL",
             "DETAILS",
@@ -909,7 +904,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         String discriminatorKey = model.discriminator != null ? model.discriminator.getPropertyBaseName() : null;
         if (discriminatorKey != null && !discriminatorKey.isBlank()) {
             model.vendorExtensions.put("x-union-discriminator-key", discriminatorKey);
-            model.vendorExtensions.put("x-union-discriminator-key-literal", toJavaStringLiteral(discriminatorKey));
+            model.vendorExtensions.put("x-union-discriminator-key-literal",
+                                       JavaStringLiterals.toJavaStringLiteral(discriminatorKey));
             model.vendorExtensions.put("x-has-union-discriminator", Boolean.TRUE);
         }
         model.vendorExtensions.put("x-render-vars", List.of());
@@ -1033,7 +1029,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             subtypesByParent.computeIfAbsent(parentType, ignored -> new ArrayList<>())
                     .add(new LinkedHashMap<>(Map.of(
                             "alias", discriminatorValue,
-                            "aliasLiteral", toJavaStringLiteral(discriminatorValue),
+                            "aliasLiteral", JavaStringLiterals.toJavaStringLiteral(discriminatorValue),
                             "name", model.classname)));
         }
 
@@ -1060,7 +1056,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
             parentModel.vendorExtensions.put("x-has-polymorphic-subtypes", Boolean.TRUE);
             parentModel.vendorExtensions.put("x-polymorphic-key", discriminatorKey);
-            parentModel.vendorExtensions.put("x-polymorphic-key-literal", toJavaStringLiteral(discriminatorKey));
+            parentModel.vendorExtensions.put("x-polymorphic-key-literal",
+                                             JavaStringLiterals.toJavaStringLiteral(discriminatorKey));
             parentModel.vendorExtensions.put("x-polymorphic-subtypes", sortedSubtypes);
         });
     }
@@ -1151,7 +1148,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             result.add(Map.of(
                     "name", member,
                     "alias", alias,
-                    "aliasLiteral", toJavaStringLiteral(alias),
+                    "aliasLiteral", JavaStringLiterals.toJavaStringLiteral(alias),
                     "serializerField", fieldBase + "Serializer",
                     "deserializerField", fieldBase + "Deserializer",
                     "requiredPropertiesLiteral", toStringArrayLiteral(requiredProperties),
@@ -1219,35 +1216,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
         return "new String[] {"
                 + values.stream()
-                        .map(HelidonDeclarativeCodegen::toJavaStringLiteral)
+                        .map(JavaStringLiterals::toJavaStringLiteral)
                         .collect(Collectors.joining(", "))
                 + "}";
-    }
-
-    static String toJavaStringLiteral(String value) {
-        StringBuilder result = new StringBuilder("\"");
-        for (int i = 0; i < value.length(); i++) {
-            char ch = value.charAt(i);
-            switch (ch) {
-                case '\\' -> result.append("\\\\");
-                case '"' -> result.append("\\\"");
-                case '\n' -> result.append("\\n");
-                case '\r' -> result.append("\\r");
-                case '\t' -> result.append("\\t");
-                case '\b' -> result.append("\\b");
-                case '\f' -> result.append("\\f");
-                default -> {
-                    if (Character.isISOControl(ch)) {
-                        result.append("\\u");
-                        String hex = Integer.toHexString(ch);
-                        result.append("0".repeat(4 - hex.length())).append(hex);
-                    } else {
-                        result.append(ch);
-                    }
-                }
-            }
-        }
-        return result.append('"').toString();
     }
 
     private String extractAllOfDiscriminatorValue(Schema<?> schema) {
@@ -1277,7 +1248,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         }
 
         try {
-            String specContent = readInputSpecContent();
+            String specContent = InputSpecContentReader.read(inputSpec);
             ObjectMapper mapper = looksLikeJson(inputSpec, specContent) ? Json.mapper() : Yaml.mapper();
             JsonNode root = mapper.readTree(specContent);
             Map<String, String> result = new LinkedHashMap<>();
@@ -1287,49 +1258,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 return Map.of();
             }
             return result;
-        } catch (Exception ignored) {
+        } catch (IOException | RuntimeException ignored) {
             return Map.of();
         }
-    }
-
-    String readInputSpecContent() throws IOException {
-        URI uri = toUri(inputSpec);
-        if (uri != null && uri.getScheme() != null && !isWindowsDrivePath(inputSpec)) {
-            String scheme = uri.getScheme().toLowerCase();
-            if ("file".equals(scheme)) {
-                return Files.readString(Path.of(uri), StandardCharsets.UTF_8);
-            }
-
-            if (!"http".equals(scheme) && !"https".equals(scheme)) {
-                throw new IOException("Unsupported input spec URI scheme for raw discriminator recovery: " + scheme);
-            }
-
-            URLConnection connection = uri.toURL().openConnection();
-            connection.setConnectTimeout(INPUT_SPEC_CONNECT_TIMEOUT_MILLIS);
-            connection.setReadTimeout(INPUT_SPEC_READ_TIMEOUT_MILLIS);
-            connection.setUseCaches(false);
-            try (InputStream inputStream = connection.getInputStream()) {
-                return readBoundedInputSpecContent(inputStream);
-            }
-        }
-
-        return Files.readString(Path.of(inputSpec), StandardCharsets.UTF_8);
-    }
-
-    private String readBoundedInputSpecContent(InputStream inputStream) throws IOException {
-        byte[] content = inputStream.readNBytes(RAW_INPUT_SPEC_MAX_BYTES + 1);
-        if (content.length > RAW_INPUT_SPEC_MAX_BYTES) {
-            throw new IOException("Input spec exceeds raw discriminator recovery limit of "
-                    + RAW_INPUT_SPEC_MAX_BYTES + " bytes");
-        }
-        return new String(content, StandardCharsets.UTF_8);
-    }
-
-    private boolean isWindowsDrivePath(String value) {
-        return value != null
-                && value.length() >= 2
-                && Character.isLetter(value.charAt(0))
-                && value.charAt(1) == ':';
     }
 
     private void collectRawAllOfDiscriminatorValues(JsonNode schemasNode, Map<String, String> result) {
@@ -1343,14 +1274,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 result.putIfAbsent(entry.getKey(), discriminatorValue);
             }
         });
-    }
-
-    private URI toUri(String value) {
-        try {
-            return URI.create(value);
-        } catch (IllegalArgumentException ignored) {
-            return null;
-        }
     }
 
     private boolean looksLikeJson(String specLocation, String specContent) {
@@ -1700,7 +1623,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                                                 String discriminatorValue) {
         CodegenProperty property = discriminatorProperty(parentModel, discriminatorKey);
         if (property == null) {
-            return toJavaStringLiteral(discriminatorValue);
+            return JavaStringLiterals.toJavaStringLiteral(discriminatorValue);
         }
 
         if (property.isEnum && property.datatypeWithEnum != null && !property.datatypeWithEnum.isBlank()) {
@@ -1712,7 +1635,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             return parentModel.classname + "." + property.datatypeWithEnum + "." + enumConstant;
         }
 
-        return toJavaStringLiteral(discriminatorValue);
+        return JavaStringLiterals.toJavaStringLiteral(discriminatorValue);
     }
 
     private String parentEnumConstant(CodegenProperty property, String discriminatorValue) {

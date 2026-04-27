@@ -38,6 +38,7 @@
 
     <properties>
         <helidon.services.skip>true</helidon.services.skip>
+        <spotbugs.exclude>etc/spotbugs/exclude.xml</spotbugs.exclude>
     </properties>
 
     <dependencies>

@@ -164,15 +164,14 @@ class HelidonDeclarativeCodegenTest {
     void javaStringLiteralEscapesUncommonControlCharacters() {
         String value = "a" + (char) 0 + (char) 0x1B + "b";
 
-        assertThat(HelidonDeclarativeCodegen.toJavaStringLiteral(value),
+        assertThat(JavaStringLiterals.toJavaStringLiteral(value),
                    is("\"a" + "\\u0000" + "\\u001b" + "b\""));
     }
 
     @Test
     void rawSpecReadRejectsUnsupportedUriSchemes() {
-        codegen.setInputSpec("jar:https://example.com/spec.yaml");
-
-        IOException exception = assertThrows(IOException.class, codegen::readInputSpecContent);
+        IOException exception = assertThrows(IOException.class,
+                                             () -> InputSpecContentReader.read("jar:https://example.com/spec.yaml"));
         assertThat(exception.getMessage(), containsString("Unsupported input spec URI scheme"));
     }
 

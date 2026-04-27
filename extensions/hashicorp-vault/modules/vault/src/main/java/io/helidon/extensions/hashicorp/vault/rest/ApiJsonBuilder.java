@@ -349,7 +349,7 @@ public abstract class ApiJsonBuilder<T extends ApiJsonBuilder<T>> {
      * @return updated builder
      */
     protected T addToObject(String name, String key, boolean value) {
-        objectsAsMaps.computeIfAbsent(name, _ -> new LinkedHashMap<>())
+        objectsAsMaps.computeIfAbsent(name, ignored -> new LinkedHashMap<>())
                 .put(key, JsonBoolean.create(value));
 
         return me();
