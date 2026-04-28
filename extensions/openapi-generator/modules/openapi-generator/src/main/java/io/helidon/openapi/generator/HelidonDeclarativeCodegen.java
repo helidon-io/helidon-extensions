@@ -410,6 +410,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         model.imports.remove("JsonNullable");   // openApiNullable wrapper — not used in our template
         boolean hasDeclaredProperties = hasDeclaredProperties(schema);
         model.vendorExtensions.put("x-has-declared-properties", hasDeclaredProperties);
+        model.vendorExtensions.put("x-schema-nullable", Boolean.TRUE.equals(schema.getNullable()));
         String allOfDiscriminatorValue = extractAllOfDiscriminatorValue(schema);
         if (allOfDiscriminatorValue == null) {
             allOfDiscriminatorValue = rawAllOfDiscriminatorValuesBySchema.get(name);
@@ -911,6 +912,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         model.vendorExtensions.put("x-render-vars", List.of());
         model.vendorExtensions.put("x-union-requires-exactly-one", "oneOf".equals(kind));
         model.vendorExtensions.put("x-union-requires-unique-best-match", "anyOf".equals(kind));
+        model.vendorExtensions.put("x-union-nullable",
+                                   Boolean.TRUE.equals(model.vendorExtensions.get("x-schema-nullable")));
 
         for (String member : members) {
             unionInterfacesByMember.computeIfAbsent(member, ignored -> new LinkedHashSet<>())
