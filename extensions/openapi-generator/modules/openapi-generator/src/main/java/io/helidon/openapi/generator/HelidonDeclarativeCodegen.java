@@ -17,6 +17,7 @@
 package io.helidon.openapi.generator;
 
 import java.io.File;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
@@ -24,16 +25,25 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.swagger.v3.core.util.Json;
+import io.swagger.v3.core.util.Yaml;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.servers.Server;
+import org.openapitools.codegen.CodegenComposedSchemas;
 import org.openapitools.codegen.CodegenModel;
 import org.openapitools.codegen.CodegenOperation;
 import org.openapitools.codegen.CodegenParameter;
@@ -81,6 +91,25 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     static final String OPT_TRACING_ENABLED = "tracingEnabled";
     static final String OPT_METRICS_ENABLED = "metricsEnabled";
     static final String OPT_AVOID_OPTIONAL_LIST_PARAMS = "avoidOptionalListParams";
+    private static final Set<String> MODEL_SUFFIX_TOKENS = Set.of(
+            "DETAIL",
+            "DETAILS",
+            "SHAPE",
+            "SHAPES",
+            "VALUE",
+            "VALUES",
+            "TYPE",
+            "TYPES",
+            "CONFIG",
+            "CONFIGS",
+            "CATEGORY",
+            "CATEGORIES",
+            "MODEL",
+            "MODELS",
+            "REQUEST",
+            "REQUESTS",
+            "RESPONSE",
+            "RESPONSES");
 
     private String helidonVersion = "4.4.1";
     private boolean generateClient = true;
@@ -93,6 +122,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private boolean metricsEnabled = false;
     private boolean avoidOptionalListParams = false;
     private List<SecurityRequirement> globalSecurityRequirements = List.of();
+    private Map<String, String> rawAllOfDiscriminatorValuesBySchema = Map.of();
 
     /**
      * Creates a new generator with default options and template mappings.
@@ -330,6 +360,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         globalSecurityRequirements = openAPI.getSecurity() == null
                 ? List.of()
                 : new ArrayList<>(openAPI.getSecurity());
+        rawAllOfDiscriminatorValuesBySchema = loadRawAllOfDiscriminatorValues();
 
         if (openAPI.getServers() != null && !openAPI.getServers().isEmpty()) {
             String serverUrl = openAPI.getServers().get(0).getUrl();
@@ -377,6 +408,16 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         model.imports.remove("JsonInclude");
         model.imports.remove("JsonProperty");
         model.imports.remove("JsonNullable");   // openApiNullable wrapper — not used in our template
+        boolean hasDeclaredProperties = hasDeclaredProperties(schema);
+        model.vendorExtensions.put("x-has-declared-properties", hasDeclaredProperties);
+        model.vendorExtensions.put("x-schema-nullable", Boolean.TRUE.equals(schema.getNullable()));
+        String allOfDiscriminatorValue = extractAllOfDiscriminatorValue(schema);
+        if (allOfDiscriminatorValue == null) {
+            allOfDiscriminatorValue = rawAllOfDiscriminatorValuesBySchema.get(name);
+        }
+        if (allOfDiscriminatorValue != null) {
+            model.vendorExtensions.put("x-allof-discriminator-value", allOfDiscriminatorValue);
+        }
         return model;
     }
 
@@ -751,14 +792,36 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     @Override
     public Map<String, ModelsMap> postProcessAllModels(Map<String, ModelsMap> objs) {
         Map<String, ModelsMap> result = super.postProcessAllModels(objs);
+        Map<String, CodegenModel> modelsByClassname = new LinkedHashMap<>();
+        List<CodegenModel> models = new ArrayList<>();
+
+        for (ModelsMap modelsMap : result.values()) {
+            for (ModelMap modelContainer : modelsMap.getModels()) {
+                CodegenModel model = modelContainer.getModel();
+                modelsByClassname.put(model.classname, model);
+                models.add(model);
+            }
+        }
+
+        Map<String, LinkedHashSet<String>> unionInterfacesByMember = new LinkedHashMap<>();
+        normalizeComposedModels(models, modelsByClassname, unionInterfacesByMember);
+        applyUnionInterfaces(models, unionInterfacesByMember);
+        applyAllOfDiscriminatorHierarchy(models, modelsByClassname);
+
         boolean anyValidation = false;
         for (Map.Entry<String, ModelsMap> entry : result.entrySet()) {
             ModelsMap modelsMap = entry.getValue();
             for (ModelMap modelContainer : modelsMap.getModels()) {
                 var model = modelContainer.getModel();
-                boolean modelHasValidation = false;
+                if (Boolean.TRUE.equals(model.vendorExtensions.get("x-is-union-interface"))) {
+                    model.vendorExtensions.put("x-render-vars", List.of());
+                    continue;
+                }
 
-                for (CodegenProperty prop : model.vars) {
+                boolean modelHasValidation = false;
+                List<CodegenProperty> renderVars = renderVars(model);
+
+                for (CodegenProperty prop : renderVars) {
                     // Mark required properties for @Json.Required
                     if (prop.required) {
                         prop.vendorExtensions.put("x-json-required", Boolean.TRUE);
@@ -796,6 +859,821 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             additionalProperties.put("hasValidation", Boolean.TRUE);
         }
         return result;
+    }
+
+    private void normalizeComposedModels(List<CodegenModel> models,
+                                         Map<String, CodegenModel> modelsByClassname,
+                                         Map<String, LinkedHashSet<String>> unionInterfacesByMember) {
+        for (CodegenModel model : models) {
+            model.vendorExtensions.put("x-render-vars", model.vars);
+
+            if ((!model.oneOf.isEmpty() || !model.anyOf.isEmpty()) && shouldRenderAsUnionInterface(model)) {
+                normalizeUnionModel(model, modelsByClassname, unionInterfacesByMember);
+            } else if (!model.allOf.isEmpty()) {
+                normalizeAllOfModel(model, modelsByClassname);
+            }
+        }
+    }
+
+    private boolean shouldRenderAsUnionInterface(CodegenModel model) {
+        Object hasDeclaredProperties = model.vendorExtensions.get("x-has-declared-properties");
+        return !Boolean.TRUE.equals(hasDeclaredProperties);
+    }
+
+    private void normalizeUnionModel(CodegenModel model,
+                                     Map<String, CodegenModel> modelsByClassname,
+                                     Map<String, LinkedHashSet<String>> unionInterfacesByMember) {
+        String kind = !model.oneOf.isEmpty() ? "oneOf" : "anyOf";
+        List<String> members = new ArrayList<>(!model.oneOf.isEmpty() ? model.oneOf : model.anyOf);
+        CodegenComposedSchemas composedSchemas = model.getComposedSchemas();
+        if (members.isEmpty() && composedSchemas != null) {
+            List<CodegenProperty> composedMembers = "oneOf".equals(kind)
+                    ? composedSchemas.getOneOf()
+                    : composedSchemas.getAnyOf();
+            if (composedMembers != null) {
+                members = composedMembers.stream()
+                        .map(CodegenProperty::getDataType)
+                        .filter(type -> type != null && !type.isBlank())
+                        .collect(Collectors.toCollection(ArrayList::new));
+            }
+        }
+
+        model.vendorExtensions.put("x-is-union-interface", Boolean.TRUE);
+        model.vendorExtensions.put("x-composition-kind", kind);
+        assertSupportedUnionMembers(model, kind, members, modelsByClassname);
+        model.vendorExtensions.put("x-union-members", buildUnionMembers(model, members, modelsByClassname));
+        String discriminatorKey = model.discriminator != null ? model.discriminator.getPropertyBaseName() : null;
+        if (discriminatorKey != null && !discriminatorKey.isBlank()) {
+            model.vendorExtensions.put("x-union-discriminator-key", discriminatorKey);
+            model.vendorExtensions.put("x-union-discriminator-key-literal",
+                                       JavaStringLiterals.toJavaStringLiteral(discriminatorKey));
+            model.vendorExtensions.put("x-has-union-discriminator", Boolean.TRUE);
+        }
+        model.vendorExtensions.put("x-render-vars", List.of());
+        model.vendorExtensions.put("x-union-requires-exactly-one", "oneOf".equals(kind));
+        model.vendorExtensions.put("x-union-requires-unique-best-match", "anyOf".equals(kind));
+        model.vendorExtensions.put("x-union-nullable",
+                                   Boolean.TRUE.equals(model.vendorExtensions.get("x-schema-nullable")));
+
+        for (String member : members) {
+            unionInterfacesByMember.computeIfAbsent(member, ignored -> new LinkedHashSet<>())
+                    .add(model.classname);
+        }
+    }
+
+    private void assertSupportedUnionMembers(CodegenModel unionModel,
+                                             String kind,
+                                             List<String> members,
+                                             Map<String, CodegenModel> modelsByClassname) {
+        for (String member : members) {
+            CodegenModel memberModel = modelsByClassname.get(member);
+            if (isSupportedUnionObjectMember(memberModel)) {
+                continue;
+            }
+
+            throw new IllegalStateException("Unsupported " + kind + " member '" + member
+                    + "' for composed schema '" + unionModel.classname + "'. "
+                    + "Helidon declarative composed schema converters currently support only referenced object "
+                    + "model members.");
+        }
+    }
+
+    private boolean isSupportedUnionObjectMember(CodegenModel model) {
+        return model != null
+                && !model.isAlias
+                && !model.isPrimitiveType
+                && !model.isArray
+                && !model.isMap
+                && !model.isEnum
+                && !model.isFreeFormObject
+                && model.oneOf.isEmpty()
+                && model.anyOf.isEmpty();
+    }
+
+    private void normalizeAllOfModel(CodegenModel model, Map<String, CodegenModel> modelsByClassname) {
+        CodegenComposedSchemas composedSchemas = model.getComposedSchemas();
+        if (composedSchemas == null || composedSchemas.getAllOf() == null || composedSchemas.getAllOf().isEmpty()) {
+            model.vendorExtensions.put("x-render-vars", model.vars);
+            return;
+        }
+
+        List<CodegenProperty> allOfSchemas = composedSchemas.getAllOf();
+        List<CodegenProperty> referencedModels = allOfSchemas.stream()
+                .filter(member -> member.getRef() != null && member.getDataType() != null)
+                .toList();
+
+        model.vendorExtensions.put("x-composition-kind", "allOf");
+
+        if (referencedModels.size() == 1) {
+            CodegenProperty parentMember = referencedModels.get(0);
+            String parentType = parentMember.getDataType();
+            model.vendorExtensions.put("x-extends-model", parentType);
+
+            Set<String> localPropertyNames = localAllOfPropertyNames(allOfSchemas, parentMember, modelsByClassname);
+            List<CodegenProperty> localProperties = selectPropertiesByName(model.vars, localPropertyNames);
+            if (localProperties.isEmpty()) {
+                CodegenModel parentModel = modelsByClassname.get(parentType);
+                localProperties = excludeInheritedProperties(model.vars, parentModel);
+            }
+            model.vendorExtensions.put("x-render-vars", localProperties);
+        } else {
+            model.vendorExtensions.put("x-render-vars", model.vars);
+        }
+    }
+
+    private void applyUnionInterfaces(List<CodegenModel> models,
+                                      Map<String, LinkedHashSet<String>> unionInterfacesByMember) {
+        for (CodegenModel model : models) {
+            LinkedHashSet<String> implementedInterfaces = unionInterfacesByMember.get(model.classname);
+            if (implementedInterfaces == null || implementedInterfaces.isEmpty()) {
+                continue;
+            }
+
+            model.vendorExtensions.put("x-has-implements-models", Boolean.TRUE);
+            model.vendorExtensions.put("x-implements-models", toNamedList(new ArrayList<>(implementedInterfaces)));
+        }
+    }
+
+    private void applyAllOfDiscriminatorHierarchy(List<CodegenModel> models,
+                                                  Map<String, CodegenModel> modelsByClassname) {
+        Map<String, List<Map<String, Object>>> subtypesByParent = new LinkedHashMap<>();
+
+        for (CodegenModel model : models) {
+            String parentType = (String) model.vendorExtensions.get("x-extends-model");
+            if (parentType == null || parentType.isBlank()) {
+                continue;
+            }
+
+            CodegenModel parentModel = modelsByClassname.get(parentType);
+            if (parentModel == null || parentModel.discriminator == null) {
+                continue;
+            }
+
+            String discriminatorKey = parentModel.discriminator.getPropertyBaseName();
+            if (discriminatorKey == null || discriminatorKey.isBlank()) {
+                discriminatorKey = parentModel.discriminator.getPropertyName();
+            }
+            if (discriminatorKey == null || discriminatorKey.isBlank()) {
+                continue;
+            }
+
+            String discriminatorValue = resolvedDiscriminatorValue(model, parentModel, discriminatorKey);
+            String discriminatorSetter = discriminatorSetter(parentModel, discriminatorKey);
+            String discriminatorValueExpression = discriminatorValueExpression(parentModel, discriminatorKey, discriminatorValue);
+
+            model.vendorExtensions.put("x-allof-discriminator-key", discriminatorKey);
+            model.vendorExtensions.put("x-allof-discriminator-value", discriminatorValue);
+            model.vendorExtensions.put("x-allof-discriminator-value-expression", discriminatorValueExpression);
+            if (discriminatorSetter != null) {
+                model.vendorExtensions.put("x-allof-discriminator-setter", discriminatorSetter);
+                model.vendorExtensions.put("x-has-allof-discriminator-setter", Boolean.TRUE);
+            }
+
+            subtypesByParent.computeIfAbsent(parentType, ignored -> new ArrayList<>())
+                    .add(new LinkedHashMap<>(Map.of(
+                            "alias", discriminatorValue,
+                            "aliasLiteral", JavaStringLiterals.toJavaStringLiteral(discriminatorValue),
+                            "name", model.classname)));
+        }
+
+        subtypesByParent.forEach((parentType, subtypes) -> {
+            CodegenModel parentModel = modelsByClassname.get(parentType);
+            if (parentModel == null || parentModel.discriminator == null || subtypes.isEmpty()) {
+                return;
+            }
+
+            String discriminatorKey = parentModel.discriminator.getPropertyBaseName();
+            if (discriminatorKey == null || discriminatorKey.isBlank()) {
+                discriminatorKey = parentModel.discriminator.getPropertyName();
+            }
+            if (discriminatorKey == null || discriminatorKey.isBlank()) {
+                return;
+            }
+
+            List<Map<String, Object>> sortedSubtypes = subtypes.stream()
+                    .sorted((left, right) -> left.get("alias").toString().compareTo(right.get("alias").toString()))
+                    .collect(Collectors.toCollection(ArrayList::new));
+            for (int i = 0; i < sortedSubtypes.size(); i++) {
+                sortedSubtypes.get(i).put("last", i == sortedSubtypes.size() - 1);
+            }
+
+            parentModel.vendorExtensions.put("x-has-polymorphic-subtypes", Boolean.TRUE);
+            parentModel.vendorExtensions.put("x-polymorphic-key", discriminatorKey);
+            parentModel.vendorExtensions.put("x-polymorphic-key-literal",
+                                             JavaStringLiterals.toJavaStringLiteral(discriminatorKey));
+            parentModel.vendorExtensions.put("x-polymorphic-subtypes", sortedSubtypes);
+        });
+    }
+
+    private Set<String> localAllOfPropertyNames(List<CodegenProperty> allOfSchemas,
+                                                CodegenProperty parentMember,
+                                                Map<String, CodegenModel> modelsByClassname) {
+        Set<String> names = new LinkedHashSet<>();
+        for (CodegenProperty member : allOfSchemas) {
+            if (member == parentMember) {
+                continue;
+            }
+
+            if (member.vars != null && !member.vars.isEmpty()) {
+                member.vars.stream()
+                        .map(CodegenProperty::getName)
+                        .forEach(names::add);
+                continue;
+            }
+
+            CodegenModel referencedModel = modelsByClassname.get(member.getDataType());
+            if (referencedModel != null && referencedModel.vars != null) {
+                referencedModel.vars.stream()
+                        .map(CodegenProperty::getName)
+                        .forEach(names::add);
+            }
+        }
+        return names;
+    }
+
+    private List<CodegenProperty> selectPropertiesByName(List<CodegenProperty> properties, Collection<String> names) {
+        if (names == null || names.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> wanted = new HashSet<>(names);
+        return properties.stream()
+                .filter(prop -> wanted.contains(prop.name))
+                .toList();
+    }
+
+    private List<CodegenProperty> excludeInheritedProperties(List<CodegenProperty> properties, CodegenModel parentModel) {
+        if (parentModel == null || parentModel.vars == null || parentModel.vars.isEmpty()) {
+            return properties;
+        }
+
+        Set<String> inheritedNames = parentModel.vars.stream()
+                .map(CodegenProperty::getName)
+                .collect(Collectors.toCollection(HashSet::new));
+
+        return properties.stream()
+                .filter(prop -> !inheritedNames.contains(prop.name))
+                .toList();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<CodegenProperty> renderVars(CodegenModel model) {
+        Object renderVars = model.vendorExtensions.get("x-render-vars");
+        if (renderVars instanceof List<?> vars) {
+            return (List<CodegenProperty>) vars;
+        }
+        return model.vars;
+    }
+
+    private List<Map<String, Object>> toNamedList(List<String> names) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (int i = 0; i < names.size(); i++) {
+            result.add(Map.of(
+                    "name", names.get(i),
+                    "last", i == names.size() - 1));
+        }
+        return result;
+    }
+
+    private List<Map<String, Object>> buildUnionMembers(CodegenModel unionModel,
+                                                        List<String> members,
+                                                        Map<String, CodegenModel> modelsByClassname) {
+        Map<String, String> aliasesByModel = unionAliasesByModel(unionModel, members, modelsByClassname);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (int i = 0; i < members.size(); i++) {
+            String member = members.get(i);
+            CodegenModel memberModel = modelsByClassname.get(member);
+            List<String> requiredProperties = propertyNames(memberModel != null ? memberModel.requiredVars : List.of());
+            List<String> allProperties = propertyNames(memberModel != null ? memberModel.allVars : List.of());
+            String alias = aliasesByModel.getOrDefault(member, member);
+            String fieldBase = toVarName(member);
+
+            result.add(Map.of(
+                    "name", member,
+                    "alias", alias,
+                    "aliasLiteral", JavaStringLiterals.toJavaStringLiteral(alias),
+                    "serializerField", fieldBase + "Serializer",
+                    "deserializerField", fieldBase + "Deserializer",
+                    "requiredPropertiesLiteral", toStringArrayLiteral(requiredProperties),
+                    "propertyNamesLiteral", toStringArrayLiteral(allProperties),
+                    "constraintsLiteral", UnionBranchConstraints.toConstraintListLiteral(memberModel),
+                    "last", i == members.size() - 1));
+        }
+        return result;
+    }
+
+    private Map<String, String> unionAliasesByModel(CodegenModel unionModel,
+                                                    List<String> members,
+                                                    Map<String, CodegenModel> modelsByClassname) {
+        Map<String, String> aliasesByModel = new LinkedHashMap<>();
+        String discriminatorKey = unionModel.discriminator != null
+                ? unionModel.discriminator.getPropertyBaseName()
+                : null;
+        if (discriminatorKey == null || discriminatorKey.isBlank()) {
+            discriminatorKey = unionModel.discriminator != null ? unionModel.discriminator.getPropertyName() : null;
+        }
+
+        for (String member : members) {
+            CodegenModel memberModel = modelsByClassname.get(member);
+            if (memberModel == null) {
+                continue;
+            }
+            String alias = resolvedDiscriminatorValue(memberModel, unionModel, discriminatorKey);
+            if (alias != null && !alias.isBlank()) {
+                aliasesByModel.putIfAbsent(member, alias);
+            }
+        }
+
+        for (String member : members) {
+            aliasesByModel.putIfAbsent(member, member);
+        }
+        return aliasesByModel;
+    }
+
+    private String modelNameFromSchemaRef(String schemaRef) {
+        if (schemaRef == null || schemaRef.isBlank()) {
+            return null;
+        }
+        int slash = schemaRef.lastIndexOf('/');
+        String schemaName = slash >= 0 ? schemaRef.substring(slash + 1) : schemaRef;
+        return toModelName(schemaName);
+    }
+
+    private List<String> propertyNames(List<CodegenProperty> properties) {
+        if (properties == null) {
+            return List.of();
+        }
+
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (CodegenProperty property : properties) {
+            if (property != null && property.name != null && !property.name.isBlank()) {
+                names.add(property.name);
+            }
+        }
+        return new ArrayList<>(names);
+    }
+
+    private String toStringArrayLiteral(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return "new String[0]";
+        }
+
+        return "new String[] {"
+                + values.stream()
+                        .map(JavaStringLiterals::toJavaStringLiteral)
+                        .collect(Collectors.joining(", "))
+                + "}";
+    }
+
+    private String extractAllOfDiscriminatorValue(Schema<?> schema) {
+        if (schema == null) {
+            return null;
+        }
+
+        Object topLevel = extensionValue(schema, "x-discriminator-value");
+        if (topLevel != null) {
+            return topLevel.toString();
+        }
+
+        if (schema.getAllOf() != null) {
+            for (Schema<?> member : schema.getAllOf()) {
+                Object value = extensionValue(member, "x-discriminator-value");
+                if (value != null) {
+                    return value.toString();
+                }
+            }
+        }
+        return null;
+    }
+
+    private Map<String, String> loadRawAllOfDiscriminatorValues() {
+        if (inputSpec == null || inputSpec.isBlank()) {
+            return Map.of();
+        }
+
+        try {
+            String specContent = InputSpecContentReader.read(inputSpec);
+            ObjectMapper mapper = looksLikeJson(inputSpec, specContent) ? Json.mapper() : Yaml.mapper();
+            JsonNode root = mapper.readTree(specContent);
+            Map<String, String> result = new LinkedHashMap<>();
+            collectRawAllOfDiscriminatorValues(root.path("components").path("schemas"), result);
+            collectRawAllOfDiscriminatorValues(root.path("definitions"), result);
+            if (result.isEmpty()) {
+                return Map.of();
+            }
+            return result;
+        } catch (IOException | RuntimeException ignored) {
+            return Map.of();
+        }
+    }
+
+    private void collectRawAllOfDiscriminatorValues(JsonNode schemasNode, Map<String, String> result) {
+        if (schemasNode == null || !schemasNode.isObject()) {
+            return;
+        }
+
+        schemasNode.fields().forEachRemaining(entry -> {
+            String discriminatorValue = rawAllOfDiscriminatorValue(entry.getValue());
+            if (discriminatorValue != null && !discriminatorValue.isBlank()) {
+                result.putIfAbsent(entry.getKey(), discriminatorValue);
+            }
+        });
+    }
+
+    private boolean looksLikeJson(String specLocation, String specContent) {
+        String filename = "";
+        if (specLocation != null) {
+            int slash = Math.max(specLocation.lastIndexOf('/'), specLocation.lastIndexOf('\\'));
+            filename = (slash >= 0 ? specLocation.substring(slash + 1) : specLocation).toLowerCase();
+        }
+        if (filename.endsWith(".json")) {
+            return true;
+        }
+        String trimmed = specContent == null ? "" : specContent.stripLeading();
+        return trimmed.startsWith("{");
+    }
+
+    private String rawAllOfDiscriminatorValue(JsonNode schemaNode) {
+        if (schemaNode == null || schemaNode.isMissingNode() || schemaNode.isNull()) {
+            return null;
+        }
+
+        JsonNode topLevel = schemaNode.get("x-discriminator-value");
+        if (topLevel != null && topLevel.isValueNode()) {
+            return topLevel.asText();
+        }
+
+        JsonNode allOf = schemaNode.get("allOf");
+        if (allOf == null || !allOf.isArray()) {
+            return null;
+        }
+
+        for (JsonNode member : allOf) {
+            if (member == null || !member.isObject()) {
+                continue;
+            }
+            JsonNode extensionValue = member.get("x-discriminator-value");
+            if (extensionValue != null && extensionValue.isValueNode()) {
+                return extensionValue.asText();
+            }
+            JsonNode shorthandValue = member.get("discriminator");
+            if (shorthandValue != null && shorthandValue.isTextual()) {
+                return shorthandValue.asText();
+            }
+        }
+        return null;
+    }
+
+    private Object extensionValue(Schema<?> schema, String name) {
+        if (schema == null || schema.getExtensions() == null) {
+            return null;
+        }
+        return schema.getExtensions().get(name);
+    }
+
+    private boolean hasDeclaredProperties(Schema<?> schema) {
+        if (schema == null) {
+            return false;
+        }
+
+        if (schema.getProperties() != null && !schema.getProperties().isEmpty()) {
+            return true;
+        }
+
+        if (schema.getAllOf() == null || schema.getAllOf().isEmpty()) {
+            return false;
+        }
+
+        for (Schema<?> member : schema.getAllOf()) {
+            if (member != null && member.get$ref() == null && hasDeclaredProperties(member)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private String resolvedDiscriminatorValue(CodegenModel model,
+                                              CodegenModel parentModel,
+                                              String discriminatorKey) {
+        Object explicitValue = model.vendorExtensions.get("x-allof-discriminator-value");
+        if (explicitValue instanceof String value && !value.isBlank()) {
+            return value;
+        }
+
+        String mappedAlias = mappedDiscriminatorAlias(model, parentModel);
+        String inferredEnumValue = inferEnumDiscriminatorValue(model, parentModel, discriminatorKey, mappedAlias);
+        if (inferredEnumValue != null) {
+            return inferredEnumValue;
+        }
+
+        if (mappedAlias != null) {
+            return mappedAlias;
+        }
+
+        return defaultDiscriminatorValue(model);
+    }
+
+    private String defaultDiscriminatorValue(CodegenModel model) {
+        if (model.schemaName != null && !model.schemaName.isBlank()) {
+            return model.schemaName;
+        }
+        return model.classname;
+    }
+
+    private String mappedDiscriminatorAlias(CodegenModel model, CodegenModel parentModel) {
+        if (parentModel.discriminator == null) {
+            return null;
+        }
+
+        Map<String, String> mapping = parentModel.discriminator.getMapping();
+        if (mapping != null) {
+            for (Map.Entry<String, String> entry : mapping.entrySet()) {
+                String modelName = modelNameFromSchemaRef(entry.getValue());
+                if (model.classname.equals(modelName)) {
+                    return entry.getKey();
+                }
+            }
+        }
+
+        if (parentModel.discriminator.getMappedModels() != null) {
+            for (var mappedModel : parentModel.discriminator.getMappedModels()) {
+                if (mappedModel == null) {
+                    continue;
+                }
+                String modelName = mappedModel.getModelName();
+                String alias = mappedModel.getMappingName();
+                if (model.classname.equals(modelName) && alias != null && !alias.isBlank()) {
+                    return alias;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private String inferEnumDiscriminatorValue(CodegenModel model,
+                                               CodegenModel parentModel,
+                                               String discriminatorKey,
+                                               String mappedAlias) {
+        if (discriminatorKey == null || discriminatorKey.isBlank()) {
+            return null;
+        }
+
+        CodegenProperty property = discriminatorProperty(parentModel, discriminatorKey);
+        if (property == null || !property.isEnum) {
+            return null;
+        }
+
+        List<String> enumValues = discriminatorEnumValues(property);
+        if (enumValues.isEmpty()) {
+            return null;
+        }
+
+        LinkedHashSet<String> discriminatorCandidates = discriminatorCandidates(model, parentModel, mappedAlias);
+        if (discriminatorCandidates.isEmpty()) {
+            return null;
+        }
+
+        for (String candidate : discriminatorCandidates) {
+            if (enumValues.contains(candidate)) {
+                return candidate;
+            }
+        }
+
+        String bestValue = null;
+        int bestScore = -1;
+        boolean ambiguous = false;
+        for (String enumValue : enumValues) {
+            int score = discriminatorMatchScore(enumValue, discriminatorCandidates);
+            if (score > bestScore) {
+                bestValue = enumValue;
+                bestScore = score;
+                ambiguous = false;
+            } else if (score > 0 && score == bestScore) {
+                ambiguous = true;
+            }
+        }
+
+        return ambiguous || bestScore <= 0 ? null : bestValue;
+    }
+
+    private LinkedHashSet<String> discriminatorCandidates(CodegenModel model,
+                                                           CodegenModel parentModel,
+                                                           String mappedAlias) {
+        LinkedHashSet<String> discriminatorCandidates = new LinkedHashSet<>();
+        if (mappedAlias != null && !mappedAlias.isBlank()) {
+            discriminatorCandidates.add(mappedAlias);
+        }
+        if (model.classname != null && !model.classname.isBlank()) {
+            discriminatorCandidates.add(model.classname);
+        }
+        if (model.schemaName != null && !model.schemaName.isBlank()) {
+            discriminatorCandidates.add(model.schemaName);
+        }
+
+        List<String> parentTokens = enumNameTokens(parentModel.classname);
+        for (String candidate : new ArrayList<>(discriminatorCandidates)) {
+            List<String> trimmedTokens = trimSharedBoundaryTokens(enumNameTokens(candidate), parentTokens);
+            trimmedTokens = trimModelSuffixTokens(trimmedTokens);
+            if (!trimmedTokens.isEmpty()) {
+                discriminatorCandidates.add(String.join("_", trimmedTokens));
+            }
+        }
+        return discriminatorCandidates;
+    }
+
+    private List<String> trimSharedBoundaryTokens(List<String> candidateTokens, List<String> parentTokens) {
+        if (candidateTokens.isEmpty() || parentTokens.isEmpty()) {
+            return candidateTokens;
+        }
+
+        int start = 0;
+        int end = candidateTokens.size();
+
+        int prefixLength = sharedPrefixLength(candidateTokens, parentTokens);
+        if (prefixLength > 0 && prefixLength < end) {
+            start = prefixLength;
+        }
+
+        int suffixLength = sharedSuffixLength(candidateTokens.subList(start, end), parentTokens);
+        if (suffixLength > 0 && start < end - suffixLength) {
+            end -= suffixLength;
+        }
+
+        return candidateTokens.subList(start, end);
+    }
+
+    private int sharedPrefixLength(List<String> left, List<String> right) {
+        int max = Math.min(left.size(), right.size());
+        int index = 0;
+        while (index < max && left.get(index).equals(right.get(index))) {
+            index++;
+        }
+        return index;
+    }
+
+    private int sharedSuffixLength(List<String> left, List<String> right) {
+        int max = Math.min(left.size(), right.size());
+        int index = 0;
+        while (index < max
+                && left.get(left.size() - 1 - index).equals(right.get(right.size() - 1 - index))) {
+            index++;
+        }
+        return index;
+    }
+
+    private List<String> trimModelSuffixTokens(List<String> tokens) {
+        int end = tokens.size();
+        while (end > 1 && MODEL_SUFFIX_TOKENS.contains(tokens.get(end - 1))) {
+            end--;
+        }
+        return tokens.subList(0, end);
+    }
+
+    private int discriminatorMatchScore(String enumValue, Collection<String> candidates) {
+        List<String> enumTokens = enumNameTokens(enumValue);
+        if (enumTokens.isEmpty()) {
+            return 0;
+        }
+
+        int bestScore = 0;
+        for (String candidate : candidates) {
+            List<String> candidateTokens = enumNameTokens(candidate);
+            if (candidateTokens.equals(enumTokens)) {
+                return 10_000 + enumTokens.size();
+            }
+
+            int subsequenceStart = tokenSubsequenceStart(candidateTokens, enumTokens);
+            if (subsequenceStart >= 0) {
+                int prefixBonus = subsequenceStart == 0 ? 100 : 0;
+                int exactBonus = candidateTokens.size() == enumTokens.size() ? 1_000 : 0;
+                bestScore = Math.max(bestScore, (enumTokens.size() * 10) + prefixBonus + exactBonus);
+            }
+        }
+        return bestScore;
+    }
+
+    private List<String> enumNameTokens(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+
+        String enumName = toEnumVarName(value, "String");
+        if (enumName == null || enumName.isBlank()) {
+            return List.of();
+        }
+
+        return List.of(enumName.split("_")).stream()
+                .filter(token -> !token.isBlank())
+                .toList();
+    }
+
+    private int tokenSubsequenceStart(List<String> candidateTokens, List<String> expectedTokens) {
+        if (candidateTokens.isEmpty() || expectedTokens.isEmpty() || expectedTokens.size() > candidateTokens.size()) {
+            return -1;
+        }
+
+        for (int start = 0; start <= candidateTokens.size() - expectedTokens.size(); start++) {
+            boolean matches = true;
+            for (int offset = 0; offset < expectedTokens.size(); offset++) {
+                if (!candidateTokens.get(start + offset).equals(expectedTokens.get(offset))) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                return start;
+            }
+        }
+        return -1;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> discriminatorEnumValues(CodegenProperty property) {
+        if (property == null) {
+            return List.of();
+        }
+
+        if (property._enum != null && !property._enum.isEmpty()) {
+            return property._enum;
+        }
+
+        if (property.allowableValues == null) {
+            return List.of();
+        }
+
+        Object values = property.allowableValues.get("values");
+        if (values instanceof List<?> enumValues) {
+            return enumValues.stream()
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .toList();
+        }
+
+        return List.of();
+    }
+
+    private String discriminatorSetter(CodegenModel parentModel, String discriminatorKey) {
+        CodegenProperty property = discriminatorProperty(parentModel, discriminatorKey);
+        if (property == null) {
+            return null;
+        }
+        return property.setter;
+    }
+
+    private String discriminatorValueExpression(CodegenModel parentModel,
+                                                String discriminatorKey,
+                                                String discriminatorValue) {
+        CodegenProperty property = discriminatorProperty(parentModel, discriminatorKey);
+        if (property == null) {
+            return JavaStringLiterals.toJavaStringLiteral(discriminatorValue);
+        }
+
+        if (property.isEnum && property.datatypeWithEnum != null && !property.datatypeWithEnum.isBlank()) {
+            String enumConstant = parentEnumConstant(property, discriminatorValue);
+            if (enumConstant == null) {
+                throw new IllegalStateException("Unable to resolve discriminator value '"
+                        + discriminatorValue + "' to an enum constant for property '" + property.name + "'");
+            }
+            return parentModel.classname + "." + property.datatypeWithEnum + "." + enumConstant;
+        }
+
+        return JavaStringLiterals.toJavaStringLiteral(discriminatorValue);
+    }
+
+    private String parentEnumConstant(CodegenProperty property, String discriminatorValue) {
+        if (discriminatorValue == null || discriminatorValue.isBlank()) {
+            return null;
+        }
+
+        String normalizedDiscriminatorValue = toEnumVarName(discriminatorValue, "String");
+        for (String enumValue : discriminatorEnumValues(property)) {
+            String enumConstant = toEnumVarName(enumValue, "String");
+            if (enumValue.equals(discriminatorValue) || enumConstant.equals(normalizedDiscriminatorValue)) {
+                return enumConstant;
+            }
+        }
+        return null;
+    }
+
+    private CodegenProperty discriminatorProperty(CodegenModel parentModel, String discriminatorKey) {
+        List<CodegenProperty> properties = parentModel.allVars != null && !parentModel.allVars.isEmpty()
+                ? parentModel.allVars
+                : parentModel.vars;
+        if (properties == null) {
+            return null;
+        }
+
+        for (CodegenProperty property : properties) {
+            if (property == null) {
+                continue;
+            }
+            if (discriminatorKey.equals(property.baseName) || discriminatorKey.equals(property.name)) {
+                return property;
+            }
+        }
+        return null;
     }
 
     /**

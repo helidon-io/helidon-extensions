@@ -149,6 +149,16 @@ Notable behavior:
 - default values are converted into Java literals
 - validation annotations are derived from OpenAPI constraints
 - model validation annotations are emitted on getter methods rather than private fields
+- composed schemas are normalized into template-friendly flags:
+  - `allOf` prefers Java inheritance when there is a single referenced parent
+  - `oneOf` and `anyOf` generate model interfaces annotated with a generated
+    `@Json.Converter`
+  - union member models implement the generated interface(s)
+  - generated converters deserialize using discriminator aliases when present,
+    then fall back to structural matching by declared properties
+  - union interface generation is limited to referenced object model members;
+    primitive, array, map, and inline members fail generation with a clear
+    unsupported-shape message
 
 ### `postProcessOperationsWithModels`
 
@@ -208,6 +218,40 @@ Per tag:
 Per schema:
 
 - `{Model}.java`
+
+### Composed Schemas
+
+The generator supports OpenAPI composed schemas using Java shapes that fit the
+existing Helidon-oriented templates:
+
+- `allOf`
+  - when exactly one referenced component schema participates, the generated model
+    extends that parent and emits only locally owned properties
+  - when that parent schema declares a discriminator, the base model is annotated
+    with generated Helidon polymorphism metadata and child models can initialize
+    inherited discriminator values from `x-discriminator-value`
+  - otherwise the generator falls back to a flattened model containing the merged
+    properties exposed by `openapi-generator`
+- `oneOf`
+  - the composed schema is generated as a Java interface with a generated
+    `@Json.Converter`
+  - each referenced member model implements that interface
+  - generated deserialization requires exactly one matching subtype
+  - when a discriminator is present, converter dispatch prefers discriminator aliases
+  - primitive, array, map, and inline members are rejected with a clear
+    unsupported-shape message instead of generating invalid Java
+- `anyOf`
+  - the composed schema is generated as a Java interface with a generated
+    `@Json.Converter`
+  - each referenced member model implements that interface
+  - generated deserialization requires at least one matching subtype
+  - ambiguous structural matches are rejected instead of picking an arbitrary model
+  - primitive, array, map, and inline members are rejected with a clear
+    unsupported-shape message instead of generating invalid Java
+
+This keeps generated source compilable and preserves assignability between
+concrete member models and the composed OpenAPI type used by operations while
+making the generated request/response types usable with Helidon JSON binding.
 
 Project-level support:
 

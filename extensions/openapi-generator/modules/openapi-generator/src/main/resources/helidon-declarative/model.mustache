@@ -18,6 +18,25 @@ limitations under the License.
 package {{modelPackage}};
 
 import io.helidon.json.binding.Json;
+{{#model}}{{#vendorExtensions.x-is-union-interface}}import java.io.ByteArrayOutputStream;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.regex.Pattern;
+import io.helidon.common.GenericType;
+import io.helidon.json.JsonGenerator;
+import io.helidon.json.JsonObject;
+import io.helidon.json.JsonParser;
+import io.helidon.json.JsonValue;
+import io.helidon.json.JsonValueType;
+import io.helidon.json.binding.JsonBindingFactory;
+import io.helidon.json.binding.JsonBindingConfigurator;
+import io.helidon.json.binding.JsonConverter;
+import io.helidon.json.binding.JsonDeserializer;
+import io.helidon.json.binding.JsonSerializer;
+import io.helidon.service.registry.Service;
+{{/vendorExtensions.x-is-union-interface}}{{/model}}
 {{#imports}}
 import {{import}};
 {{/imports}}
@@ -26,22 +45,342 @@ import {{import}};
 /**
  * {{description}}{{^description}}{{classname}} model.{{/description}}
  */
-@Json.Entity
+{{#vendorExtensions.x-is-union-interface}}@Json.Converter({{classname}}.{{classname}}JsonConverter.class)
+{{#isDeprecated}}@Deprecated
+{{/isDeprecated}}public interface {{classname}} {
+
+    final class {{classname}}JsonConverter implements JsonConverter<{{classname}}> {
+{{#vendorExtensions.x-union-members}}
+        private JsonDeserializer<{{name}}> {{deserializerField}};
+        private JsonSerializer<{{name}}> {{serializerField}};
+{{/vendorExtensions.x-union-members}}
+
+        @Override
+        public GenericType<{{classname}}> type() {
+            return new GenericType<>() {
+            };
+        }
+
+        @Override
+        public void configure(JsonBindingConfigurator jsonBindingConfigurator) {
+{{#vendorExtensions.x-union-members}}
+            this.{{deserializerField}} = jsonBindingConfigurator.deserializer({{name}}.class);
+            this.{{serializerField}} = jsonBindingConfigurator.serializer({{name}}.class);
+{{/vendorExtensions.x-union-members}}
+        }
+
+        @Override
+        public {{classname}} deserialize(JsonParser parser) {
+            JsonValue jsonValue = parser.readJsonValue();
+            if (jsonValue.type() == JsonValueType.NULL) {
+{{#vendorExtensions.x-union-nullable}}
+                return null;
+{{/vendorExtensions.x-union-nullable}}{{^vendorExtensions.x-union-nullable}}
+                throw new IllegalArgumentException("JSON null is not supported for {{classname}}");
+{{/vendorExtensions.x-union-nullable}}
+            }
+            if (jsonValue.type() != JsonValueType.OBJECT) {
+                throw new IllegalArgumentException("Expected JSON object for {{classname}}, but found " + jsonValue.type());
+            }
+            JsonObject jsonObject = jsonValue.asObject();
+{{#vendorExtensions.x-has-union-discriminator}}
+            String discriminatorValue = jsonObject.stringValue({{{vendorExtensions.x-union-discriminator-key-literal}}}).orElse(null);
+            if (discriminatorValue != null) {
+                {{classname}} discriminatorMatch = deserializeByAlias(discriminatorValue, jsonObject);
+                if (discriminatorMatch != null) {
+                    return discriminatorMatch;
+                }
+                throw new IllegalArgumentException("Unsupported discriminator value '" + discriminatorValue
+                        + "' for {{classname}}");
+            }
+{{/vendorExtensions.x-has-union-discriminator}}
+            return deserializeStructurally(jsonObject);
+        }
+
+        @Override
+        public void serialize(JsonGenerator generator, {{classname}} instance, boolean writeNulls) {
+            if (instance == null) {
+                serializeNull(generator);
+                return;
+            }
+            generator.write(serializeMember(instance, writeNulls));
+        }
+
+        private {{classname}} deserializeByAlias(String alias, JsonObject jsonObject) {
+            return switch (alias) {
+{{#vendorExtensions.x-union-members}}
+                case {{{aliasLiteral}}} -> deserialize{{name}}(jsonObject);
+{{/vendorExtensions.x-union-members}}
+                default -> null;
+            };
+        }
+
+        private {{classname}} deserializeStructurally(JsonObject jsonObject) {
+            List<UnionMatch> matches = new ArrayList<>();
+{{#vendorExtensions.x-union-members}}
+            int {{deserializerField}}Score = matchScore(jsonObject, {{{propertyNamesLiteral}}});
+            if (matchesMember(jsonObject, {{{requiredPropertiesLiteral}}}, {{deserializerField}}Score)
+                    && matchesConstraints(jsonObject, {{{constraintsLiteral}}})) {
+                matches.add(new UnionMatch("{{name}}", {{deserializerField}}Score));
+            }
+{{/vendorExtensions.x-union-members}}
+            if (matches.isEmpty()) {
+                throw new IllegalArgumentException("No matching subtype found for {{classname}}");
+            }
+{{#vendorExtensions.x-union-requires-exactly-one}}
+            if (matches.size() != 1) {
+                throw new IllegalArgumentException("Expected exactly one matching subtype for {{classname}}, but found "
+                        + matches.size());
+            }
+            return deserializeByType(matches.get(0).type(), jsonObject);
+{{/vendorExtensions.x-union-requires-exactly-one}}{{#vendorExtensions.x-union-requires-unique-best-match}}
+            if (matches.size() == 1) {
+                return deserializeByType(matches.get(0).type(), jsonObject);
+            }
+            matches.sort((left, right) -> Integer.compare(right.score(), left.score()));
+            if (matches.get(0).score() > matches.get(1).score()) {
+                return deserializeByType(matches.get(0).type(), jsonObject);
+            }
+            throw new IllegalArgumentException("Ambiguous anyOf match for {{classname}}");
+{{/vendorExtensions.x-union-requires-unique-best-match}}
+        }
+
+        private boolean matchesMember(JsonObject jsonObject, String[] requiredProperties, int score) {
+            for (String requiredProperty : requiredProperties) {
+                if (!jsonObject.containsKey(requiredProperty)) {
+                    return false;
+                }
+            }
+            return score > 0 || requiredProperties.length > 0;
+        }
+
+        private boolean matchesConstraints(JsonObject jsonObject, List<UnionConstraint> constraints) {
+            for (UnionConstraint constraint : constraints) {
+                JsonValue value = jsonObject.value(constraint.propertyName()).orElse(null);
+                if (value == null) {
+                    continue;
+                }
+                if (value.type() == JsonValueType.NULL) {
+                    if (constraint.nullable()) {
+                        continue;
+                    }
+                    return false;
+                }
+                if (constraint.jsonType() != null && value.type() != constraint.jsonType()) {
+                    return false;
+                }
+                if (!matchesEnum(value, constraint.enumValues())
+                        || !matchesStringConstraints(value, constraint)
+                        || !matchesNumberConstraints(value, constraint)
+                        || !matchesArrayConstraints(value, constraint)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private boolean matchesEnum(JsonValue value, String[] enumValues) {
+            if (enumValues.length == 0) {
+                return true;
+            }
+            String scalarValue = scalarValue(value);
+            if (scalarValue == null) {
+                return false;
+            }
+            for (String enumValue : enumValues) {
+                if (enumValue.equals(scalarValue)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private String scalarValue(JsonValue value) {
+            return switch (value.type()) {
+                case STRING -> value.asString().value();
+                case NUMBER -> value.asNumber().bigDecimalValue().stripTrailingZeros().toPlainString();
+                case BOOLEAN -> Boolean.toString(value.asBoolean().value());
+                default -> null;
+            };
+        }
+
+        private boolean matchesStringConstraints(JsonValue value, UnionConstraint constraint) {
+            if (constraint.minLength() == null && constraint.maxLength() == null && constraint.pattern() == null) {
+                return true;
+            }
+            if (value.type() != JsonValueType.STRING) {
+                return false;
+            }
+            String stringValue = value.asString().value();
+            if (constraint.minLength() != null && stringValue.length() < constraint.minLength()) {
+                return false;
+            }
+            if (constraint.maxLength() != null && stringValue.length() > constraint.maxLength()) {
+                return false;
+            }
+            return constraint.pattern() == null || Pattern.compile(constraint.pattern()).matcher(stringValue).find();
+        }
+
+        private boolean matchesNumberConstraints(JsonValue value, UnionConstraint constraint) {
+            if (constraint.minimum() == null && constraint.maximum() == null && constraint.multipleOf() == null) {
+                return true;
+            }
+            if (value.type() != JsonValueType.NUMBER) {
+                return false;
+            }
+            BigDecimal number = value.asNumber().bigDecimalValue();
+            if (constraint.minimum() != null) {
+                int comparison = number.compareTo(constraint.minimum());
+                if (comparison < 0 || (comparison == 0 && constraint.exclusiveMinimum())) {
+                    return false;
+                }
+            }
+            if (constraint.maximum() != null) {
+                int comparison = number.compareTo(constraint.maximum());
+                if (comparison > 0 || (comparison == 0 && constraint.exclusiveMaximum())) {
+                    return false;
+                }
+            }
+            return constraint.multipleOf() == null
+                    || number.remainder(constraint.multipleOf()).compareTo(BigDecimal.ZERO) == 0;
+        }
+
+        private boolean matchesArrayConstraints(JsonValue value, UnionConstraint constraint) {
+            if (constraint.minItems() == null && constraint.maxItems() == null) {
+                return true;
+            }
+            if (value.type() != JsonValueType.ARRAY) {
+                return false;
+            }
+            int size = value.asArray().values().size();
+            if (constraint.minItems() != null && size < constraint.minItems()) {
+                return false;
+            }
+            return constraint.maxItems() == null || size <= constraint.maxItems();
+        }
+
+        private int matchScore(JsonObject jsonObject, String[] propertyNames) {
+            int score = 0;
+            for (String propertyName : propertyNames) {
+                if (jsonObject.containsKey(propertyName)) {
+                    score++;
+                }
+            }
+            return score;
+        }
+
+        private {{classname}} deserializeByType(String type, JsonObject jsonObject) {
+            return switch (type) {
+{{#vendorExtensions.x-union-members}}
+                case "{{name}}" -> deserialize{{name}}(jsonObject);
+{{/vendorExtensions.x-union-members}}
+                default -> throw new IllegalArgumentException("Unsupported subtype '" + type + "' for {{classname}}");
+            };
+        }
+
+        private JsonObject serializeMember({{classname}} instance, boolean writeNulls) {
+{{#vendorExtensions.x-union-members}}
+            if (instance instanceof {{name}} value) {
+                return serialize{{name}}(value, writeNulls);
+            }
+{{/vendorExtensions.x-union-members}}
+            throw new IllegalArgumentException("Unsupported subtype '" + instance.getClass().getName()
+                    + "' for {{classname}}");
+        }
+
+{{#vendorExtensions.x-union-members}}
+        private {{classname}} deserialize{{name}}(JsonObject jsonObject) {
+            return {{deserializerField}}.deserialize(JsonParser.create(jsonObject));
+        }
+
+        private JsonObject serialize{{name}}({{name}} instance, boolean writeNulls) {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            try (JsonGenerator delegate = JsonGenerator.create(outputStream)) {
+                {{serializerField}}.serialize(delegate, instance, writeNulls);
+            }
+            JsonObject jsonObject = JsonParser.create(outputStream.toByteArray()).readJsonObject();
+{{#vendorExtensions.x-has-union-discriminator}}
+            return JsonObject.builder()
+                    .from(jsonObject)
+                    .set({{{vendorExtensions.x-union-discriminator-key-literal}}}, {{{aliasLiteral}}})
+                    .build();
+{{/vendorExtensions.x-has-union-discriminator}}{{^vendorExtensions.x-has-union-discriminator}}
+            return jsonObject;
+{{/vendorExtensions.x-has-union-discriminator}}
+        }
+{{/vendorExtensions.x-union-members}}
+
+        private record UnionMatch(String type, int score) {
+        }
+
+        private record UnionConstraint(String propertyName,
+                                       JsonValueType jsonType,
+                                       boolean nullable,
+                                       String[] enumValues,
+                                       Integer minLength,
+                                       Integer maxLength,
+                                       String pattern,
+                                       BigDecimal minimum,
+                                       boolean exclusiveMinimum,
+                                       BigDecimal maximum,
+                                       boolean exclusiveMaximum,
+                                       BigDecimal multipleOf,
+                                       Integer minItems,
+                                       Integer maxItems) {
+        }
+    }
+
+}
+
+@Service.Singleton
+final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{classname}}> {
+
+    @Override
+    public JsonDeserializer<{{classname}}> createDeserializer(Class<? extends {{classname}}> type) {
+        return new {{classname}}.{{classname}}JsonConverter();
+    }
+
+    @Override
+    public JsonDeserializer<{{classname}}> createDeserializer(GenericType<? extends {{classname}}> type) {
+        return new {{classname}}.{{classname}}JsonConverter();
+    }
+
+    @Override
+    public JsonSerializer<{{classname}}> createSerializer(Class<? extends {{classname}}> type) {
+        return new {{classname}}.{{classname}}JsonConverter();
+    }
+
+    @Override
+    public JsonSerializer<{{classname}}> createSerializer(GenericType<? extends {{classname}}> type) {
+        return new {{classname}}.{{classname}}JsonConverter();
+    }
+
+    @Override
+    public Set<Class<?>> supportedTypes() {
+        return Set.of({{classname}}.class);
+    }
+}
+{{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}@Json.Entity
+{{#vendorExtensions.x-has-polymorphic-subtypes}}@Json.Polymorphic(key = {{{vendorExtensions.x-polymorphic-key-literal}}})
+{{#vendorExtensions.x-polymorphic-subtypes}}@Json.Subtype(alias = {{{aliasLiteral}}}, value = {{name}}.class)
+{{/vendorExtensions.x-polymorphic-subtypes}}{{/vendorExtensions.x-has-polymorphic-subtypes}}
 {{#isDeprecated}}@Deprecated
 {{/isDeprecated}}{{#vendorExtensions.x-has-validations}}@Validation.Validated
-{{/vendorExtensions.x-has-validations}}public class {{classname}} {
+{{/vendorExtensions.x-has-validations}}public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendorExtensions.x-extends-model}}{{/vendorExtensions.x-extends-model}}{{#vendorExtensions.x-has-implements-models}} implements {{#vendorExtensions.x-implements-models}}{{name}}{{^last}}, {{/last}}{{/vendorExtensions.x-implements-models}}{{/vendorExtensions.x-has-implements-models}} {
 
-{{#vars}}
+{{#vendorExtensions.x-render-vars}}
     {{#description}}/** {{description}} */
     {{/description}}{{#vendorExtensions.x-json-required}}@Json.Required
     {{/vendorExtensions.x-json-required}}private {{{datatypeWithEnum}}} {{name}}{{#vendorExtensions.x-default-value}} = {{{vendorExtensions.x-default-value}}}{{/vendorExtensions.x-default-value}};
 
-{{/vars}}
+{{/vendorExtensions.x-render-vars}}
     /** No-arg constructor. */
     public {{classname}}() {
+{{#vendorExtensions.x-has-allof-discriminator-setter}}        {{vendorExtensions.x-allof-discriminator-setter}}({{{vendorExtensions.x-allof-discriminator-value-expression}}});
+{{/vendorExtensions.x-has-allof-discriminator-setter}}
     }
 
-{{#vars}}
+{{#vendorExtensions.x-render-vars}}
 {{#vendorExtensions.x-validation-annotations}}    {{{annotation}}}
 {{/vendorExtensions.x-validation-annotations}}    public {{{datatypeWithEnum}}} {{getter}}() {
         return {{name}};
@@ -51,14 +390,15 @@ import {{import}};
         this.{{name}} = {{name}};
     }
 
-{{/vars}}
-{{#vars}}{{#isEnum}}
+{{/vendorExtensions.x-render-vars}}
+{{#vendorExtensions.x-render-vars}}{{#isEnum}}
     public enum {{datatypeWithEnum}} {
         {{#allowableValues}}{{#enumVars}}{{name}}{{^-last}},
         {{/-last}}{{/enumVars}};{{/allowableValues}}
     }
 
-{{/isEnum}}{{/vars}}
+{{/isEnum}}{{/vendorExtensions.x-render-vars}}
 }
+{{/vendorExtensions.x-is-union-interface}}
 {{/model}}
 {{/models}}

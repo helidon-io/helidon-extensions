@@ -43,12 +43,33 @@ final class GeneratedProjectBuildSupport {
                                                    + BUILD_TESTS_PROPERTY + "=true to enable.");
         }
 
+        runMaven(projectDir, "Maven package", "-DskipTests", "package");
+    }
+
+    static void assertMavenTestSucceeds(Path projectDir) throws IOException, InterruptedException {
+        if (System.getProperty(BUILD_TESTS_PROPERTY) == null) {
+            throw new TestAbortedException("Skipping Maven test check. Set -D"
+                                                   + BUILD_TESTS_PROPERTY + "=true to enable.");
+        }
+
+        runMaven(projectDir, "Maven test", "test");
+    }
+
+    private static void runMaven(Path projectDir, String actionLabel, String... goals)
+            throws IOException, InterruptedException {
         String mavenExecutable = isWindows() ? "mvn.cmd" : "mvn";
         Path settingsFile = Files.createTempFile("maven-settings-", ".xml");
         Files.writeString(settingsFile, "<settings/>", StandardCharsets.UTF_8);
 
-        ProcessBuilder processBuilder = new ProcessBuilder(
-                mavenExecutable, "-B", "-q", "-s", settingsFile.toString(), "-DskipTests", "package");
+        String[] command = new String[5 + goals.length];
+        command[0] = mavenExecutable;
+        command[1] = "-B";
+        command[2] = "-q";
+        command[3] = "-s";
+        command[4] = settingsFile.toString();
+        System.arraycopy(goals, 0, command, 5, goals.length);
+
+        ProcessBuilder processBuilder = new ProcessBuilder(command);
         processBuilder.directory(projectDir.toFile());
         processBuilder.redirectErrorStream(true);
         Path outputFile = Files.createTempFile("generated-project-maven-", ".log");
@@ -63,16 +84,18 @@ final class GeneratedProjectBuildSupport {
 
             String output = Files.readString(outputFile, StandardCharsets.UTF_8);
             assertThat(
-                    String.format("Generated project Maven build timed out after %s seconds.%nOutput:%n%s",
-                            BUILD_TIMEOUT_SECONDS, output),
+                    String.format("Generated project %s timed out after %s seconds.%nOutput:%n%s",
+                            actionLabel,
+                            BUILD_TIMEOUT_SECONDS,
+                            output),
                     finished,
                     is(true));
             if (process.exitValue() != 0 && isDependencyResolutionUnavailable(output)) {
-                throw new TestAbortedException("Skipping Maven build check: dependency resolution unavailable "
+                throw new TestAbortedException("Skipping " + actionLabel + " check: dependency resolution unavailable "
                                                        + "in this environment.\n" + output);
             }
             assertThat(
-                    String.format("Generated project Maven build failed.%nOutput:%n%s", output),
+                    String.format("Generated project %s failed.%nOutput:%n%s", actionLabel, output),
                     process.exitValue(),
                     is(0));
         } finally {
