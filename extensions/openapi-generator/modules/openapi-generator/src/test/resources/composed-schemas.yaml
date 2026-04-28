@@ -81,6 +81,23 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /nullable-pets:
+    post:
+      tags: [composed]
+      operationId: saveNullablePet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NullablePet'
+      responses:
+        '200':
+          description: Saved nullable pet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NullablePet'
   /constraint-choices:
     post:
       tags: [composed]
@@ -140,6 +157,16 @@ components:
         bark:
           type: boolean
     Pet:
+      oneOf:
+        - $ref: '#/components/schemas/Cat'
+        - $ref: '#/components/schemas/Dog'
+      discriminator:
+        propertyName: kind
+        mapping:
+          cat&special: '#/components/schemas/Cat'
+          dog: '#/components/schemas/Dog'
+    NullablePet:
+      nullable: true
       oneOf:
         - $ref: '#/components/schemas/Cat'
         - $ref: '#/components/schemas/Dog'
