@@ -25,13 +25,13 @@
     <parent>
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-parent</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
+        <version>1.0.0</version>
         <relativePath>../../../parent/pom.xml</relativePath>
     </parent>
 
     <groupId>io.helidon.extensions.openapi-generator</groupId>
     <artifactId>helidon-extensions-openapi-generator-bom</artifactId>
-    <version>4.0.0-SNAPSHOT</version>
+    <version>4.0.0</version>
     <packaging>pom</packaging>
     <name>Helidon Extensions Openapi-Generator BOM POM</name>
 
