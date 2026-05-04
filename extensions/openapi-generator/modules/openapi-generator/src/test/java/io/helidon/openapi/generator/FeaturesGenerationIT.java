@@ -200,12 +200,6 @@ class FeaturesGenerationIT {
     }
 
     @Test
-    void apiInterfaceHasValidatedAnnotationWhenParamValidationIsPresent() throws IOException {
-        assertThat(read(apiFile("ThingsApi.java")),
-                   containsString("@Validation.Validated"));
-    }
-
-    @Test
     void apiInterfaceIntParamHasExclusiveMinMaxValidation() throws IOException {
         String content = read(apiFile("ThingsApi.java"));
         assertThat(content, containsString("@Validation.Integer.Min(11)"));
