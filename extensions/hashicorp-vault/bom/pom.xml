@@ -37,7 +37,7 @@
     <description>Hashicorp Vault extension BOM POM</description>
 
     <properties>
-        <helidon.hashicorp.vault.version>27.0.0-SNAPSHOT</helidon.hashicorp.vault.version>
+        <helidon.hashicorp-vault.extension.version>27.0.0-SNAPSHOT</helidon.hashicorp-vault.extension.version>
     </properties>
 
     <dependencyManagement>
@@ -45,62 +45,62 @@
             <dependency>
                 <groupId>io.helidon.extensions.hashicorp.vault</groupId>
                 <artifactId>helidon-extensions-hashicorp-vault</artifactId>
-                <version>${helidon.hashicorp.vault.version}</version>
+                <version>${helidon.hashicorp-vault.extension.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.hashicorp.vault.auths</groupId>
                 <artifactId>helidon-extensions-hashicorp-vault-auths-common</artifactId>
-                <version>${helidon.hashicorp.vault.version}</version>
+                <version>${helidon.hashicorp-vault.extension.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.hashicorp.vault.sys</groupId>
                 <artifactId>helidon-extensions-hashicorp-vault-sys</artifactId>
-                <version>${helidon.hashicorp.vault.version}</version>
+                <version>${helidon.hashicorp-vault.extension.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.hashicorp.vault.secrets</groupId>
                 <artifactId>helidon-extensions-hashicorp-vault-secrets-cubbyhole</artifactId>
-                <version>${helidon.hashicorp.vault.version}</version>
+                <version>${helidon.hashicorp-vault.extension.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.hashicorp.vault.secrets</groupId>
                 <artifactId>helidon-extensions-hashicorp-vault-secrets-kv1</artifactId>
-                <version>${helidon.hashicorp.vault.version}</version>
+                <version>${helidon.hashicorp-vault.extension.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.hashicorp.vault.secrets</groupId>
                 <artifactId>helidon-extensions-hashicorp-vault-secrets-kv2</artifactId>
-                <version>${helidon.hashicorp.vault.version}</version>
+                <version>${helidon.hashicorp-vault.extension.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.hashicorp.vault.secrets</groupId>
                 <artifactId>helidon-extensions-hashicorp-vault-secrets-database</artifactId>
-                <version>${helidon.hashicorp.vault.version}</version>
+                <version>${helidon.hashicorp-vault.extension.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.hashicorp.vault.secrets</groupId>
                 <artifactId>helidon-extensions-hashicorp-vault-secrets-pki</artifactId>
-                <version>${helidon.hashicorp.vault.version}</version>
+                <version>${helidon.hashicorp-vault.extension.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.hashicorp.vault.secrets</groupId>
                 <artifactId>helidon-extensions-hashicorp-vault-secrets-transit</artifactId>
-                <version>${helidon.hashicorp.vault.version}</version>
+                <version>${helidon.hashicorp-vault.extension.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.hashicorp.vault.auths</groupId>
                 <artifactId>helidon-extensions-hashicorp-vault-auths-token</artifactId>
-                <version>${helidon.hashicorp.vault.version}</version>
+                <version>${helidon.hashicorp-vault.extension.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.hashicorp.vault.auths</groupId>
                 <artifactId>helidon-extensions-hashicorp-vault-auths-k8s</artifactId>
-                <version>${helidon.hashicorp.vault.version}</version>
+                <version>${helidon.hashicorp-vault.extension.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.hashicorp.vault.auths</groupId>
                 <artifactId>helidon-extensions-hashicorp-vault-auths-approle</artifactId>
-                <version>${helidon.hashicorp.vault.version}</version>
+                <version>${helidon.hashicorp-vault.extension.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

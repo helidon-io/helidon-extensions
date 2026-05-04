@@ -52,6 +52,13 @@
         <url>https://github.com/oracle/helidon-extensions</url>
     </scm>
 
+    <developers>
+        <developer>
+            <name>Helidon Team</name>
+            <organization>Oracle Corporation</organization>
+        </developer>
+    </developers>
+
     <properties>
         <version.plugin.clean>3.2.0</version.plugin.clean>
         <version.plugin.deploy>3.1.1</version.plugin.deploy>

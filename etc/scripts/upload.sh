@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Copyright (c) 2025 Oracle and/or its affiliates.
+# Copyright (c) 2025, 2026 Oracle and/or its affiliates.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,9 +39,12 @@ $(basename "${0}") [OPTIONS] --directory=DIR CMD
   --dir=DIR
       Set the staging directory to use.
 
+  --extension=ID
+      Set the extension id to use.
+
   --description=DESCRIPTION
         Set the staging repository description to use.
-        %{version} can be used to subsitute the release version.
+        %{version} can be used to substitute the release version.
 
   --help
         Prints the usage and exits.
@@ -66,6 +69,10 @@ while (( ${#} > 0 )); do
     ;;
   "--description="*)
     DESCRIPTION=${1#*=}
+    shift
+    ;;
+  "--extension="*)
+    EXTENSION=${1#*=}
     shift
     ;;
   "--help")
@@ -93,6 +100,10 @@ case ${COMMAND} in
 "upload_release")
   if [ -z "${DESCRIPTION}" ] ; then
     echo "ERROR: description required" >&2
+    usage
+    exit 1
+  elif [ -z "${EXTENSION}" ] ; then
+    echo "ERROR: extension required" >&2
     usage
     exit 1
   fi
@@ -134,95 +145,82 @@ if [ ! -d "${STAGING_DIR}" ] ; then
   exit 1
 fi
 
-# Central Portal URL for releases
-#readonly CENTRAL_URL="http://localhost:8080/api/v1/"
 readonly CENTRAL_URL="https://central.sonatype.com/api/v1"
-# Central SNAPSHOT URL
 readonly SNAPSHOT_URL="https://central.sonatype.com/repository/maven-snapshots"
 
 BEARER=$(printf "%s:%s" "${CENTRAL_USER}" "${CENTRAL_PASSWORD}" | base64)
 
-find_version() {
-  local versions version
+find_release_version() {
+  local project_artifact project_dir pom version
+  project_artifact="helidon-extensions-${EXTENSION}-project"
+  project_dir="${STAGING_DIR}/io/helidon/extensions/${EXTENSION}/${project_artifact}"
 
-  # List the "version" directories
-  versions=$(while read -r v ; do
-   dirname "${v}" | xargs basename
-  done < <(find "${STAGING_DIR}" -type f -name "*.pom" -print) | sort | uniq)
-
-  # Enforce one version per staging directory
-  for v in ${versions} ; do
-    if [ -n "${version}" ] ; then
-      echo "ERROR: staging directory contains more than one version: ${versions}" >&2
-      return 1
-    fi
-    version="${v}"
-  done
-
-  if [ -z "${version}" ] ; then
-    echo "ERROR: version not found" >&2
-    return 1
+  if [ ! -d "${project_dir}" ] ; then
+    return 0
   fi
-  echo "${version}"
+
+  while read -r pom ; do
+    version=${pom##*/}
+    version=${version#"${project_artifact}-"}
+    version=${version%.pom}
+    printf '%s\n' "${version}"
+    break
+  done < <(find "${project_dir}" -mindepth 2 -maxdepth 2 -type f -name "${project_artifact}-*.pom" -print | sort -u)
 }
 
 upload_snapshot() {
   echo "Uploading SNAPSHOT..." >&2
-  local version
-  version=$(find_version)
-
-  # Make sure version ends in -SNAPSHOT
-  if [[ "${version}" != *-SNAPSHOT ]]; then
-    echo "ERROR: Version ${version} is NOT a SNAPSHOT version" >&2
-    exit 1
-  fi
-
   nexus_upload "${SNAPSHOT_URL}" "${STAGING_DIR}"
 }
 
 upload_release() {
   echo "Uploading release..." >&2
-  local version
-  version=$(find_version)
+  local deployment_id version
+  read -r version < <(find_release_version) || true
 
-  # Make sure version does NOT end in -SNAPSHOT
-  if [[ "${v}" = *-SNAPSHOT ]]; then
-    echo "ERROR: Version ${version} is a SNAPSHOT version" >&2
-    exit 1
+  if [ -z "${version}" ]; then
+    echo "ERROR: unable to resolve release version" >&2
+    return 1
+  elif [[ "${version}" == *-SNAPSHOT ]]; then
+      echo "ERROR: Version ${version} is a SNAPSHOT version" >&2
+      exit 1
   fi
 
-  deployment_id="$(central_upload "${CENTRAL_URL}" "${STAGING_DIR}")"
+  deployment_id="$(central_upload "${CENTRAL_URL}" "${STAGING_DIR}" "${EXTENSION}" "${version}")"
   central_finish "${deployment_id}"
 }
 
 # Upload contents of the staging directory to central portal
 # arg1: base URL of upload portal
 # arg2: staging directory
+# arg3: extension id
+# arg4: release version
 # prints deployment ID
 central_upload() {
-  local version
-  version=$(find_version)
+  local extension_id upload_bundle version
+  extension_id="${3}"
+  version="${4}"
 
   printf "Uploading artifacts...\n" >&2
-  readonly UPLOAD_BUNDLE=io-helidon-artifacts-${version}.zip
-  rm -f "${UPLOAD_BUNDLE}"
-  printf "Creating artifact bundle %s...\n" "${UPLOAD_BUNDLE}" >&2
-  (cd "${2}"; zip -ryq "../${UPLOAD_BUNDLE}" .)
+  upload_bundle="io-helidon-extensions-${extension_id}-artifacts-${version}.zip"
+  rm -f "${upload_bundle}"
+  printf "Creating artifact bundle %s...\n" "${upload_bundle}" >&2
+  (cd "${2}"; zip -ryq "../${upload_bundle}" .)
 
   local responseFile statusFile
   responseFile=$(mktemp)
   statusFile=$(mktemp)
 
-  printf "Uploading %s to %s...\n" "${UPLOAD_BUNDLE}" "${1}" >&2
+  printf "Uploading %s to %s...\n" "${upload_bundle}" "${1}" >&2
   # Upload bundle in one shot
   # publishingType of USER_MANAGED acts like "staging". Artifacts are uploaded and verified but not published.
   curl --request POST \
     --retry 2 \
     --header "Authorization: Bearer ${BEARER}" \
     --write-out "%{stderr}%{http_code} %{url_effective}\n%{stdout}%{http_code}" \
-    --form bundle=@"${UPLOAD_BUNDLE}" \
+    --form bundle=@"${upload_bundle}" \
     -o  "${responseFile}" \
-    "${1}/publisher/upload?name=io-helidon-${version}&publishingType=USER_MANAGED" > "${statusFile}"
+    "${1}/publisher/upload?name=io-helidon-extensions-${extension_id}-${version}&publishingType=USER_MANAGED" > "${statusFile}"
 
   # handle errors
   if [ "$(cat "${statusFile}")" != "201" ] ; then
@@ -250,16 +248,16 @@ central_finish() {
       ;;
     "VALIDATED")
       printf "Done. Bits are uploaded." >&2
-      exit
+      exit 0
       ;;
     "PUBLISHING")
       ;;
     "PUBLISHED")
       printf "!!!! Oh No! Artifacts have been published!!!! That should not have happened." >&2
-      exit
+      exit 1
       ;;
     "FAILED")
-      exit
+      exit 1
       ;;
     esac
     sleep 10
@@ -286,21 +284,21 @@ central_get_deployment_state() {
 nexus_upload() {
   printf "\nUploading artifacts...\n" >&2
 
-  local tmpfile
-  tmpfile=$(mktemp)
+  local tmp_file
+  tmp_file=$(mktemp)
 
   # Generate a curl config file for all files to deploy
   # Use -T <file> --url <url> for each file
   while read -r i ; do
-      echo "-T ${2}/${i}" >> "${tmpfile}"
-      echo "--url ${1}/${i}" >> "${tmpfile}"
+      echo "-T ${2}/${i}" >> "${tmp_file}"
+      echo "--url ${1}/${i}" >> "${tmp_file}"
   done < <(find "${2}" -type f | cut -c $((${#2} + 2))-)
 
   # Upload
   curl -s \
     --user "${CENTRAL_USER}:${CENTRAL_PASSWORD}" \
     --write-out "%{stderr}%{http_code} %{url_effective} t_pretrans=%{time_pretransfer}s t_tot=%{time_total}s %{speed_upload}B/s\n" \
-    --config "${tmpfile}" \
+    --config "${tmp_file}" \
     --parallel \
     --parallel-max 10 \
     --retry 3

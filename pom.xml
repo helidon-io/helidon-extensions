@@ -29,8 +29,9 @@
         <version>1.0.0-SNAPSHOT</version>
         <relativePath>./parent/pom.xml</relativePath>
     </parent>
-
     <artifactId>helidon-extensions-project</artifactId>
+    <!--suppress MavenRedundantVersion -->
+    <version>1.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>Helidon Extensions Project</name>
@@ -183,7 +184,6 @@
                         <failOnWarnings>${javadoc.fail-on-warnings}</failOnWarnings>
                         <!-- we are not interested in each file that is generated -->
                         <quiet>true</quiet>
-                        <offline>true</offline>
                     </configuration>
                 </plugin>
                 <plugin>
@@ -579,6 +579,30 @@
                                     </rules>
                                     <fail>true</fail>
                                 </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
                             </execution>
                         </executions>
                     </plugin>
