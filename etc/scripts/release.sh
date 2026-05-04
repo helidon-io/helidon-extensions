@@ -451,7 +451,7 @@ create_tag() {
   read -r _ _ version < <(gav "${WS_DIR}/extensions/${extension}/pom.xml")
 
   # Strip qualifier
-  version="${version%%-*}"
+  version=${version%-SNAPSHOT}
 
   git_branch="release/${extension}/${version}"
   tag_name="${extension}/${version}"
