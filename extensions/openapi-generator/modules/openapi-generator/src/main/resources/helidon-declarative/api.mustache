@@ -56,7 +56,6 @@ import io.helidon.security.SecurityContext;
  * <p>{@code @RestServer.Endpoint} — processed at build time by the Helidon annotation
  * processor to register HTTP routing without runtime reflection.</p>
  */
-@SuppressWarnings("deprecation")
 @RestServer.Endpoint
 @Service.Singleton
 {{#corsEnabled}}@Cors.Defaults
