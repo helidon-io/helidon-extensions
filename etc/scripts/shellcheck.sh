@@ -59,9 +59,7 @@ shellcheck --version
 status_code=0
 while IFS= read -r -d '' file; do
   printf "\n-- Checking file:  %s --\n" "${file}"
-  if ! shellcheck "${WS_DIR}/${file}" ; then
-    status_code=${?}
-  fi
+  shellcheck "${WS_DIR}/${file}" || status_code=${?}
 done < <(git -C "${WS_DIR}" ls-files -z '*.sh')
 
 exit "${status_code}"

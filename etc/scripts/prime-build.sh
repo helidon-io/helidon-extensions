@@ -85,7 +85,7 @@ branch() {
   version="${1}"
 
   branch="helidon-${version%%.*}.x"
-  if [ -z "$(git ls-remote --heads https://github.com/helidon-io/helidon "refs/heads/${HELIDON_BRANCH}")" ] ; then
+  if [ -z "$(git ls-remote --heads https://github.com/helidon-io/helidon "refs/heads/${branch}")" ] ; then
     branch="main"
   fi
   echo "${branch}"

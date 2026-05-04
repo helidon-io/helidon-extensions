@@ -115,4 +115,5 @@ jobs:
         run: |
           etc/scripts/upload.sh upload_release \
             --dir="staging" \
+            --extension="${{ needs.create-tag.outputs.extension }}" \
             --description="Helidon Extensions ${{ needs.create-tag.outputs.extension }} v%{version}"

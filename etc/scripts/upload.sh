@@ -39,6 +39,9 @@ $(basename "${0}") [OPTIONS] --directory=DIR CMD
   --dir=DIR
       Set the staging directory to use.
 
+  --extension=ID
+      Set the extension id to use.
+
   --description=DESCRIPTION
         Set the staging repository description to use.
         %{version} can be used to substitute the release version.
@@ -68,6 +71,10 @@ while (( ${#} > 0 )); do
     DESCRIPTION=${1#*=}
     shift
     ;;
+  "--extension="*)
+    EXTENSION=${1#*=}
+    shift
+    ;;
   "--help")
     usage
     exit 0
@@ -93,6 +100,10 @@ case ${COMMAND} in
 "upload_release")
   if [ -z "${DESCRIPTION}" ] ; then
     echo "ERROR: description required" >&2
+    usage
+    exit 1
+  elif [ -z "${EXTENSION}" ] ; then
+    echo "ERROR: extension required" >&2
     usage
     exit 1
   fi
@@ -139,18 +150,22 @@ readonly SNAPSHOT_URL="https://central.sonatype.com/repository/maven-snapshots"
 
 BEARER=$(printf "%s:%s" "${CENTRAL_USER}" "${CENTRAL_PASSWORD}" | base64)
 
-find_release_info() {
-  local pom id
+find_release_version() {
+  local project_artifact project_dir pom version
+  project_artifact="helidon-extensions-${EXTENSION}-project"
+  project_dir="${STAGING_DIR}/io/helidon/extensions/${EXTENSION}/${project_artifact}"
+
+  if [ ! -d "${project_dir}" ] ; then
+    return 0
+  fi
+
   while read -r pom ; do
-    if [[ "${pom}" == ${STAGING_DIR}/io/helidon/extensions/*/*-project/*/*-project-*.pom ]] ; then
-      id=${pom##*/}
-      id=${id/helidon-extensions-/}
-      id=${id/.pom/}
-      id=${id/-project/}
-      printf '%s %s\n' "${id%-*}" "${id##*-}"
-      break
-    fi
-  done < <(find "${STAGING_DIR}" -type f -name "*.pom" -print) | sort -u
+    version=${pom##*/}
+    version=${version#"${project_artifact}-"}
+    version=${version%.pom}
+    printf '%s\n' "${version}"
+    break
+  done < <(find "${project_dir}" -mindepth 2 -maxdepth 2 -type f -name "${project_artifact}-*.pom" -print | sort -u)
 }
 
 upload_snapshot() {
@@ -160,18 +175,18 @@ upload_snapshot() {
 
 upload_release() {
   echo "Uploading release..." >&2
-  local deployment_id extension_id version
-  read -r extension_id version < <(find_release_info)
+  local deployment_id version
+  read -r version < <(find_release_version) || true
 
-  if [ -z "${extension_id}" ] || [ -z "${version}" ]; then
-    echo "ERROR: unable to resolve release info" >&2
+  if [ -z "${version}" ]; then
+    echo "ERROR: unable to resolve release version" >&2
     return 1
   elif [[ "${version}" == *-SNAPSHOT ]]; then
       echo "ERROR: Version ${version} is a SNAPSHOT version" >&2
       exit 1
   fi
 
-  deployment_id="$(central_upload "${CENTRAL_URL}" "${STAGING_DIR}" "${extension_id}" "${version}")"
+  deployment_id="$(central_upload "${CENTRAL_URL}" "${STAGING_DIR}" "${EXTENSION}" "${version}")"
   central_finish "${deployment_id}"
 }
 
@@ -233,16 +248,16 @@ central_finish() {
       ;;
     "VALIDATED")
       printf "Done. Bits are uploaded." >&2
-      exit
+      exit 0
       ;;
     "PUBLISHING")
       ;;
     "PUBLISHED")
       printf "!!!! Oh No! Artifacts have been published!!!! That should not have happened." >&2
-      exit
+      exit 1
       ;;
     "FAILED")
-      exit
+      exit 1
       ;;
     esac
     sleep 10

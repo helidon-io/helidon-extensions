@@ -193,7 +193,7 @@ select_pull_request_extensions() {
   base_sha="${1}"
   source_sha="${2}"
   requested_ids=()
-  changed_files=$(git -C "${WS_DIR}" diff --name-only "${base_sha}" "${source_sha}")
+  changed_files=$(git -C "${WS_DIR}" diff --name-only "${base_sha}...${source_sha}")
 
   if [ -z "${changed_files}" ] ; then
     select_all_extensions
