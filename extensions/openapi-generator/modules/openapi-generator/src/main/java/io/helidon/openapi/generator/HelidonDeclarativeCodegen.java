@@ -638,9 +638,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
             if (op.vendorExtensions.containsKey("x-has-security-roles")) {
                 anySecurityRoles = true;
-                // SecurityContext needs a leading comma when other params already appear
-                boolean needsLeadingComma = !op.allParams.isEmpty();
-                op.vendorExtensions.put("x-needs-leading-comma-for-security", needsLeadingComma);
             }
 
             // Find error model from non-2xx responses

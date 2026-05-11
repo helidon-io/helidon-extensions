@@ -63,9 +63,9 @@ class GlobalSecurityGenerationIT {
     }
 
     @Test
-    void endpointInheritedSecuredMethodHasSecurityContextParam() throws IOException {
+    void endpointInheritedSecuredMethodMatchesInterfaceSignature() throws IOException {
         assertThat(read(apiFile("ItemsEndpoint.java")),
-                   containsString("public List<Item> listItems(SecurityContext securityContext)"));
+                   containsString("public List<Item> listItems()"));
     }
 
     @Test

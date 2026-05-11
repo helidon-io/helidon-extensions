@@ -34,7 +34,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 /**
  * Integration test for security code generation.
  * Uses a spec that has operations with security requirements to verify
- * that @RoleValidator.Roles, SecurityContext, and security dependencies are generated.
+ * that @RoleValidator.Roles and security dependencies are generated.
  */
 class SecurityGenerationIT {
 
@@ -58,7 +58,7 @@ class SecurityGenerationIT {
     }
 
     // -------------------------------------------------------------------------
-    // Endpoint: SecurityContext and API contract implementation
+    // Endpoint: shared API contract implementation
     // -------------------------------------------------------------------------
 
     @Test
@@ -68,10 +68,9 @@ class SecurityGenerationIT {
     }
 
     @Test
-    void endpointSecuredMethodHasSecurityContextParam() throws IOException {
-        // createItem is secured → SecurityContext injected as unannotated param
+    void endpointSecuredMethodMatchesInterfaceSignature() throws IOException {
         assertThat(read(apiFile("ItemsEndpoint.java")),
-                   containsString("SecurityContext securityContext"));
+                   containsString("public void createItem(@Http.Entity Item item)"));
     }
 
     @Test
@@ -89,26 +88,19 @@ class SecurityGenerationIT {
     }
 
     @Test
-    void endpointHasSecurityImports() throws IOException {
+    void endpointHasNoSecurityContextImport() throws IOException {
         String content = read(apiFile("ItemsEndpoint.java"));
-        assertThat(content, containsString("import io.helidon.security.SecurityContext;"));
+        assertThat(content, not(containsString("import io.helidon.security.SecurityContext;")));
     }
 
     // -------------------------------------------------------------------------
-    // Interface: @RoleValidator.Roles, no SecurityContext
+    // Interface: @RoleValidator.Roles
     // -------------------------------------------------------------------------
 
     @Test
     void interfaceSecuredMethodHasRoleValidatorAnnotation() throws IOException {
         assertThat(read(apiFile("ItemsApi.java")),
                    containsString("@RoleValidator.Roles(\"admin\")"));
-    }
-
-    @Test
-    void interfaceHasNoSecurityContextParam() throws IOException {
-        // SecurityContext is server-side only — must not appear in the interface
-        assertThat(read(apiFile("ItemsApi.java")),
-                   not(containsString("SecurityContext")));
     }
 
     @Test
