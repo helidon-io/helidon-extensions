@@ -73,12 +73,6 @@ class DiscriminatorEnumAllOfGenerationIT {
     }
 
     @Test
-    void mappedEnumDiscriminatorGeneratedProjectBuilds() throws Exception {
-        Path outputDir = generate("discriminator-enum-mapping-repro.yaml");
-        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
-    }
-
-    @Test
     void mappedEnumDiscriminatorSubtypeUsesActualDiscriminatorValueInSimpleHierarchy() throws Exception {
         Path outputDir = generate("discriminator-enum-mapping-repro-2.yaml");
 
@@ -93,12 +87,6 @@ class DiscriminatorEnumAllOfGenerationIT {
         String instantValue = read(modelFile(outputDir, "UserConfigInstantValue.java"));
         assertThat(instantValue, containsString("setType(UserConfig.TypeEnum.INSTANT);"));
         assertThat(instantValue, not(containsString("USER_CONFIG_INSTANT_VALUE")));
-    }
-
-    @Test
-    void mappedEnumDiscriminatorGeneratedProjectBuildsInSimpleHierarchy() throws Exception {
-        Path outputDir = generate("discriminator-enum-mapping-repro-2.yaml");
-        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
     }
 
     @Test

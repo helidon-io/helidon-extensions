@@ -141,11 +141,6 @@ class SecurityGenerationIT {
                    containsString("required: one or more operations use @RoleValidator.Roles"));
     }
 
-    @Test
-    void generatedProjectBuildsWithMaven() throws Exception {
-        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
-    }
-
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------

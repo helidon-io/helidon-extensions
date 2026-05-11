@@ -81,7 +81,7 @@ jobs:
             mvn --version
             EXTRA_MVN_ARGS=""
             if [ "${{ matrix.extension.id }}" = "openapi-generator" ]; then
-              EXTRA_MVN_ARGS="-Dhelidon.codegen.it.buildsWithMaven=true"
+              EXTRA_MVN_ARGS="-Ppipeline"
             fi
             mvn ${MVN_ARGS} \
               -f extensions/${{ matrix.extension.id }}/pom.xml \

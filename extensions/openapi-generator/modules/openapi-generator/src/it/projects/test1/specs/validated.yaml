@@ -1,0 +1,76 @@
+#
+# Copyright (c) 2026 Oracle and/or its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+---
+openapi: "3.0.0"
+info:
+  title: Validated Items API
+  version: "1.0"
+servers:
+  - url: http://example.com/v1
+paths:
+  /items:
+    get:
+      summary: List items
+      operationId: listItems
+      tags:
+        - items
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Item'
+components:
+  schemas:
+    Item:
+      type: object
+      required:
+        - name
+        - quantity
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: "[A-Za-z0-9 ]+"
+        quantity:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 1000
+          multipleOf: 5
+        batchId:
+          type: integer
+          format: int64
+          minimum: 100
+          exclusiveMinimum: true
+          maximum: 1000
+          exclusiveMaximum: true
+          multipleOf: 10
+        price:
+          type: number
+          format: double
+          minimum: 0.01
+          multipleOf: 0.25
+        tags:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 20

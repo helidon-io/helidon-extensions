@@ -24,7 +24,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.openapitools.codegen.DefaultGenerator;
@@ -223,12 +222,6 @@ class FeaturesGenerationIT {
     void buildGradleHasValidationDependencyForParameterValidation() throws IOException {
         assertThat(read(outputDir.resolve("build.gradle").toFile()),
                    containsString("io.helidon.validation:helidon-validation"));
-    }
-
-    @Test
-    @Disabled("Blocked pending Helidon core release for optional list query parameter codegen")
-    void generatedProjectBuildsWithMaven() throws Exception {
-        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
     }
 
     // -------------------------------------------------------------------------

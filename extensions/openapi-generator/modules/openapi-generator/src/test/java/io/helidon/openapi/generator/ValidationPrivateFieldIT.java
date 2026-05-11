@@ -105,11 +105,6 @@ class ValidationPrivateFieldIT {
                            """.stripIndent().trim())));
     }
 
-    @Test
-    void generatedProjectBuildsWithMaven() throws Exception {
-        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
-    }
-
     private File modelFile(String name) {
         return outputDir.resolve("src/main/java/io/helidon/example/model/" + name).toFile();
     }
