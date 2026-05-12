@@ -61,10 +61,10 @@ The separate `helidonVersion` option controls which Helidon version is written
 into generated Maven and Gradle projects, and its current default is `4.4.1`.
 
 For CI-style verification of generated Maven projects in this module, enable
-the `pipeline` Maven profile:
+the `it-tests` Maven profile:
 
 ```bash
-mvn -pl openapi-generator/modules/openapi-generator -Ppipeline verify
+mvn -pl openapi-generator/modules/openapi-generator -Pit-tests verify
 ```
 
 That profile drives checked-in integration harnesses under
@@ -268,13 +268,13 @@ and covers:
 - generated project build verification
 
 Generated-project verification is opt-in and runs during `verify` under the
-`pipeline` Maven profile:
+`it-tests` Maven profile:
 
 ```bash
-mvn -pl openapi-generator/modules/openapi-generator -Ppipeline verify
+mvn -pl openapi-generator/modules/openapi-generator -Pit-tests verify
 ```
 
-The `pipeline` profile runs a checked-in Maven reactor of harness projects. Each
+The `it-tests` profile runs a checked-in Maven reactor of harness projects. Each
 harness invokes `openapi-generator-maven-plugin` against one test spec, then
 compiles or tests the generated sources in-place. This keeps verification close
 to the `openapi-ui` module approach while still exercising the current generator

@@ -224,7 +224,7 @@ Per schema:
 Module-local integration checks are Maven-only:
 
 - standard JUnit tests run in the normal `test` phase
-- generated Maven project verification runs under the `pipeline` Maven profile
+- generated Maven project verification runs under the `it-tests` Maven profile
   using `maven-invoker-plugin` during `verify`
 
 ### Composed Schemas
@@ -312,7 +312,7 @@ There is also a focused unit test for the codegen class itself:
 - `HelidonDeclarativeCodegenTest`
 
 Generated-project build verification is intentionally opt-in and uses the
-`pipeline` profile.
+`it-tests` profile.
 
 The profile points `maven-invoker-plugin` at checked-in harness projects under:
 
@@ -333,7 +333,7 @@ reactor using `build-helper-maven-plugin` and compiles or tests them like a
 normal project.
 
 This keeps verification close to the `openapi-ui` module pattern while still
-validating fresh generator output on every `pipeline` run. Most harness modules
+validating fresh generator output on every `it-tests` run. Most harness modules
 skip test execution and verify that generated projects build successfully;
 `composed-schemas` also runs a checked-in JSON-binding round-trip test against
 the freshly generated model classes.

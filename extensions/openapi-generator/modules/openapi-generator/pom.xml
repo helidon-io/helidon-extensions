@@ -121,7 +121,7 @@
 
     <profiles>
         <profile>
-            <id>pipeline</id>
+            <id>it-tests</id>
             <activation>
                 <property>
                     <name>env.GITHUB_ACTIONS</name>
