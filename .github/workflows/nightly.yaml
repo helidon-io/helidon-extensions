@@ -79,14 +79,9 @@ jobs:
           free-space: true
           run: |
             mvn --version
-            EXTRA_MVN_ARGS=""
-            if [ "${{ matrix.extension.id }}" = "openapi-generator" ]; then
-              EXTRA_MVN_ARGS="-Ppipeline"
-            fi
             mvn ${MVN_ARGS} \
               -f extensions/${{ matrix.extension.id }}/pom.xml \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -Dsurefire.reportNameSuffix=latest-java \
               -Ptests \
-              ${EXTRA_MVN_ARGS} \
               verify

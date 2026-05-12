@@ -122,6 +122,12 @@
     <profiles>
         <profile>
             <id>pipeline</id>
+            <activation>
+                <property>
+                    <name>env.GITHUB_ACTIONS</name>
+                    <value>true</value>
+                </property>
+            </activation>
             <build>
                 <plugins>
                     <plugin>
