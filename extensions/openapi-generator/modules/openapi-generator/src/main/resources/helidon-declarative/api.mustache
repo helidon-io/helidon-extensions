@@ -43,10 +43,6 @@ import io.helidon.common.parameters.Parameters;
 {{#hasMultipartOperations}}
 import io.helidon.http.media.ReadableEntity;
 {{/hasMultipartOperations}}
-{{#hasSecurityRoles}}
-import io.helidon.security.SecurityContext;
-{{/hasSecurityRoles}}
-
 /**
  * Declarative HTTP endpoint for the {{classname}} API.
  *
@@ -75,7 +71,7 @@ import io.helidon.security.SecurityContext;
     {{#vendorExtensions.x-static-headers}}@RestServer.Header(name = "{{name}}", value = "{{value}}")
     {{/vendorExtensions.x-static-headers}}{{#vendorExtensions.x-computed-headers}}@RestServer.ComputedHeader(name = "{{name}}", function = "{{functionName}}")
     {{/vendorExtensions.x-computed-headers}}{{#metricsEnabled}}@Metrics.Timed
-    {{/metricsEnabled}}public {{{returnType}}} {{operationId}}({{#allParams}}{{#isPathParam}}{{#vendorExtensions.x-validation-annotations}}{{{annotation}}} {{/vendorExtensions.x-validation-annotations}}@Http.PathParam("{{baseName}}") {{{dataType}}} {{paramName}}{{/isPathParam}}{{#isQueryParam}}{{#vendorExtensions.x-validation-annotations}}{{{annotation}}} {{/vendorExtensions.x-validation-annotations}}@Http.QueryParam("{{baseName}}") {{{dataType}}} {{paramName}}{{/isQueryParam}}{{#isHeaderParam}}{{#vendorExtensions.x-validation-annotations}}{{{annotation}}} {{/vendorExtensions.x-validation-annotations}}@Http.HeaderParam("{{baseName}}") {{{dataType}}} {{paramName}}{{/isHeaderParam}}{{#isBodyParam}}@Http.Entity {{{dataType}}} {{paramName}}{{/isBodyParam}}{{^-last}}, {{/-last}}{{/allParams}}{{#vendorExtensions.x-has-security-roles}}{{#vendorExtensions.x-needs-leading-comma-for-security}}, {{/vendorExtensions.x-needs-leading-comma-for-security}}SecurityContext securityContext{{/vendorExtensions.x-has-security-roles}}) {
+    {{/metricsEnabled}}public {{{returnType}}} {{operationId}}({{#allParams}}{{#isPathParam}}{{#vendorExtensions.x-validation-annotations}}{{{annotation}}} {{/vendorExtensions.x-validation-annotations}}@Http.PathParam("{{baseName}}") {{{dataType}}} {{paramName}}{{/isPathParam}}{{#isQueryParam}}{{#vendorExtensions.x-validation-annotations}}{{{annotation}}} {{/vendorExtensions.x-validation-annotations}}@Http.QueryParam("{{baseName}}") {{{dataType}}} {{paramName}}{{/isQueryParam}}{{#isHeaderParam}}{{#vendorExtensions.x-validation-annotations}}{{{annotation}}} {{/vendorExtensions.x-validation-annotations}}@Http.HeaderParam("{{baseName}}") {{{dataType}}} {{paramName}}{{/isHeaderParam}}{{#isBodyParam}}@Http.Entity {{{dataType}}} {{paramName}}{{/isBodyParam}}{{^-last}}, {{/-last}}{{/allParams}}) {
         // TODO: implement {{operationId}}
         throw new UnsupportedOperationException("{{operationId}} not yet implemented");
     }

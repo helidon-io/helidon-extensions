@@ -219,6 +219,14 @@ Per schema:
 
 - `{Model}.java`
 
+## Verification
+
+Module-local integration checks are Maven-only:
+
+- standard JUnit tests run in the normal `test` phase
+- generated Maven project verification runs under the `it-tests` Maven profile
+  using `maven-invoker-plugin` during `verify`
+
 ### Composed Schemas
 
 The generator supports OpenAPI composed schemas using Java shapes that fit the
@@ -303,10 +311,32 @@ There is also a focused unit test for the codegen class itself:
 
 - `HelidonDeclarativeCodegenTest`
 
-Generated-project build verification is intentionally opt-in through system properties:
+Generated-project build verification is intentionally opt-in and uses the
+`it-tests` profile.
 
-- `helidon.codegen.it.buildsWithMaven`
-- `helidon.codegen.it.buildsWithGradle`
+The profile points `maven-invoker-plugin` at checked-in harness projects under:
+
+```text
+openapi-generator/modules/openapi-generator/src/it/
+├── settings.xml
+└── projects/
+    └── test1/
+        ├── pom.xml
+        ├── specs/*.yaml
+        └── modules/*/pom.xml
+```
+
+Each harness module runs `openapi-generator-maven-plugin` during its own build,
+writing the generated project into `target/generated-project`. The harness then
+adds the generated main and test source/resource directories back into the Maven
+reactor using `build-helper-maven-plugin` and compiles or tests them like a
+normal project.
+
+This keeps verification close to the `openapi-ui` module pattern while still
+validating fresh generator output on every `it-tests` run. Most harness modules
+skip test execution and verify that generated projects build successfully;
+`composed-schemas` also runs a checked-in JSON-binding round-trip test against
+the freshly generated model classes.
 
 ## Packaging
 

@@ -75,11 +75,6 @@ class MediaTypesGenerationIT {
                    not(containsString("@Http.Produces(MediaTypes.APPLICATION_JSON_VALUE)\n    String getPlainReport(")));
     }
 
-    @Test
-    void generatedProjectBuildsWithMaven() throws Exception {
-        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
-    }
-
     private Path apiFile(String name) {
         return outputDir.resolve("src/main/java/io/helidon/example/api/" + name);
     }

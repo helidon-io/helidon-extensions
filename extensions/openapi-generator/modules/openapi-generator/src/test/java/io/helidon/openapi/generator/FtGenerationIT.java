@@ -85,11 +85,6 @@ class FtGenerationIT {
                    containsString("io.helidon.fault-tolerance:helidon-fault-tolerance"));
     }
 
-    @Test
-    void generatedProjectBuildsWithMaven() throws Exception {
-        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
-    }
-
     private File apiFile(String name) {
         return outputDir.resolve("src/main/java/io/helidon/example/api/" + name).toFile();
     }

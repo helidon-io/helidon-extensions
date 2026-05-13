@@ -118,4 +118,63 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>it-tests</id>
+            <activation>
+                <property>
+                    <name>env.GITHUB_ACTIONS</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-install-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>install-openapi-generator-bom</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>install-file</goal>
+                                </goals>
+                                <configuration>
+                                    <file>${project.basedir}/../../bom/pom.xml</file>
+                                    <pomFile>${project.basedir}/../../bom/pom.xml</pomFile>
+                                    <localRepositoryPath>${project.build.directory}/it-repo</localRepositoryPath>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-invoker-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>install</goal>
+                                    <goal>integration-test</goal>
+                                    <goal>verify</goal>
+                                </goals>
+                                <configuration>
+                                    <projectsDirectory>src/it/projects</projectsDirectory>
+                                    <pomIncludes>
+                                        <pomInclude>test1/pom.xml</pomInclude>
+                                    </pomIncludes>
+                                    <cloneProjectsTo>${project.build.directory}/invoker</cloneProjectsTo>
+                                    <localRepositoryPath>${project.build.directory}/it-repo</localRepositoryPath>
+                                    <goals>
+                                        <goal>verify</goal>
+                                    </goals>
+                                    <streamLogs>true</streamLogs>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

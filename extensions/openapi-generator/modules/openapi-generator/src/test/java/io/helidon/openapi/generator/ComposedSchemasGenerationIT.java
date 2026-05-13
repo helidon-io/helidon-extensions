@@ -140,16 +140,6 @@ class ComposedSchemasGenerationIT {
     }
 
     @Test
-    void generatedProjectBuildsWithMavenWhenEnabled() throws IOException, InterruptedException {
-        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
-    }
-
-    @Test
-    void generatedJsonBindingRoundTripsWhenEnabled() throws IOException, InterruptedException {
-        GeneratedProjectBuildSupport.assertMavenTestSucceeds(outputDir);
-    }
-
-    @Test
     void nonObjectUnionMembersFailClearly(@TempDir Path tempDir) throws IOException {
         Path spec = tempDir.resolve("unsupported-union.yaml");
         Files.writeString(spec, """

@@ -63,9 +63,9 @@ class GlobalSecurityGenerationIT {
     }
 
     @Test
-    void endpointInheritedSecuredMethodHasSecurityContextParam() throws IOException {
+    void endpointInheritedSecuredMethodMatchesInterfaceSignature() throws IOException {
         assertThat(read(apiFile("ItemsEndpoint.java")),
-                   containsString("public List<Item> listItems(SecurityContext securityContext)"));
+                   containsString("public List<Item> listItems()"));
     }
 
     @Test
@@ -79,11 +79,6 @@ class GlobalSecurityGenerationIT {
     void generatedProjectStillIncludesSecurityDependencies() throws IOException {
         assertThat(read(outputDir.resolve("pom.xml")),
                    containsString("helidon-security"));
-    }
-
-    @Test
-    void generatedProjectBuildsWithMaven() throws Exception {
-        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
     }
 
     private Path apiFile(String name) {

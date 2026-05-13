@@ -224,11 +224,6 @@ class FeaturesGenerationIT {
                    containsString("io.helidon.validation:helidon-validation"));
     }
 
-    @Test
-    void generatedProjectBuildsWithMaven() throws Exception {
-        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
-    }
-
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------

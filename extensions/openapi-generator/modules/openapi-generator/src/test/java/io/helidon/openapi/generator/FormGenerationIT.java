@@ -104,11 +104,6 @@ class FormGenerationIT {
                    containsString("import io.helidon.http.media.ReadableEntity;"));
     }
 
-    @Test
-    void generatedProjectBuildsWithMaven() throws Exception {
-        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
-    }
-
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------

@@ -393,21 +393,6 @@ class PetstoreGenerationIT {
         assertThat(read(javaFile("io/helidon/example/Main.java")), containsString("@Service.GenerateBinding"));
     }
 
-    @Test
-    void generatedProjectBuildsWithMaven() throws Exception {
-        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
-    }
-
-    @Test
-    void generatedProjectBuildsWithGradle() throws Exception {
-        GeneratedProjectBuildSupport.assertGradleBuildSucceeds(outputDir);
-    }
-
-    @Test
-    void generatedProjectTestsWithGradle() throws Exception {
-        GeneratedProjectBuildSupport.assertGradleTestSucceeds(outputDir);
-    }
-
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------

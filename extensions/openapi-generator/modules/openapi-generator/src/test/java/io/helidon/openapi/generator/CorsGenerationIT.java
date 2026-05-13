@@ -85,11 +85,6 @@ class CorsGenerationIT {
                    containsString("io.helidon.webserver:helidon-webserver-cors"));
     }
 
-    @Test
-    void generatedProjectBuildsWithMaven() throws Exception {
-        GeneratedProjectBuildSupport.assertMavenPackageSucceeds(outputDir);
-    }
-
     private File apiFile(String name) {
         return outputDir.resolve("src/main/java/io/helidon/example/api/" + name).toFile();
     }
