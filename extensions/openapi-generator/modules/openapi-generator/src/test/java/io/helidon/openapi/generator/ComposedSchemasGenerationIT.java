@@ -72,6 +72,16 @@ class ComposedSchemasGenerationIT {
     }
 
     @Test
+    void allOfModelBuilderExtendsParentBuilder() throws IOException {
+        String content = read(modelFile("Extended.java"));
+        assertThat(content, containsString("public static BuilderBase<?, ? extends Extended> builder()"));
+        assertThat(content, containsString("public static class Builder extends BuilderBase<Builder, Extended>"));
+        assertThat(content, containsString("extends Base.BuilderBase<B, T>"));
+        assertThat(content, containsString("public Builder name(String name)"));
+        assertThat(content, containsString("public Extended build()"));
+    }
+
+    @Test
     void oneOfSchemaGeneratesInterface() throws IOException {
         String content = read(modelFile("Pet.java"));
         assertThat(content, containsString("public interface Pet"));
@@ -228,7 +238,7 @@ class ComposedSchemasGenerationIT {
                     @Test
                     void oneOfDiscriminatorRoundTrip() {
                         Cat cat = new Cat();
-                        cat.setWhiskers(7);
+                        cat.whiskers(7);
 
                         String json = jsonBinding.serialize((Pet) cat, Pet.class);
                         assertThat(json, containsString("\\\"kind\\\":\\\"cat&special\\\""));
@@ -236,20 +246,31 @@ class ComposedSchemasGenerationIT {
 
                         Pet pet = jsonBinding.deserialize("{\\\"kind\\\":\\\"cat&special\\\",\\\"whiskers\\\":7}", Pet.class);
                         assertThat(pet, instanceOf(Cat.class));
-                        assertThat(((Cat) pet).getWhiskers(), is(7));
+                        assertThat(((Cat) pet).whiskers(), is(7));
                     }
 
                     @Test
                     void anyOfStructuralRoundTrip() {
                         EmailContact emailContact = new EmailContact();
-                        emailContact.setEmail("user@example.com");
+                        emailContact.email("user@example.com");
 
                         String json = jsonBinding.serialize((Contact) emailContact, Contact.class);
                         assertThat(json, containsString("\\\"email\\\":\\\"user@example.com\\\""));
 
                         Contact contact = jsonBinding.deserialize("{\\\"email\\\":\\\"user@example.com\\\"}", Contact.class);
                         assertThat(contact, instanceOf(EmailContact.class));
-                        assertThat(((EmailContact) contact).getEmail(), is("user@example.com"));
+                        assertThat(((EmailContact) contact).email(), is("user@example.com"));
+                    }
+
+                    @Test
+                    void allOfBuilderCanSetParentAndChildProperties() {
+                        Extended extended = Extended.builder()
+                                .id("extended-1")
+                                .name("extended-name")
+                                .build();
+
+                        assertThat(extended.id(), is("extended-1"));
+                        assertThat(extended.name(), is("extended-name"));
                     }
 
                     @Test

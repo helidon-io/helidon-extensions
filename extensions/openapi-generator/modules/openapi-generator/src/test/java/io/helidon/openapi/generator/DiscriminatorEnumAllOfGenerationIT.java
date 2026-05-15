@@ -42,8 +42,8 @@ class DiscriminatorEnumAllOfGenerationIT {
         Path outputDir = generate("discriminator-enum-repro.yaml");
         String content = read(modelFile(outputDir, "RegionHealthCheckCategoryDetails.java"));
         assertThat(content, containsString("public RegionHealthCheckCategoryDetails()"));
-        assertThat(content, containsString("setCategory(MqlCheckDetails.CategoryEnum.REGION_HEALTH_CHECK);"));
-        assertThat(content, not(containsString("setCategory(\"REGION_HEALTH_CHECK\")")));
+        assertThat(content, containsString("category(MqlCheckDetails.CategoryEnum.REGION_HEALTH_CHECK);"));
+        assertThat(content, not(containsString("category(\"REGION_HEALTH_CHECK\")")));
     }
 
     @Test
@@ -51,7 +51,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         Path outputDir = generate("discriminator-enum-repro.yaml");
         String content = read(modelFile(outputDir, "MqlCheckDetails.java"));
         assertThat(content, containsString("private CategoryEnum category;"));
-        assertThat(content, containsString("public void setCategory(CategoryEnum category)"));
+        assertThat(content, containsString("public void category(CategoryEnum category)"));
         assertThat(content, containsString("public enum CategoryEnum"));
     }
 
@@ -64,11 +64,11 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("@Json.Subtype(alias = \"TIME_WINDOW_CONSTRAINTS\", value = TimeWindowConstraintsConditionShape.class)"));
 
         String changeFreeze = read(modelFile(outputDir, "ChangeFreezeConditionShape.java"));
-        assertThat(changeFreeze, containsString("setConditionShape(ConditionShapeDetails.ConditionShapeEnum.CHANGE_FREEZE);"));
+        assertThat(changeFreeze, containsString("conditionShape(ConditionShapeDetails.ConditionShapeEnum.CHANGE_FREEZE);"));
         assertThat(changeFreeze, not(containsString("CHANGE_FREEZE_CONDITION_SHAPE")));
 
         String timeWindow = read(modelFile(outputDir, "TimeWindowConstraintsConditionShape.java"));
-        assertThat(timeWindow, containsString("setConditionShape(ConditionShapeDetails.ConditionShapeEnum.TIME_WINDOW_CONSTRAINTS);"));
+        assertThat(timeWindow, containsString("conditionShape(ConditionShapeDetails.ConditionShapeEnum.TIME_WINDOW_CONSTRAINTS);"));
         assertThat(timeWindow, not(containsString("TIME_WINDOW_CONSTRAINTS_CONDITION_SHAPE")));
     }
 
@@ -81,11 +81,11 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("@Json.Subtype(alias = \"STRING\", value = UserConfigStringValue.class)"));
 
         String stringValue = read(modelFile(outputDir, "UserConfigStringValue.java"));
-        assertThat(stringValue, containsString("setType(UserConfig.TypeEnum.STRING);"));
+        assertThat(stringValue, containsString("type(UserConfig.TypeEnum.STRING);"));
         assertThat(stringValue, not(containsString("USER_CONFIG_STRING_VALUE")));
 
         String instantValue = read(modelFile(outputDir, "UserConfigInstantValue.java"));
-        assertThat(instantValue, containsString("setType(UserConfig.TypeEnum.INSTANT);"));
+        assertThat(instantValue, containsString("type(UserConfig.TypeEnum.INSTANT);"));
         assertThat(instantValue, not(containsString("USER_CONFIG_INSTANT_VALUE")));
     }
 
@@ -97,7 +97,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("AUTHOR_DEFINED_TIME_EXPIRY"));
 
         String explicitSubtype = read(modelFile(outputDir, "ConditionAuthorDefinedExpiringApprovalInvalidationTypeDetails.java"));
-        assertThat(explicitSubtype, containsString("setApprovalInvalidationType("
+        assertThat(explicitSubtype, containsString("approvalInvalidationType("
                 + "ApprovalInvalidationTypeDetails.ApprovalInvalidationTypeEnum.AUTHOR_DEFINED_TIME_EXPIRY);"));
         assertThat(explicitSubtype,
                 not(containsString("CONDITION_AUTHOR_DEFINED_EXPIRING_APPROVAL_INVALIDATION_TYPE_DETAILS")));
@@ -111,7 +111,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("SERVICE_PHONEBOOK_SCOPE"));
 
         String subtype = read(modelFile(outputDir, "ServicePhoneBookScope.java"));
-        assertThat(subtype, containsString("setScopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
+        assertThat(subtype, containsString("scopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
         assertThat(subtype, not(containsString("SERVICE_PHONE_BOOK_SCOPE")));
     }
 
@@ -123,7 +123,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("CM_PREREQUISITES_VIOLATION"));
 
         String subtype = read(modelFile(outputDir, "CmPreRequisiteViolationConditionShape.java"));
-        assertThat(subtype, containsString("setConditionShape("
+        assertThat(subtype, containsString("conditionShape("
                 + "ConditionShapeDetails.ConditionShapeEnum.CM_PREREQUISITES_VIOLATION);"));
         assertThat(subtype, not(containsString("CM_PRE_REQUISITE_VIOLATION_CONDITION_SHAPE")));
     }
@@ -136,7 +136,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("AUTHOR_DEFINED_TIME_EXPIRY"));
 
         String subtype = read(modelFile(outputDir, "AuthorDefinedExpiryDetails.java"));
-        assertThat(subtype, containsString("setApprovalInvalidationType("
+        assertThat(subtype, containsString("approvalInvalidationType("
                 + "ApprovalInvalidationTypeDetails.ApprovalInvalidationTypeEnum.AUTHOR_DEFINED_TIME_EXPIRY);"));
         assertThat(subtype, not(containsString("AUTHOR_DEFINED_EXPIRY_DETAILS")));
     }
@@ -149,7 +149,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("SERVICE_PHONEBOOK_SCOPE"));
 
         String subtype = read(modelFile(outputDir, "ServicePhoneBookScope.java"));
-        assertThat(subtype, containsString("setScopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
+        assertThat(subtype, containsString("scopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
         assertThat(subtype, not(containsString("SERVICE_PHONE_BOOK_SCOPE")));
     }
 
@@ -161,7 +161,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("CM_PREREQUISITES_VIOLATION"));
 
         String subtype = read(modelFile(outputDir, "CmPreRequisiteViolationConditionShape.java"));
-        assertThat(subtype, containsString("setConditionShape("
+        assertThat(subtype, containsString("conditionShape("
                 + "ConditionShapeDetails.ConditionShapeEnum.CM_PREREQUISITES_VIOLATION);"));
         assertThat(subtype, not(containsString("CM_PRE_REQUISITE_VIOLATION_CONDITION_SHAPE")));
     }
@@ -177,7 +177,7 @@ class DiscriminatorEnumAllOfGenerationIT {
 
         String subtype = read(modelFile(outputDir, "AuthorDefinedExpiryDetails.java"));
         assertThat(subtype, containsString("public class AuthorDefinedExpiryDetails extends ApprovalInvalidationTypeDetails"));
-        assertThat(subtype, containsString("setApprovalInvalidationType("
+        assertThat(subtype, containsString("approvalInvalidationType("
                 + "ApprovalInvalidationTypeDetails.ApprovalInvalidationTypeEnum.AUTHOR_DEFINED_TIME_EXPIRY);"));
         assertThat(subtype, not(containsString("AUTHOR_DEFINED_EXPIRY_DETAILS")));
     }
@@ -193,7 +193,7 @@ class DiscriminatorEnumAllOfGenerationIT {
 
         String subtype = read(modelFile(outputDir, "ServicePhoneBookScope.java"));
         assertThat(subtype, containsString("public class ServicePhoneBookScope extends ApplicableScope"));
-        assertThat(subtype, containsString("setScopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
+        assertThat(subtype, containsString("scopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
         assertThat(subtype, not(containsString("SERVICE_PHONE_BOOK_SCOPE")));
     }
 
@@ -206,7 +206,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("@Json.Subtype(alias = \"CM_PREREQUISITES_VIOLATION\", value = CmPreRequisiteViolationConditionShape.class)"));
 
         String subtype = read(modelFile(outputDir, "CmPreRequisiteViolationConditionShape.java"));
-        assertThat(subtype, containsString("setConditionShape("
+        assertThat(subtype, containsString("conditionShape("
                 + "ConditionShapeDetails.ConditionShapeEnum.CM_PREREQUISITES_VIOLATION);"));
         assertThat(subtype, not(containsString("CM_PRE_REQUISITE_VIOLATION_CONDITION_SHAPE")));
     }
@@ -220,7 +220,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("@Json.Subtype(alias = \"SERVICE_PHONEBOOK_SCOPE\", value = ServicePhoneBookScope.class)"));
 
         String subtype = read(modelFile(outputDir, "ServicePhoneBookScope.java"));
-        assertThat(subtype, containsString("setScopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
+        assertThat(subtype, containsString("scopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
         assertThat(subtype, not(containsString("SERVICE_PHONE_BOOK_SCOPE")));
     }
 
@@ -233,7 +233,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("@Json.Subtype(alias = \"AUTHOR_DEFINED_TIME_EXPIRY\", value = AuthorDefinedExpiryDetails.class)"));
 
         String subtype = read(modelFile(outputDir, "AuthorDefinedExpiryDetails.java"));
-        assertThat(subtype, containsString("setApprovalInvalidationType("
+        assertThat(subtype, containsString("approvalInvalidationType("
                 + "ApprovalInvalidationTypeDetails.ApprovalInvalidationTypeEnum.AUTHOR_DEFINED_TIME_EXPIRY);"));
         assertThat(subtype, not(containsString("AUTHOR_DEFINED_EXPIRY_DETAILS")));
     }
@@ -247,7 +247,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("@Json.Subtype(alias = \"CM_PREREQUISITES_VIOLATION\", value = CmPreRequisiteViolationConditionShape.class)"));
 
         String subtype = read(modelFile(outputDir, "CmPreRequisiteViolationConditionShape.java"));
-        assertThat(subtype, containsString("setConditionShape("
+        assertThat(subtype, containsString("conditionShape("
                 + "ConditionShapeDetails.ConditionShapeEnum.CM_PREREQUISITES_VIOLATION);"));
         assertThat(subtype, not(containsString("CM_PRE_REQUISITE_VIOLATION_CONDITION_SHAPE")));
     }
@@ -263,7 +263,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("@Json.Subtype(alias = \"CM_PREREQUISITES_VIOLATION\", value = CmPreRequisiteViolationConditionShape.class)"));
 
         String subtype = read(modelFile(outputDir, "CmPreRequisiteViolationConditionShape.java"));
-        assertThat(subtype, containsString("setConditionShape("
+        assertThat(subtype, containsString("conditionShape("
                 + "ConditionShapeDetails.ConditionShapeEnum.CM_PREREQUISITES_VIOLATION);"));
         assertThat(subtype, not(containsString("CM_PRE_REQUISITE_VIOLATION_CONDITION_SHAPE")));
     }
@@ -277,7 +277,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("@Json.Subtype(alias = \"SERVICE_PHONEBOOK_SCOPE\", value = ServicePhoneBookScope.class)"));
 
         String subtype = read(modelFile(outputDir, "ServicePhoneBookScope.java"));
-        assertThat(subtype, containsString("setScopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
+        assertThat(subtype, containsString("scopeType(ApplicableScope.ScopeTypeEnum.SERVICE_PHONEBOOK_SCOPE);"));
         assertThat(subtype, not(containsString("SERVICE_PHONE_BOOK_SCOPE")));
     }
 
@@ -290,7 +290,7 @@ class DiscriminatorEnumAllOfGenerationIT {
         assertThat(parent, containsString("@Json.Subtype(alias = \"AUTHOR_DEFINED_TIME_EXPIRY\", value = ConditionAuthorDefinedExpiringApprovalInvalidationTypeDetails.class)"));
 
         String subtype = read(modelFile(outputDir, "ConditionAuthorDefinedExpiringApprovalInvalidationTypeDetails.java"));
-        assertThat(subtype, containsString("setApprovalInvalidationType("
+        assertThat(subtype, containsString("approvalInvalidationType("
                 + "ApprovalInvalidationTypeDetails.ApprovalInvalidationTypeEnum.AUTHOR_DEFINED_TIME_EXPIRY);"));
         assertThat(subtype, not(containsString("CONDITION_AUTHOR_DEFINED_EXPIRING_APPROVAL_INVALIDATION_TYPE_DETAILS")));
     }

@@ -366,7 +366,8 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
 {{/vendorExtensions.x-polymorphic-subtypes}}{{/vendorExtensions.x-has-polymorphic-subtypes}}
 {{#isDeprecated}}@Deprecated
 {{/isDeprecated}}{{#vendorExtensions.x-has-validations}}@Validation.Validated
-{{/vendorExtensions.x-has-validations}}public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendorExtensions.x-extends-model}}{{/vendorExtensions.x-extends-model}}{{#vendorExtensions.x-has-implements-models}} implements {{#vendorExtensions.x-implements-models}}{{name}}{{^last}}, {{/last}}{{/vendorExtensions.x-implements-models}}{{/vendorExtensions.x-has-implements-models}} {
+{{/vendorExtensions.x-has-validations}}@Json.BuilderInfo({{classname}}.Builder.class)
+public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendorExtensions.x-extends-model}}{{/vendorExtensions.x-extends-model}}{{#vendorExtensions.x-has-implements-models}} implements {{#vendorExtensions.x-implements-models}}{{name}}{{^last}}, {{/last}}{{/vendorExtensions.x-implements-models}}{{/vendorExtensions.x-has-implements-models}} {
 
 {{#vendorExtensions.x-render-vars}}
     {{#description}}/** {{description}} */
@@ -382,15 +383,190 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
 
 {{#vendorExtensions.x-render-vars}}
 {{#vendorExtensions.x-validation-annotations}}    {{{annotation}}}
-{{/vendorExtensions.x-validation-annotations}}    public {{{datatypeWithEnum}}} {{getter}}() {
+{{/vendorExtensions.x-validation-annotations}}    public {{{datatypeWithEnum}}} {{name}}() {
         return {{name}};
     }
 
-    public void {{setter}}({{{datatypeWithEnum}}} {{name}}) {
+    public void {{name}}({{{datatypeWithEnum}}} {{name}}) {
         this.{{name}} = {{name}};
     }
 
 {{/vendorExtensions.x-render-vars}}
+{{^vendorExtensions.x-extends-model}}
+    /**
+     * Create a builder for {@link {{classname}}}.
+     *
+     * @return new builder
+     */
+    @Json.Ignore
+    public static BuilderBase<?, ? extends {{classname}}> builder() {
+        return new Builder();
+    }
+
+    /**
+     * Builder for {@link {{classname}}}.
+     */
+    public static class Builder extends BuilderBase<Builder, {{classname}}> {
+
+        /**
+         * Create a new builder.
+         */
+        public Builder() {
+            super(new {{classname}}());
+        }
+
+{{#vendorExtensions.x-render-vars}}
+        /**
+         * Set {{name}}.
+         *
+         * @param {{name}} {{name}} value
+         * @return updated builder
+         */
+        public Builder {{name}}({{{datatypeWithEnum}}} {{name}}) {
+            return super.{{name}}({{name}});
+        }
+
+{{/vendorExtensions.x-render-vars}}
+        /**
+         * Build the instance.
+         *
+         * @return configured instance
+         */
+        @Override
+        public {{classname}} build() {
+            return super.build();
+        }
+    }
+
+    /**
+     * Base builder for {@link {{classname}}}.
+     *
+     * @param <B> concrete builder type
+     * @param <T> concrete built type
+     */
+    public static class BuilderBase<B extends BuilderBase<B, T>, T extends {{classname}}>
+            implements io.helidon.common.Builder<B, T> {
+        protected final T instance;
+
+        /**
+         * Create a new builder.
+         *
+         * @param instance instance to build
+         */
+        protected BuilderBase(T instance) {
+            this.instance = instance;
+        }
+
+{{#vendorExtensions.x-render-vars}}
+        /**
+         * Set {{name}}.
+         *
+         * @param {{name}} {{name}} value
+         * @return updated builder
+         */
+        public B {{name}}({{{datatypeWithEnum}}} {{name}}) {
+            instance.{{name}}({{name}});
+            return self();
+        }
+
+{{/vendorExtensions.x-render-vars}}
+        /**
+         * Build the instance.
+         *
+         * @return configured instance
+         */
+        @Override
+        public T build() {
+            return instance;
+        }
+
+        @SuppressWarnings("unchecked")
+        protected B self() {
+            return (B) this;
+        }
+    }
+
+{{/vendorExtensions.x-extends-model}}{{#vendorExtensions.x-extends-model}}
+    /**
+     * Create a builder for {@link {{classname}}}.
+     *
+     * @return new builder
+     */
+    @Json.Ignore
+    public static BuilderBase<?, ? extends {{classname}}> builder() {
+        return new Builder();
+    }
+
+    /**
+     * Builder for {@link {{classname}}}.
+     */
+    public static class Builder extends BuilderBase<Builder, {{classname}}> {
+
+        /**
+         * Create a new builder.
+         */
+        public Builder() {
+            super(new {{classname}}());
+        }
+
+{{#vendorExtensions.x-render-vars}}
+        /**
+         * Set {{name}}.
+         *
+         * @param {{name}} {{name}} value
+         * @return updated builder
+         */
+        public Builder {{name}}({{{datatypeWithEnum}}} {{name}}) {
+            (({{classname}}) instance).{{name}}({{name}});
+            return this;
+        }
+
+{{/vendorExtensions.x-render-vars}}
+        /**
+         * Build the instance.
+         *
+         * @return configured instance
+         */
+        @Override
+        public {{classname}} build() {
+            return ({{classname}}) instance;
+        }
+    }
+
+    /**
+     * Base builder for {@link {{classname}}}.
+     *
+     * @param <B> concrete builder type
+     * @param <T> concrete built type
+     */
+    public static class BuilderBase<B extends BuilderBase<B, T>, T extends {{classname}}>
+            extends {{vendorExtensions.x-extends-model}}.BuilderBase<B, T> {
+
+        /**
+         * Create a new builder.
+         *
+         * @param instance instance to build
+         */
+        protected BuilderBase(T instance) {
+            super(instance);
+        }
+
+{{#vendorExtensions.x-render-vars}}
+        /**
+         * Set {{name}}.
+         *
+         * @param {{name}} {{name}} value
+         * @return updated builder
+         */
+        public B {{name}}({{{datatypeWithEnum}}} {{name}}) {
+            instance.{{name}}({{name}});
+            return self();
+        }
+
+{{/vendorExtensions.x-render-vars}}
+    }
+
+{{/vendorExtensions.x-extends-model}}
 {{#vendorExtensions.x-render-vars}}{{#isEnum}}
     public enum {{datatypeWithEnum}} {
         {{#allowableValues}}{{#enumVars}}{{name}}{{^-last}},

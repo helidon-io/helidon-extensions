@@ -185,7 +185,7 @@ Per schema:
 
 | File | Description |
 |------|-------------|
-| `{Model}.java` | Helidon JSON model type with generated validation and enum support |
+| `{Model}.java` | Helidon JSON model type with generated builders, validation, and enum support |
 
 Supporting files:
 
@@ -226,6 +226,37 @@ For union schemas, generated converters use the OpenAPI discriminator when one i
 present. Without a discriminator, they fall back to structural matching based on
 the member models' required and declared properties.
 
+### Model API
+
+Generated object schemas are mutable Helidon JSON entities with prefixless
+property accessors and mutators. A schema property named `id` produces `id()`
+and `id(value)` methods instead of JavaBean-style `getId()` and `setId(...)`.
+
+Each generated model also has a Helidon-style builder:
+
+```java
+Pet pet = Pet.builder()
+        .id(1L)
+        .name("Fluffy")
+        .tag("cat")
+        .build();
+
+Long id = pet.id();
+pet.name("Mochi");
+```
+
+Builders implement `io.helidon.common.Builder` through a generated
+`BuilderBase<B, T>` class. For `allOf` inheritance, child builders extend the
+parent model's builder base so fluent chains can set both inherited and local
+properties:
+
+```java
+Extended extended = Extended.builder()
+        .id("extended-1")
+        .name("extended-name")
+        .build();
+```
+
 ### Parameters
 
 | OpenAPI | Generated |
@@ -250,8 +281,9 @@ The generator currently emits Helidon validation annotations for:
 - collection size
 - `multipleOf` for integer, long, and number constraints
 
-For model classes, validation annotations are emitted on accessor methods rather than
-private fields so generated projects compile cleanly with the current validation API.
+For model classes, validation annotations are emitted on prefixless accessor
+methods rather than private fields so generated projects compile cleanly with the
+current validation API.
 
 ## Testing
 
