@@ -42,6 +42,7 @@
         <ftEnabled>false</ftEnabled>
         <tracingEnabled>false</tracingEnabled>
         <metricsEnabled>false</metricsEnabled>
+        <serializationLibrary>helidon</serializationLibrary>
         <skipGeneratedTests>true</skipGeneratedTests>
     </properties>
 
@@ -69,6 +70,14 @@
         <dependency>
             <groupId>io.helidon.http.media</groupId>
             <artifactId>helidon-http-media-json-binding</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.helidon.http.media</groupId>
+            <artifactId>helidon-http-media-jsonb</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.helidon.http.media</groupId>
+            <artifactId>helidon-http-media-jackson</artifactId>
         </dependency>
         <dependency>
             <groupId>io.helidon.validation</groupId>
@@ -221,6 +230,7 @@
                                 <ftEnabled>${ftEnabled}</ftEnabled>
                                 <tracingEnabled>${tracingEnabled}</tracingEnabled>
                                 <metricsEnabled>${metricsEnabled}</metricsEnabled>
+                                <serializationLibrary>${serializationLibrary}</serializationLibrary>
                             </configOptions>
                         </configuration>
                     </execution>

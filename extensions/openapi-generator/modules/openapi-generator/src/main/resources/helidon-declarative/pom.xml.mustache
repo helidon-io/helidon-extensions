@@ -51,11 +51,27 @@ limitations under the License.
             <artifactId>helidon-service-registry</artifactId>
         </dependency>
 
+        {{#serializationLibraryHelidon}}
         <!-- Helidon build-time JSON media support -->
         <dependency>
             <groupId>io.helidon.http.media</groupId>
             <artifactId>helidon-http-media-json-binding</artifactId>
         </dependency>
+        {{/serializationLibraryHelidon}}
+        {{#serializationLibraryJsonb}}
+        <!-- JSON-B media support -->
+        <dependency>
+            <groupId>io.helidon.http.media</groupId>
+            <artifactId>helidon-http-media-jsonb</artifactId>
+        </dependency>
+        {{/serializationLibraryJsonb}}
+        {{#serializationLibraryJackson}}
+        <!-- Jackson media support -->
+        <dependency>
+            <groupId>io.helidon.http.media</groupId>
+            <artifactId>helidon-http-media-jackson</artifactId>
+        </dependency>
+        {{/serializationLibraryJackson}}
 
         {{#hasValidation}}
         <!-- Helidon build-time validation (@Validation.Validated, @Validation.String.*, etc.) -->
