@@ -80,6 +80,7 @@ import static org.openapitools.codegen.utils.StringUtils.camelize;
 public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
     static final String OPT_HELIDON_VERSION = "helidonVersion";
+    static final String OPT_JAVA_VERSION = "javaVersion";
     static final String OPT_GENERATE_CLIENT = "generateClient";
     static final String OPT_GENERATE_ERROR_HANDLER = "generateErrorHandler";
     static final String OPT_SERVER_OPENAPI = "serverOpenApi";
@@ -112,6 +113,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             "RESPONSES");
 
     private String helidonVersion = "4.4.1";
+    private String javaVersion = "21";
     private boolean generateClient = true;
     private boolean generateErrorHandler = true;
     private boolean serverOpenApi = true;
@@ -173,6 +175,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         addOption(OPT_HELIDON_VERSION,
                 "Helidon version written into the generated pom.xml",
                 helidonVersion);
+        addOption(OPT_JAVA_VERSION,
+                "Java version used as the generated Maven source/target and Gradle toolchain version",
+                javaVersion);
         addOption(OPT_GENERATE_CLIENT,
                 "Generate @RestClient.Endpoint interface per tag",
                 String.valueOf(generateClient));
@@ -232,6 +237,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         if (additionalProperties.containsKey(OPT_HELIDON_VERSION)) {
             helidonVersion = additionalProperties.get(OPT_HELIDON_VERSION).toString();
         }
+        if (additionalProperties.containsKey(OPT_JAVA_VERSION)) {
+            javaVersion = normalizeJavaVersion(additionalProperties.get(OPT_JAVA_VERSION));
+        }
         if (additionalProperties.containsKey(OPT_GENERATE_CLIENT)) {
             generateClient = Boolean.parseBoolean(
                     additionalProperties.get(OPT_GENERATE_CLIENT).toString());
@@ -275,6 +283,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
         // Expose options to all templates via additionalProperties
         additionalProperties.put("helidonVersion", helidonVersion);
+        additionalProperties.put("javaVersion", javaVersion);
         additionalProperties.put("generateClient", generateClient);
         additionalProperties.put("generateErrorHandler", generateErrorHandler);
         additionalProperties.put("serverOpenApi", serverOpenApi);
@@ -302,6 +311,14 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         // Main.java location depends on the (possibly user-supplied) invokerPackage
         String mainFolder = "src/main/java/" + invokerPackage.replace('.', '/');
         supportingFiles.add(new SupportingFile("Main.java.mustache", mainFolder, "Main.java"));
+    }
+
+    private static String normalizeJavaVersion(Object value) {
+        String text = String.valueOf(value).trim();
+        if (!text.matches("[1-9][0-9]*")) {
+            throw new IllegalArgumentException("javaVersion must be a positive integer, but was '" + text + "'");
+        }
+        return text;
     }
 
     // -------------------------------------------------------------------------

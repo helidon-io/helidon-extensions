@@ -355,6 +355,13 @@ class PetstoreGenerationIT {
     }
 
     @Test
+    void pomXmlDefaultsCompilerSourceAndTargetToJava21() throws IOException {
+        String pom = read(outputDir.resolve("pom.xml").toFile());
+        assertThat(pom, containsString("<source>21</source>"));
+        assertThat(pom, containsString("<target>21</target>"));
+    }
+
+    @Test
     void buildGradleContainsApplicationPlugin() throws IOException {
         assertThat(read(outputDir.resolve("build.gradle").toFile()),
                    containsString("id 'application'"));
@@ -376,6 +383,12 @@ class PetstoreGenerationIT {
     void buildGradleConfiguresMainClass() throws IOException {
         assertThat(read(outputDir.resolve("build.gradle").toFile()),
                    containsString("mainClass = 'io.helidon.example.Main'"));
+    }
+
+    @Test
+    void buildGradleDefaultsJavaToolchainToJava21() throws IOException {
+        assertThat(read(outputDir.resolve("build.gradle").toFile()),
+                   containsString("languageVersion = JavaLanguageVersion.of(21)"));
     }
 
     @Test

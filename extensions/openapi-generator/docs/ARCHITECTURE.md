@@ -79,6 +79,7 @@ Its responsibilities are:
 Important option constants currently supported:
 
 - `helidonVersion`
+- `javaVersion`
 - `generateClient`
 - `generateErrorHandler`
 - `serverOpenApi`
