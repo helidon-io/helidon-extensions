@@ -59,6 +59,9 @@ The module is packaged as a thin jar. Runtime dependencies are copied to
 In the examples below, `4.0.0-SNAPSHOT` is the version of this extension artifact.
 The separate `helidonVersion` option controls which Helidon version is written
 into generated Maven and Gradle projects, and its current default is `4.4.1`.
+The `javaVersion` option controls the generated Maven compiler source and target
+values and the generated Gradle Java toolchain version, and its current default is
+`21`.
 
 For CI-style verification of generated Maven projects in this module, enable
 the `it-tests` Maven profile:
@@ -91,6 +94,7 @@ Add the generator as a dependency of `openapi-generator-maven-plugin`:
                 <output>${project.build.directory}/generated-sources/openapi</output>
                 <configOptions>
                     <helidonVersion>4.4.1</helidonVersion>
+                    <javaVersion>21</javaVersion>
                     <apiPackage>com.example.api</apiPackage>
                     <modelPackage>com.example.model</modelPackage>
                     <invokerPackage>com.example</invokerPackage>
@@ -129,11 +133,12 @@ java -jar openapi-generator/modules/openapi-generator/target/helidon-extensions-
   -g helidon-declarative \
   -i /path/to/openapi.yaml \
   -o /path/to/output \
-  --additional-properties helidonVersion=4.4.1,apiPackage=com.example.api,modelPackage=com.example.model,invokerPackage=com.example
+  --additional-properties helidonVersion=4.4.1,javaVersion=21,apiPackage=com.example.api,modelPackage=com.example.model,invokerPackage=com.example
 ```
 
 Here again, the jar version (`4.0.0-SNAPSHOT`) is the generator version, while
-`helidonVersion=4.4.1` controls the generated project.
+`helidonVersion=4.4.1` controls the generated Helidon dependencies and
+`javaVersion=21` controls the generated project Java compilation level.
 
 Example with the optional-list flag enabled:
 
@@ -153,6 +158,7 @@ Set these under Maven `<configOptions>` or CLI `--additional-properties`.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `helidonVersion` | `4.4.1` | Helidon version written into generated Maven and Gradle builds |
+| `javaVersion` | `21` | Java version written into generated Maven compiler source/target and Gradle toolchain builds |
 | `apiPackage` | `io.helidon.example.api` | Package for generated API, endpoint, client, and error classes |
 | `modelPackage` | `io.helidon.example.model` | Package for generated model classes |
 | `invokerPackage` | `io.helidon.example` | Package for generated `Main.java` |

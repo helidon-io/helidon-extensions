@@ -221,4 +221,23 @@ class HelidonDeclarativeCodegenTest {
         assertThat(codegen.modelPackage(), is("io.helidon.example.model"));
         assertThat(codegen.getInvokerPackage(), is("io.helidon.example"));
     }
+
+    @Test
+    void processOptsRejectsNonIntegerJavaVersion() {
+        codegen.additionalProperties().put("javaVersion", "1.8");
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                                                          () -> codegen.processOpts());
+
+        assertThat(exception.getMessage(), containsString("javaVersion must be a positive integer"));
+    }
+
+    @Test
+    void processOptsExposesIntegerJavaVersion() {
+        codegen.additionalProperties().put("javaVersion", "17");
+
+        codegen.processOpts();
+
+        assertThat(codegen.additionalProperties().get("javaVersion"), is("17"));
+    }
 }
