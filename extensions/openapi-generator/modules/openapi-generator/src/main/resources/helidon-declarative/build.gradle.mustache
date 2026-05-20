@@ -41,7 +41,15 @@ dependencies {
 
     implementation 'io.helidon.webserver:helidon-webserver'
     implementation 'io.helidon.service:helidon-service-registry'
+    {{#serializationLibraryHelidon}}
     implementation 'io.helidon.http.media:helidon-http-media-json-binding'
+    {{/serializationLibraryHelidon}}
+    {{#serializationLibraryJsonb}}
+    implementation 'io.helidon.http.media:helidon-http-media-jsonb'
+    {{/serializationLibraryJsonb}}
+    {{#serializationLibraryJackson}}
+    implementation 'io.helidon.http.media:helidon-http-media-jackson'
+    {{/serializationLibraryJackson}}
 
     {{#hasValidation}}
     implementation 'io.helidon.validation:helidon-validation'

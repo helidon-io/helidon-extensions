@@ -18,8 +18,6 @@ package io.helidon.openapi.generator;
 
 import java.io.File;
 import java.io.IOException;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -81,6 +79,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
     static final String OPT_HELIDON_VERSION = "helidonVersion";
     static final String OPT_JAVA_VERSION = "javaVersion";
+    static final String OPT_SERIALIZATION_LIBRARY = "serializationLibrary";
     static final String OPT_GENERATE_CLIENT = "generateClient";
     static final String OPT_GENERATE_ERROR_HANDLER = "generateErrorHandler";
     static final String OPT_SERVER_OPENAPI = "serverOpenApi";
@@ -114,6 +113,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
     private String helidonVersion = "4.4.1";
     private String javaVersion = "21";
+    private String serializationLibrary = "helidon";
     private boolean generateClient = true;
     private boolean generateErrorHandler = true;
     private boolean serverOpenApi = true;
@@ -178,6 +178,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         addOption(OPT_JAVA_VERSION,
                 "Java version used as the generated Maven source/target and Gradle toolchain version",
                 javaVersion);
+        addOption(OPT_SERIALIZATION_LIBRARY,
+                "JSON serialization library to use for generated models: helidon, jsonb, or jackson",
+                serializationLibrary);
         addOption(OPT_GENERATE_CLIENT,
                 "Generate @RestClient.Endpoint interface per tag",
                 String.valueOf(generateClient));
@@ -240,6 +243,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         if (additionalProperties.containsKey(OPT_JAVA_VERSION)) {
             javaVersion = normalizeJavaVersion(additionalProperties.get(OPT_JAVA_VERSION));
         }
+        if (additionalProperties.containsKey(OPT_SERIALIZATION_LIBRARY)) {
+            serializationLibrary = SerializationLibrarySupport.normalize(
+                    additionalProperties.get(OPT_SERIALIZATION_LIBRARY));
+        }
         if (additionalProperties.containsKey(OPT_GENERATE_CLIENT)) {
             generateClient = Boolean.parseBoolean(
                     additionalProperties.get(OPT_GENERATE_CLIENT).toString());
@@ -284,6 +291,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         // Expose options to all templates via additionalProperties
         additionalProperties.put("helidonVersion", helidonVersion);
         additionalProperties.put("javaVersion", javaVersion);
+        additionalProperties.put("serializationLibrary", serializationLibrary);
+        additionalProperties.put("serializationLibraryHelidon", "helidon".equals(serializationLibrary));
+        additionalProperties.put("serializationLibraryJsonb", "jsonb".equals(serializationLibrary));
+        additionalProperties.put("serializationLibraryJackson", "jackson".equals(serializationLibrary));
         additionalProperties.put("generateClient", generateClient);
         additionalProperties.put("generateErrorHandler", generateErrorHandler);
         additionalProperties.put("serverOpenApi", serverOpenApi);
@@ -644,7 +655,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             }
             // Parameter-level validation annotations
             for (CodegenParameter param : op.allParams) {
-                List<Map<String, Object>> paramValidations = buildParamValidationAnnotations(param);
+                List<Map<String, Object>> paramValidations = ValidationSupport.buildParamValidationAnnotations(param);
                 if (!paramValidations.isEmpty()) {
                     param.vendorExtensions.put("x-validation-annotations", paramValidations);
                     anyParamValidation = true;
@@ -821,6 +832,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         normalizeComposedModels(models, modelsByClassname, unionInterfacesByMember);
         applyUnionInterfaces(models, unionInterfacesByMember);
         applyAllOfDiscriminatorHierarchy(models, modelsByClassname);
+        SerializationLibrarySupport.rejectUnsupportedUnions(serializationLibrary, models);
 
         boolean anyValidation = false;
         for (Map.Entry<String, ModelsMap> entry : result.entrySet()) {
@@ -834,22 +846,33 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
                 boolean modelHasValidation = false;
                 List<CodegenProperty> renderVars = renderVars(model);
+                Set<String> discriminatorPropertyNames =
+                        SerializationLibrarySupport.discriminatorPropertyNames(model,
+                                                                               modelsByClassname,
+                                                                               unionInterfacesByMember);
 
                 for (CodegenProperty prop : renderVars) {
+                    String jsonPropertyName = prop.baseName == null ? prop.name : prop.baseName;
+                    prop.vendorExtensions.put("x-json-property-literal",
+                                              JavaStringLiterals.toJavaStringLiteral(jsonPropertyName));
+                    if (discriminatorPropertyNames.contains(jsonPropertyName) || discriminatorPropertyNames.contains(prop.name)) {
+                        prop.vendorExtensions.put("x-is-discriminator-property", Boolean.TRUE);
+                    }
+
                     // Mark required properties for @Json.Required
                     if (prop.required) {
                         prop.vendorExtensions.put("x-json-required", Boolean.TRUE);
                     }
 
                     // Build @Validation.* annotations from OpenAPI constraints
-                    List<Map<String, Object>> validationAnnotations = buildValidationAnnotations(prop);
+                    List<Map<String, Object>> validationAnnotations = ValidationSupport.buildValidationAnnotations(prop);
                     if (!validationAnnotations.isEmpty()) {
                         prop.vendorExtensions.put("x-validation-annotations", validationAnnotations);
                         modelHasValidation = true;
                     }
 
                     // Format default value as a Java literal for field initializer
-                    String javaDefault = formatDefaultValue(prop);
+                    String javaDefault = ValidationSupport.formatDefaultValue(prop);
                     if (javaDefault != null) {
                         prop.vendorExtensions.put("x-default-value", javaDefault);
                     }
@@ -1727,265 +1750,4 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         };
     }
 
-    /**
-     * Maps OpenAPI schema constraints on a property to Helidon {@code @Validation.*} annotations.
-     */
-    private List<Map<String, Object>> buildValidationAnnotations(CodegenProperty prop) {
-        List<Map<String, Object>> result = new ArrayList<>();
-
-        if (prop.isString) {
-            // minLength / maxLength → @Validation.String.Length
-            if (prop.minLength != null || prop.maxLength != null) {
-                List<String> attrs = new ArrayList<>();
-                if (prop.minLength != null) attrs.add("min = " + prop.minLength);
-                if (prop.maxLength != null) attrs.add("value = " + prop.maxLength);
-                result.add(Map.of("annotation",
-                        "@Validation.String.Length(" + String.join(", ", attrs) + ")"));
-            }
-            // pattern → @Validation.String.Pattern
-            if (prop.pattern != null && !prop.pattern.isEmpty()) {
-                String escaped = prop.pattern.replace("\\", "\\\\").replace("\"", "\\\"");
-                result.add(Map.of("annotation", "@Validation.String.Pattern(\"" + escaped + "\")"));
-            }
-        } else if (prop.isInteger) {
-            addIntegerBounds(result, prop.minimum, prop.exclusiveMinimum, prop.maximum, prop.exclusiveMaximum);
-            Integer multipleOf = toIntMultipleOfValue(prop.multipleOf);
-            if (multipleOf != null) {
-                result.add(Map.of("annotation", "@Validation.Integer.MultipleOf(" + multipleOf + ")"));
-            }
-        } else if (prop.isLong) {
-            addLongBounds(result, prop.minimum, prop.exclusiveMinimum, prop.maximum, prop.exclusiveMaximum);
-            Long multipleOf = toLongMultipleOfValue(prop.multipleOf);
-            if (multipleOf != null) {
-                result.add(Map.of("annotation", "@Validation.Long.MultipleOf(" + multipleOf + "L)"));
-            }
-        } else if (prop.isNumber || prop.isFloat || prop.isDouble) {
-            // minimum / maximum → @Validation.Number.Min / Max (string-valued)
-            if (prop.minimum != null) {
-                result.add(Map.of("annotation", "@Validation.Number.Min(\"" + prop.minimum + "\")"));
-            }
-            if (prop.maximum != null) {
-                result.add(Map.of("annotation", "@Validation.Number.Max(\"" + prop.maximum + "\")"));
-            }
-            String multipleOf = toNumberMultipleOfValue(prop.multipleOf);
-            if (multipleOf != null) {
-                result.add(Map.of("annotation", "@Validation.Number.MultipleOf(\"" + multipleOf + "\")"));
-            }
-        }
-
-        // minItems / maxItems → @Validation.Collection.Size (independent of element type)
-        if (prop.isArray && (prop.minItems != null || prop.maxItems != null)) {
-            List<String> attrs = new ArrayList<>();
-            if (prop.minItems != null) attrs.add("min = " + prop.minItems);
-            if (prop.maxItems != null) attrs.add("value = " + prop.maxItems);
-            result.add(Map.of("annotation",
-                    "@Validation.Collection.Size(" + String.join(", ", attrs) + ")"));
-        }
-
-        return result;
-    }
-
-    /**
-     * Formats a property's default value as a Java literal for use in a field initializer.
-     * Returns {@code null} when no useful initializer can be produced (e.g. arrays).
-     */
-    private String formatDefaultValue(CodegenProperty prop) {
-        if (prop.defaultValue == null || prop.defaultValue.isEmpty()) {
-            return null;
-        }
-        String val = prop.defaultValue;
-        if (prop.isEnum) {
-            // Upstream AbstractJavaCodegen already formats the default as "TypeName.CONSTANT"
-            return val;
-        }
-        if (prop.isString) {
-            // Escape backslashes and double-quotes, then wrap in quotes
-            return "\"" + val.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
-        }
-        if (prop.isLong) {
-            return val + "L";
-        }
-        if (prop.isFloat) {
-            return val + "f";
-        }
-        if (prop.isArray || prop.isMap) {
-            return null;  // skip — complex initialization
-        }
-        return val;  // integer, double, boolean — value as-is
-    }
-
-    /**
-     * Maps OpenAPI schema constraints on a parameter to Helidon {@code @Validation.*} annotations.
-     * Mirrors {@link #buildValidationAnnotations(CodegenProperty)} but operates on {@link CodegenParameter}.
-     */
-    private List<Map<String, Object>> buildParamValidationAnnotations(CodegenParameter param) {
-        List<Map<String, Object>> result = new ArrayList<>();
-
-        if (param.isString) {
-            if (param.minLength != null || param.maxLength != null) {
-                List<String> attrs = new ArrayList<>();
-                if (param.minLength != null) attrs.add("min = " + param.minLength);
-                if (param.maxLength != null) attrs.add("value = " + param.maxLength);
-                result.add(Map.of("annotation",
-                        "@Validation.String.Length(" + String.join(", ", attrs) + ")"));
-            }
-            if (param.pattern != null && !param.pattern.isEmpty()) {
-                String escaped = param.pattern.replace("\\", "\\\\").replace("\"", "\\\"");
-                result.add(Map.of("annotation", "@Validation.String.Pattern(\"" + escaped + "\")"));
-            }
-        } else if (param.isInteger) {
-            addIntegerBounds(result, param.minimum, param.exclusiveMinimum, param.maximum, param.exclusiveMaximum);
-            Integer multipleOf = toIntMultipleOfValue(param.multipleOf);
-            if (multipleOf != null) {
-                result.add(Map.of("annotation", "@Validation.Integer.MultipleOf(" + multipleOf + ")"));
-            }
-        } else if (param.isLong) {
-            addLongBounds(result, param.minimum, param.exclusiveMinimum, param.maximum, param.exclusiveMaximum);
-            Long multipleOf = toLongMultipleOfValue(param.multipleOf);
-            if (multipleOf != null) {
-                result.add(Map.of("annotation", "@Validation.Long.MultipleOf(" + multipleOf + "L)"));
-            }
-        } else if (param.isNumber || param.isFloat || param.isDouble) {
-            if (param.minimum != null) {
-                result.add(Map.of("annotation", "@Validation.Number.Min(\"" + param.minimum + "\")"));
-            }
-            if (param.maximum != null) {
-                result.add(Map.of("annotation", "@Validation.Number.Max(\"" + param.maximum + "\")"));
-            }
-            String multipleOf = toNumberMultipleOfValue(param.multipleOf);
-            if (multipleOf != null) {
-                result.add(Map.of("annotation", "@Validation.Number.MultipleOf(\"" + multipleOf + "\")"));
-            }
-        }
-
-        if (param.isArray && (param.minItems != null || param.maxItems != null)) {
-            List<String> attrs = new ArrayList<>();
-            if (param.minItems != null) attrs.add("min = " + param.minItems);
-            if (param.maxItems != null) attrs.add("value = " + param.maxItems);
-            result.add(Map.of("annotation",
-                    "@Validation.Collection.Size(" + String.join(", ", attrs) + ")"));
-        }
-
-        return result;
-    }
-
-    private void addIntegerBounds(List<Map<String, Object>> result,
-                                  String minimum,
-                                  boolean exclusiveMinimum,
-                                  String maximum,
-                                  boolean exclusiveMaximum) {
-        Integer minBound = toIntMinimumBound(minimum, exclusiveMinimum);
-        if (minBound != null) {
-            result.add(Map.of("annotation", "@Validation.Integer.Min(" + minBound + ")"));
-        }
-
-        Integer maxBound = toIntMaximumBound(maximum, exclusiveMaximum);
-        if (maxBound != null) {
-            result.add(Map.of("annotation", "@Validation.Integer.Max(" + maxBound + ")"));
-        }
-    }
-
-    private void addLongBounds(List<Map<String, Object>> result,
-                               String minimum,
-                               boolean exclusiveMinimum,
-                               String maximum,
-                               boolean exclusiveMaximum) {
-        Long minBound = toLongMinimumBound(minimum, exclusiveMinimum);
-        if (minBound != null) {
-            result.add(Map.of("annotation", "@Validation.Long.Min(" + minBound + "L)"));
-        }
-
-        Long maxBound = toLongMaximumBound(maximum, exclusiveMaximum);
-        if (maxBound != null) {
-            result.add(Map.of("annotation", "@Validation.Long.Max(" + maxBound + "L)"));
-        }
-    }
-
-    private Integer toIntMinimumBound(String value, boolean exclusive) {
-        Long bound = parseIntegralMinimumBound(value, exclusive);
-        if (bound == null || bound < Integer.MIN_VALUE || bound > Integer.MAX_VALUE) {
-            return null;
-        }
-        return bound.intValue();
-    }
-
-    private Integer toIntMaximumBound(String value, boolean exclusive) {
-        Long bound = parseIntegralMaximumBound(value, exclusive);
-        if (bound == null || bound < Integer.MIN_VALUE || bound > Integer.MAX_VALUE) {
-            return null;
-        }
-        return bound.intValue();
-    }
-
-    private Long toLongMinimumBound(String value, boolean exclusive) {
-        return parseIntegralMinimumBound(value, exclusive);
-    }
-
-    private Long toLongMaximumBound(String value, boolean exclusive) {
-        return parseIntegralMaximumBound(value, exclusive);
-    }
-
-    private Integer toIntMultipleOfValue(Number value) {
-        Long multipleOf = parseIntegralMultipleOf(value);
-        if (multipleOf == null || multipleOf < Integer.MIN_VALUE || multipleOf > Integer.MAX_VALUE) {
-            return null;
-        }
-        return multipleOf.intValue();
-    }
-
-    private Long toLongMultipleOfValue(Number value) {
-        return parseIntegralMultipleOf(value);
-    }
-
-    private String toNumberMultipleOfValue(Number value) {
-        if (value == null) {
-            return null;
-        }
-        try {
-            return new BigDecimal(value.toString()).stripTrailingZeros().toPlainString();
-        } catch (NumberFormatException ignored) {
-            return null;
-        }
-    }
-
-    private Long parseIntegralMinimumBound(String value, boolean exclusive) {
-        if (value == null) {
-            return null;
-        }
-        try {
-            BigDecimal numeric = new BigDecimal(value);
-            BigDecimal rounded = exclusive
-                    ? numeric.setScale(0, RoundingMode.FLOOR).add(BigDecimal.ONE)
-                    : numeric.setScale(0, RoundingMode.CEILING);
-            return rounded.longValueExact();
-        } catch (ArithmeticException | NumberFormatException ignored) {
-            return null;
-        }
-    }
-
-    private Long parseIntegralMaximumBound(String value, boolean exclusive) {
-        if (value == null) {
-            return null;
-        }
-        try {
-            BigDecimal numeric = new BigDecimal(value);
-            BigDecimal rounded = exclusive
-                    ? numeric.setScale(0, RoundingMode.CEILING).subtract(BigDecimal.ONE)
-                    : numeric.setScale(0, RoundingMode.FLOOR);
-            return rounded.longValueExact();
-        } catch (ArithmeticException | NumberFormatException ignored) {
-            return null;
-        }
-    }
-
-    private Long parseIntegralMultipleOf(Number value) {
-        if (value == null) {
-            return null;
-        }
-        try {
-            return new BigDecimal(value.toString()).longValueExact();
-        } catch (ArithmeticException | NumberFormatException ignored) {
-            return null;
-        }
-    }
 }
