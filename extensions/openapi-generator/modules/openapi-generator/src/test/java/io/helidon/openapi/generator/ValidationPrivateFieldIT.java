@@ -82,7 +82,7 @@ class ValidationPrivateFieldIT {
         assertThat(read(modelFile("CreateGuardrailsOperationDetails.java")),
                    containsString("""
                            @Validation.String.Length(min = 1, value = 255)
-                               public String getCompartmentId() {
+                               public String compartmentId() {
                            """.stripIndent().trim()));
     }
 
@@ -91,7 +91,7 @@ class ValidationPrivateFieldIT {
         assertThat(read(modelFile("CreateGuardrailsOperationDetails.java")),
                    containsString("""
                            @Validation.String.Length(min = 1, value = 255)
-                               public String getName() {
+                               public String name() {
                            """.stripIndent().trim()));
     }
 

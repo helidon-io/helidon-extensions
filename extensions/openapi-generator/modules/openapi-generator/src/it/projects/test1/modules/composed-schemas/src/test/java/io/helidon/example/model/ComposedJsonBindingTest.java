@@ -31,8 +31,8 @@ class ComposedJsonBindingTest {
     @Test
     void oneOfDiscriminatorRoundTrip() {
         Cat cat = new Cat();
-        cat.setKind("cat&special");
-        cat.setWhiskers(7);
+        cat.kind("cat&special");
+        cat.whiskers(7);
 
         String json = jsonBinding.serialize((Pet) cat, Pet.class);
         assertThat(json, containsString("\"kind\":\"cat&special\""));
@@ -40,20 +40,20 @@ class ComposedJsonBindingTest {
 
         Pet pet = jsonBinding.deserialize("{\"kind\":\"cat&special\",\"whiskers\":7}", Pet.class);
         assertThat(pet, instanceOf(Cat.class));
-        assertThat(((Cat) pet).getWhiskers(), is(7));
+        assertThat(((Cat) pet).whiskers(), is(7));
     }
 
     @Test
     void anyOfStructuralRoundTrip() {
         EmailContact emailContact = new EmailContact();
-        emailContact.setEmail("user@example.com");
+        emailContact.email("user@example.com");
 
         String json = jsonBinding.serialize((Contact) emailContact, Contact.class);
         assertThat(json, containsString("\"email\":\"user@example.com\""));
 
         Contact contact = jsonBinding.deserialize("{\"email\":\"user@example.com\"}", Contact.class);
         assertThat(contact, instanceOf(EmailContact.class));
-        assertThat(((EmailContact) contact).getEmail(), is("user@example.com"));
+        assertThat(((EmailContact) contact).email(), is("user@example.com"));
     }
 
     @Test

@@ -77,7 +77,7 @@ class DiscriminatorAllOfGenerationIT {
     void discriminatorAllOfSubtypeInitializesInheritedDiscriminator() throws IOException {
         String content = read(modelFile("CreateChangeFreezeConditionShape.java"));
         assertThat(content, containsString("public CreateChangeFreezeConditionShape()"));
-        assertThat(content, containsString("setConditionShape(\"CHANGE_FREEZE\");"));
+        assertThat(content, containsString("conditionShape(\"CHANGE_FREEZE\");"));
     }
 
     private static File modelFile(String fileName) {

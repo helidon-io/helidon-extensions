@@ -1633,7 +1633,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         if (property == null) {
             return null;
         }
-        return property.setter;
+        return property.name;
     }
 
     private String discriminatorValueExpression(CodegenModel parentModel,

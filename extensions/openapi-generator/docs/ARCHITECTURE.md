@@ -149,7 +149,14 @@ Notable behavior:
 - required properties are marked for JSON-required rendering
 - default values are converted into Java literals
 - validation annotations are derived from OpenAPI constraints
-- model validation annotations are emitted on getter methods rather than private fields
+- model validation annotations are emitted on prefixless accessor methods rather
+  than private fields
+- model classes expose prefixless accessors and mutators, such as `id()` and
+  `id(value)`, instead of JavaBean-style `getId()` and `setId(...)`
+- model classes expose builders backed by `io.helidon.common.Builder` through a
+  generated `BuilderBase<B, T>` class; `allOf` subtype builder bases extend the
+  parent model builder base so inherited and local properties can be set in one
+  fluent chain
 - composed schemas are normalized into template-friendly flags:
   - `allOf` prefers Java inheritance when there is a single referenced parent
   - `oneOf` and `anyOf` generate model interfaces annotated with a generated
@@ -202,7 +209,9 @@ Current templates:
 - `api-interface.mustache` defines the shared annotated contract.
 - `api.mustache` emits the endpoint stub implementation.
 - `restClient.mustache` extends the shared API contract to reuse HTTP annotations.
-- `model.mustache` generates model classes rather than records.
+- `model.mustache` generates mutable JSON entity model classes rather than
+  records. Models use prefixless property methods and Helidon-style builders
+  instead of JavaBean getters and setters.
 - `api.mustache` does not emit `@RestServer.Listener`, because the default listener is
   already implied.
 
@@ -219,6 +228,11 @@ Per tag:
 Per schema:
 
 - `{Model}.java`
+  - `@Json.Entity` model class
+  - prefixless accessor and mutator methods for schema properties
+  - `@Json.BuilderInfo` and a generated `Builder` / `BuilderBase<B, T>`
+    implementing `io.helidon.common.Builder`
+  - generated nested enums when needed
 
 ## Verification
 

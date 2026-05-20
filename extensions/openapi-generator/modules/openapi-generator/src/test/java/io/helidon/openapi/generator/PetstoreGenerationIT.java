@@ -278,12 +278,26 @@ class PetstoreGenerationIT {
     }
 
     @Test
-    void petModelHasGettersAndSetters() throws IOException {
+    void petModelHasPrefixlessAccessorsAndMutators() throws IOException {
         String content = read(modelFile("Pet.java"));
-        assertThat(content, containsString("getId()"));
-        assertThat(content, containsString("setId("));
-        assertThat(content, containsString("getName()"));
-        assertThat(content, containsString("setName("));
+        assertThat(content, containsString("id()"));
+        assertThat(content, containsString("id(Long id)"));
+        assertThat(content, containsString("name()"));
+        assertThat(content, containsString("name(String name)"));
+        assertThat(content, not(containsString("getId()")));
+        assertThat(content, not(containsString("setId(")));
+    }
+
+    @Test
+    void petModelHasBuilder() throws IOException {
+        String content = read(modelFile("Pet.java"));
+        assertThat(content, containsString("@Json.BuilderInfo(Pet.Builder.class)"));
+        assertThat(content, containsString("public static BuilderBase<?, ? extends Pet> builder()"));
+        assertThat(content, containsString("public static class Builder extends BuilderBase<Builder, Pet>"));
+        assertThat(content, containsString("implements io.helidon.common.Builder<B, T>"));
+        assertThat(content, containsString("public B id(Long id)"));
+        assertThat(content, containsString("public B name(String name)"));
+        assertThat(content, containsString("public T build()"));
     }
 
     @Test
