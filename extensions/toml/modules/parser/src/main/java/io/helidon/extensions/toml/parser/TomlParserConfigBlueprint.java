@@ -16,11 +16,21 @@
 
 package io.helidon.extensions.toml.parser;
 
+import io.helidon.builder.api.Option;
+import io.helidon.builder.api.Prototype;
 import io.helidon.common.Api;
 
 /**
- * TOML value.
+ * Configuration of the TOML parser.
  */
+@Prototype.Blueprint
 @Api.Incubating
-public sealed interface TomlValue permits TomlArray, TomlScalar, TomlTable {
+interface TomlParserConfigBlueprint extends Prototype.Factory<TomlParser> {
+    /**
+     * Maximum nesting depth for arrays and tables.
+     *
+     * @return maximum nesting depth
+     */
+    @Option.DefaultInt(TomlParser.DEFAULT_MAX_NESTING_DEPTH)
+    int maxNestingDepth();
 }

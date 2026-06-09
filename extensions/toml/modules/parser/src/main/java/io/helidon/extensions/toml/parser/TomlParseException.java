@@ -16,9 +16,12 @@
 
 package io.helidon.extensions.toml.parser;
 
+import io.helidon.common.Api;
+
 /**
  * TOML parse exception.
  */
+@Api.Incubating
 public class TomlParseException extends RuntimeException {
     /**
      * Create a new exception.

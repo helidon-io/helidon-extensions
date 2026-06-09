@@ -25,6 +25,8 @@ import io.helidon.common.features.api.HelidonFlavor;
 @Features.Flavor({HelidonFlavor.SE, HelidonFlavor.MP})
 @Features.Path({"TOML", "Parser"})
 module io.helidon.extensions.toml.parser {
+    requires transitive io.helidon.builder.api;
+
     requires static io.helidon.common.features.api;
 
     exports io.helidon.extensions.toml.parser;

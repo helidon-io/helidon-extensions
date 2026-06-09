@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class TomlParserTest {
     @Test
     void testScalarTypes() {
-        TomlTable table = TomlParser.parse("""
+        TomlTable table = TomlParser.create().parse("""
                 title = "TOML example"
                 enabled = true
                 retries = 1_000
@@ -68,7 +68,7 @@ class TomlParserTest {
 
     @Test
     void testScalarText() {
-        TomlTable table = TomlParser.parse("""
+        TomlTable table = TomlParser.create().parse("""
                 title = "TOML example"
                 enabled = true
                 retries = 1_000
@@ -102,21 +102,21 @@ class TomlParserTest {
 
     @Test
     void testStrings() {
-        TomlTable table = TomlParser.parse("""
+        TomlTable table = TomlParser.create().parse("""
                 basic = "Jos\\xE9\\e"
                 literal = 'C:\\Users\\node'
-                multiline-basic = \"\"\"
+                multiline-basic = \"""
                 first \\
 
                   second
-                \"\"\"
+                \"""
                 multiline-literal = '''
                 first
                 second
                 '''
                 """);
 
-        assertThat(scalar(table, "basic", TomlString.class).value(), is("Jos\u00E9\u001B"));
+        assertThat(scalar(table, "basic", TomlString.class).value(), is("José\u001B"));
         assertThat(scalar(table, "literal", TomlString.class).value(), is("C:\\Users\\node"));
         assertThat(scalar(table, "multiline-basic", TomlString.class).value(), is("first second\n"));
         assertThat(scalar(table, "multiline-literal", TomlString.class).value(), is("first\nsecond\n"));
@@ -124,7 +124,7 @@ class TomlParserTest {
 
     @Test
     void testTablesArraysAndDottedKeys() {
-        TomlTable table = TomlParser.parse("""
+        TomlTable table = TomlParser.create().parse("""
                 owner.name = "Tom"
 
                 [database]
@@ -155,7 +155,7 @@ class TomlParserTest {
 
     @Test
     void testV11InlineTables() {
-        TomlTable table = TomlParser.parse("""
+        TomlTable table = TomlParser.create().parse("""
                 contact = {
                     personal = {
                         name = "Donald Duck",
@@ -175,25 +175,48 @@ class TomlParserTest {
 
     @Test
     void testInvalidDocuments() {
-        assertThrows(TomlParseException.class, () -> TomlParser.parse("""
+        assertThrows(TomlParseException.class, () -> TomlParser.create().parse("""
                 name = "Tom"
                 name = "Pradyun"
                 """));
-        assertThrows(TomlParseException.class, () -> TomlParser.parse("""
+        assertThrows(TomlParseException.class, () -> TomlParser.create().parse("""
                 fruit.apple.color = "red"
                 [fruit.apple]
                 texture = "smooth"
                 """));
-        assertThrows(TomlParseException.class, () -> TomlParser.parse("""
+        assertThrows(TomlParseException.class, () -> TomlParser.create().parse("""
                 [product]
                 type = { name = "Nail" }
                 type.edible = false
                 """));
-        assertThrows(TomlParseException.class, () -> TomlParser.parse("""
+        assertThrows(TomlParseException.class, () -> TomlParser.create().parse("""
                 fruits = []
                 [[fruits]]
                 name = "apple"
                 """));
+    }
+
+    @Test
+    void testParserFactory() {
+        TomlParser parser = TomlParser.create();
+
+        TomlTable table = parser.parse("name = \"Tom\"");
+
+        assertThat(scalar(table, "name", TomlString.class).value(), is("Tom"));
+        assertThat(parser.prototype().maxNestingDepth(), is(TomlParser.DEFAULT_MAX_NESTING_DEPTH));
+    }
+
+    @Test
+    void testMaxNestingDepth() {
+        TomlParser parser = TomlParser.create(builder -> builder.maxNestingDepth(2));
+
+        assertThrows(TomlParseException.class, () -> parser.parse("value = [[[1]]]"));
+        assertThrows(TomlParseException.class, () -> parser.parse("a.b.c.d = 1"));
+    }
+
+    @Test
+    void testInvalidMaxNestingDepth() {
+        assertThrows(IllegalArgumentException.class, () -> TomlParser.create(builder -> builder.maxNestingDepth(0)));
     }
 
     private static <T extends TomlScalar<?>> T scalar(TomlTable table, String key, Class<T> type) {

@@ -18,11 +18,14 @@ package io.helidon.extensions.toml.parser;
 
 import java.util.Objects;
 
+import io.helidon.common.Api;
+
 /**
  * TOML scalar value.
  *
  * @param <T> Java type of the scalar value
  */
+@Api.Incubating
 public abstract sealed class TomlScalar<T> implements TomlValue
         permits TomlBoolean,
                 TomlFloat,

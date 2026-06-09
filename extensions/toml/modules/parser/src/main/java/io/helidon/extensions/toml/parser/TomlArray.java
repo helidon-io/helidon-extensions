@@ -18,9 +18,12 @@ package io.helidon.extensions.toml.parser;
 
 import java.util.List;
 
+import io.helidon.common.Api;
+
 /**
  * TOML array value.
  */
+@Api.Incubating
 public final class TomlArray implements TomlValue {
     private final List<TomlValue> values;
 

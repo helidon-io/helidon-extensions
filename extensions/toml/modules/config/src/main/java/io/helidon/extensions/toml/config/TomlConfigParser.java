@@ -88,7 +88,7 @@ public class TomlConfigParser implements ConfigParser {
     @Override
     public ObjectNode parse(Content content) throws ConfigParserException {
         try (InputStreamReader reader = new InputStreamReader(content.data(), content.charset())) {
-            return fromTable(TomlParser.parse(reader));
+            return fromTable(TomlParser.create().parse(reader));
         } catch (ConfigException e) {
             throw e;
         } catch (TomlParseException e) {
@@ -112,28 +112,22 @@ public class TomlConfigParser implements ConfigParser {
     private static ListNode fromArray(TomlArray array) {
         ListNode.Builder builder = ListNode.builder();
         for (TomlValue value : array.values()) {
-            if (value instanceof TomlArray arrayValue) {
-                builder.addList(fromArray(arrayValue));
-            } else if (value instanceof TomlTable tableValue) {
-                builder.addObject(fromTable(tableValue));
-            } else if (value instanceof TomlScalar<?> scalar) {
-                builder.addValue(scalar.text());
-            } else {
-                throw new ConfigParserException("Unsupported TOML value: " + value);
+            switch (value) {
+            case TomlArray arrayValue -> builder.addList(fromArray(arrayValue));
+            case TomlTable tableValue -> builder.addObject(fromTable(tableValue));
+            case TomlScalar<?> scalar -> builder.addValue(scalar.text());
+            case null, default -> throw new ConfigParserException("Unsupported TOML value: " + value);
             }
         }
         return builder.build();
     }
 
     private static void addValue(ObjectNode.Builder builder, String key, TomlValue value) {
-        if (value instanceof TomlArray arrayValue) {
-            builder.addList(key, fromArray(arrayValue));
-        } else if (value instanceof TomlTable tableValue) {
-            builder.addObject(key, fromTable(tableValue));
-        } else if (value instanceof TomlScalar<?> scalar) {
-            builder.addValue(key, scalar.text());
-        } else {
-            throw new ConfigParserException("Unsupported TOML value: " + value);
+        switch (value) {
+        case TomlArray arrayValue -> builder.addList(key, fromArray(arrayValue));
+        case TomlTable tableValue -> builder.addObject(key, fromTable(tableValue));
+        case TomlScalar<?> scalar -> builder.addValue(key, scalar.text());
+        case null, default -> throw new ConfigParserException("Unsupported TOML value: " + value);
         }
     }
 }

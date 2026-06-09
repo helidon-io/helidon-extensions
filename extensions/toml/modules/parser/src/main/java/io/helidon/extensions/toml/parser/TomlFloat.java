@@ -16,9 +16,12 @@
 
 package io.helidon.extensions.toml.parser;
 
+import io.helidon.common.Api;
+
 /**
  * TOML float value represented as an IEEE 754 binary64 value.
  */
+@Api.Incubating
 public final class TomlFloat extends TomlScalar<Double> {
     private final double value;
 

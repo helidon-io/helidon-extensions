@@ -95,7 +95,7 @@ Use the parser directly when you need a TOML value tree instead of a Helidon
 Config tree:
 
 ```java
-TomlTable table = TomlParser.parse("""
+TomlTable table = TomlParser.create().parse("""
         app.greeting = "Hello"
         app.page-size = 20
         """);

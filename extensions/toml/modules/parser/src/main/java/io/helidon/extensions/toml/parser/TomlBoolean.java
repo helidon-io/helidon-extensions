@@ -16,9 +16,12 @@
 
 package io.helidon.extensions.toml.parser;
 
+import io.helidon.common.Api;
+
 /**
  * TOML boolean value.
  */
+@Api.Incubating
 public final class TomlBoolean extends TomlScalar<Boolean> {
     /**
      * TOML {@code false}.

@@ -16,9 +16,12 @@
 
 package io.helidon.extensions.toml.parser;
 
+import io.helidon.common.Api;
+
 /**
  * TOML integer value represented as a signed 64-bit value.
  */
+@Api.Incubating
 public final class TomlInteger extends TomlScalar<Long> {
     private final long value;
 

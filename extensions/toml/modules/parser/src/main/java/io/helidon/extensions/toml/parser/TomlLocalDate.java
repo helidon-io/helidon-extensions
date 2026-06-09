@@ -19,9 +19,12 @@ package io.helidon.extensions.toml.parser;
 import java.time.LocalDate;
 import java.util.Objects;
 
+import io.helidon.common.Api;
+
 /**
  * TOML local date value.
  */
+@Api.Incubating
 public final class TomlLocalDate extends TomlScalar<LocalDate> {
     private final LocalDate value;
 

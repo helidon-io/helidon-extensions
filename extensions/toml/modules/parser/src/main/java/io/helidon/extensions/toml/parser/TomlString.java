@@ -18,9 +18,12 @@ package io.helidon.extensions.toml.parser;
 
 import java.util.Objects;
 
+import io.helidon.common.Api;
+
 /**
  * TOML string value.
  */
+@Api.Incubating
 public final class TomlString extends TomlScalar<String> {
     private final String value;
 
