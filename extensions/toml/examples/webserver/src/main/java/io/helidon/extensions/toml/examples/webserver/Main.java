@@ -18,38 +18,32 @@ package io.helidon.extensions.toml.examples.webserver;
 
 import io.helidon.config.Config;
 import io.helidon.logging.common.LogConfig;
+import io.helidon.service.registry.Services;
 import io.helidon.webserver.WebServer;
-import io.helidon.webserver.WebServerConfig;
+import io.helidon.webserver.http.HttpRouting;
 
 public class Main {
     private Main() {
     }
 
-    public static void main(String[] args) {
+    static void main(String[] args) {
         LogConfig.configureRuntime();
 
-        Config config = loadConfig();
-        WebServer server = startServer(config);
+        Config config = Services.get(Config.class);
+
+        WebServer server = WebServer.builder()
+                .config(config.get("server"))
+                .routing(routing -> routing(config, routing))
+                .build()
+                .start();
 
         String host = config.get("server.host").asString().orElse("localhost");
         System.out.println("Server started on: http://" + host + ":" + server.port() + "/hello");
     }
 
-    static Config loadConfig() {
-        return Config.create();
-    }
-
-    static WebServer startServer(Config config) {
-        WebServerConfig.Builder server = WebServer.builder()
-                .config(config.get("server"));
-
-        configureServer(server, config);
-        return server.build().start();
-    }
-
-    static void configureServer(WebServerConfig.Builder server, Config config) {
+    static void routing(Config config, HttpRouting.Builder routing) {
         String greeting = config.get("app.greeting").asString().orElse("Hello from TOML");
 
-        server.routing(routing -> routing.get("/hello", (req, res) -> res.send(greeting)));
+        routing.get("/hello", (req, res) -> res.send(greeting));
     }
 }

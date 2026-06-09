@@ -14,30 +14,11 @@
  * limitations under the License.
  */
 
-import io.helidon.common.features.api.Features;
-import io.helidon.common.features.api.HelidonFlavor;
-
 /**
- * TOML ConfigParser implementation.
+ * TOML parser and document model.
  * <p>
- * Uses the TOML parser and document model that supports the
+ * Implements supported syntax from the
  * <a href="https://toml.io/en/v1.0.0">TOML v1.0.0</a> and
  * <a href="https://toml.io/en/v1.1.0">TOML v1.1.0</a> specifications.
  */
-@Features.Name("TOML Config")
-@Features.Description("TOML media type support for config")
-@Features.Flavor({HelidonFlavor.SE, HelidonFlavor.MP})
-@Features.Path({"TOML", "Config"})
-module io.helidon.extensions.toml.config {
-    requires io.helidon.common;
-    requires io.helidon.extensions.toml;
-
-    requires static io.helidon.common.features.api;
-
-    requires transitive io.helidon.config;
-
-    exports io.helidon.extensions.toml.config;
-
-    provides io.helidon.config.spi.ConfigParser
-            with io.helidon.extensions.toml.config.TomlConfigParser;
-}
+package io.helidon.extensions.toml;

@@ -43,7 +43,7 @@
         <dependencies>
             <dependency>
                 <groupId>io.helidon.extensions.toml</groupId>
-                <artifactId>helidon-extensions-toml-parser</artifactId>
+                <artifactId>helidon-extensions-toml</artifactId>
                 <version>${toml.extension.version}</version>
             </dependency>
             <dependency>

@@ -17,7 +17,7 @@
 /**
  * TOML format ConfigParser implementation.
  * <p>
- * It supports {@code application/toml} media type and TOML v1.1.0 syntax.
+ * It supports {@code application/toml} media type and the TOML v1.0.0 and v1.1.0 specifications.
  * <p>
  * The parser implementation supports {@link java.util.ServiceLoader}, i.e.
  * {@link io.helidon.config.Config.Builder} can automatically load and register TOML ConfigParser instance,

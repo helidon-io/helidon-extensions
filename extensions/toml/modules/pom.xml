@@ -31,7 +31,7 @@
     <name>Helidon Extensions TOML Modules Project</name>
 
     <modules>
-        <module>parser</module>
+        <module>toml</module>
         <module>config</module>
     </modules>
 </project>

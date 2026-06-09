@@ -11,19 +11,20 @@
 
 ## Overview
 
-The TOML extension provides a TOML parser and Helidon Config integration for
-`application/toml`.
+The TOML extension provides a TOML parser, a document model, and Helidon Config
+integration for `application/toml`.
 
 The parser is implemented in this extension and does not depend on an external
-TOML library. The current target is TOML v1.0.0 and v1.1.0.
+TOML library. It targets the [TOML v1.0.0](https://toml.io/en/v1.0.0)
+and [TOML v1.1.0](https://toml.io/en/v1.1.0) specifications.
 
 ## Artifacts
 
 | Artifact | Use it when | Notes |
 | --- | --- | --- |
 | `io.helidon.extensions.toml:helidon-extensions-toml-bom` | You want version alignment for TOML extension artifacts. | Import it in `dependencyManagement`. |
-| `io.helidon.extensions.toml:helidon-extensions-toml-config` | Your application needs TOML as a Helidon Config source format. | Registers `TomlConfigParser` through `ServiceLoader` and depends on the parser artifact. |
-| `io.helidon.extensions.toml:helidon-extensions-toml-parser` | Your application needs direct TOML parsing without Helidon Config. | Provides the parser value model. |
+| `io.helidon.extensions.toml:helidon-extensions-toml-config` | Your application needs TOML as a Helidon Config source format. | Registers `TomlConfigParser` through `ServiceLoader` and depends on the TOML artifact. |
+| `io.helidon.extensions.toml:helidon-extensions-toml` | Your application needs direct TOML parsing without Helidon Config. | Provides the parser and document model. |
 
 ## Maven Coordinates
 
@@ -61,7 +62,7 @@ For parser-only usage, add:
 ```xml
 <dependency>
     <groupId>io.helidon.extensions.toml</groupId>
-    <artifactId>helidon-extensions-toml-parser</artifactId>
+    <artifactId>helidon-extensions-toml</artifactId>
 </dependency>
 ```
 

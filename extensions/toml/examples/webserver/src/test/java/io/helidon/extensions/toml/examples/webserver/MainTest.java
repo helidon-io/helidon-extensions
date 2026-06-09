@@ -16,15 +16,14 @@
 
 package io.helidon.extensions.toml.examples.webserver;
 
-import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
-import io.helidon.config.ConfigSources;
 import io.helidon.config.ConfigValues;
 import io.helidon.http.Status;
+import io.helidon.service.registry.Services;
 import io.helidon.webclient.http1.Http1Client;
-import io.helidon.webserver.WebServerConfig;
+import io.helidon.webserver.http.HttpRouting;
 import io.helidon.webserver.testing.junit5.ServerTest;
-import io.helidon.webserver.testing.junit5.SetUpServer;
+import io.helidon.webserver.testing.junit5.SetUpRoute;
 
 import org.junit.jupiter.api.Test;
 
@@ -33,24 +32,15 @@ import static org.hamcrest.Matchers.is;
 
 @ServerTest
 class MainTest {
-    private static final String TEST_CONFIG = """
-            [server]
-            host = "127.0.0.1"
-            port = 0
-
-            [app]
-            greeting = "Hello from test TOML"
-            """;
-
     private final Http1Client client;
 
     MainTest(Http1Client client) {
         this.client = client;
     }
 
-    @SetUpServer
-    static void configureServer(WebServerConfig.Builder server) {
-        Main.configureServer(server.config(testConfig().get("server")), testConfig());
+    @SetUpRoute
+    static void setupRoute(HttpRouting.Builder routing) {
+        Main.routing(Services.get(Config.class), routing);
     }
 
     @Test
@@ -63,15 +53,10 @@ class MainTest {
 
     @Test
     void testApplicationToml() {
-        Config config = Main.loadConfig();
+        Config config = Config.create();
 
         assertThat(config.get("server.host").asString(), is(ConfigValues.simpleValue("localhost")));
         assertThat(config.get("server.port").asInt(), is(ConfigValues.simpleValue(8080)));
-        assertThat(config.get("app.greeting").asString(), is(ConfigValues.simpleValue("Hello from TOML")));
-    }
-
-    private static Config testConfig() {
-        return Config.builder(ConfigSources.create(TEST_CONFIG, MediaTypes.APPLICATION_TOML))
-                .build();
+        assertThat(config.get("app.greeting").asString(), is(ConfigValues.simpleValue("Hello from test TOML")));
     }
 }

@@ -256,6 +256,14 @@ class TomlConfigParserTest {
     }
 
     @Test
+    void testNullContracts() {
+        ConfigParser parser = TomlConfigParser.create();
+
+        assertThrows(NullPointerException.class, () -> parser.parse(null));
+        assertThrows(NullPointerException.class, () -> parser.parse(toContent(""), null));
+    }
+
+    @Test
     void testGetSupportedMediaTypes() {
         TomlConfigParser parser = TomlConfigParser.create();
 

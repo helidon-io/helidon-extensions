@@ -16,9 +16,13 @@
 
 package io.helidon.extensions.toml.config;
 
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 
 import io.helidon.common.Api;
 import io.helidon.common.Weight;
@@ -31,12 +35,12 @@ import io.helidon.config.spi.ConfigNode.ListNode;
 import io.helidon.config.spi.ConfigNode.ObjectNode;
 import io.helidon.config.spi.ConfigParser;
 import io.helidon.config.spi.ConfigParserException;
-import io.helidon.extensions.toml.parser.TomlArray;
-import io.helidon.extensions.toml.parser.TomlParseException;
-import io.helidon.extensions.toml.parser.TomlParser;
-import io.helidon.extensions.toml.parser.TomlScalar;
-import io.helidon.extensions.toml.parser.TomlTable;
-import io.helidon.extensions.toml.parser.TomlValue;
+import io.helidon.extensions.toml.TomlArray;
+import io.helidon.extensions.toml.TomlParseException;
+import io.helidon.extensions.toml.TomlParser;
+import io.helidon.extensions.toml.TomlScalar;
+import io.helidon.extensions.toml.TomlTable;
+import io.helidon.extensions.toml.TomlValue;
 
 /**
  * TOML {@link ConfigParser} implementation that supports {@code application/toml}.
@@ -87,6 +91,13 @@ public class TomlConfigParser implements ConfigParser {
 
     @Override
     public ObjectNode parse(Content content) throws ConfigParserException {
+        return parse(content, ignored -> Optional.empty());
+    }
+
+    @Override
+    public ObjectNode parse(Content content, Function<String, Optional<InputStream>> relativeResolver) {
+        Objects.requireNonNull(content);
+        Objects.requireNonNull(relativeResolver);
         try (InputStreamReader reader = new InputStreamReader(content.data(), content.charset())) {
             return fromTable(TomlParser.create().parse(reader));
         } catch (ConfigException e) {
