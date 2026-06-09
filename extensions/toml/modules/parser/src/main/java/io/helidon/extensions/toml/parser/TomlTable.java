@@ -19,6 +19,7 @@ package io.helidon.extensions.toml.parser;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 import io.helidon.common.Api;
@@ -50,6 +51,6 @@ public final class TomlTable implements TomlValue {
      * @return value, if present
      */
     public Optional<TomlValue> get(String key) {
-        return Optional.ofNullable(values.get(key));
+        return Optional.ofNullable(values.get(Objects.requireNonNull(key)));
     }
 }

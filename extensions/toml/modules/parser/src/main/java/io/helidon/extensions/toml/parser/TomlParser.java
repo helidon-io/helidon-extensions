@@ -23,6 +23,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -56,6 +57,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
         if (config.maxNestingDepth() < 1) {
             throw new IllegalArgumentException("Maximum TOML nesting depth must be at least 1");
         }
+        Objects.requireNonNull(config.versionBehavior());
     }
 
     /**
@@ -137,7 +139,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
         return value.longValue();
     }
 
-    private static TomlScalar<?> parseDateTime(String token) {
+    private static TomlScalar<?> parseDateTime(String token, TomlVersionBehavior versionBehavior) {
         if (token.length() < 16 || !isDate(token) || (token.charAt(10) != 'T' && token.charAt(10) != ' ')) {
             return null;
         }
@@ -146,7 +148,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
         String rest = token.substring(11);
         int offsetIndex = offsetIndex(rest);
         if (offsetIndex >= 0) {
-            String time = timeText(rest.substring(0, offsetIndex));
+            String time = timeText(rest.substring(0, offsetIndex), versionBehavior);
             if (time == null) {
                 return null;
             }
@@ -157,7 +159,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
             return TomlOffsetDateTime.create(OffsetDateTime.parse(date + "T" + time + offset));
         }
 
-        String time = timeText(rest);
+        String time = timeText(rest, versionBehavior);
         return time == null ? null : TomlLocalDateTime.create(LocalDateTime.parse(date + "T" + time));
     }
 
@@ -192,13 +194,13 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
                 && isDigit(token.charAt(9));
     }
 
-    private static String timeText(String token) {
+    private static String timeText(String token, TomlVersionBehavior versionBehavior) {
         if (token.length() < 5 || token.charAt(2) != ':' || !isDigit(token.charAt(0)) || !isDigit(token.charAt(1))
                 || !isDigit(token.charAt(3)) || !isDigit(token.charAt(4))) {
             return null;
         }
         if (token.length() == 5) {
-            return token + ":00";
+            return versionBehavior.allowsV11() ? token + ":00" : null;
         }
         if (token.length() < 8 || token.charAt(5) != ':' || !isDigit(token.charAt(6)) || !isDigit(token.charAt(7))) {
             return null;
@@ -308,6 +310,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
         private final String input;
         private final MutableTable root = new MutableTable(false);
         private final int maxNestingDepth;
+        private final TomlVersionBehavior versionBehavior;
 
         private MutableTable current = root;
         private int index;
@@ -317,6 +320,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
         private Parser(String input, TomlParserConfig config) {
             this.input = normalizeNewlines(input);
             this.maxNestingDepth = config.maxNestingDepth();
+            this.versionBehavior = config.versionBehavior();
         }
 
         private TomlTable parse() {
@@ -451,7 +455,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
             checkNestingDepth(depth);
             expect('{');
             MutableTable table = new MutableTable(true);
-            skipWhitespaceNewlinesAndComments();
+            skipInlineTableWhitespace();
             if (consume('}')) {
                 return table;
             }
@@ -463,10 +467,11 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
                 skipWhitespace();
                 Object value = parseValue(depth);
                 putDotted(table, key, value, true);
-                skipWhitespaceNewlinesAndComments();
+                skipInlineTableWhitespace();
                 if (consume(',')) {
-                    skipWhitespaceNewlinesAndComments();
+                    skipInlineTableWhitespace();
                     if (consume('}')) {
+                        requireV11("Trailing comma in inline table");
                         return table;
                     }
                     continue;
@@ -500,18 +505,22 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
                 return TomlBoolean.FALSE;
             }
 
-            TomlScalar<?> dateTime = parseDateTime(token);
-            if (dateTime != null) {
-                return dateTime;
-            }
+            try {
+                TomlScalar<?> dateTime = parseDateTime(token, versionBehavior);
+                if (dateTime != null) {
+                    return dateTime;
+                }
 
-            if (LOCAL_DATE.matcher(token).matches()) {
-                return TomlLocalDate.create(LocalDate.parse(token));
-            }
+                if (LOCAL_DATE.matcher(token).matches()) {
+                    return TomlLocalDate.create(LocalDate.parse(token));
+                }
 
-            String localTime = timeText(token);
-            if (localTime != null) {
-                return TomlLocalTime.create(LocalTime.parse(localTime));
+                String localTime = timeText(token, versionBehavior);
+                if (localTime != null) {
+                    return TomlLocalTime.create(LocalTime.parse(localTime));
+                }
+            } catch (DateTimeParseException e) {
+                throw error("Invalid date/time value: " + token, e);
             }
 
             if (SPECIAL_FLOAT.matcher(token).matches()) {
@@ -679,10 +688,16 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
             case 'n' -> result.append('\n');
             case 'f' -> result.append('\f');
             case 'r' -> result.append('\r');
-            case 'e' -> result.append('\u001B');
+            case 'e' -> {
+                requireV11("Escape sequence \\e");
+                result.append('\u001B');
+            }
             case '"' -> result.append('"');
             case '\\' -> result.append('\\');
-            case 'x' -> result.appendCodePoint(readCodePoint(2));
+            case 'x' -> {
+                requireV11("Escape sequence \\xHH");
+                result.appendCodePoint(readCodePoint(2));
+            }
             case 'u' -> result.appendCodePoint(readCodePoint(4));
             case 'U' -> result.appendCodePoint(readCodePoint(8));
             default -> throw error("Invalid escape sequence: \\" + escaped);
@@ -849,6 +864,14 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
             }
         }
 
+        private void skipInlineTableWhitespace() {
+            if (versionBehavior.allowsV11()) {
+                skipWhitespaceNewlinesAndComments();
+            } else {
+                skipWhitespace();
+            }
+        }
+
         private void skipWhitespace() {
             while (!isEnd() && isWhitespace(peek())) {
                 advance();
@@ -947,6 +970,16 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
 
         private TomlParseException error(String message) {
             return new TomlParseException(message + " at line " + line + ", column " + column);
+        }
+
+        private TomlParseException error(String message, Throwable cause) {
+            return new TomlParseException(message + " at line " + line + ", column " + column, cause);
+        }
+
+        private void requireV11(String feature) {
+            if (!versionBehavior.allowsV11()) {
+                throw error(feature + " requires TOML v1.1.0");
+            }
         }
 
         private TomlTable toTomlTable(MutableTable table, int depth) {

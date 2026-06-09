@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 
 import org.junit.jupiter.api.Test;
 
@@ -174,6 +175,33 @@ class TomlParserTest {
     }
 
     @Test
+    void testVersionBehavior() {
+        TomlParser strictV10 = TomlParser.create(builder -> builder.versionBehavior(TomlVersionBehavior.V1_0_0));
+        TomlParser strictV11 = TomlParser.create(builder -> builder.versionBehavior(TomlVersionBehavior.V1_1_0));
+
+        assertThrows(TomlParseException.class, () -> strictV10.parse("local-time = 07:32"));
+        assertThrows(TomlParseException.class, () -> strictV10.parse("basic = \"\\xE9\\e\""));
+        assertThrows(TomlParseException.class, () -> strictV10.parse("""
+                contact = {
+                    name = "Donald Duck"
+                }
+                """));
+        assertThrows(TomlParseException.class, () -> strictV10.parse("contact = { name = \"Donald Duck\", }"));
+
+        TomlTable table = strictV11.parse("""
+                local-time = 07:32
+                basic = "\\xE9\\e"
+                contact = {
+                    name = "Donald Duck",
+                }
+                """);
+
+        assertThat(scalar(table, "local-time", TomlLocalTime.class).value(), is(LocalTime.parse("07:32:00")));
+        assertThat(scalar(table, "basic", TomlString.class).value(), is("\u00E9\u001B"));
+        assertThat(scalar(table(table, "contact"), "name", TomlString.class).value(), is("Donald Duck"));
+    }
+
+    @Test
     void testInvalidDocuments() {
         assertThrows(TomlParseException.class, () -> TomlParser.create().parse("""
                 name = "Tom"
@@ -197,6 +225,21 @@ class TomlParserTest {
     }
 
     @Test
+    void testInvalidDateTimeDocuments() {
+        TomlParseException invalidDate = assertThrows(TomlParseException.class,
+                                                      () -> TomlParser.create().parse("date = 2026-02-30"));
+        TomlParseException invalidTime = assertThrows(TomlParseException.class,
+                                                      () -> TomlParser.create().parse("time = 25:00"));
+        TomlParseException invalidOffsetDateTime = assertThrows(TomlParseException.class,
+                                                                () -> TomlParser.create()
+                                                                        .parse("timestamp = 2026-02-30T10:00Z"));
+
+        assertThat(invalidDate.getCause(), instanceOf(DateTimeParseException.class));
+        assertThat(invalidTime.getCause(), instanceOf(DateTimeParseException.class));
+        assertThat(invalidOffsetDateTime.getCause(), instanceOf(DateTimeParseException.class));
+    }
+
+    @Test
     void testParserFactory() {
         TomlParser parser = TomlParser.create();
 
@@ -204,6 +247,7 @@ class TomlParserTest {
 
         assertThat(scalar(table, "name", TomlString.class).value(), is("Tom"));
         assertThat(parser.prototype().maxNestingDepth(), is(TomlParser.DEFAULT_MAX_NESTING_DEPTH));
+        assertThat(parser.prototype().versionBehavior(), is(TomlVersionBehavior.BEST_EFFORT));
     }
 
     @Test
@@ -217,6 +261,16 @@ class TomlParserTest {
     @Test
     void testInvalidMaxNestingDepth() {
         assertThrows(IllegalArgumentException.class, () -> TomlParser.create(builder -> builder.maxNestingDepth(0)));
+    }
+
+    @Test
+    void testNullContracts() {
+        TomlTable table = TomlParser.create().parse("name = \"Tom\"");
+
+        assertThrows(NullPointerException.class, () -> table.get(null));
+        assertThrows(NullPointerException.class, () -> new TomlParseException(null));
+        assertThrows(NullPointerException.class, () -> new TomlParseException(null, new RuntimeException()));
+        assertThrows(NullPointerException.class, () -> new TomlParseException("message", null));
     }
 
     private static <T extends TomlScalar<?>> T scalar(TomlTable table, String key, Class<T> type) {

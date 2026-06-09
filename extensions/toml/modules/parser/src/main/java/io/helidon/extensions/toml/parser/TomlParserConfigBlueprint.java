@@ -33,4 +33,15 @@ interface TomlParserConfigBlueprint extends Prototype.Factory<TomlParser> {
      */
     @Option.DefaultInt(TomlParser.DEFAULT_MAX_NESTING_DEPTH)
     int maxNestingDepth();
+
+    /**
+     * Version-specific parser behavior.
+     * <p>
+     * TOML documents do not identify the specification version they use, so this option controls how strictly
+     * version-specific syntax is handled.
+     *
+     * @return version behavior
+     */
+    @Option.Default("BEST_EFFORT")
+    TomlVersionBehavior versionBehavior();
 }

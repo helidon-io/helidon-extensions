@@ -104,6 +104,13 @@ TomlTable app = (TomlTable) table.get("app").orElseThrow();
 String greeting = ((TomlString) app.get("greeting").orElseThrow()).value();
 ```
 
+TOML documents do not declare the specification version they use. Configure
+version-specific parsing when strict validation is needed:
+
+```java
+TomlParser parser = TomlParser.create(builder -> builder.versionBehavior(TomlVersionBehavior.V1_0_0));
+```
+
 ## Example
 
 See the [TOML WebServer example](../examples/webserver/README.md) for an

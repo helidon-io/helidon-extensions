@@ -16,31 +16,29 @@
 
 package io.helidon.extensions.toml.parser;
 
-import java.util.Objects;
-
 import io.helidon.common.Api;
 
 /**
- * TOML parse exception.
+ * TOML version-specific parser behavior.
  */
 @Api.Incubating
-public class TomlParseException extends RuntimeException {
+public enum TomlVersionBehavior {
     /**
-     * Create a new exception.
-     *
-     * @param message message
+     * Require TOML v1.0.0 syntax.
      */
-    public TomlParseException(String message) {
-        super(Objects.requireNonNull(message));
-    }
+    V1_0_0,
 
     /**
-     * Create a new exception.
-     *
-     * @param message message
-     * @param cause cause
+     * Require TOML v1.1.0 syntax.
      */
-    public TomlParseException(String message, Throwable cause) {
-        super(Objects.requireNonNull(message), Objects.requireNonNull(cause));
+    V1_1_0,
+
+    /**
+     * Accept all supported TOML syntax without rejecting version-specific features.
+     */
+    BEST_EFFORT;
+
+    boolean allowsV11() {
+        return this != V1_0_0;
     }
 }
