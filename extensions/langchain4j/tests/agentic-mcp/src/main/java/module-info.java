@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+/**
+ * Test module for LangChain4j agentic MCP integration.
+ */
 module io.helidon.extensions.langchain4j.tests.agenticmcp {
     requires langchain4j.agentic;
     requires langchain4j;

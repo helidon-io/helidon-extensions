@@ -30,6 +30,12 @@ import dev.langchain4j.service.V;
 @Ai.McpClients("cli-tools-mcp-server")
 public interface CliExpert {
 
+    /**
+     * Answer a Helidon CLI request.
+     *
+     * @param request user request
+     * @return CLI guidance
+     */
     @UserMessage("""
             You are a command line expert helping users with Helidon CLI.
             Provide a short step-by-step answer to the request: {{request}}

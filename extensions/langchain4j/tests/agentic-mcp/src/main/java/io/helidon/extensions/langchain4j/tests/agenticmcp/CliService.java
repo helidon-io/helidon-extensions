@@ -21,9 +21,19 @@ import io.helidon.extensions.langchain4j.Ai;
 import dev.langchain4j.service.UserMessage;
 import dev.langchain4j.service.V;
 
+/**
+ * Declarative service that answers Helidon CLI requests through an MCP client.
+ */
 @Ai.Service("cli-service")
 @Ai.McpClients("cli-tools-mcp-server")
 public interface CliService {
+
+    /**
+     * Answer a Helidon CLI request.
+     *
+     * @param request user request
+     * @return CLI guidance
+     */
     @UserMessage("""
             You are a command line expert helping users with Helidon CLI.
             Provide a short step-by-step answer to the request: {{request}}
