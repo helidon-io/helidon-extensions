@@ -364,7 +364,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
             skipWhitespace();
             expect('=');
             skipWhitespace();
-            Object value = parseValue();
+            ParsedValue value = parseValue();
             putDotted(table, key, value, false);
             endOfStatement();
         }
@@ -412,25 +412,25 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
             return input.substring(start, index);
         }
 
-        private Object parseValue() {
+        private ParsedValue parseValue() {
             return parseValue(0);
         }
 
-        private Object parseValue(int depth) {
+        private ParsedValue parseValue(int depth) {
             char c = peekOrThrow("Expected value");
             return switch (c) {
-            case '"' -> TomlString.create(parseBasicString(startsWith("\"\"\"")));
-            case '\'' -> TomlString.create(parseLiteralString(startsWith("'''")));
-                case '[' -> parseArray(depth + 1);
-                case '{' -> parseInlineTable(depth + 1);
-            default -> parsePrimitive();
+            case '"' -> new ScalarValue(TomlString.create(parseBasicString(startsWith("\"\"\""))));
+            case '\'' -> new ScalarValue(TomlString.create(parseLiteralString(startsWith("'''"))));
+            case '[' -> parseArray(depth + 1);
+            case '{' -> parseInlineTable(depth + 1);
+            default -> new ScalarValue(parsePrimitive());
             };
         }
 
         private MutableArray parseArray(int depth) {
             checkNestingDepth(depth);
             expect('[');
-            MutableArray array = new MutableArray(false);
+            MutableArray array = new MutableArray();
             skipWhitespaceNewlinesAndComments();
             if (consume(']')) {
                 return array;
@@ -466,7 +466,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
                 skipWhitespace();
                 expect('=');
                 skipWhitespace();
-                Object value = parseValue(depth);
+                ParsedValue value = parseValue(depth);
                 putDotted(table, key, value, true);
                 skipInlineTableWhitespace();
                 if (consume(',')) {
@@ -745,7 +745,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
 
         private MutableTable openTable(List<String> key) {
             TableLocation location = tableLocation(key);
-            Object existing = location.existing();
+            ParsedValue existing = location.existing();
             if (existing == null) {
                 MutableTable table = new MutableTable(false);
                 table.headerDefined = true;
@@ -764,12 +764,12 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
 
         private MutableTable openArrayTable(List<String> key) {
             TableLocation location = tableLocation(key);
-            Object existing = location.existing();
-            MutableArray array;
+            ParsedValue existing = location.existing();
+            MutableTableArray array;
             if (existing == null) {
-                array = new MutableArray(true);
+                array = new MutableTableArray();
                 location.parent().values.put(location.last(), array);
-            } else if (existing instanceof MutableArray existingArray && existingArray.arrayOfTables) {
+            } else if (existing instanceof MutableTableArray existingArray) {
                 array = existingArray;
             } else {
                 throw error("Cannot redefine value as array of tables: " + String.join(".", key));
@@ -792,7 +792,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
         }
 
         private MutableTable tableForPart(MutableTable parent, String part, boolean inlineDottedKey) {
-            Object existing = parent.values.get(part);
+            ParsedValue existing = parent.values.get(part);
             switch (existing) {
             case null -> {
                 MutableTable table = new MutableTable(inlineDottedKey);
@@ -805,11 +805,11 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
                 }
                 return table;
             }
-            case MutableArray array when array.arrayOfTables -> {
+            case MutableTableArray array -> {
                 if (array.values.isEmpty()) {
                     throw error("Array of tables has no current element: " + part);
                 }
-                return (MutableTable) array.values.getLast();
+                return array.values.getLast();
             }
             default -> {
             }
@@ -817,7 +817,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
             throw error("Cannot redefine non-table value as table: " + part);
         }
 
-        private void putDotted(MutableTable table, List<String> key, Object value, boolean inlineDottedKey) {
+        private void putDotted(MutableTable table, List<String> key, ParsedValue value, boolean inlineDottedKey) {
             MutableTable parent = table;
             for (int i = 0; i < key.size() - 1; i++) {
                 parent = tableForPart(parent, key.get(i), inlineDottedKey);
@@ -997,20 +997,23 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
             return new TomlArray(result);
         }
 
-        private TomlValue toTomlValue(Object value, int depth) {
-            if (value instanceof TomlValue tomlValue) {
-                return tomlValue;
-            }
-            if (value instanceof MutableTable table) {
-                return toTomlTable(table, depth);
-            }
-            if (value instanceof MutableArray array) {
-                return toTomlArray(array, depth);
-            }
-            throw new IllegalStateException("Unsupported TOML value: " + value);
+        private TomlArray toTomlArray(MutableTableArray array, int depth) {
+            checkNestingDepth(depth);
+            List<TomlValue> result = new ArrayList<>();
+            array.values.forEach(value -> result.add(toTomlTable(value, depth + 1)));
+            return new TomlArray(result);
         }
 
-        private record TableLocation(MutableTable parent, String last, Object existing) {
+        private TomlValue toTomlValue(ParsedValue value, int depth) {
+            return switch (value) {
+            case ScalarValue scalar -> scalar.value();
+            case MutableTable table -> toTomlTable(table, depth);
+            case MutableArray array -> toTomlArray(array, depth);
+            case MutableTableArray array -> toTomlArray(array, depth);
+            };
+        }
+
+        private record TableLocation(MutableTable parent, String last, ParsedValue existing) {
         }
     }
 
@@ -1038,8 +1041,17 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
         return text.replace("\r\n", "\n").replace('\r', '\n');
     }
 
-    private static final class MutableTable {
-        private final Map<String, Object> values = new LinkedHashMap<>();
+    private sealed interface ParsedValue permits ScalarValue, MutableTable, MutableArray, MutableTableArray {
+    }
+
+    private record ScalarValue(TomlScalar<?> value) implements ParsedValue {
+        ScalarValue {
+            Objects.requireNonNull(value);
+        }
+    }
+
+    private static final class MutableTable implements ParsedValue {
+        private final Map<String, ParsedValue> values = new LinkedHashMap<>();
         private final boolean inline;
         private boolean inlineDefined;
         private boolean headerDefined;
@@ -1050,12 +1062,14 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
         }
     }
 
-    private static final class MutableArray {
-        private final List<Object> values = new ArrayList<>();
-        private final boolean arrayOfTables;
+    private static final class MutableArray implements ParsedValue {
+        private final List<ParsedValue> values = new ArrayList<>();
 
-        private MutableArray(boolean arrayOfTables) {
-            this.arrayOfTables = arrayOfTables;
+        private MutableArray() {
         }
+    }
+
+    private static final class MutableTableArray implements ParsedValue {
+        private final List<MutableTable> values = new ArrayList<>();
     }
 }
