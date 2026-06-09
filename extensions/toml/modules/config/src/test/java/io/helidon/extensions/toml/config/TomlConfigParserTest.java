@@ -119,6 +119,10 @@ class TomlConfigParserTest {
                 octal = 0o755
                 binary = 0b1010
                 ratio = 6.25e2
+                positive-infinity = +inf
+                negative-infinity = -inf
+                not-a-number = -nan
+                special-floats = [inf, -inf, nan]
                 local-date = 1979-05-27
                 local-time = 07:32
                 local-date-time = 1979-05-27T07:32
@@ -133,6 +137,11 @@ class TomlConfigParserTest {
         assertThat(config.get("octal").asInt(), is(ConfigValues.simpleValue(493)));
         assertThat(config.get("binary").asInt(), is(ConfigValues.simpleValue(10)));
         assertThat(config.get("ratio").asDouble(), is(ConfigValues.simpleValue(625.0)));
+        assertThat(config.get("positive-infinity").asDouble(), is(ConfigValues.simpleValue(Double.POSITIVE_INFINITY)));
+        assertThat(config.get("negative-infinity").asDouble(), is(ConfigValues.simpleValue(Double.NEGATIVE_INFINITY)));
+        assertThat(config.get("not-a-number").asDouble(), is(ConfigValues.simpleValue(Double.NaN)));
+        assertThat(config.get("special-floats").asList(Double.class),
+                   is(ConfigValues.simpleValue(List.of(Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NaN))));
         assertThat(config.get("local-date").asString(), is(ConfigValues.simpleValue("1979-05-27")));
         assertThat(config.get("local-time").asString(), is(ConfigValues.simpleValue("07:32:00")));
         assertThat(config.get("local-date-time").asString(), is(ConfigValues.simpleValue("1979-05-27T07:32:00")));

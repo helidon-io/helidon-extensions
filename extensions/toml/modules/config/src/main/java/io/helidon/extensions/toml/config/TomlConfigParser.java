@@ -36,6 +36,7 @@ import io.helidon.config.spi.ConfigNode.ObjectNode;
 import io.helidon.config.spi.ConfigParser;
 import io.helidon.config.spi.ConfigParserException;
 import io.helidon.extensions.toml.TomlArray;
+import io.helidon.extensions.toml.TomlFloat;
 import io.helidon.extensions.toml.TomlParseException;
 import io.helidon.extensions.toml.TomlParser;
 import io.helidon.extensions.toml.TomlScalar;
@@ -126,6 +127,7 @@ public class TomlConfigParser implements ConfigParser {
             switch (value) {
             case TomlArray arrayValue -> builder.addList(fromArray(arrayValue));
             case TomlTable tableValue -> builder.addObject(fromTable(tableValue));
+            case TomlFloat floatValue -> builder.addValue(doubleText(floatValue));
             case TomlScalar<?> scalar -> builder.addValue(scalar.text());
             case null, default -> throw new ConfigParserException("Unsupported TOML value: " + value);
             }
@@ -137,8 +139,20 @@ public class TomlConfigParser implements ConfigParser {
         switch (value) {
         case TomlArray arrayValue -> builder.addList(key, fromArray(arrayValue));
         case TomlTable tableValue -> builder.addObject(key, fromTable(tableValue));
+        case TomlFloat floatValue -> builder.addValue(key, doubleText(floatValue));
         case TomlScalar<?> scalar -> builder.addValue(key, scalar.text());
         case null, default -> throw new ConfigParserException("Unsupported TOML value: " + value);
         }
+    }
+
+    private static String doubleText(TomlFloat scalar) {
+        String text = scalar.text();
+
+        return switch (text) {
+            case "nan" -> "NaN";
+            case "inf" -> "Infinity";
+            case "-inf" -> "-Infinity";
+            default -> text;
+        };
     }
 }
