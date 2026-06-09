@@ -14,9 +14,6 @@
  * limitations under the License.
  */
 
-import io.helidon.common.features.api.Features;
-import io.helidon.common.features.api.HelidonFlavor;
-
 /**
  * TOML parser and document model.
  * <p>
@@ -24,14 +21,8 @@ import io.helidon.common.features.api.HelidonFlavor;
  * <a href="https://toml.io/en/v1.0.0">TOML v1.0.0</a> and
  * <a href="https://toml.io/en/v1.1.0">TOML v1.1.0</a> specifications.
  */
-@Features.Name("TOML")
-@Features.Description("TOML parser and document model")
-@Features.Flavor({HelidonFlavor.SE, HelidonFlavor.MP})
-@Features.Path({"TOML"})
 module io.helidon.extensions.toml {
     requires transitive io.helidon.builder.api;
-
-    requires static io.helidon.common.features.api;
 
     exports io.helidon.extensions.toml;
 }

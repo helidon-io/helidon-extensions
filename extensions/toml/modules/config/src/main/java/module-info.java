@@ -27,7 +27,7 @@ import io.helidon.common.features.api.HelidonFlavor;
 @Features.Name("TOML Config")
 @Features.Description("TOML media type support for config")
 @Features.Flavor({HelidonFlavor.SE, HelidonFlavor.MP})
-@Features.Path({"TOML", "Config"})
+@Features.Path({"Config", "TOML"})
 module io.helidon.extensions.toml.config {
     requires io.helidon.common;
     requires io.helidon.extensions.toml;
