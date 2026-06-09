@@ -7,6 +7,7 @@
 - [Maven Coordinates](#maven-coordinates)
 - [Config Usage](#config-usage)
 - [Parser Usage](#parser-usage)
+- [Example](#example)
 
 ## Overview
 
@@ -80,7 +81,7 @@ For source builders where the media type is explicit, use `application/toml`:
 ```java
 Config config = Config.builder()
         .addSource(ConfigSources.classpath("application.toml")
-                           .mediaType(TomlConfigParser.APPLICATION_TOML))
+                           .mediaType(MediaTypes.APPLICATION_TOML))
         .build();
 ```
 
@@ -100,5 +101,11 @@ TomlTable table = TomlParser.parse("""
         """);
 
 TomlTable app = (TomlTable) table.get("app").orElseThrow();
-String greeting = ((TomlScalar) app.get("greeting").orElseThrow()).stringValue();
+String greeting = ((TomlString) app.get("greeting").orElseThrow()).value();
 ```
+
+## Example
+
+See the [TOML WebServer example](../examples/webserver/README.md) for an
+application that uses `application.toml` to configure the WebServer host and
+port.

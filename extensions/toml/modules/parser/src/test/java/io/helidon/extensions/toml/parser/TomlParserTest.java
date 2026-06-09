@@ -49,19 +49,55 @@ class TomlParserTest {
                 offset-date-time = 1979-05-27 07:32Z
                 """);
 
-        assertThat(scalar(table, "title").value(), is("TOML example"));
-        assertThat(scalar(table, "enabled").value(), is(true));
-        assertThat(scalar(table, "retries").value(), is(1000L));
-        assertThat(scalar(table, "hex").value(), is(255L));
-        assertThat(scalar(table, "octal").value(), is(493L));
-        assertThat(scalar(table, "binary").value(), is(10L));
-        assertThat((double) scalar(table, "ratio").value(), closeTo(625.0, 0.0));
-        assertThat(scalar(table, "positive-infinity").value(), is(Double.POSITIVE_INFINITY));
-        assertThat((double) scalar(table, "not-a-number").value(), is(Double.NaN));
-        assertThat(scalar(table, "local-date").value(), is(LocalDate.parse("1979-05-27")));
-        assertThat(scalar(table, "local-time").value(), is(LocalTime.parse("07:32:00")));
-        assertThat(scalar(table, "local-date-time").value(), is(LocalDateTime.parse("1979-05-27T07:32:00")));
-        assertThat(scalar(table, "offset-date-time").value(), is(OffsetDateTime.parse("1979-05-27T07:32:00Z")));
+        assertThat(scalar(table, "title", TomlString.class).value(), is("TOML example"));
+        assertThat(scalar(table, "enabled", TomlBoolean.class).value(), is(true));
+        assertThat(scalar(table, "retries", TomlInteger.class).value(), is(1000L));
+        assertThat(scalar(table, "hex", TomlInteger.class).value(), is(255L));
+        assertThat(scalar(table, "octal", TomlInteger.class).value(), is(493L));
+        assertThat(scalar(table, "binary", TomlInteger.class).value(), is(10L));
+        assertThat(scalar(table, "ratio", TomlFloat.class).value(), closeTo(625.0, 0.0));
+        assertThat(scalar(table, "positive-infinity", TomlFloat.class).value(), is(Double.POSITIVE_INFINITY));
+        assertThat(scalar(table, "not-a-number", TomlFloat.class).value(), is(Double.NaN));
+        assertThat(scalar(table, "local-date", TomlLocalDate.class).value(), is(LocalDate.parse("1979-05-27")));
+        assertThat(scalar(table, "local-time", TomlLocalTime.class).value(), is(LocalTime.parse("07:32:00")));
+        assertThat(scalar(table, "local-date-time", TomlLocalDateTime.class).value(),
+                   is(LocalDateTime.parse("1979-05-27T07:32:00")));
+        assertThat(scalar(table, "offset-date-time", TomlOffsetDateTime.class).value(),
+                   is(OffsetDateTime.parse("1979-05-27T07:32:00Z")));
+    }
+
+    @Test
+    void testScalarText() {
+        TomlTable table = TomlParser.parse("""
+                title = "TOML example"
+                enabled = true
+                retries = 1_000
+                ratio = 6.25e2
+                positive-infinity = +inf
+                not-a-number = -nan
+                local-date = 1979-05-27
+                local-time = 07:32
+                local-date-time = 1979-05-27T07:32
+                offset-date-time = 1979-05-27 07:32Z
+                fractional-time = 07:32:00.5
+                fractional-date-time = 1979-05-27T07:32:00.5
+                fractional-offset-date-time = 1979-05-27 07:32:00.5Z
+                """);
+
+        assertText(scalar(table, "title", TomlString.class), "TOML example");
+        assertText(scalar(table, "enabled", TomlBoolean.class), "true");
+        assertText(scalar(table, "retries", TomlInteger.class), "1000");
+        assertText(scalar(table, "ratio", TomlFloat.class), "625.0");
+        assertText(scalar(table, "positive-infinity", TomlFloat.class), "inf");
+        assertText(scalar(table, "not-a-number", TomlFloat.class), "nan");
+        assertText(scalar(table, "local-date", TomlLocalDate.class), "1979-05-27");
+        assertText(scalar(table, "local-time", TomlLocalTime.class), "07:32:00");
+        assertText(scalar(table, "local-date-time", TomlLocalDateTime.class), "1979-05-27T07:32:00");
+        assertText(scalar(table, "offset-date-time", TomlOffsetDateTime.class), "1979-05-27T07:32:00Z");
+        assertText(scalar(table, "fractional-time", TomlLocalTime.class), "07:32:00.5");
+        assertText(scalar(table, "fractional-date-time", TomlLocalDateTime.class), "1979-05-27T07:32:00.5");
+        assertText(scalar(table, "fractional-offset-date-time", TomlOffsetDateTime.class),
+                   "1979-05-27T07:32:00.5Z");
     }
 
     @Test
@@ -80,10 +116,10 @@ class TomlParserTest {
                 '''
                 """);
 
-        assertThat(scalar(table, "basic").value(), is("Jos\u00E9\u001B"));
-        assertThat(scalar(table, "literal").value(), is("C:\\Users\\node"));
-        assertThat(scalar(table, "multiline-basic").value(), is("first second\n"));
-        assertThat(scalar(table, "multiline-literal").value(), is("first\nsecond\n"));
+        assertThat(scalar(table, "basic", TomlString.class).value(), is("Jos\u00E9\u001B"));
+        assertThat(scalar(table, "literal", TomlString.class).value(), is("C:\\Users\\node"));
+        assertThat(scalar(table, "multiline-basic", TomlString.class).value(), is("first second\n"));
+        assertThat(scalar(table, "multiline-literal", TomlString.class).value(), is("first\nsecond\n"));
     }
 
     @Test
@@ -106,14 +142,15 @@ class TomlParserTest {
                 name = "admin"
                 """);
 
-        assertThat(scalar(table(table, "owner"), "name").value(), is("Tom"));
+        assertThat(scalar(table(table, "owner"), "name", TomlString.class).value(), is("Tom"));
         assertThat(array(table(table, "database"), "ports").values(), hasSize(3));
-        assertThat(scalar(table(table(table, "database"), "credentials"), "user").value(), is("db-user"));
+        assertThat(scalar(table(table(table, "database"), "credentials"), "user", TomlString.class).value(),
+                   is("db-user"));
 
         TomlArray services = array(table, "services");
         assertThat(services.values(), hasSize(2));
-        assertThat(scalar((TomlTable) services.values().get(0), "name").value(), is("api"));
-        assertThat(scalar((TomlTable) services.values().get(1), "name").value(), is("admin"));
+        assertThat(scalar((TomlTable) services.values().get(0), "name", TomlString.class).value(), is("api"));
+        assertThat(scalar((TomlTable) services.values().get(1), "name", TomlString.class).value(), is("admin"));
     }
 
     @Test
@@ -132,8 +169,8 @@ class TomlParserTest {
                 """);
 
         TomlTable contact = table(table, "contact");
-        assertThat(scalar(table(contact, "personal"), "name").value(), is("Donald Duck"));
-        assertThat(scalar(table(contact, "work"), "email").value(), is("donald@ScroogeCorp.com"));
+        assertThat(scalar(table(contact, "personal"), "name", TomlString.class).value(), is("Donald Duck"));
+        assertThat(scalar(table(contact, "work"), "email", TomlString.class).value(), is("donald@ScroogeCorp.com"));
     }
 
     @Test
@@ -159,10 +196,15 @@ class TomlParserTest {
                 """));
     }
 
-    private static TomlScalar scalar(TomlTable table, String key) {
+    private static <T extends TomlScalar<?>> T scalar(TomlTable table, String key, Class<T> type) {
         TomlValue value = table.get(key).orElseThrow();
-        assertThat(value, instanceOf(TomlScalar.class));
-        return (TomlScalar) value;
+        assertThat(value, instanceOf(type));
+        return type.cast(value);
+    }
+
+    private static void assertText(TomlScalar<?> scalar, String expected) {
+        assertThat(scalar.text(), is(expected));
+        assertThat(scalar.toString(), is(expected));
     }
 
     private static TomlTable table(TomlTable table, String key) {

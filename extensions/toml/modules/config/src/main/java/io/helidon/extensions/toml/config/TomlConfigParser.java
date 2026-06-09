@@ -52,21 +52,11 @@ import io.helidon.extensions.toml.parser.TomlValue;
 @Weight(TomlConfigParser.WEIGHT)
 public class TomlConfigParser implements ConfigParser {
     /**
-     * {@code application/toml} media type.
-     */
-    public static final MediaType APPLICATION_TOML = MediaTypes.create("application", "toml");
-
-    /**
-     * String value of {@code application/toml} media type.
-     */
-    public static final String APPLICATION_TOML_VALUE = "application/toml";
-
-    /**
      * Priority of the parser used if registered by {@link io.helidon.config.Config.Builder} automatically.
      */
     public static final double WEIGHT = Weighted.DEFAULT_WEIGHT - 10;
 
-    private static final Set<MediaType> SUPPORTED_MEDIA_TYPES = Set.of(APPLICATION_TOML);
+    private static final Set<MediaType> SUPPORTED_MEDIA_TYPES = Set.of(MediaTypes.APPLICATION_TOML);
     private static final List<String> SUPPORTED_SUFFIXES = List.of("toml");
 
     /**
@@ -110,7 +100,7 @@ public class TomlConfigParser implements ConfigParser {
 
     @Override
     public String toString() {
-        return "TOML(" + APPLICATION_TOML.text() + ")";
+        return "TOML(" + MediaTypes.APPLICATION_TOML.text() + ")";
     }
 
     private static ObjectNode fromTable(TomlTable table) {
@@ -126,8 +116,8 @@ public class TomlConfigParser implements ConfigParser {
                 builder.addList(fromArray(arrayValue));
             } else if (value instanceof TomlTable tableValue) {
                 builder.addObject(fromTable(tableValue));
-            } else if (value instanceof TomlScalar scalar) {
-                builder.addValue(scalar.stringValue());
+            } else if (value instanceof TomlScalar<?> scalar) {
+                builder.addValue(scalar.text());
             } else {
                 throw new ConfigParserException("Unsupported TOML value: " + value);
             }
@@ -140,8 +130,8 @@ public class TomlConfigParser implements ConfigParser {
             builder.addList(key, fromArray(arrayValue));
         } else if (value instanceof TomlTable tableValue) {
             builder.addObject(key, fromTable(tableValue));
-        } else if (value instanceof TomlScalar scalar) {
-            builder.addValue(key, scalar.stringValue());
+        } else if (value instanceof TomlScalar<?> scalar) {
+            builder.addValue(key, scalar.text());
         } else {
             throw new ConfigParserException("Unsupported TOML value: " + value);
         }

@@ -20,12 +20,20 @@ import java.util.Objects;
 
 /**
  * TOML scalar value.
+ *
+ * @param <T> Java type of the scalar value
  */
-public final class TomlScalar implements TomlValue {
-    private final Object value;
+public abstract sealed class TomlScalar<T> implements TomlValue
+        permits TomlBoolean,
+                TomlFloat,
+                TomlInteger,
+                TomlLocalDate,
+                TomlLocalDateTime,
+                TomlLocalTime,
+                TomlOffsetDateTime,
+                TomlString {
 
-    TomlScalar(Object value) {
-        this.value = Objects.requireNonNull(value);
+    TomlScalar() {
     }
 
     /**
@@ -35,16 +43,34 @@ public final class TomlScalar implements TomlValue {
      *
      * @return scalar value
      */
-    public Object value() {
-        return value;
-    }
+    public abstract T value();
 
     /**
-     * Scalar value as text.
+     * Scalar text.
      *
      * @return scalar text
      */
-    public String stringValue() {
-        return String.valueOf(value);
+    public abstract String text();
+
+    @Override
+    public final String toString() {
+        return text();
+    }
+
+    @Override
+    public final boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj == null || obj.getClass() != getClass()) {
+            return false;
+        }
+        TomlScalar<?> that = (TomlScalar<?>) obj;
+        return Objects.equals(value(), that.value());
+    }
+
+    @Override
+    public final int hashCode() {
+        return Objects.hash(getClass(), value());
     }
 }

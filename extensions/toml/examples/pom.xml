@@ -39,5 +39,6 @@
     </properties>
 
     <modules>
+        <module>webserver</module>
     </modules>
 </project>

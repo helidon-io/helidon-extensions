@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.config.ConfigValues;
@@ -133,9 +134,9 @@ class TomlConfigParserTest {
         assertThat(config.get("binary").asInt(), is(ConfigValues.simpleValue(10)));
         assertThat(config.get("ratio").asDouble(), is(ConfigValues.simpleValue(625.0)));
         assertThat(config.get("local-date").asString(), is(ConfigValues.simpleValue("1979-05-27")));
-        assertThat(config.get("local-time").asString(), is(ConfigValues.simpleValue("07:32")));
-        assertThat(config.get("local-date-time").asString(), is(ConfigValues.simpleValue("1979-05-27T07:32")));
-        assertThat(config.get("offset-date-time").asString(), is(ConfigValues.simpleValue("1979-05-27T07:32Z")));
+        assertThat(config.get("local-time").asString(), is(ConfigValues.simpleValue("07:32:00")));
+        assertThat(config.get("local-date-time").asString(), is(ConfigValues.simpleValue("1979-05-27T07:32:00")));
+        assertThat(config.get("offset-date-time").asString(), is(ConfigValues.simpleValue("1979-05-27T07:32:00Z")));
     }
 
     @Test
@@ -234,7 +235,7 @@ class TomlConfigParserTest {
 
                 [app]
                 name = "Demo"
-                """, TomlConfigParser.APPLICATION_TOML))
+                """, MediaTypes.APPLICATION_TOML))
                 .disableEnvironmentVariablesSource()
                 .disableSystemPropertiesSource()
                 .disableMapperServices()
@@ -260,11 +261,11 @@ class TomlConfigParserTest {
 
         assertThat(parser.supportedMediaTypes(), is(not(empty())));
         assertThat(parser.supportedSuffixes(), contains("toml"));
-        assertThat(parser.supportedMediaTypes(), contains(TomlConfigParser.APPLICATION_TOML));
+        assertThat(parser.supportedMediaTypes(), contains(MediaTypes.APPLICATION_TOML));
     }
 
     private Config toConfig(String toml) {
-        return Config.builder(ConfigSources.create(toml, TomlConfigParser.APPLICATION_TOML))
+        return Config.builder(ConfigSources.create(toml, MediaTypes.APPLICATION_TOML))
                 .addParser(TomlConfigParser.create())
                 .disableEnvironmentVariablesSource()
                 .disableSystemPropertiesSource()
@@ -277,7 +278,7 @@ class TomlConfigParserTest {
     private Content toContent(String toml) {
         return Content.builder()
                 .data(new ByteArrayInputStream(toml.getBytes(StandardCharsets.UTF_8)))
-                .mediaType(TomlConfigParser.APPLICATION_TOML)
+                .mediaType(MediaTypes.APPLICATION_TOML)
                 .build();
     }
 }

@@ -71,10 +71,6 @@ public final class TomlParser {
         return parse(text.toString());
     }
 
-    private static TomlScalar scalar(Object value) {
-        return new TomlScalar(value);
-    }
-
     private static final class Parser {
         private final String input;
         private final MutableTable root = new MutableTable(false);
@@ -181,8 +177,8 @@ public final class TomlParser {
         private Object parseValue() {
             char c = peekOrThrow("Expected value");
             return switch (c) {
-            case '"' -> scalar(parseBasicString(startsWith("\"\"\"")));
-            case '\'' -> scalar(parseLiteralString(startsWith("'''")));
+            case '"' -> TomlString.create(parseBasicString(startsWith("\"\"\"")));
+            case '\'' -> TomlString.create(parseLiteralString(startsWith("'''")));
             case '[' -> parseArray();
             case '{' -> parseInlineTable();
             default -> parsePrimitive();
@@ -240,7 +236,7 @@ public final class TomlParser {
             }
         }
 
-        private TomlScalar parsePrimitive() {
+        private TomlScalar<?> parsePrimitive() {
             int start = index;
             while (!isEnd()) {
                 char c = peek();
@@ -253,51 +249,51 @@ public final class TomlParser {
             if (token.isEmpty()) {
                 throw error("Expected value");
             }
-            return scalar(parsePrimitiveToken(token));
+            return parsePrimitiveToken(token);
         }
 
-        private Object parsePrimitiveToken(String token) {
+        private TomlScalar<?> parsePrimitiveToken(String token) {
             if ("true".equals(token)) {
-                return Boolean.TRUE;
+                return TomlBoolean.TRUE;
             }
             if ("false".equals(token)) {
-                return Boolean.FALSE;
+                return TomlBoolean.FALSE;
             }
 
-            Object dateTime = parseDateTime(token);
+            TomlScalar<?> dateTime = parseDateTime(token);
             if (dateTime != null) {
                 return dateTime;
             }
 
             if (LOCAL_DATE.matcher(token).matches()) {
-                return LocalDate.parse(token);
+                return TomlLocalDate.create(LocalDate.parse(token));
             }
 
             String localTime = timeText(token);
             if (localTime != null) {
-                return LocalTime.parse(localTime);
+                return TomlLocalTime.create(LocalTime.parse(localTime));
             }
 
             if (SPECIAL_FLOAT.matcher(token).matches()) {
-                return specialFloat(token);
+                return TomlFloat.create(specialFloat(token));
             }
 
             if (isFloat(token)) {
-                return Double.parseDouble(token.replace("_", ""));
+                return TomlFloat.create(Double.parseDouble(token.replace("_", "")));
             }
 
             if (DECIMAL_INTEGER.matcher(token).matches()) {
-                return Long.parseLong(token.replace("_", ""));
+                return TomlInteger.create(parseDecimalInteger(token));
             }
 
             if (HEX_INTEGER.matcher(token).matches()) {
-                return parseBaseInteger(token, 16, 2);
+                return TomlInteger.create(parseBaseInteger(token, 16, 2));
             }
             if (OCTAL_INTEGER.matcher(token).matches()) {
-                return parseBaseInteger(token, 8, 2);
+                return TomlInteger.create(parseBaseInteger(token, 8, 2));
             }
             if (BINARY_INTEGER.matcher(token).matches()) {
-                return parseBaseInteger(token, 2, 2);
+                return TomlInteger.create(parseBaseInteger(token, 2, 2));
             }
 
             throw error("Invalid value: " + token);
@@ -713,6 +709,14 @@ public final class TomlParser {
         return value.longValue();
     }
 
+    private static Long parseDecimalInteger(String token) {
+        try {
+            return Long.parseLong(token.replace("_", ""));
+        } catch (NumberFormatException e) {
+            throw new TomlParseException("Integer out of 64-bit signed range: " + token, e);
+        }
+    }
+
     private static Double specialFloat(String token) {
         return switch (token) {
         case "inf", "+inf" -> Double.POSITIVE_INFINITY;
@@ -722,7 +726,7 @@ public final class TomlParser {
         };
     }
 
-    private static Object parseDateTime(String token) {
+    private static TomlScalar<?> parseDateTime(String token) {
         if (token.length() < 16 || !isDate(token, 0) || (token.charAt(10) != 'T' && token.charAt(10) != ' ')) {
             return null;
         }
@@ -739,11 +743,11 @@ public final class TomlParser {
             if (!isOffset(offset)) {
                 return null;
             }
-            return OffsetDateTime.parse(date + "T" + time + offset);
+            return TomlOffsetDateTime.create(OffsetDateTime.parse(date + "T" + time + offset));
         }
 
         String time = timeText(rest);
-        return time == null ? null : LocalDateTime.parse(date + "T" + time);
+        return time == null ? null : TomlLocalDateTime.create(LocalDateTime.parse(date + "T" + time));
     }
 
     private static String timeText(String token) {
