@@ -14,27 +14,7 @@
  * limitations under the License.
  */
 
-package io.helidon.extensions.langchain4j.tests.agenticmcp;
-
-import io.helidon.extensions.langchain4j.Ai;
-
-import dev.langchain4j.agentic.declarative.SequenceAgent;
-import dev.langchain4j.service.V;
-
 /**
- * Sequential agent that delegates Helidon CLI requests to the CLI expert.
+ * Test fixtures for LangChain4j agentic MCP integration.
  */
-@Ai.Agent("sequential-agent")
-public interface SequentialAgent {
-
-    /**
-     * Ask the sequential agent for a response.
-     *
-     * @param request user request
-     * @return agent response
-     */
-    @SequenceAgent(outputKey = "response", subAgents = {
-            CliExpert.class
-    })
-    String ask(@V("request") String request);
-}
+package io.helidon.extensions.langchain4j.tests.agenticmcp;
