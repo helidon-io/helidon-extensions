@@ -37,4 +37,9 @@
         <maven.sources.skip>true</maven.sources.skip>
         <maven.javadoc.skip>true</maven.javadoc.skip>
     </properties>
+
+    <modules>
+        <module>se-imperative</module>
+        <module>se-declarative</module>
+    </modules>
 </project>
