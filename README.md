@@ -20,6 +20,7 @@ See README for individual extensions.
 * [OCI SDK v3](extensions/oci-v3/docs/README.md)
 * [OpenAPI UI](extensions/openapi-ui/docs/README.md)
 * [gson](extensions/gson/docs/README.md)
+* [toml](extensions/toml/docs/README.md)
 
 ## Examples
 
@@ -48,5 +49,5 @@ Please consult the [security guide](./SECURITY.md) for our responsible security 
 
 ## License
 
-Copyright (c) 2017, 2025 Oracle and/or its affiliates.
+Copyright (c) 2017, 2026 Oracle and/or its affiliates.
 Licensed under the Apache License, Version 2.0
