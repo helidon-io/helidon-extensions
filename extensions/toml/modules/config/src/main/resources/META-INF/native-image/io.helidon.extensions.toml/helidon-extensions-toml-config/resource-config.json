@@ -1,0 +1,16 @@
+{
+    "resources": [
+        {
+            "pattern": "application.toml"
+        },
+        {
+            "pattern": "meta-config.toml"
+        },
+        {
+            "pattern": "config-profile.toml"
+        },
+        {
+            "pattern": "config-profile-.*\\.toml$"
+        }
+    ]
+}
