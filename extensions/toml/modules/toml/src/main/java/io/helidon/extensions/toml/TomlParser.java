@@ -602,8 +602,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
                 if (c == '\\') {
                     appendEscaped(result);
                 } else {
-                    validateBasicStringChar(c, false);
-                    result.append(c);
+                    appendBasicStringChar(result, c, false);
                 }
             }
             throw error("Unterminated basic string");
@@ -631,8 +630,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
                     }
                     appendEscaped(result);
                 } else {
-                    validateBasicStringChar(c, true);
-                    result.append(c);
+                    appendBasicStringChar(result, c, true);
                 }
             }
             throw error("Unterminated multiline basic string");
@@ -654,8 +652,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
                 if (c == '\n') {
                     throw error("Unterminated literal string");
                 }
-                validateLiteralStringChar(c, false);
-                result.append(c);
+                appendLiteralStringChar(result, c, false);
             }
             throw error("Unterminated literal string");
         }
@@ -675,10 +672,34 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
                     }
                 }
                 char c = advance();
-                validateLiteralStringChar(c, true);
-                result.append(c);
+                appendLiteralStringChar(result, c, true);
             }
             throw error("Unterminated multiline literal string");
+        }
+
+        private void appendBasicStringChar(StringBuilder result, char c, boolean multiline) {
+            validateBasicStringChar(c, multiline);
+            appendUnicodeScalar(result, c);
+        }
+
+        private void appendLiteralStringChar(StringBuilder result, char c, boolean multiline) {
+            validateLiteralStringChar(c, multiline);
+            appendUnicodeScalar(result, c);
+        }
+
+        private void appendUnicodeScalar(StringBuilder result, char c) {
+            if (Character.isHighSurrogate(c)) {
+                if (isEnd() || !Character.isLowSurrogate(peek())) {
+                    throw error("Invalid unicode scalar value");
+                }
+                result.append(c);
+                result.append(advance());
+                return;
+            }
+            if (Character.isLowSurrogate(c)) {
+                throw error("Invalid unicode scalar value");
+            }
+            result.append(c);
         }
 
         private void appendEscaped(StringBuilder result) {
@@ -1038,7 +1059,36 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
     }
 
     private static String normalizeNewlines(String text) {
-        return text.replace("\r\n", "\n").replace('\r', '\n');
+        StringBuilder result = null;
+        int line = 1;
+        int column = 1;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '\r') {
+                if (i + 1 >= text.length() || text.charAt(i + 1) != '\n') {
+                    throw new TomlParseException("Bare carriage return at line " + line + ", column " + column);
+                }
+                if (result == null) {
+                    result = new StringBuilder(text.length());
+                    result.append(text, 0, i);
+                }
+                result.append('\n');
+                i++;
+                line++;
+                column = 1;
+            } else {
+                if (result != null) {
+                    result.append(c);
+                }
+                if (c == '\n') {
+                    line++;
+                    column = 1;
+                } else {
+                    column++;
+                }
+            }
+        }
+        return result == null ? text : result.toString();
     }
 
     private sealed interface ParsedValue permits ScalarValue, MutableTable, MutableArray, MutableTableArray {

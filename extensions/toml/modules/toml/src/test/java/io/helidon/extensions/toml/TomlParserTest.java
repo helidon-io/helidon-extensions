@@ -202,6 +202,35 @@ class TomlParserTest {
     }
 
     @Test
+    void testNewlineValidation() {
+        TomlParser strictV10 = TomlParser.create(builder -> builder.versionBehavior(TomlVersionBehavior.V1_0_0));
+
+        TomlTable table = strictV10.parse("a = 1\r\nb = 2");
+
+        assertThat(scalar(table, "a", TomlInteger.class).value(), is(1L));
+        assertThat(scalar(table, "b", TomlInteger.class).value(), is(2L));
+        assertThrows(TomlParseException.class, () -> strictV10.parse("a = 1\rb = 2"));
+    }
+
+    @Test
+    void testStringUnicodeScalars() {
+        TomlParser parser = TomlParser.create();
+        String validSupplementary = Character.toString(0x1F600);
+        String highSurrogate = String.valueOf(Character.MIN_HIGH_SURROGATE);
+        String lowSurrogate = String.valueOf(Character.MIN_LOW_SURROGATE);
+
+        TomlTable table = parser.parse("basic = \"" + validSupplementary + "\"\nliteral = '" + validSupplementary + "'");
+
+        assertThat(scalar(table, "basic", TomlString.class).value(), is(validSupplementary));
+        assertThat(scalar(table, "literal", TomlString.class).value(), is(validSupplementary));
+        assertThrows(TomlParseException.class, () -> parser.parse("basic = \"" + highSurrogate + "\""));
+        assertThrows(TomlParseException.class, () -> parser.parse("basic = \"" + lowSurrogate + "\""));
+        assertThrows(TomlParseException.class, () -> parser.parse("literal = '" + highSurrogate + "'"));
+        assertThrows(TomlParseException.class, () -> parser.parse("literal = '" + lowSurrogate + "'"));
+        assertThrows(TomlParseException.class, () -> parser.parse("escaped = \"\\uD800\""));
+    }
+
+    @Test
     void testInvalidDocuments() {
         assertThrows(TomlParseException.class, () -> TomlParser.create().parse("""
                 name = "Tom"
