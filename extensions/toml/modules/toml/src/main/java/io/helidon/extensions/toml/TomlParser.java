@@ -805,14 +805,14 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
         private TableLocation tableLocation(List<String> key) {
             MutableTable parent = root;
             for (int i = 0; i < key.size() - 1; i++) {
-                parent = tableForPart(parent, key.get(i), false);
+                parent = tableForPart(parent, key.get(i), false, false);
             }
 
             String last = key.getLast();
             return new TableLocation(parent, last, parent.values.get(last));
         }
 
-        private MutableTable tableForPart(MutableTable parent, String part, boolean inlineDottedKey) {
+        private MutableTable tableForPart(MutableTable parent, String part, boolean inlineDottedKey, boolean dottedKey) {
             ParsedValue existing = parent.values.get(part);
             switch (existing) {
             case null -> {
@@ -823,6 +823,9 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
             case MutableTable table -> {
                 if (table.inline && (!inlineDottedKey || table.inlineDefined)) {
                     throw error("Cannot add keys to an inline table");
+                }
+                if (dottedKey && table.headerDefined) {
+                    throw error("Cannot add a dotted key to table already defined by header: " + part);
                 }
                 return table;
             }
@@ -841,7 +844,7 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
         private void putDotted(MutableTable table, List<String> key, ParsedValue value, boolean inlineDottedKey) {
             MutableTable parent = table;
             for (int i = 0; i < key.size() - 1; i++) {
-                parent = tableForPart(parent, key.get(i), inlineDottedKey);
+                parent = tableForPart(parent, key.get(i), inlineDottedKey, true);
                 parent.dottedKeyDefined = true;
             }
 

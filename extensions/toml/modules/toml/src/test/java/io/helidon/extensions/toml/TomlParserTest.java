@@ -242,6 +242,13 @@ class TomlParserTest {
                 texture = "smooth"
                 """));
         assertThrows(TomlParseException.class, () -> TomlParser.create().parse("""
+                [x.y]
+                a = 1
+
+                [x]
+                y.b = 2
+                """));
+        assertThrows(TomlParseException.class, () -> TomlParser.create().parse("""
                 [product]
                 type = { name = "Nail" }
                 type.edible = false

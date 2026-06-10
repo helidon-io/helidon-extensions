@@ -36,7 +36,7 @@
 
     <properties>
         <mainClass>io.helidon.extensions.toml.examples.webserver.Main</mainClass>
-        <helidon.extension.toml.version>27.0.0-SNAPSHOT</helidon.extension.toml.version>
+        <toml.extension.version>27.0.0-SNAPSHOT</toml.extension.version>
     </properties>
 
     <dependencies>
@@ -83,7 +83,7 @@
             <dependency>
                 <groupId>io.helidon.extensions.toml</groupId>
                 <artifactId>helidon-extensions-toml-bom</artifactId>
-                <version>${helidon.extension.toml.version}</version>
+                <version>${toml.extension.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
