@@ -491,7 +491,11 @@ public final class TomlParser implements RuntimeType.Api<TomlParserConfig> {
                 }
                 advance();
             }
-            String token = input.substring(start, index).trim();
+            int end = index;
+            while (end > start && isWhitespace(input.charAt(end - 1))) {
+                end--;
+            }
+            String token = input.substring(start, end);
             if (token.isEmpty()) {
                 throw error("Expected value");
             }

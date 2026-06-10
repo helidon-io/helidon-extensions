@@ -261,6 +261,9 @@ class TomlParserTest {
         assertThrows(TomlParseException.class, () -> TomlParser.create().parse("""
                 contact = { personal = { name = "Donald" }, personal.email = "donald@example.com" }
                 """));
+        assertThrows(TomlParseException.class, () -> TomlParser.create().parse("a = 1" + (char) 0x000C));
+        assertThrows(TomlParseException.class, () -> TomlParser.create().parse("a = [" + (char) 0x000C + "1]"));
+        assertThrows(TomlParseException.class, () -> TomlParser.create().parse("a = true" + (char) 0x001B));
     }
 
     @Test
