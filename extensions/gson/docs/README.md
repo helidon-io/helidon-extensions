@@ -72,7 +72,7 @@ gson:
 ```
 
 If you configure media support through the WebServer configuration tree, the same support appears under
-`server.media-context.media-supports.gson` (or `server.sockets.media-context.media-supports.gson`):
+`server.media-context.media-supports.gson` and is inherited by all configured sockets:
 
 ```yaml
 server:
@@ -81,6 +81,20 @@ server:
       gson:
         properties:
           serialize-nulls: true
+```
+
+To customize media support for a single socket, include the socket name in the path, for example
+`server.sockets.admin.media-context.media-supports.gson`:
+
+```yaml
+server:
+  sockets:
+    admin:
+      media-context:
+        media-supports:
+          gson:
+            properties:
+              serialize-nulls: true
 ```
 
 The supported configuration surface is intentionally small:
