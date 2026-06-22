@@ -233,11 +233,32 @@ class HelidonDeclarativeCodegenTest {
     }
 
     @Test
+    void processOptsRejectsUnknownSerializationLibrary() {
+        codegen.additionalProperties().put("serializationLibrary", "gson");
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                                                          () -> codegen.processOpts());
+
+        assertThat(exception.getMessage(), containsString("serializationLibrary must be one of helidon, jsonb, or jackson"));
+    }
+
+    @Test
     void processOptsExposesIntegerJavaVersion() {
         codegen.additionalProperties().put("javaVersion", "17");
 
         codegen.processOpts();
 
         assertThat(codegen.additionalProperties().get("javaVersion"), is("17"));
+    }
+
+    @Test
+    void processOptsExposesSerializationLibraryFlags() {
+        codegen.additionalProperties().put("serializationLibrary", "Jackson");
+
+        codegen.processOpts();
+
+        assertThat(codegen.additionalProperties().get("serializationLibrary"), is("jackson"));
+        assertThat(codegen.additionalProperties().get("serializationLibraryJackson"), is(true));
+        assertThat(codegen.additionalProperties().get("serializationLibraryHelidon"), is(false));
     }
 }

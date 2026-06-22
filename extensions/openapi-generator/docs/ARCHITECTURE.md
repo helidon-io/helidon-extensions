@@ -148,6 +148,10 @@ Notable behavior:
 
 - required properties are marked for JSON-required rendering
 - default values are converted into Java literals
+- serialization library flags are exposed to templates for Helidon JSON, JSON-B,
+  or Jackson output
+- discriminator properties are identified so Jackson can use existing-property
+  polymorphism and JSON-B can avoid unsupported composed-schema generation
 - validation annotations are derived from OpenAPI constraints
 - model validation annotations are emitted on prefixless accessor methods rather
   than private fields
@@ -160,7 +164,12 @@ Notable behavior:
 - composed schemas are normalized into template-friendly flags:
   - `allOf` prefers Java inheritance when there is a single referenced parent
   - `oneOf` and `anyOf` generate model interfaces annotated with a generated
-    `@Json.Converter`
+    `@Json.Converter` for Helidon JSON output
+  - Jackson output supports discriminator-based `oneOf` and `anyOf` using
+    `@JsonTypeInfo` and `@JsonSubTypes`
+  - JSON-B output rejects composed `oneOf` and `anyOf` models because the
+    generated fluent model shape needs field visibility and JSON-B type info
+    cannot safely share the discriminator field
   - union member models implement the generated interface(s)
   - generated converters deserialize using discriminator aliases when present,
     then fall back to structural matching by declared properties
@@ -209,9 +218,11 @@ Current templates:
 - `api-interface.mustache` defines the shared annotated contract.
 - `api.mustache` emits the endpoint stub implementation.
 - `restClient.mustache` extends the shared API contract to reuse HTTP annotations.
-- `model.mustache` generates mutable JSON entity model classes rather than
-  records. Models use prefixless property methods and Helidon-style builders
-  instead of JavaBean getters and setters.
+- `model.mustache` generates mutable JSON model classes rather than records.
+  Models use prefixless property methods and Helidon-style builders instead of
+  JavaBean getters and setters. The selected serialization library controls
+  whether the model uses Helidon JSON binding annotations, JSON-B field
+  visibility, or Jackson property annotations.
 - `api.mustache` does not emit `@RestServer.Listener`, because the default listener is
   already implied.
 
@@ -228,9 +239,11 @@ Per tag:
 Per schema:
 
 - `{Model}.java`
-  - `@Json.Entity` model class
+  - JSON model class using the selected serialization library
   - prefixless accessor and mutator methods for schema properties
-  - `@Json.BuilderInfo` and a generated `Builder` / `BuilderBase<B, T>`
+  - `@Json.BuilderInfo` for Helidon JSON output, JSON-B field visibility for
+    JSON-B output, or Jackson property annotations for Jackson output
+  - a generated `Builder` / `BuilderBase<B, T>`
     implementing `io.helidon.common.Builder`
   - generated nested enums when needed
 
@@ -245,36 +258,45 @@ Module-local integration checks are Maven-only:
 ### Composed Schemas
 
 The generator supports OpenAPI composed schemas using Java shapes that fit the
-existing Helidon-oriented templates:
+selected JSON serialization library:
 
 - `allOf`
   - when exactly one referenced component schema participates, the generated model
     extends that parent and emits only locally owned properties
   - when that parent schema declares a discriminator, the base model is annotated
-    with generated Helidon polymorphism metadata and child models can initialize
-    inherited discriminator values from `x-discriminator-value`
+    with generated Helidon or Jackson polymorphism metadata and child models can
+    initialize inherited discriminator values from `x-discriminator-value`
   - otherwise the generator falls back to a flattened model containing the merged
     properties exposed by `openapi-generator`
 - `oneOf`
-  - the composed schema is generated as a Java interface with a generated
-    `@Json.Converter`
+  - for Helidon JSON output, the composed schema is generated as a Java interface
+    with a generated `@Json.Converter`
+  - for Jackson output, discriminator-based `oneOf` uses `@JsonTypeInfo` with
+    `JsonTypeInfo.As.EXISTING_PROPERTY` and `@JsonSubTypes`
   - each referenced member model implements that interface
   - generated deserialization requires exactly one matching subtype
   - when a discriminator is present, converter dispatch prefers discriminator aliases
   - primitive, array, map, and inline members are rejected with a clear
     unsupported-shape message instead of generating invalid Java
 - `anyOf`
-  - the composed schema is generated as a Java interface with a generated
-    `@Json.Converter`
+  - for Helidon JSON output, the composed schema is generated as a Java interface
+    with a generated `@Json.Converter`
+  - for Jackson output, discriminator-based `anyOf` uses `@JsonTypeInfo` with
+    `JsonTypeInfo.As.EXISTING_PROPERTY` and `@JsonSubTypes`
   - each referenced member model implements that interface
   - generated deserialization requires at least one matching subtype
   - ambiguous structural matches are rejected instead of picking an arbitrary model
   - primitive, array, map, and inline members are rejected with a clear
     unsupported-shape message instead of generating invalid Java
 
-This keeps generated source compilable and preserves assignability between
+Structural `oneOf` and `anyOf` matching is available only with Helidon JSON
+output. JSON-B supports regular object models, but rejects composed `oneOf` and
+`anyOf` models during generation.
+
+These rules keep generated source compilable and preserve assignability between
 concrete member models and the composed OpenAPI type used by operations while
-making the generated request/response types usable with Helidon JSON binding.
+making generated request and response types usable with the selected supported
+JSON binding.
 
 Project-level support:
 
@@ -350,8 +372,10 @@ normal project.
 This keeps verification close to the `openapi-ui` module pattern while still
 validating fresh generator output on every `it-tests` run. Most harness modules
 skip test execution and verify that generated projects build successfully;
-`composed-schemas` also runs a checked-in JSON-binding round-trip test against
-the freshly generated model classes.
+`composed-schemas` runs a checked-in Helidon JSON-binding round-trip test against
+the freshly generated model classes. The `serialization-jsonb` and
+`serialization-jackson` harnesses verify runtime JSON round trips for JSON-B
+regular models and Jackson discriminator polymorphism.
 
 ## Packaging
 

@@ -39,6 +39,8 @@
         <module>modules/validation-private-field</module>
         <module>modules/discriminator-enum-mapping-repro</module>
         <module>modules/discriminator-enum-mapping-repro-2</module>
+        <module>modules/serialization-jsonb</module>
+        <module>modules/serialization-jackson</module>
         <module>modules/composed-schemas</module>
     </modules>
 </project>

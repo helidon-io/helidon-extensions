@@ -148,7 +148,7 @@ java -jar openapi-generator/modules/openapi-generator/target/helidon-extensions-
   -g helidon-declarative \
   -i /path/to/openapi.yaml \
   -o /tmp/generated-openapi \
-  --additional-properties helidonVersion=4.4.1,avoidOptionalListParams=true
+  --additional-properties helidonVersion=4.4.1,serializationLibrary=jackson,avoidOptionalListParams=true
 ```
 
 ## Generator Options
@@ -159,6 +159,7 @@ Set these under Maven `<configOptions>` or CLI `--additional-properties`.
 |--------|---------|-------------|
 | `helidonVersion` | `4.4.1` | Helidon version written into generated Maven and Gradle builds |
 | `javaVersion` | `21` | Java version written into generated Maven compiler source/target and Gradle toolchain builds |
+| `serializationLibrary` | `helidon` | JSON serialization library for generated models and media dependency: `helidon`, `jsonb`, or `jackson` |
 | `apiPackage` | `io.helidon.example.api` | Package for generated API, endpoint, client, and error classes |
 | `modelPackage` | `io.helidon.example.model` | Package for generated model classes |
 | `invokerPackage` | `io.helidon.example` | Package for generated `Main.java` |
@@ -173,6 +174,86 @@ Set these under Maven `<configOptions>` or CLI `--additional-properties`.
 | `avoidOptionalListParams` | `false` | Generate `List<T>` instead of `Optional<List<T>>` for optional query list params |
 
 Legacy aliases `serveOpenApi` and `serveBasePath` are still accepted for compatibility.
+
+For composed schemas, `jackson` supports discriminator-based `oneOf`/`anyOf`
+models. Structural `oneOf`/`anyOf` models without a discriminator require the default
+`helidon` serialization library. JSON-B is supported for regular object models,
+but not for composed `oneOf`/`anyOf` models.
+
+For example, this structural `oneOf` has no discriminator and fails generation
+with `serializationLibrary=jackson`:
+
+```yaml
+components:
+  schemas:
+    EmailContact:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+    PhoneContact:
+      type: object
+      required:
+        - phone
+      properties:
+        phone:
+          type: string
+    Contact:
+      oneOf:
+        - $ref: '#/components/schemas/EmailContact'
+        - $ref: '#/components/schemas/PhoneContact'
+```
+
+This discriminator-based `anyOf` is supported by `helidon` and `jackson`, but
+fails generation with `serializationLibrary=jsonb` because JSON-B composed
+models are not supported:
+
+```yaml
+components:
+  schemas:
+    Cat:
+      type: object
+      required:
+        - kind
+        - whiskers
+      properties:
+        kind:
+          type: string
+        whiskers:
+          type: integer
+    Dog:
+      type: object
+      required:
+        - kind
+        - bark
+      properties:
+        kind:
+          type: string
+        bark:
+          type: boolean
+    Pet:
+      anyOf:
+        - $ref: '#/components/schemas/Cat'
+        - $ref: '#/components/schemas/Dog'
+      discriminator:
+        propertyName: kind
+        mapping:
+          cat: '#/components/schemas/Cat'
+          dog: '#/components/schemas/Dog'
+```
+
+### Serialization Libraries
+
+The `serializationLibrary` option controls both generated model annotations and
+the JSON media dependency in generated Maven and Gradle builds.
+
+| Value | Generated model annotations | Generated media dependency | Composed schema support |
+|-------|-----------------------------|----------------------------|-------------------------|
+| `helidon` | `io.helidon.json.binding.Json` annotations and generated converters | `io.helidon.http.media:helidon-http-media-json-binding` | `allOf`, discriminator `oneOf`/`anyOf`, and structural `oneOf`/`anyOf` |
+| `jsonb` | JSON-B annotations with field visibility for generated fluent model methods | `io.helidon.http.media:helidon-http-media-jsonb` | regular object models only; composed `oneOf`/`anyOf` fails generation |
+| `jackson` | Jackson annotations, using existing discriminator properties for polymorphism | `io.helidon.http.media:helidon-http-media-jackson` | `allOf` and discriminator-based `oneOf`/`anyOf`; structural `oneOf`/`anyOf` fails generation |
 
 ## What Gets Generated
 
@@ -191,7 +272,7 @@ Per schema:
 
 | File | Description |
 |------|-------------|
-| `{Model}.java` | Helidon JSON model type with generated builders, validation, and enum support |
+| `{Model}.java` | JSON model type using the selected serialization library, with generated builders, validation, and enum support |
 
 Supporting files:
 
@@ -214,29 +295,37 @@ The generator supports these schema-composition keywords:
 
 - `allOf`: generates an inherited model when there is a single referenced parent
   component; otherwise falls back to a flattened merged model. When the parent
-  schema declares a discriminator, the generator also emits `@Json.Polymorphic`
-  and `@Json.Subtype` metadata on the base model and initializes discriminator
-  values for `allOf` subtypes that provide `x-discriminator-value`
+  schema declares a discriminator, the generator also emits library-specific
+  polymorphism metadata on the base model and initializes discriminator values
+  for `allOf` subtypes that provide `x-discriminator-value`
 - `oneOf`: generates a Java interface for the composed schema, attaches a
-  generated `@Json.Converter`, makes member models implement it, and requires
-  exactly one matching subtype during deserialization. Members must be referenced
-  object model schemas; primitive, array, map, and inline members fail generation
-  with a clear unsupported-shape message.
+  generated Helidon JSON converter when `serializationLibrary=helidon`, makes
+  member models implement it, and requires exactly one matching subtype during
+  deserialization. With `serializationLibrary=jackson`, discriminator-based
+  `oneOf` uses Jackson polymorphism metadata. Members must be referenced object
+  model schemas; primitive, array, map, and inline members fail generation with
+  a clear unsupported-shape message.
 - `anyOf`: generates a Java interface for the composed schema, attaches a
-  generated `@Json.Converter`, makes member models implement it, and rejects
-  ambiguous structural matches during deserialization. Members must be referenced
-  object model schemas; primitive, array, map, and inline members fail generation
-  with a clear unsupported-shape message.
+  generated Helidon JSON converter when `serializationLibrary=helidon`, makes
+  member models implement it, and rejects ambiguous structural matches during
+  deserialization. With `serializationLibrary=jackson`, discriminator-based
+  `anyOf` uses Jackson polymorphism metadata. Members must be referenced object
+  model schemas; primitive, array, map, and inline members fail generation with
+  a clear unsupported-shape message.
 
 For union schemas, generated converters use the OpenAPI discriminator when one is
-present. Without a discriminator, they fall back to structural matching based on
-the member models' required and declared properties.
+present. Without a discriminator, Helidon JSON converters fall back to structural
+matching based on the member models' required and declared properties. JSON-B
+does not support generated composed `oneOf`/`anyOf` models.
 
 ### Model API
 
-Generated object schemas are mutable Helidon JSON entities with prefixless
-property accessors and mutators. A schema property named `id` produces `id()`
-and `id(value)` methods instead of JavaBean-style `getId()` and `setId(...)`.
+Generated object schemas are mutable JSON model classes with prefixless property
+accessors and mutators. A schema property named `id` produces `id()` and
+`id(value)` methods instead of JavaBean-style `getId()` and `setId(...)`.
+The selected serialization library determines whether the generated class uses
+Helidon JSON binding annotations, JSON-B field visibility, or Jackson property
+annotations.
 
 Each generated model also has a Helidon-style builder:
 
@@ -304,6 +393,7 @@ and covers:
 - observability options
 - optional query list handling
 - generated project build verification
+- serialization library dependency and runtime round-trip coverage
 
 Generated-project verification is opt-in and runs during `verify` under the
 `it-tests` Maven profile:
@@ -317,6 +407,11 @@ harness invokes `openapi-generator-maven-plugin` against one test spec, then
 compiles or tests the generated sources in-place. This keeps verification close
 to the `openapi-ui` module approach while still exercising the current generator
 output rather than stale checked-in generated sources.
+
+The `composed-schemas` harness runs a checked-in Helidon JSON-binding round-trip
+test against freshly generated composed models. The `serialization-jsonb` and
+`serialization-jackson` harnesses verify runtime JSON round trips for JSON-B
+regular models and Jackson discriminator polymorphism.
 
 ## Notes
 

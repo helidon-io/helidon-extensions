@@ -17,8 +17,24 @@ limitations under the License.
 {{#models}}
 package {{modelPackage}};
 
+{{#serializationLibraryHelidon}}
 import io.helidon.json.binding.Json;
-{{#model}}{{#vendorExtensions.x-is-union-interface}}import java.io.ByteArrayOutputStream;
+{{/serializationLibraryHelidon}}
+{{#serializationLibraryJsonb}}
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import jakarta.json.bind.annotation.JsonbProperty;
+import jakarta.json.bind.annotation.JsonbTransient;
+import jakarta.json.bind.annotation.JsonbVisibility;
+import jakarta.json.bind.config.PropertyVisibilityStrategy;
+{{/serializationLibraryJsonb}}
+{{#serializationLibraryJackson}}
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+{{/serializationLibraryJackson}}
+{{#model}}{{#vendorExtensions.x-is-union-interface}}{{#serializationLibraryHelidon}}import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,7 +52,7 @@ import io.helidon.json.binding.JsonConverter;
 import io.helidon.json.binding.JsonDeserializer;
 import io.helidon.json.binding.JsonSerializer;
 import io.helidon.service.registry.Service;
-{{/vendorExtensions.x-is-union-interface}}{{/model}}
+{{/serializationLibraryHelidon}}{{/vendorExtensions.x-is-union-interface}}{{/model}}
 {{#imports}}
 import {{import}};
 {{/imports}}
@@ -45,10 +61,16 @@ import {{import}};
 /**
  * {{description}}{{^description}}{{classname}} model.{{/description}}
  */
-{{#vendorExtensions.x-is-union-interface}}@Json.Converter({{classname}}.{{classname}}JsonConverter.class)
+{{#vendorExtensions.x-is-union-interface}}{{#serializationLibraryHelidon}}@Json.Converter({{classname}}.{{classname}}JsonConverter.class)
+{{/serializationLibraryHelidon}}{{#serializationLibraryJackson}}{{#vendorExtensions.x-has-union-discriminator}}@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.EXISTING_PROPERTY, property = {{{vendorExtensions.x-union-discriminator-key-literal}}}, visible = true)
+@JsonSubTypes({
+{{#vendorExtensions.x-union-members}}        @JsonSubTypes.Type(value = {{name}}.class, name = {{{aliasLiteral}}}){{^last}},{{/last}}
+{{/vendorExtensions.x-union-members}}})
+{{/vendorExtensions.x-has-union-discriminator}}{{/serializationLibraryJackson}}
 {{#isDeprecated}}@Deprecated
 {{/isDeprecated}}public interface {{classname}} {
 
+{{#serializationLibraryHelidon}}
     final class {{classname}}JsonConverter implements JsonConverter<{{classname}}> {
 {{#vendorExtensions.x-union-members}}
         private JsonDeserializer<{{name}}> {{deserializerField}};
@@ -330,8 +352,10 @@ import {{import}};
         }
     }
 
+{{/serializationLibraryHelidon}}
 }
 
+{{#serializationLibraryHelidon}}
 @Service.Singleton
 final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{classname}}> {
 
@@ -360,19 +384,46 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
         return Set.of({{classname}}.class);
     }
 }
-{{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}@Json.Entity
+{{/serializationLibraryHelidon}}
+{{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}{{#serializationLibraryHelidon}}@Json.Entity
 {{#vendorExtensions.x-has-polymorphic-subtypes}}@Json.Polymorphic(key = {{{vendorExtensions.x-polymorphic-key-literal}}})
 {{#vendorExtensions.x-polymorphic-subtypes}}@Json.Subtype(alias = {{{aliasLiteral}}}, value = {{name}}.class)
 {{/vendorExtensions.x-polymorphic-subtypes}}{{/vendorExtensions.x-has-polymorphic-subtypes}}
+{{/serializationLibraryHelidon}}{{#serializationLibraryJackson}}{{#vendorExtensions.x-has-polymorphic-subtypes}}@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.EXISTING_PROPERTY, property = {{{vendorExtensions.x-polymorphic-key-literal}}}, visible = true)
+@JsonSubTypes({
+{{#vendorExtensions.x-polymorphic-subtypes}}        @JsonSubTypes.Type(value = {{name}}.class, name = {{{aliasLiteral}}}){{^last}},{{/last}}
+{{/vendorExtensions.x-polymorphic-subtypes}}})
+{{/vendorExtensions.x-has-polymorphic-subtypes}}{{/serializationLibraryJackson}}
 {{#isDeprecated}}@Deprecated
 {{/isDeprecated}}{{#vendorExtensions.x-has-validations}}@Validation.Validated
-{{/vendorExtensions.x-has-validations}}@Json.BuilderInfo({{classname}}.Builder.class)
+{{/vendorExtensions.x-has-validations}}{{#serializationLibraryJsonb}}@JsonbVisibility({{classname}}.JsonbFieldVisibility.class)
+{{/serializationLibraryJsonb}}{{#serializationLibraryHelidon}}@Json.BuilderInfo({{classname}}.Builder.class)
+{{/serializationLibraryHelidon}}
 public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendorExtensions.x-extends-model}}{{/vendorExtensions.x-extends-model}}{{#vendorExtensions.x-has-implements-models}} implements {{#vendorExtensions.x-implements-models}}{{name}}{{^last}}, {{/last}}{{/vendorExtensions.x-implements-models}}{{/vendorExtensions.x-has-implements-models}} {
 
+{{#serializationLibraryJsonb}}
+    public static class JsonbFieldVisibility implements PropertyVisibilityStrategy {
+
+        @Override
+        public boolean isVisible(Field field) {
+            return true;
+        }
+
+        @Override
+        public boolean isVisible(Method method) {
+            return false;
+        }
+    }
+
+{{/serializationLibraryJsonb}}
 {{#vendorExtensions.x-render-vars}}
     {{#description}}/** {{description}} */
-    {{/description}}{{#vendorExtensions.x-json-required}}@Json.Required
-    {{/vendorExtensions.x-json-required}}private {{{datatypeWithEnum}}} {{name}}{{#vendorExtensions.x-default-value}} = {{{vendorExtensions.x-default-value}}}{{/vendorExtensions.x-default-value}};
+    {{/description}}{{#serializationLibraryHelidon}}{{#vendorExtensions.x-json-required}}@Json.Required
+    {{/vendorExtensions.x-json-required}}{{/serializationLibraryHelidon}}{{#serializationLibraryJsonb}}{{#vendorExtensions.x-is-discriminator-property}}@JsonbTransient
+    {{/vendorExtensions.x-is-discriminator-property}}{{^vendorExtensions.x-is-discriminator-property}}@JsonbProperty({{{vendorExtensions.x-json-property-literal}}})
+    {{/vendorExtensions.x-is-discriminator-property}}
+    {{/serializationLibraryJsonb}}{{#serializationLibraryJackson}}@JsonProperty(value = {{{vendorExtensions.x-json-property-literal}}}{{#vendorExtensions.x-json-required}}, required = true{{/vendorExtensions.x-json-required}})
+    {{/serializationLibraryJackson}}private {{{datatypeWithEnum}}} {{name}}{{#vendorExtensions.x-default-value}} = {{{vendorExtensions.x-default-value}}}{{/vendorExtensions.x-default-value}};
 
 {{/vendorExtensions.x-render-vars}}
     /** No-arg constructor. */
@@ -383,11 +434,15 @@ public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendor
 
 {{#vendorExtensions.x-render-vars}}
 {{#vendorExtensions.x-validation-annotations}}    {{{annotation}}}
-{{/vendorExtensions.x-validation-annotations}}    public {{{datatypeWithEnum}}} {{name}}() {
+{{/vendorExtensions.x-validation-annotations}}{{#serializationLibraryJsonb}}{{^vendorExtensions.x-is-discriminator-property}}    @JsonbProperty({{{vendorExtensions.x-json-property-literal}}})
+{{/vendorExtensions.x-is-discriminator-property}}{{#vendorExtensions.x-is-discriminator-property}}    @JsonbTransient
+{{/vendorExtensions.x-is-discriminator-property}}{{/serializationLibraryJsonb}}    public {{{datatypeWithEnum}}} {{name}}() {
         return {{name}};
     }
 
-    public void {{name}}({{{datatypeWithEnum}}} {{name}}) {
+{{#serializationLibraryJsonb}}{{^vendorExtensions.x-is-discriminator-property}}    @JsonbProperty({{{vendorExtensions.x-json-property-literal}}})
+{{/vendorExtensions.x-is-discriminator-property}}{{#vendorExtensions.x-is-discriminator-property}}    @JsonbTransient
+{{/vendorExtensions.x-is-discriminator-property}}{{/serializationLibraryJsonb}}    public void {{name}}({{{datatypeWithEnum}}} {{name}}) {
         this.{{name}} = {{name}};
     }
 
@@ -398,7 +453,13 @@ public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendor
      *
      * @return new builder
      */
+    {{#serializationLibraryHelidon}}
     @Json.Ignore
+    {{/serializationLibraryHelidon}}{{#serializationLibraryJsonb}}
+    @JsonbTransient
+    {{/serializationLibraryJsonb}}{{#serializationLibraryJackson}}
+    @JsonIgnore
+    {{/serializationLibraryJackson}}
     public static BuilderBase<?, ? extends {{classname}}> builder() {
         return new Builder();
     }
@@ -492,7 +553,13 @@ public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendor
      *
      * @return new builder
      */
+    {{#serializationLibraryHelidon}}
     @Json.Ignore
+    {{/serializationLibraryHelidon}}{{#serializationLibraryJsonb}}
+    @JsonbTransient
+    {{/serializationLibraryJsonb}}{{#serializationLibraryJackson}}
+    @JsonIgnore
+    {{/serializationLibraryJackson}}
     public static BuilderBase<?, ? extends {{classname}}> builder() {
         return new Builder();
     }
