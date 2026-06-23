@@ -1,0 +1,38 @@
+openapi: 3.0.3
+info:
+  title: Array Enum Property Repro
+  version: 1.0.0
+paths:
+  /agentRuntimeDetails:
+    get:
+      operationId: getAgentRuntimeDetails
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRuntimeDetails'
+components:
+  schemas:
+    AgentRuntimeDetails:
+      type: object
+      required:
+        - backend
+        - supportedAgentTypes
+        - placement
+      properties:
+        backend:
+          type: string
+        supportedAgentTypes:
+          description: Agent definition types this runtime can host.
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum:
+              - CONTAINERIZED_AGENT
+              - HARNESS_AGENT
+              - AGENT_SPEC_AGENT
+        placement:
+          type: string

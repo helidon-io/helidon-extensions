@@ -568,7 +568,7 @@ public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendor
 
 {{/vendorExtensions.x-extends-model}}
 {{#vendorExtensions.x-render-vars}}{{#isEnum}}
-    public enum {{datatypeWithEnum}} {
+    public enum {{vendorExtensions.x-enum-name}} {
         {{#allowableValues}}{{#enumVars}}{{name}}{{^-last}},
         {{/-last}}{{/enumVars}};{{/allowableValues}}
     }
