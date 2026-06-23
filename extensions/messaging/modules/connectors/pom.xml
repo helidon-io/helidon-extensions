@@ -22,29 +22,16 @@
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.helidon.extensions</groupId>
-        <artifactId>helidon-extensions-project</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
-        <relativePath>../pom.xml</relativePath>
+        <groupId>io.helidon.extensions.messaging</groupId>
+        <artifactId>helidon-extensions-messaging-modules-project</artifactId>
+        <version>27.0.0-SNAPSHOT</version>
     </parent>
-
-    <artifactId>helidon-extensions-modules-project</artifactId>
-
     <packaging>pom</packaging>
 
-    <name>Helidon Extensions Modules Project</name>
+    <artifactId>helidon-extensions-messaging-connectors-project</artifactId>
+    <name>Helidon Extensions Messaging Connectors Project</name>
 
     <modules>
-        <module>hashicorp-vault</module>
-        <module>neo4j</module>
-        <module>oci-v3</module>
-        <module>langchain4j</module>
-        <module>messaging</module>
-        <module>eureka</module>
-        <module>crac</module>
-        <module>openapi-ui</module>
-        <module>openapi-generator</module>
-        <module>gson</module>
-        <module>toml</module>
+        <module>file</module>
     </modules>
 </project>
