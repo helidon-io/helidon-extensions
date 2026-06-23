@@ -836,7 +836,13 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 List<CodegenProperty> renderVars = renderVars(model);
 
                 for (CodegenProperty prop : renderVars) {
-                    normalizeEnumProperty(prop);
+                    if (prop.isEnum) {
+                        String enumName = prop.isArray && prop.items != null && prop.items.datatypeWithEnum != null
+                                ? prop.items.datatypeWithEnum : prop.datatypeWithEnum;
+                        if (enumName != null && !enumName.isBlank()) {
+                            prop.vendorExtensions.put("x-enum-name", enumName);
+                        }
+                    }
 
                     // Mark required properties for @Json.Required
                     if (prop.required) {
@@ -875,21 +881,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             additionalProperties.put("hasValidation", Boolean.TRUE);
         }
         return result;
-    }
-
-    private void normalizeEnumProperty(CodegenProperty prop) {
-        if (!prop.isEnum) {
-            return;
-        }
-
-        String enumName = prop.datatypeWithEnum;
-        if (prop.isArray && prop.items != null && prop.items.datatypeWithEnum != null) {
-            enumName = prop.items.datatypeWithEnum;
-        }
-
-        if (enumName != null && !enumName.isBlank()) {
-            prop.vendorExtensions.put("x-enum-name", enumName);
-        }
     }
 
     private void normalizeComposedModels(List<CodegenModel> models,
