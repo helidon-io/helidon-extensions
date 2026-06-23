@@ -61,11 +61,11 @@ class ArrayEnumPropertyGenerationIT {
 
     @Test
     void arrayEnumPropertyUsesItemEnumNameForInnerEnumDeclaration() throws IOException {
-        String model = read(outputDir.resolve("src/main/java/io/helidon/example/model/AgentRuntimeDetails.java"));
+        String model = read(outputDir.resolve("src/main/java/io/helidon/example/model/SampleModel.java"));
 
-        assertThat(model, containsString("private List<SupportedAgentTypesEnum> supportedAgentTypes"));
-        assertThat(model, containsString("public enum SupportedAgentTypesEnum"));
-        assertThat(model, not(containsString("public enum List&lt;SupportedAgentTypesEnum&gt;")));
+        assertThat(model, containsString("private List<ValuesEnum> values"));
+        assertThat(model, containsString("public enum ValuesEnum"));
+        assertThat(model, not(containsString("public enum List&lt;ValuesEnum&gt;")));
     }
 
     private static String read(Path file) throws IOException {

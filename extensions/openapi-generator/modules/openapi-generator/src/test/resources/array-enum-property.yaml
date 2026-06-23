@@ -3,36 +3,30 @@ info:
   title: Array Enum Property Repro
   version: 1.0.0
 paths:
-  /agentRuntimeDetails:
+  /sample:
     get:
-      operationId: getAgentRuntimeDetails
+      operationId: getSample
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentRuntimeDetails'
+                $ref: '#/components/schemas/SampleModel'
 components:
   schemas:
-    AgentRuntimeDetails:
+    SampleModel:
       type: object
       required:
-        - backend
-        - supportedAgentTypes
-        - placement
+        - values
       properties:
-        backend:
-          type: string
-        supportedAgentTypes:
-          description: Agent definition types this runtime can host.
+        values:
+          description: Sample enum values.
           type: array
           minItems: 1
           items:
             type: string
             enum:
-              - CONTAINERIZED_AGENT
-              - HARNESS_AGENT
-              - AGENT_SPEC_AGENT
-        placement:
-          type: string
+              - FIRST
+              - SECOND
+              - THIRD
