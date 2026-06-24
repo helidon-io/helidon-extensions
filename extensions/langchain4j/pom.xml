@@ -55,6 +55,11 @@
         <version.lib.langchain4j-community>1.12.1-beta21</version.lib.langchain4j-community>
         <version.lib.coherence>25.03.1</version.lib.coherence>
         <langchain4j.extension.version>${project.version}</langchain4j.extension.version>
+        <!-- Force upgrade for dependency convergence -->
+        <version.lib.kotlin>1.9.10</version.lib.kotlin>
+        <!-- Force upgrade for dependency convergence -->
+        <version.lib.okhttp3>4.12.0</version.lib.okhttp3>
+
         <!--
         Align with oci extension
         -->
@@ -63,6 +68,18 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <!-- Force upgrade for dependency convergence -->
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-stdlib-jdk8</artifactId>
+                <version>${version.lib.kotlin}</version>
+            </dependency>
+            <dependency>
+                <!-- Force upgrade for dependency convergence -->
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>okhttp</artifactId>
+                <version>${version.lib.okhttp3}</version>
+            </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.langchain4j</groupId>
                 <artifactId>helidon-extensions-langchain4j-bom</artifactId>
