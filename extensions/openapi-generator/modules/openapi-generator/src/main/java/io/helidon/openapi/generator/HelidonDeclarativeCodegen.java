@@ -836,6 +836,14 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 List<CodegenProperty> renderVars = renderVars(model);
 
                 for (CodegenProperty prop : renderVars) {
+                    if (prop.isEnum) {
+                        String enumName = prop.isArray && prop.items != null && prop.items.datatypeWithEnum != null
+                                ? prop.items.datatypeWithEnum : prop.datatypeWithEnum;
+                        if (enumName != null && !enumName.isBlank()) {
+                            prop.vendorExtensions.put("x-enum-name", enumName);
+                        }
+                    }
+
                     // Mark required properties for @Json.Required
                     if (prop.required) {
                         prop.vendorExtensions.put("x-json-required", Boolean.TRUE);
