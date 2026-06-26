@@ -42,12 +42,12 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
 
     private final Class<T> payloadType;
     private final List<Stream<?>> inputs;
-    private final List<Consumer<Message<?>>> outputs;
+    private final List<Consumer<List<Message<?>>>> outputs;
     private final AtomicBoolean started = new AtomicBoolean();
 
     private DefaultMessagingChannel(Class<T> payloadType,
                                     List<Stream<?>> inputs,
-                                    List<Consumer<Message<?>>> outputs) {
+                                    List<Consumer<List<Message<?>>>> outputs) {
         this.payloadType = payloadType;
         this.inputs = List.copyOf(inputs);
         this.outputs = new CopyOnWriteArrayList<>(outputs);
@@ -60,7 +60,12 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
 
     @Override
     public void emit(Message<T> message) {
-        emitObject(message);
+        emitBatch(List.of(message));
+    }
+
+    @Override
+    public void emitBatch(List<Message<T>> messages) {
+        emitBatchObject(messages);
     }
 
     @Override
@@ -74,17 +79,30 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
     }
 
     void addOutput(Consumer<Message<?>> output) {
+        outputs.add(messages -> messages.forEach(output));
+    }
+
+    void addBatchOutput(Consumer<List<Message<?>>> output) {
         outputs.add(output);
     }
 
     void addOutgoingConnector(ConnectorSink output) {
-        outputs.add(message -> send(output, message));
+        outputs.add(messages -> send(output, messages));
     }
 
     void emitObject(Object value) {
         Message<T> message = toMessage(value);
-        for (Consumer<Message<?>> output : outputs) {
-            output.accept(message);
+        emitBatch(List.of(message));
+    }
+
+    void emitBatchObject(List<? extends Message<?>> messages) {
+        Objects.requireNonNull(messages);
+        if (messages.isEmpty()) {
+            return;
+        }
+        List<Message<?>> batch = toBatch(messages);
+        for (Consumer<List<Message<?>>> output : outputs) {
+            output.accept(batch);
         }
     }
 
@@ -113,7 +131,7 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
     static final class Builder<T> implements MessagingChannel.Builder<T> {
         private final List<Stream<?>> inputs = new ArrayList<>();
         private final List<MessagingChannel<?>> inputChannels = new ArrayList<>();
-        private final List<Consumer<Message<?>>> outputs = new ArrayList<>();
+        private final List<Consumer<List<Message<?>>>> outputs = new ArrayList<>();
         private Class<T> payloadType;
 
         @Override
@@ -136,13 +154,19 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
 
         @Override
         public MessagingChannel.Builder<T> addOutput(Consumer<Message<T>> output) {
-            outputs.add(message -> output.accept(cast(message)));
+            outputs.add(messages -> messages.forEach(message -> output.accept(cast(message))));
+            return this;
+        }
+
+        @Override
+        public MessagingChannel.Builder<T> addBatchOutput(Consumer<List<Message<T>>> output) {
+            outputs.add(messages -> output.accept(castBatch(messages)));
             return this;
         }
 
         @Override
         public MessagingChannel.Builder<T> addOutgoingConnector(ConnectorSink output) {
-            outputs.add(message -> DefaultMessagingChannel.send(output, message));
+            outputs.add(messages -> DefaultMessagingChannel.send(output, messages));
             return this;
         }
 
@@ -157,7 +181,7 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
                     throw new IllegalArgumentException("Unsupported channel implementation "
                                                                + inputChannel.getClass().getName());
                 }
-                defaultInputChannel.addOutput(channel::emitObject);
+                defaultInputChannel.addBatchOutput(channel::emitBatchObject);
             }
             return channel;
         }
@@ -167,15 +191,23 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
             return (Message<T>) message;
         }
 
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        private List<Message<T>> castBatch(List<Message<?>> messages) {
+            return (List) messages;
+        }
+
     }
 
-    private static void send(ConnectorSink output, Message<?> message) {
-        try {
-            output.send(message);
-        } catch (RuntimeException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new MessagingException("Outgoing connector failed", e);
+    private List<Message<?>> toBatch(List<? extends Message<?>> messages) {
+        List<Message<?>> batch = new ArrayList<>(messages.size());
+        for (Message<?> message : messages) {
+            batch.add(toMessage(Objects.requireNonNull(message)));
         }
+        return List.copyOf(batch);
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static void send(ConnectorSink output, List<Message<?>> messages) {
+        output.sendBatch((List) messages);
     }
 }

@@ -16,6 +16,8 @@
 
 package io.helidon.extensions.messaging;
 
+import java.util.List;
+
 /**
  * Outgoing connector sink.
  */
@@ -25,9 +27,8 @@ public interface ConnectorSink {
      *
      * @param entity payload
      * @param <T> payload type
-     * @throws Exception if the message cannot be sent
      */
-    default <T> void send(T entity) throws Exception {
+    default <T> void send(T entity) {
         send(Message.create(entity));
     }
 
@@ -36,7 +37,18 @@ public interface ConnectorSink {
      *
      * @param message message
      * @param <T> payload type
-     * @throws Exception if the message cannot be sent
      */
-    <T> void send(Message<T> message) throws Exception;
+    <T> void send(Message<T> message);
+
+    /**
+     * Send a batch of messages to the connector target.
+     *
+     * @param messages messages
+     * @param <T> payload type
+     */
+    default <T> void sendBatch(List<Message<T>> messages) {
+        for (Message<T> message : messages) {
+            send(message);
+        }
+    }
 }

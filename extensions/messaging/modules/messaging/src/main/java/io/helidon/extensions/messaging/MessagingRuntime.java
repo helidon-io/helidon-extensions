@@ -16,6 +16,8 @@
 
 package io.helidon.extensions.messaging;
 
+import java.util.List;
+
 import io.helidon.common.Api;
 import io.helidon.service.registry.Service;
 
@@ -33,4 +35,13 @@ public interface MessagingRuntime {
      * @param <T> payload type
      */
     <T> void emit(String channel, Message<T> message);
+
+    /**
+     * Emit a batch of messages to a named channel.
+     *
+     * @param channel channel name
+     * @param messages messages
+     * @param <T> payload type
+     */
+    <T> void emitBatch(String channel, List<Message<T>> messages);
 }

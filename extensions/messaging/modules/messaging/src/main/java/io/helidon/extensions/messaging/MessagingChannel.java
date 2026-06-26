@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.messaging;
 
+import java.util.List;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -48,6 +49,13 @@ public interface MessagingChannel<T> {
      * @param message message
      */
     void emit(Message<T> message);
+
+    /**
+     * Emit a batch of messages to all channel outputs.
+     *
+     * @param messages messages
+     */
+    void emitBatch(List<Message<T>> messages);
 
     /**
      * Start this channel's lifecycle inputs.
@@ -93,6 +101,14 @@ public interface MessagingChannel<T> {
          * @return updated builder
          */
         Builder<T> addOutput(Consumer<Message<T>> output);
+
+        /**
+         * Add a batch output consumer.
+         *
+         * @param output output consumer
+         * @return updated builder
+         */
+        Builder<T> addBatchOutput(Consumer<List<Message<T>>> output);
 
         /**
          * Add an outgoing connector as an output.

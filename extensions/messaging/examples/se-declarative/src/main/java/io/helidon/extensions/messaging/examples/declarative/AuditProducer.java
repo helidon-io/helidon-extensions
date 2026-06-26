@@ -16,7 +16,10 @@
 
 package io.helidon.extensions.messaging.examples.declarative;
 
+import java.util.List;
+
 import io.helidon.extensions.messaging.Emitter;
+import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.Messaging;
 import io.helidon.service.registry.Service;
 
@@ -32,13 +35,17 @@ class AuditProducer {
 
     @Service.PostConstruct
     void publishSampleEvents() {
-        audit("user-created", "example");
-        audit("invoice-paid", "example");
+        audit.emitBatch(List.of(auditEvent("user-created", "example"),
+                                auditEvent("invoice-paid", "example")));
     }
 
     void audit(String event, String actor) {
-        audit.emit(Messaging.message(event)
-                           .header("actor", actor)
-                           .build());
+        audit.emit(auditEvent(event, actor));
+    }
+
+    private Message<String> auditEvent(String event, String actor) {
+        return Messaging.message(event)
+                .header("actor", actor)
+                .build();
     }
 }

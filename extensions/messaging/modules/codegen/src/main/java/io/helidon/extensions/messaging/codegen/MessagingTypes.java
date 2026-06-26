@@ -17,6 +17,7 @@
 package io.helidon.extensions.messaging.codegen;
 
 import io.helidon.common.types.TypeName;
+import io.helidon.common.types.TypeNames;
 
 final class MessagingTypes {
     static final TypeName CONSUMER_REGISTRATION =
@@ -25,6 +26,7 @@ final class MessagingTypes {
     static final TypeName ENTITY = TypeName.create("io.helidon.extensions.messaging.Messaging.Entity");
     static final TypeName HEADER_PARAM =
             TypeName.create("io.helidon.extensions.messaging.Messaging.HeaderParam");
+    static final TypeName LIST = TypeNames.LIST;
     static final TypeName MESSAGE = TypeName.create("io.helidon.extensions.messaging.Message");
     static final TypeName MESSAGING_RUNTIME = TypeName.create("io.helidon.extensions.messaging.MessagingRuntime");
     static final TypeName ON_MESSAGE = TypeName.create("io.helidon.extensions.messaging.Messaging.OnMessage");
