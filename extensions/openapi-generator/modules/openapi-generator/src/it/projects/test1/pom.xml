@@ -21,7 +21,7 @@
 
     <groupId>io.helidon.extensions.openapi-generator.it</groupId>
     <artifactId>maven-harnesses</artifactId>
-    <version>@project.version@</version>
+    <version>4.0.0-RC3-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>OpenAPI Generator Maven Harnesses</name>

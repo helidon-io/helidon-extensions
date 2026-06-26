@@ -22,7 +22,7 @@
     <parent>
         <groupId>io.helidon.extensions.openapi-generator.it</groupId>
         <artifactId>maven-harnesses</artifactId>
-        <version>@project.version@</version>
+        <version>4.0.0-RC3-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
