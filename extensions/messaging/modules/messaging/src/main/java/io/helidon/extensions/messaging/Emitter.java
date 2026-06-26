@@ -16,6 +16,8 @@
 
 package io.helidon.extensions.messaging;
 
+import java.util.List;
+
 import io.helidon.service.registry.Service;
 
 /**
@@ -38,4 +40,15 @@ public interface Emitter<T> {
      * @param message message
      */
     void emit(Message<T> message);
+
+    /**
+     * Emit a batch of messages.
+     *
+     * @param messages messages
+     */
+    default void emitBatch(List<Message<T>> messages) {
+        for (Message<T> message : messages) {
+            emit(message);
+        }
+    }
 }

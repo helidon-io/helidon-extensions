@@ -71,11 +71,23 @@ class ChannelRegistry implements MessagingRuntime {
      */
     @Override
     public <T> void emit(String channel, Message<T> message) {
+        emitBatch(channel, List.of(message));
+    }
+
+    /**
+     * Emit a batch of messages to a named channel.
+     *
+     * @param channel channel name
+     * @param messages messages
+     * @param <T> payload type
+     */
+    @Override
+    public <T> void emitBatch(String channel, List<Message<T>> messages) {
         MessagingChannel<?> messagingChannel = channels.get(channel);
         if (messagingChannel == null) {
             return;
         }
-        emit(messagingChannel, message);
+        emitBatch(messagingChannel, messages);
     }
 
     /**
@@ -132,10 +144,17 @@ class ChannelRegistry implements MessagingRuntime {
         MessagingChannel.Builder<Object> builder = MessagingChannel.<Object>builder()
                 .payloadType(payloadType);
         for (ConsumerRegistration consumer : consumerRegistrations) {
-            builder.addOutput(message -> {
-                validatePayloadType(consumer, message);
-                consumer.dispatch(message);
-            });
+            if (consumer.batch()) {
+                builder.addBatchOutput(messages -> {
+                    validatePayloadTypes(consumer, messages);
+                    dispatchBatch(consumer, messages);
+                });
+            } else {
+                builder.addOutput(message -> {
+                    validatePayloadType(consumer, message);
+                    consumer.dispatch(message);
+                });
+            }
         }
         return builder.build();
     }
@@ -144,9 +163,9 @@ class ChannelRegistry implements MessagingRuntime {
         return MessagingChannel.builder().build();
     }
 
-    @SuppressWarnings("unchecked")
-    private <T> void emit(MessagingChannel<?> messagingChannel, Message<T> message) {
-        ((MessagingChannel<T>) messagingChannel).emit(message);
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private <T> void emitBatch(MessagingChannel<?> messagingChannel, List<Message<T>> messages) {
+        ((MessagingChannel) messagingChannel).emitBatch(messages);
     }
 
     private Class<?> payloadType(String channel, List<ConsumerRegistration> consumerRegistrations) {
@@ -171,6 +190,17 @@ class ChannelRegistry implements MessagingRuntime {
                                                        + consumer.payloadType().getName()
                                                        + " but received " + entity.getClass().getName());
         }
+    }
+
+    private void validatePayloadTypes(ConsumerRegistration consumer, List<? extends Message<?>> messages) {
+        for (Message<?> message : messages) {
+            validatePayloadType(consumer, message);
+        }
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void dispatchBatch(ConsumerRegistration consumer, List<? extends Message<?>> messages) {
+        consumer.dispatchBatch((List) messages);
     }
 
     private void configureOutgoingConnectors(Config root, List<OutgoingConnector<?>> outgoingConnectors) {
@@ -366,6 +396,11 @@ class ChannelRegistry implements MessagingRuntime {
         @Override
         public <T> void emit(Message<T> message) {
             ChannelRegistry.this.emit(channel, message);
+        }
+
+        @Override
+        public <T> void emitBatch(List<Message<T>> messages) {
+            ChannelRegistry.this.emitBatch(channel, messages);
         }
     }
 }

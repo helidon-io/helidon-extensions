@@ -31,8 +31,8 @@ class AuditConsumer {
     private final List<Message<String>> messages = new CopyOnWriteArrayList<>();
 
     @Messaging.OnMessage(Main.AUDIT_CHANNEL)
-    void consume(Message<String> message) {
-        messages.add(message);
+    void consume(List<Message<String>> batch) {
+        messages.addAll(batch);
     }
 
     List<Message<String>> messages() {

@@ -145,6 +145,18 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                     .addContentLiteral(channel)
                     .addContentLine(", message);"));
 
+            classModel.addMethod(method -> method
+                    .addAnnotation(Annotations.OVERRIDE)
+                    .accessModifier(AccessModifier.PUBLIC)
+                    .returnType(TypeName.create(void.class))
+                    .name("emitBatch")
+                    .addParameter(messages -> messages
+                            .type(messageListType(payloadType))
+                            .name("messages"))
+                    .addContent("registry.emitBatch(")
+                    .addContentLiteral(channel)
+                    .addContentLine(", messages);"));
+
             roundContext.addGeneratedType(generatedType, classModel, serviceInfo.typeName(), serviceInfo);
         }
 
@@ -159,6 +171,12 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
             return TypeName.builder()
                     .from(MessagingTypes.MESSAGE)
                     .addTypeArgument(payloadType)
+                    .build();
+        }
+
+        private TypeName messageListType(TypeName payloadType) {
+            return TypeName.builder(MessagingTypes.LIST)
+                    .addTypeArgument(messageType(payloadType))
                     .build();
         }
 

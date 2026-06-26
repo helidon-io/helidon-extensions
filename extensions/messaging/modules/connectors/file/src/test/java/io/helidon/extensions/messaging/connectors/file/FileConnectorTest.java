@@ -19,6 +19,7 @@ package io.helidon.extensions.messaging.connectors.file;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import io.helidon.config.Config;
@@ -69,7 +70,7 @@ class FileConnectorTest {
     }
 
     @Test
-    void testDefaultLineSeparatorWritesOneMessagePerLine(@TempDir Path tempDir) throws Exception {
+    void testDefaultLineSeparatorWritesOneMessagePerLine(@TempDir Path tempDir) throws IOException {
         Path auditLog = tempDir.resolve("audit.log");
         var sink = new FileOutgoingConnector().createSink(config(auditLog));
 
@@ -80,7 +81,7 @@ class FileConnectorTest {
     }
 
     @Test
-    void testCustomLineSeparator(@TempDir Path tempDir) throws Exception {
+    void testCustomLineSeparator(@TempDir Path tempDir) throws IOException {
         Path auditLog = tempDir.resolve("audit.log");
         var sink = new FileOutgoingConnector().createSink(config(auditLog, "|"));
 
@@ -91,7 +92,18 @@ class FileConnectorTest {
     }
 
     @Test
-    void testParentDirectoriesAreCreated(@TempDir Path tempDir) throws Exception {
+    void testBatchWritesMessagesInOneConnectorCall(@TempDir Path tempDir) throws IOException {
+        Path auditLog = tempDir.resolve("audit.log");
+        var sink = new FileOutgoingConnector().createSink(config(auditLog, "|"));
+
+        sink.sendBatch(List.of(Message.create("first audit event"),
+                               Message.create("second audit event")));
+
+        assertThat(Files.readString(auditLog), is("first audit event|second audit event|"));
+    }
+
+    @Test
+    void testParentDirectoriesAreCreated(@TempDir Path tempDir) throws IOException {
         Path auditLog = tempDir.resolve("logs").resolve("audit.log");
 
         new FileOutgoingConnector().createSink(config(auditLog))
@@ -113,6 +125,23 @@ class FileConnectorTest {
         channel.emit(Message.builder("second audit event")
                              .header("key", "value")
                              .build());
+
+        assertThat(Files.readString(auditLog), is("first audit event|second audit event|"));
+    }
+
+    @Test
+    void testFileConnectorCanBeUsedAsChannelBatchOutput(@TempDir Path tempDir) throws IOException {
+        Path auditLog = tempDir.resolve("audit.log");
+
+        MessagingChannel<String> channel = MessagingChannel.<String>builder()
+                .payloadType(String.class)
+                .addOutgoingConnector(new FileOutgoingConnector().createSink(config(auditLog, "|")))
+                .build();
+
+        channel.emitBatch(List.of(Message.create("first audit event"),
+                                  Message.builder("second audit event")
+                                          .header("key", "value")
+                                          .build()));
 
         assertThat(Files.readString(auditLog), is("first audit event|second audit event|"));
     }

@@ -16,6 +16,8 @@
 
 package io.helidon.extensions.messaging;
 
+import java.util.List;
+
 import io.helidon.service.registry.Service;
 
 /**
@@ -38,9 +40,29 @@ public interface ConsumerRegistration {
     Class<?> payloadType();
 
     /**
+     * Whether this registration consumes message batches.
+     *
+     * @return {@code true} for batch consumers
+     */
+    default boolean batch() {
+        return false;
+    }
+
+    /**
      * Dispatch the message to the generated consumer invoker.
      *
      * @param message message to dispatch
      */
     void dispatch(Message<?> message);
+
+    /**
+     * Dispatch a batch to the generated consumer invoker.
+     *
+     * @param messages messages to dispatch
+     */
+    default void dispatchBatch(List<Message<?>> messages) {
+        for (Message<?> message : messages) {
+            dispatch(message);
+        }
+    }
 }

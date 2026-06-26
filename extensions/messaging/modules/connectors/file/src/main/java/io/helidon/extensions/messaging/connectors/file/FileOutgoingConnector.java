@@ -20,9 +20,11 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.List;
 
 import io.helidon.extensions.messaging.ConnectorSink;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.OutgoingConnector;
 import io.helidon.service.registry.Service;
 
@@ -48,15 +50,36 @@ public class FileOutgoingConnector implements OutgoingConnector<FileConnectorCon
 
     private record FileSink(FileConnectorConfig config) implements ConnectorSink {
         @Override
-        public <T> void send(Message<T> message) throws IOException {
-            Path parent = config.path().getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
+        public <T> void send(Message<T> message) {
+            write(String.valueOf(message.entity()) + config.lineSeparator());
+        }
+
+        @Override
+        public <T> void sendBatch(List<Message<T>> messages) {
+            if (messages.isEmpty()) {
+                return;
             }
-            Files.writeString(config.path(),
-                              String.valueOf(message.entity()) + config.lineSeparator(),
-                              StandardOpenOption.CREATE,
-                              StandardOpenOption.APPEND);
+            StringBuilder content = new StringBuilder();
+            for (Message<T> message : messages) {
+                content.append(message.entity())
+                        .append(config.lineSeparator());
+            }
+            write(content.toString());
+        }
+
+        private void write(String content) {
+            Path parent = config.path().getParent();
+            try {
+                if (parent != null) {
+                    Files.createDirectories(parent);
+                }
+                Files.writeString(config.path(),
+                                  content,
+                                  StandardOpenOption.CREATE,
+                                  StandardOpenOption.APPEND);
+            } catch (IOException e) {
+                throw new MessagingException("File outgoing connector failed", e);
+            }
         }
     }
 }

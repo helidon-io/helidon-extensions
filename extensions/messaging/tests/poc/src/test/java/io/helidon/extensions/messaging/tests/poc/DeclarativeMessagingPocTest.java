@@ -29,6 +29,7 @@ import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingChannel;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.MessagingRuntime;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.BatchChannelOneConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ChannelTwoConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.FirstChannelOneConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.Producer;
@@ -124,19 +125,55 @@ class DeclarativeMessagingPocTest {
     }
 
     @Test
+    void testImperativeChannelPreservesBatchForBatchOutputsAndConnectors() {
+        List<List<Message<String>>> batches = new CopyOnWriteArrayList<>();
+        List<List<String>> connectorBatches = new CopyOnWriteArrayList<>();
+
+        MessagingChannel<String> channel = MessagingChannel.<String>builder()
+                .payloadType(String.class)
+                .addBatchOutput(batch -> batches.add(List.copyOf(batch)))
+                .addOutgoingConnector(new ConnectorSink() {
+                    @Override
+                    public <T> void send(Message<T> message) {
+                        throw new AssertionError("sendBatch should be used");
+                    }
+
+                    @Override
+                    public <T> void sendBatch(List<Message<T>> messages) {
+                        List<String> entities = new ArrayList<>();
+                        for (Message<T> message : messages) {
+                            entities.add(String.valueOf(message.entity()));
+                        }
+                        connectorBatches.add(entities);
+                    }
+                })
+                .build();
+
+        channel.emitBatch(List.of(Message.builder("first")
+                                          .header("source", "batch")
+                                          .build(),
+                                  Message.create("second")));
+
+        assertThat(batches, hasSize(1));
+        assertThat(batches.getFirst(), hasSize(2));
+        assertThat(batches.getFirst().getFirst().header("source").orElseThrow(), is("batch"));
+        assertThat(connectorBatches, is(List.of(List.of("first", "second"))));
+    }
+
+    @Test
     void testOutgoingConnectorFailureFailsChannelEmit() {
         MessagingChannel<String> channel = MessagingChannel.<String>builder()
                 .payloadType(String.class)
                 .addOutgoingConnector(new ConnectorSink() {
                     @Override
-                    public <T> void send(Message<T> message) throws Exception {
-                        throw new IOException("connector failed");
+                    public <T> void send(Message<T> message) {
+                        throw new MessagingException("connector failed", new IOException("I/O failed"));
                     }
                 })
                 .build();
 
         MessagingException thrown = assertThrows(MessagingException.class, () -> channel.emit("test message"));
-        assertThat(thrown.getCause().getMessage(), is("connector failed"));
+        assertThat(thrown.getCause().getMessage(), is("I/O failed"));
     }
 
     @Test
@@ -150,11 +187,39 @@ class DeclarativeMessagingPocTest {
 
         var firstConsumer = registry.get(FirstChannelOneConsumer.class);
         var secondConsumer = registry.get(SecondChannelOneConsumer.class);
+        var batchConsumer = registry.get(BatchChannelOneConsumer.class);
 
         assertThat(firstConsumer.messages(), hasSize(1));
         assertThat(firstConsumer.keys(), is(List.of("runtime")));
         assertThat(secondConsumer.messages(), hasSize(1));
         assertThat(secondConsumer.messages().getFirst().entity(), is("runtime message"));
+        assertThat(batchConsumer.batches(), hasSize(1));
+        assertThat(batchConsumer.batches().getFirst().getFirst().entity(), is("runtime message"));
+    }
+
+    @Test
+    void testRuntimeCanEmitBatchIntoNamedChannel() {
+        MessagingRuntime runtime = registry.get(MessagingRuntime.class);
+
+        runtime.emitBatch(ChannelMessagingTypes.CHANNEL_ONE,
+                          List.of(Message.builder("runtime batch first")
+                                          .header("key", "batch-1")
+                                          .build(),
+                                  Message.builder("runtime batch second")
+                                          .header("key", "batch-2")
+                                          .build()));
+
+        var firstConsumer = registry.get(FirstChannelOneConsumer.class);
+        var secondConsumer = registry.get(SecondChannelOneConsumer.class);
+        var batchConsumer = registry.get(BatchChannelOneConsumer.class);
+
+        assertThat(firstConsumer.messages(), hasSize(2));
+        assertThat(firstConsumer.keys(), is(List.of("batch-1", "batch-2")));
+        assertThat(secondConsumer.messages(), hasSize(2));
+        assertThat(batchConsumer.batches(), hasSize(1));
+        assertThat(batchConsumer.batches().getFirst(), hasSize(2));
+        assertThat(batchConsumer.batches().getFirst().get(0).entity(), is("runtime batch first"));
+        assertThat(batchConsumer.batches().getFirst().get(1).header("key").orElseThrow(), is("batch-2"));
     }
 
     @Test
@@ -165,11 +230,14 @@ class DeclarativeMessagingPocTest {
 
         var firstConsumer = registry.get(FirstChannelOneConsumer.class);
         var secondConsumer = registry.get(SecondChannelOneConsumer.class);
+        var batchConsumer = registry.get(BatchChannelOneConsumer.class);
         var channelTwoConsumer = registry.get(ChannelTwoConsumer.class);
 
         assertThat(firstConsumer.messages(), hasSize(1));
         assertThat(firstConsumer.keys(), is(List.of("value")));
         assertThat(secondConsumer.messages(), hasSize(1));
+        assertThat(batchConsumer.batches(), hasSize(1));
+        assertThat(batchConsumer.batches().getFirst(), hasSize(1));
         assertThat(channelTwoConsumer.messages(), empty());
 
         Message<String> firstMessage = firstConsumer.messages().getFirst();
@@ -178,6 +246,25 @@ class DeclarativeMessagingPocTest {
         assertThat(secondMessage.entity(), is("test message 1"));
         assertThat(firstMessage.header("key").orElseThrow(), is("value"));
         assertThat(secondMessage.header("key").orElseThrow(), is("value"));
+    }
+
+    @Test
+    void testNamedEmitterPreservesBatch() {
+        var producer = registry.get(Producer.class);
+
+        producer.emitChannelOneBatch("emitter batch first", "emitter batch second");
+
+        var firstConsumer = registry.get(FirstChannelOneConsumer.class);
+        var secondConsumer = registry.get(SecondChannelOneConsumer.class);
+        var batchConsumer = registry.get(BatchChannelOneConsumer.class);
+
+        assertThat(firstConsumer.messages(), hasSize(2));
+        assertThat(firstConsumer.keys(), is(List.of("batch-first", "batch-second")));
+        assertThat(secondConsumer.messages(), hasSize(2));
+        assertThat(batchConsumer.batches(), hasSize(1));
+        assertThat(batchConsumer.batches().getFirst(), hasSize(2));
+        assertThat(batchConsumer.batches().getFirst().get(0).entity(), is("emitter batch first"));
+        assertThat(batchConsumer.batches().getFirst().get(1).entity(), is("emitter batch second"));
     }
 
     @Test
@@ -191,11 +278,13 @@ class DeclarativeMessagingPocTest {
 
         var firstConsumer = registry.get(FirstChannelOneConsumer.class);
         var secondConsumer = registry.get(SecondChannelOneConsumer.class);
+        var batchConsumer = registry.get(BatchChannelOneConsumer.class);
         var channelTwoConsumer = registry.get(ChannelTwoConsumer.class);
 
         assertThat(firstConsumer.messages(), hasSize(1));
         assertThat(firstConsumer.keys(), is(List.of("connector")));
         assertThat(secondConsumer.messages(), hasSize(1));
+        assertThat(batchConsumer.batches(), hasSize(1));
         assertThat(channelTwoConsumer.messages(), empty());
         assertThat(firstConsumer.messages().getFirst().entity(), is("connector message"));
         assertThat(secondConsumer.messages().getFirst().header("key").orElseThrow(), is("connector"));
@@ -209,10 +298,12 @@ class DeclarativeMessagingPocTest {
 
         var firstConsumer = registry.get(FirstChannelOneConsumer.class);
         var secondConsumer = registry.get(SecondChannelOneConsumer.class);
+        var batchConsumer = registry.get(BatchChannelOneConsumer.class);
         var channelTwoConsumer = registry.get(ChannelTwoConsumer.class);
 
         assertThat(firstConsumer.messages(), empty());
         assertThat(secondConsumer.messages(), empty());
+        assertThat(batchConsumer.batches(), empty());
         assertThat(channelTwoConsumer.messages(), hasSize(1));
 
         Message<String> message = channelTwoConsumer.messages().getFirst();

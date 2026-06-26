@@ -16,6 +16,8 @@
 
 package io.helidon.extensions.messaging;
 
+import java.util.List;
+
 /**
  * Runtime context exposed to incoming connector sources.
  */
@@ -44,4 +46,16 @@ public interface ConnectorSourceContext {
      * @param <T> payload type
      */
     <T> void emit(Message<T> message);
+
+    /**
+     * Emit a batch of messages into the channel.
+     *
+     * @param messages messages
+     * @param <T> payload type
+     */
+    default <T> void emitBatch(List<Message<T>> messages) {
+        for (Message<T> message : messages) {
+            emit(message);
+        }
+    }
 }

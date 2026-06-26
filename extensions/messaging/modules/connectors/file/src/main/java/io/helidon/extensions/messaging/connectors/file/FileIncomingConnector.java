@@ -21,12 +21,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.helidon.extensions.messaging.ConnectorSource;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.IncomingConnector;
+import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.service.registry.Service;
 
@@ -101,11 +104,15 @@ public class FileIncomingConnector implements IncomingConnector<FileConnectorCon
             }
             String added = content.substring(offset);
             String lineSeparator = config.lineSeparator();
+            List<Message<String>> messages = new ArrayList<>();
             int index;
             while ((index = added.indexOf(lineSeparator)) >= 0) {
-                context.emit(added.substring(0, index));
+                messages.add(Message.create(added.substring(0, index)));
                 added = added.substring(index + lineSeparator.length());
                 offset += index + lineSeparator.length();
+            }
+            if (!messages.isEmpty()) {
+                context.emitBatch(messages);
             }
             return offset;
         }

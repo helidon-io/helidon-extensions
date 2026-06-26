@@ -47,6 +47,15 @@ class ChannelMessagingTypes {
                                     .build());
         }
 
+        void emitChannelOneBatch(String first, String second) {
+            channelOne.emitBatch(List.of(Messaging.message(first)
+                                                 .header("key", "batch-first")
+                                                 .build(),
+                                         Messaging.message(second)
+                                                 .header("key", "batch-second")
+                                                 .build()));
+        }
+
         void emitChannelTwo(String entity) {
             channelTwo.emit(entity);
         }
@@ -80,6 +89,20 @@ class ChannelMessagingTypes {
         @Messaging.OnMessage(CHANNEL_ONE)
         void consume(Message<String> message) {
             messages().add(message);
+        }
+    }
+
+    @Service.Singleton
+    static class BatchChannelOneConsumer {
+        private final List<List<Message<String>>> batches = new CopyOnWriteArrayList<>();
+
+        @Messaging.OnMessage(CHANNEL_ONE)
+        void consume(List<Message<String>> batch) {
+            batches.add(List.copyOf(batch));
+        }
+
+        List<List<Message<String>>> batches() {
+            return batches;
         }
     }
 
