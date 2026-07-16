@@ -19,6 +19,7 @@ package io.helidon.extensions.hashicorp.vault.auths.token;
 import java.lang.System.Logger.Level;
 import java.util.Optional;
 
+import io.helidon.common.Api;
 import io.helidon.common.Weight;
 import io.helidon.common.Weighted;
 import io.helidon.config.Config;
@@ -43,8 +44,9 @@ public class TokenVaultAuth implements VaultAuth {
     private final String baseNamespace;
 
     /**
-     * Required for service loader.
+     * Required public constructor for {@link java.util.ServiceLoader}.
      */
+    @Api.Internal
     public TokenVaultAuth() {
         this.token = null;
         this.baseNamespace = null;

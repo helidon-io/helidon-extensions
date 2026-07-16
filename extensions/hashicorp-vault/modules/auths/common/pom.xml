@@ -35,6 +35,11 @@
             <groupId>io.helidon.extensions.hashicorp.vault</groupId>
             <artifactId>helidon-extensions-hashicorp-vault</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.helidon.common</groupId>
+            <artifactId>helidon-common</artifactId>
+            <optional>true</optional>
+        </dependency>
 
         <dependency>
             <groupId>org.junit.jupiter</groupId>

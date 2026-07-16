@@ -30,6 +30,7 @@ module io.helidon.extensions.hashicorp.vault.auths.token {
     requires io.helidon.extensions.hashicorp.vault.auths.common;
     requires io.helidon.webclient;
 
+    requires static io.helidon.common;
     requires static io.helidon.common.features.api;
 
     requires transitive io.helidon.extensions.hashicorp.vault;

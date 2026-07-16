@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.oci.v3.tls.certificates;
 
+import io.helidon.common.Api;
 import io.helidon.common.tls.TlsManager;
 import io.helidon.common.tls.spi.TlsManagerProvider;
 import io.helidon.config.Config;
@@ -26,10 +27,9 @@ import io.helidon.config.Config;
 public class DefaultOciCertificatesTlsManagerProvider implements TlsManagerProvider {
 
     /**
-     * Service loader based constructor.
-     *
-     * @deprecated this is a Java ServiceLoader implementation and the constructor should not be used directly
+     * Required public constructor for {@link java.util.ServiceLoader}.
      */
+    @Api.Internal
     public DefaultOciCertificatesTlsManagerProvider() {
     }
 

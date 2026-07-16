@@ -21,6 +21,7 @@ import java.util.Set;
 import io.helidon.codegen.CodegenContext;
 import io.helidon.codegen.spi.CodegenExtension;
 import io.helidon.codegen.spi.CodegenExtensionProvider;
+import io.helidon.common.Api;
 import io.helidon.common.Weight;
 import io.helidon.common.Weighted;
 import io.helidon.common.types.TypeName;
@@ -36,8 +37,9 @@ import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.MODEL_CUS
 public class ModelFactoryCodegenProvider implements CodegenExtensionProvider {
 
     /**
-     * Public no-arg constructor required by {@link java.util.ServiceLoader}.
+     * Required public constructor for {@link java.util.ServiceLoader}.
      */
+    @Api.Internal
     public ModelFactoryCodegenProvider() {
     }
 

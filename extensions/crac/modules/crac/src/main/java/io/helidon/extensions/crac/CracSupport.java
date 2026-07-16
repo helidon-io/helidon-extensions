@@ -19,6 +19,7 @@ package io.helidon.extensions.crac;
 import java.util.Map;
 import java.util.WeakHashMap;
 
+import io.helidon.common.Api;
 import io.helidon.common.resumable.Resumable;
 import io.helidon.common.resumable.ResumableSupport;
 
@@ -36,8 +37,9 @@ public class CracSupport implements ResumableSupport {
     private static final Map<Resumable, Resource> REFERENCES = new WeakHashMap<>();
 
     /**
-     * Constructor required by Java {@link java.util.ServiceLoader}.
+     * Required public constructor for {@link java.util.ServiceLoader}.
      */
+    @Api.Internal
     public CracSupport() {
     }
 

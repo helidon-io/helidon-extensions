@@ -18,6 +18,7 @@ package io.helidon.extensions.hashicorp.vault.auths.common;
 
 import java.util.Optional;
 
+import io.helidon.common.Api;
 import io.helidon.common.Weight;
 import io.helidon.config.Config;
 import io.helidon.extensions.hashicorp.vault.VaultConfig;
@@ -34,8 +35,9 @@ public class NoVaultAuth implements VaultAuth {
     private static final HeaderName VAULT_NAMESPACE_HEADER_NAME = HeaderNames.create("X-Vault-Namespace");
 
     /**
-     * Required for service loader.
+     * Required public constructor for {@link java.util.ServiceLoader}.
      */
+    @Api.Internal
     public NoVaultAuth() {
     }
 

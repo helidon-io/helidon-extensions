@@ -26,6 +26,7 @@ import io.helidon.common.features.api.HelidonFlavor;
 @Features.Path({"HCP Vault", "Secrets", "K/V 1"})
 module io.helidon.extensions.hashicorp.vault.secrets.kvone {
 
+    requires static io.helidon.common;
     requires static io.helidon.common.features.api;
 
     requires transitive io.helidon.extensions.hashicorp.vault;

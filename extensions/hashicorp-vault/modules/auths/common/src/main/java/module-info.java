@@ -19,6 +19,8 @@
  */
 module io.helidon.extensions.hashicorp.vault.auths.common {
 
+    requires static io.helidon.common;
+
     requires io.helidon.http;
     requires io.helidon.webclient;
     requires io.helidon.json;
