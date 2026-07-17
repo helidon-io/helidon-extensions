@@ -27,6 +27,7 @@ import io.helidon.common.features.api.HelidonFlavor;
 @Features.Path("CRaC")
 @Features.Since("4.2.0")
 module io.helidon.extensions.crac {
+    requires static io.helidon.common;
     requires static io.helidon.common.features.api; // @Feature
 
     requires transitive org.crac;

@@ -17,6 +17,7 @@ package io.helidon.extensions.oci.v3.secrets.configsource;
 
 import java.util.Set;
 
+import io.helidon.common.Api;
 import io.helidon.common.Weight;
 import io.helidon.config.AbstractConfigSource;
 import io.helidon.config.Config;
@@ -64,11 +65,9 @@ public final class OciSecretsConfigSourceProvider implements ConfigSourceProvide
     private static final Set<String> SUPPORTED_TYPES = Set.of("oci-secrets");
 
     /**
-     * Creates a new {@link OciSecretsConfigSourceProvider}.
-     *
-     * @deprecated For use by {@link java.util.ServiceLoader} only.
+     * Required public constructor for {@link java.util.ServiceLoader}.
      */
-    @Deprecated
+    @Api.Internal
     public OciSecretsConfigSourceProvider() {
     }
 

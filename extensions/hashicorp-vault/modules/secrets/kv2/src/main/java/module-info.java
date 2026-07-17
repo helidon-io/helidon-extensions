@@ -28,6 +28,7 @@ module io.helidon.extensions.hashicorp.vault.secrets.kv {
 
     requires io.helidon.http;
 
+    requires static io.helidon.common;
     requires static io.helidon.common.features.api;
 
     requires transitive io.helidon.extensions.hashicorp.vault;

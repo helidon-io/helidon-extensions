@@ -26,6 +26,7 @@ import io.helidon.common.features.api.HelidonFlavor;
 @Features.Path({"HCP Vault", "Secrets", "Cubbyhole"})
 module io.helidon.extensions.hashicorp.vault.secrets.cubbyhole {
 
+    requires static io.helidon.common;
     requires static io.helidon.common.features.api;
 
     requires transitive io.helidon.extensions.hashicorp.vault;

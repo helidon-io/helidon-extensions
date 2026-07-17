@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.hashicorp.vault.secrets.cubbyhole;
 
+import io.helidon.common.Api;
 import io.helidon.config.Config;
 import io.helidon.extensions.hashicorp.vault.Engine;
 import io.helidon.extensions.hashicorp.vault.rest.RestApi;
@@ -27,9 +28,9 @@ import io.helidon.extensions.hashicorp.vault.spi.SecretsEngineProvider;
 public class CubbyholeEngineProvider implements SecretsEngineProvider<CubbyholeSecrets> {
 
     /**
-     * @deprecated Do not use this constructor, this is a service loader service!
+     * Required by this service loader service.
      */
-    @Deprecated
+    @Api.Internal
     public CubbyholeEngineProvider() {
     }
 
