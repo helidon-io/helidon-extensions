@@ -42,6 +42,7 @@
     </properties>
 
     <modules>
+        <module>kafka</module>
         <module>poc</module>
     </modules>
 </project>
