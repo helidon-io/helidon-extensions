@@ -33,5 +33,6 @@
 
     <modules>
         <module>file</module>
+        <module>kafka</module>
     </modules>
 </project>
