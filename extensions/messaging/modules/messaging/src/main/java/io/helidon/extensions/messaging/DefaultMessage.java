@@ -14,12 +14,31 @@
  * limitations under the License.
  */
 
-/**
- * Declarative messaging API and in-memory POC runtime.
- * <p>
- * Message delivery uses a synchronous, at-least-once settlement contract. An emission returns only after every
- * required output completes successfully. Outputs are invoked sequentially and delivery fails immediately when an
- * output throws. Outputs completed before that failure are not rolled back, so retrying a failed emission can deliver
- * the same message to those outputs again. Applications and connectors must therefore tolerate duplicate delivery.
- */
 package io.helidon.extensions.messaging;
+
+import java.util.Map;
+
+/**
+ * Default immutable message implementation.
+ *
+ * @param <T> payload type
+ */
+final class DefaultMessage<T> implements Message<T> {
+    private final T entity;
+    private final Map<String, String> headers;
+
+    DefaultMessage(T entity, Map<String, String> headers) {
+        this.entity = entity;
+        this.headers = Map.copyOf(headers);
+    }
+
+    @Override
+    public T entity() {
+        return entity;
+    }
+
+    @Override
+    public Map<String, String> headers() {
+        return headers;
+    }
+}

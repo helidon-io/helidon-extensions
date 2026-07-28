@@ -18,6 +18,7 @@ package io.helidon.extensions.messaging;
 
 import java.util.List;
 
+import io.helidon.common.GenericType;
 import io.helidon.service.registry.Service;
 
 /**
@@ -40,6 +41,42 @@ public interface ConsumerRegistration {
     Class<?> payloadType();
 
     /**
+     * Expected payload type including generic arguments.
+     * <p>
+     * Generated registrations override this method to retain the complete declared payload type. The default keeps
+     * manually implemented registrations source-compatible and represents their raw {@link #payloadType()}.
+     *
+     * @return generic payload type
+     */
+    default GenericType<?> payloadGenericType() {
+        return GenericType.create(payloadType());
+    }
+
+    /**
+     * Expected message envelope raw type.
+     * <p>
+     * The default accepts any {@link Message} implementation. Generated registrations override this for consumer
+     * parameters that declare a more specific message subtype.
+     *
+     * @return message envelope raw type
+     */
+    default Class<?> envelopeType() {
+        return Message.class;
+    }
+
+    /**
+     * Expected message envelope type including generic arguments.
+     * <p>
+     * Generated registrations override this method to retain the complete declared envelope type. The default keeps
+     * manually implemented registrations source-compatible and represents their raw {@link #envelopeType()}.
+     *
+     * @return generic message envelope type
+     */
+    default GenericType<?> envelopeGenericType() {
+        return GenericType.create(envelopeType());
+    }
+
+    /**
      * Whether this registration consumes message batches.
      *
      * @return {@code true} for batch consumers
@@ -50,15 +87,22 @@ public interface ConsumerRegistration {
 
     /**
      * Dispatch the message to the generated consumer invoker.
+     * <p>
+     * A successful return means the consumer method completed. Consumer failures must be propagated with their causes
+     * preserved.
      *
      * @param message message to dispatch
+     * @throws RuntimeException if the consumer fails
      */
     void dispatch(Message<?> message);
 
     /**
      * Dispatch a batch to the generated consumer invoker.
+     * <p>
+     * The default implementation dispatches messages sequentially and stops at the first failure.
      *
      * @param messages messages to dispatch
+     * @throws RuntimeException if the consumer fails
      */
     default void dispatchBatch(List<Message<?>> messages) {
         for (Message<?> message : messages) {

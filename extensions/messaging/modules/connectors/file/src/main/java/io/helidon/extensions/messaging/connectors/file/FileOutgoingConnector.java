@@ -30,9 +30,20 @@ import io.helidon.service.registry.Service;
 
 /**
  * File outgoing connector.
+ * <p>
+ * A delivery completes successfully when the connector's {@code Files.writeString(...)} call returns without
+ * throwing.
  */
 @Service.Singleton
 public class FileOutgoingConnector implements OutgoingConnector<FileConnectorConfig> {
+    private static final Object[] WRITE_LOCKS = new Object[64];
+
+    static {
+        for (int i = 0; i < WRITE_LOCKS.length; i++) {
+            WRITE_LOCKS[i] = new Object();
+        }
+    }
+
     /**
      * Connector name used in messaging configuration.
      */
@@ -45,17 +56,19 @@ public class FileOutgoingConnector implements OutgoingConnector<FileConnectorCon
 
     @Override
     public ConnectorSink createSink(FileConnectorConfig config) {
-        return new FileSink(config);
+        Path path = config.path().toAbsolutePath().normalize();
+        Object writeLock = WRITE_LOCKS[Math.floorMod(path.hashCode(), WRITE_LOCKS.length)];
+        return new FileSink(config, path, writeLock);
     }
 
-    private record FileSink(FileConnectorConfig config) implements ConnectorSink {
+    private record FileSink(FileConnectorConfig config, Path path, Object writeLock) implements ConnectorSink {
         @Override
         public <T> void send(Message<T> message) {
             write(String.valueOf(message.entity()) + config.lineSeparator());
         }
 
         @Override
-        public <T> void sendBatch(List<Message<T>> messages) {
+        public <T> void sendBatch(List<? extends Message<T>> messages) {
             if (messages.isEmpty()) {
                 return;
             }
@@ -68,17 +81,19 @@ public class FileOutgoingConnector implements OutgoingConnector<FileConnectorCon
         }
 
         private void write(String content) {
-            Path parent = config.path().getParent();
-            try {
-                if (parent != null) {
-                    Files.createDirectories(parent);
+            synchronized (writeLock) {
+                Path parent = path.getParent();
+                try {
+                    if (parent != null) {
+                        Files.createDirectories(parent);
+                    }
+                    Files.writeString(path,
+                                      content,
+                                      StandardOpenOption.CREATE,
+                                      StandardOpenOption.APPEND);
+                } catch (IOException e) {
+                    throw new MessagingException("File outgoing connector failed", e);
                 }
-                Files.writeString(config.path(),
-                                  content,
-                                  StandardOpenOption.CREATE,
-                                  StandardOpenOption.APPEND);
-            } catch (IOException e) {
-                throw new MessagingException("File outgoing connector failed", e);
             }
         }
     }

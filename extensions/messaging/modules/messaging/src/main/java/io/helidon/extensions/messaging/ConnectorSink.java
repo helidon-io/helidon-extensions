@@ -19,14 +19,21 @@ package io.helidon.extensions.messaging;
 import java.util.List;
 
 /**
- * Outgoing connector sink.
+ * Synchronous outgoing connector sink.
+ * <p>
+ * Each implementation defines and documents its external send-completion point. A send method must not return before
+ * that success point is reached. It must throw if sending failed or its outcome is indeterminate, preserving the
+ * underlying cause when one is available.
  */
 public interface ConnectorSink {
     /**
      * Send a payload-only message.
+     * <p>
+     * A successful return means the connector-specific send-completion point was reached.
      *
      * @param entity payload
      * @param <T> payload type
+     * @throws RuntimeException if sending fails or its outcome is indeterminate
      */
     default <T> void send(T entity) {
         send(Message.create(entity));
@@ -34,19 +41,26 @@ public interface ConnectorSink {
 
     /**
      * Send a message to the connector target.
+     * <p>
+     * A successful return means the connector-specific send-completion point was reached.
      *
      * @param message message
      * @param <T> payload type
+     * @throws RuntimeException if sending fails or its outcome is indeterminate
      */
     <T> void send(Message<T> message);
 
     /**
      * Send a batch of messages to the connector target.
+     * <p>
+     * The default implementation sends messages sequentially and stops at the first failure. Messages sent before that
+     * failure are not rolled back and can be duplicated if the caller retries the batch.
      *
      * @param messages messages
      * @param <T> payload type
+     * @throws RuntimeException if sending fails or its outcome is indeterminate
      */
-    default <T> void sendBatch(List<Message<T>> messages) {
+    default <T> void sendBatch(List<? extends Message<T>> messages) {
         for (Message<T> message : messages) {
             send(message);
         }

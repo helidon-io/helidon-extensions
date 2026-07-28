@@ -22,26 +22,40 @@ import io.helidon.common.Api;
 import io.helidon.service.registry.Service;
 
 /**
- * Internal runtime contract used by generated messaging emitters.
+ * Internal synchronous runtime contract used by generated messaging emitters.
+ * <p>
+ * A successful emission returns only after all required outputs complete. Outputs are invoked sequentially and the
+ * first failure is propagated to the caller. Already completed outputs are not rolled back, so a retry can duplicate
+ * delivery.
  */
 @Api.Internal
 @Service.Contract
 public interface MessagingRuntime {
     /**
      * Emit a message to a named channel.
+     * <p>
+     * A successful return means all required outputs completed. Handler and connector failures are propagated to the
+     * caller with their causes preserved.
      *
      * @param channel channel name
      * @param message message
      * @param <T> payload type
+     * @throws MessagingException if the named channel does not exist
+     * @throws RuntimeException if a handler or outgoing connector fails
      */
     <T> void emit(String channel, Message<T> message);
 
     /**
      * Emit a batch of messages to a named channel.
+     * <p>
+     * A successful return means all required outputs completed. Handler and connector failures are propagated to the
+     * caller with their causes preserved. Completed outputs are not rolled back if a later output fails.
      *
      * @param channel channel name
      * @param messages messages
      * @param <T> payload type
+     * @throws MessagingException if the named channel does not exist
+     * @throws RuntimeException if a handler or outgoing connector fails
      */
-    <T> void emitBatch(String channel, List<Message<T>> messages);
+    <T> void emitBatch(String channel, List<? extends Message<T>> messages);
 }

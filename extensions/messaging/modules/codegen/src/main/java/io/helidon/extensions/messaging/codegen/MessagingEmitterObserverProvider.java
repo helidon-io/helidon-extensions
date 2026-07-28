@@ -16,6 +16,9 @@
 
 package io.helidon.extensions.messaging.codegen;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import io.helidon.codegen.CodegenException;
 import io.helidon.codegen.CodegenUtil;
 import io.helidon.codegen.classmodel.ClassModel;
@@ -25,6 +28,7 @@ import io.helidon.common.types.Annotation;
 import io.helidon.common.types.Annotations;
 import io.helidon.common.types.TypeInfo;
 import io.helidon.common.types.TypeName;
+import io.helidon.common.types.TypeNames;
 import io.helidon.common.types.TypedElementInfo;
 import io.helidon.service.codegen.RegistryCodegenContext;
 import io.helidon.service.codegen.RegistryRoundContext;
@@ -51,6 +55,8 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
     private static final class MessagingEmitterObserver implements InjectCodegenObserver {
         private static final TypeName GENERATOR = TypeName.create(MessagingEmitterObserver.class);
 
+        private final Map<TypeName, TypeName> emitterPayloadTypes = new HashMap<>();
+
         @Override
         public void onInjectionPoint(RegistryRoundContext roundContext,
                                      TypeInfo service,
@@ -60,8 +66,8 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
             if (!typeName.genericTypeName().equals(MessagingTypes.EMITTER)) {
                 return;
             }
-            if (typeName.typeArguments().isEmpty()) {
-                throw new CodegenException("Cannot generate a messaging emitter when type argument is missing",
+            if (typeName.typeArguments().size() != 1) {
+                throw new CodegenException("Messaging emitters must declare exactly one payload type argument",
                                            argument.originatingElementValue());
             }
 
@@ -71,7 +77,19 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                                                             argument.originatingElementValue()));
 
             TypeName payloadType = typeName.typeArguments().getFirst();
+            if (!MessagingExtension.isConcretePayloadType(payloadType)) {
+                throw new CodegenException("Messaging emitter payload type must be concrete: " + payloadType,
+                                           argument.originatingElementValue());
+            }
             TypeName generatedType = emitterTypeName(service.typeName(), channel);
+            TypeName registeredPayloadType = emitterPayloadTypes.putIfAbsent(generatedType, payloadType);
+            if (registeredPayloadType != null
+                    && !registeredPayloadType.resolvedName().equals(payloadType.resolvedName())) {
+                throw new CodegenException("Conflicting messaging emitter payload types for channel "
+                                                   + channel + " in service " + service.typeName() + ": "
+                                                   + registeredPayloadType + " and " + payloadType,
+                                           argument.originatingElementValue());
+            }
             if (roundContext.generatedType(generatedType).isEmpty()) {
                 generateEmitter(roundContext, service, generatedType, payloadType, channel);
             }
@@ -110,14 +128,14 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
             classModel.addField(registry -> registry
                     .accessModifier(AccessModifier.PRIVATE)
                     .isFinal(true)
-                    .type(MessagingTypes.MESSAGING_RUNTIME)
+                    .type(messagingRuntimeSupplierType())
                     .name("registry"));
 
             classModel.addConstructor(ctr -> ctr
                     .addAnnotation(Annotation.create(ServiceCodegenTypes.SERVICE_ANNOTATION_INJECT))
                     .accessModifier(AccessModifier.PACKAGE_PRIVATE)
                     .addParameter(registry -> registry
-                            .type(MessagingTypes.MESSAGING_RUNTIME)
+                            .type(messagingRuntimeSupplierType())
                             .name("registry"))
                     .addContentLine("this.registry = registry;"));
 
@@ -141,7 +159,7 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                     .addParameter(message -> message
                             .type(messageType)
                             .name("message"))
-                    .addContent("registry.emit(")
+                    .addContent("registry.get().emit(")
                     .addContentLiteral(channel)
                     .addContentLine(", message);"));
 
@@ -153,7 +171,7 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                     .addParameter(messages -> messages
                             .type(messageListType(payloadType))
                             .name("messages"))
-                    .addContent("registry.emitBatch(")
+                    .addContent("registry.get().emitBatch(")
                     .addContentLiteral(channel)
                     .addContentLine(", messages);"));
 
@@ -176,7 +194,18 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
 
         private TypeName messageListType(TypeName payloadType) {
             return TypeName.builder(MessagingTypes.LIST)
-                    .addTypeArgument(messageType(payloadType))
+                    .addTypeArgument(TypeName.builder()
+                                             .generic(true)
+                                             .wildcard(true)
+                                             .className("?")
+                                             .addUpperBound(messageType(payloadType))
+                                             .build())
+                    .build();
+        }
+
+        private TypeName messagingRuntimeSupplierType() {
+            return TypeName.builder(TypeNames.SUPPLIER)
+                    .addTypeArgument(MessagingTypes.MESSAGING_RUNTIME)
                     .build();
         }
 

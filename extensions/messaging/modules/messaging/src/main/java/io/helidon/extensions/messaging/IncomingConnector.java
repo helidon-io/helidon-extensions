@@ -24,6 +24,10 @@ package io.helidon.extensions.messaging;
 public interface IncomingConnector<C extends ConnectorConfig> extends Connector {
     /**
      * Create a source for one configured incoming channel.
+     * <p>
+     * This method must return an unstarted source. It may validate and snapshot configuration, but it must not acquire
+     * transport resources, start threads, poll, or deliver messages. The runtime creates every binding and validates
+     * the complete logical channel graph before it invokes {@link ConnectorSource#run()}.
      *
      * @param config connector configuration
      * @param context connector context

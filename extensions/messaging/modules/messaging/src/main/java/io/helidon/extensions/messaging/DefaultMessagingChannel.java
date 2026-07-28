@@ -64,7 +64,7 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
     }
 
     @Override
-    public void emitBatch(List<Message<T>> messages) {
+    public void emitBatch(List<? extends Message<T>> messages) {
         emitBatchObject(messages);
     }
 
