@@ -31,6 +31,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.helidon.extensions.messaging.ConnectorSink;
+import io.helidon.extensions.messaging.DeadLetterMessage;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.OutgoingConnector;
@@ -44,6 +45,14 @@ import org.apache.kafka.common.header.internals.RecordHeaders;
 
 /**
  * Kafka outgoing connector.
+ *
+ * <p>A sink created by this connector returns from {@code send} or {@code sendBatch}
+ * only after the {@link Producer#send(ProducerRecord) producer send futures} complete
+ * successfully, or throws if enqueueing or awaiting any send fails. The corresponding
+ * Kafka success point is controlled by the producer {@code acks} configuration: no
+ * broker acknowledgement for {@code acks=0}, the leader acknowledgement for
+ * {@code acks=1}, or all in-sync replica acknowledgements for {@code acks=all}. It
+ * does not imply that a consumer has processed the message.
  */
 @Service.Singleton
 public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorConfig> {
@@ -52,7 +61,49 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
      */
     public static final String CONNECTOR = "kafka";
 
+    /**
+     * Dead-letter header containing the original Kafka topic.
+     */
+    public static final String DLQ_ORIGINAL_TOPIC_HEADER = "dlq-orig-topic";
+
+    /**
+     * Dead-letter header containing the original Kafka partition.
+     */
+    public static final String DLQ_ORIGINAL_PARTITION_HEADER = "dlq-orig-partition";
+
+    /**
+     * Dead-letter header containing the original Kafka offset.
+     */
+    public static final String DLQ_ORIGINAL_OFFSET_HEADER = "dlq-orig-offset";
+
+    /**
+     * Dead-letter header containing the original Kafka record timestamp in milliseconds.
+     * <p>
+     * This is source metadata. The dead-letter record itself has its own publication timestamp.
+     */
+    public static final String DLQ_ORIGINAL_TIMESTAMP_HEADER = "dlq-orig-timestamp";
+
+    /**
+     * Dead-letter header containing the name of the original {@link KafkaMessage.TimestampType}.
+     */
+    public static final String DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER = "dlq-orig-timestamp-type";
+
+    /**
+     * Dead-letter header containing the original Kafka leader epoch.
+     */
+    public static final String DLQ_ORIGINAL_LEADER_EPOCH_HEADER = "dlq-orig-leader-epoch";
+
     private static final System.Logger LOGGER = System.getLogger(KafkaOutgoingConnector.class.getName());
+    private static final Set<String> DLQ_RESERVED_HEADERS = Set.of(DeadLetterMessage.SOURCE_CHANNEL_HEADER,
+                                                                   DeadLetterMessage.ATTEMPTS_HEADER,
+                                                                   DeadLetterMessage.FAILURE_TYPE_HEADER,
+                                                                   DeadLetterMessage.FAILURE_MESSAGE_HEADER,
+                                                                   DLQ_ORIGINAL_TOPIC_HEADER,
+                                                                   DLQ_ORIGINAL_PARTITION_HEADER,
+                                                                   DLQ_ORIGINAL_OFFSET_HEADER,
+                                                                   DLQ_ORIGINAL_TIMESTAMP_HEADER,
+                                                                   DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER,
+                                                                   DLQ_ORIGINAL_LEADER_EPOCH_HEADER);
 
     private final ProducerFactory producerFactory;
     private final Set<ProducerResource> producers = ConcurrentHashMap.newKeySet();
@@ -137,7 +188,7 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
         }
 
         @Override
-        public <T> void sendBatch(List<Message<T>> messages) {
+        public <T> void sendBatch(List<? extends Message<T>> messages) {
             Objects.requireNonNull(messages);
             if (messages.isEmpty()) {
                 return;
@@ -154,6 +205,12 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
 
         private Future<RecordMetadata> enqueue(Message<?> message) {
             Objects.requireNonNull(message);
+            if (message instanceof DeadLetterMessage<?> deadLetterMessage) {
+                return enqueue(deadLetterMessage);
+            }
+            if (message instanceof KafkaMessage<?, ?> kafkaMessage) {
+                return enqueue(kafkaMessage);
+            }
             RecordHeaders headers = new RecordHeaders();
             message.headers().forEach((name, value) -> headers.add(name, value.getBytes(StandardCharsets.UTF_8)));
             ProducerRecord<Object, Object> record = new ProducerRecord<>(topic,
@@ -167,6 +224,112 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
             } catch (RuntimeException e) {
                 throw new MessagingException("Cannot send Kafka message to topic " + topic, e);
             }
+        }
+
+        private Future<RecordMetadata> enqueue(DeadLetterMessage<?> message) {
+            Message<?> originalMessage = message.originalMessage();
+            if (!(originalMessage instanceof KafkaMessage<?, ?> kafkaMessage)) {
+                RecordHeaders headers = new RecordHeaders();
+                message.headers().forEach((name, value) -> addUtf8Header(headers, name, value));
+                return enqueue(null, message.entity(), headers);
+            }
+
+            RecordHeaders headers = kafkaHeaders(kafkaMessage);
+            mergePortableWrapperHeaders(headers, message, originalMessage);
+            addReservedHeader(headers,
+                              DeadLetterMessage.SOURCE_CHANNEL_HEADER,
+                              message.sourceChannel());
+            addReservedHeader(headers,
+                              DeadLetterMessage.ATTEMPTS_HEADER,
+                              message.attempts());
+            addReservedHeader(headers,
+                              DeadLetterMessage.FAILURE_TYPE_HEADER,
+                              message.failureType());
+            addReservedHeader(headers,
+                              DeadLetterMessage.FAILURE_MESSAGE_HEADER,
+                              message.failureMessage());
+            addKafkaMetadata(headers,
+                             DLQ_ORIGINAL_TOPIC_HEADER,
+                             kafkaMessage.topic().orElse(null));
+            addKafkaMetadata(headers,
+                             DLQ_ORIGINAL_PARTITION_HEADER,
+                             kafkaMessage.partition().isPresent()
+                                     ? kafkaMessage.partition().getAsInt()
+                                     : null);
+            addKafkaMetadata(headers,
+                             DLQ_ORIGINAL_OFFSET_HEADER,
+                             kafkaMessage.offset().isPresent()
+                                     ? kafkaMessage.offset().getAsLong()
+                                     : null);
+            addKafkaMetadata(headers,
+                             DLQ_ORIGINAL_TIMESTAMP_HEADER,
+                             kafkaMessage.timestamp().isPresent()
+                                     ? kafkaMessage.timestamp().getAsLong()
+                                     : null);
+            addKafkaMetadata(headers,
+                             DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER,
+                             kafkaMessage.timestampType().orElse(null));
+            addKafkaMetadata(headers,
+                             DLQ_ORIGINAL_LEADER_EPOCH_HEADER,
+                             kafkaMessage.leaderEpoch().isPresent()
+                                     ? kafkaMessage.leaderEpoch().getAsInt()
+                                     : null);
+            return enqueue(kafkaMessage.key().orElse(null), message.entity(), headers);
+        }
+
+        private Future<RecordMetadata> enqueue(KafkaMessage<?, ?> message) {
+            return enqueue(message.key().orElse(null), message.entity(), kafkaHeaders(message));
+        }
+
+        private Future<RecordMetadata> enqueue(Object key, Object entity, RecordHeaders headers) {
+            ProducerRecord<Object, Object> record = new ProducerRecord<>(topic,
+                                                                         null,
+                                                                         null,
+                                                                         key,
+                                                                         entity,
+                                                                         headers);
+            try {
+                return producer.send(record);
+            } catch (RuntimeException e) {
+                throw new MessagingException("Cannot send Kafka message to topic " + topic, e);
+            }
+        }
+
+        private RecordHeaders kafkaHeaders(KafkaMessage<?, ?> message) {
+            RecordHeaders headers = new RecordHeaders();
+            for (KafkaMessage.Header header : message.kafkaHeaders()) {
+                headers.add(header.name(), header.value().orElse(null));
+            }
+            return headers;
+        }
+
+        private void mergePortableWrapperHeaders(RecordHeaders headers,
+                                                 DeadLetterMessage<?> message,
+                                                 Message<?> originalMessage) {
+            Map<String, String> originalHeaders = originalMessage.headers();
+            message.headers().forEach((name, value) -> {
+                if (!DLQ_RESERVED_HEADERS.contains(name)
+                        && (!originalHeaders.containsKey(name)
+                        || !Objects.equals(originalHeaders.get(name), value))) {
+                    addUtf8Header(headers, name, value);
+                }
+            });
+        }
+
+        private void addReservedHeader(RecordHeaders headers, String name, Object value) {
+            headers.remove(name);
+            addUtf8Header(headers, name, String.valueOf(value));
+        }
+
+        private void addKafkaMetadata(RecordHeaders headers, String name, Object value) {
+            headers.remove(name);
+            if (value != null) {
+                addUtf8Header(headers, name, String.valueOf(value));
+            }
+        }
+
+        private void addUtf8Header(RecordHeaders headers, String name, String value) {
+            headers.add(name, value.getBytes(StandardCharsets.UTF_8));
         }
 
         private void await(Future<RecordMetadata> result) {

@@ -18,6 +18,9 @@ package io.helidon.extensions.messaging;
 
 /**
  * Incoming connector source.
+ * <p>
+ * Transport-resource acquisition, polling, and message delivery begin from {@link #run()}, after the messaging
+ * runtime has validated the complete logical channel graph.
  */
 public interface ConnectorSource extends Runnable {
 }

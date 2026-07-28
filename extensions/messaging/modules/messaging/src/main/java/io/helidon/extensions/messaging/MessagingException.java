@@ -24,6 +24,15 @@ public class MessagingException extends RuntimeException {
      * Create a messaging exception.
      *
      * @param message exception message
+     */
+    public MessagingException(String message) {
+        super(message);
+    }
+
+    /**
+     * Create a messaging exception.
+     *
+     * @param message exception message
      * @param cause root cause
      */
     public MessagingException(String message, Throwable cause) {

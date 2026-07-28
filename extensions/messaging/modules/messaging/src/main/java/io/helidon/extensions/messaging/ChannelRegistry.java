@@ -16,18 +16,26 @@
 
 package io.helidon.extensions.messaging;
 
+import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
+import java.lang.reflect.WildcardType;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 
+import io.helidon.common.GenericType;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.service.registry.Service;
@@ -58,16 +66,29 @@ class ChannelRegistry implements MessagingRuntime {
         configuredChannels(config, ConnectorConfig.INCOMING_PREFIX).forEach(channel -> ensureChannel(channels, channel));
         this.channels = Map.copyOf(channels);
 
-        configureOutgoingConnectors(config, outgoingConnectors);
-        startIncomingConnectors(config, incomingConnectors);
+        List<OutgoingBinding> outgoingBindings = prepareOutgoingBindings(config, outgoingConnectors);
+        List<IncomingDescriptor> incomingDescriptors = prepareIncomingDescriptors(config, incomingConnectors);
+        Set<String> outputChannels = new LinkedHashSet<>(grouped.keySet());
+        outgoingBindings.stream().map(OutgoingBinding::channel).forEach(outputChannels::add);
+        validateFailureRoutes(incomingDescriptors, outputChannels, grouped);
+        validateIncomingOutputs(incomingDescriptors, outputChannels);
+
+        configureOutgoingConnectors(outgoingBindings);
+        List<IncomingBinding> incomingBindings = createIncomingBindings(incomingDescriptors);
+        startIncomingConnectors(incomingBindings);
     }
 
     /**
      * Emit a message to a named channel.
+     * <p>
+     * This method returns only after every required output completes successfully. Output failures are propagated
+     * unchanged.
      *
      * @param channel channel name
      * @param message message
      * @param <T> payload type
+     * @throws MessagingException if the channel does not exist
+     * @throws RuntimeException if an output fails
      */
     @Override
     public <T> void emit(String channel, Message<T> message) {
@@ -76,16 +97,21 @@ class ChannelRegistry implements MessagingRuntime {
 
     /**
      * Emit a batch of messages to a named channel.
+     * <p>
+     * This method returns only after every required output completes successfully. Output failures are propagated
+     * unchanged.
      *
      * @param channel channel name
      * @param messages messages
      * @param <T> payload type
+     * @throws MessagingException if the channel does not exist
+     * @throws RuntimeException if an output fails
      */
     @Override
-    public <T> void emitBatch(String channel, List<Message<T>> messages) {
+    public <T> void emitBatch(String channel, List<? extends Message<T>> messages) {
         MessagingChannel<?> messagingChannel = channels.get(channel);
         if (messagingChannel == null) {
-            return;
+            throw new MessagingException("Unknown messaging channel " + channel);
         }
         emitBatch(messagingChannel, messages);
     }
@@ -125,7 +151,11 @@ class ChannelRegistry implements MessagingRuntime {
      * @return connector source context
      */
     ConnectorSourceContext incomingContext(String channel) {
-        return new RegistryConnectorSourceContext(channel);
+        return incomingContext(channel, FailurePolicy.create());
+    }
+
+    private ConnectorSourceContext incomingContext(String channel, FailurePolicy failurePolicy) {
+        return new RegistryConnectorSourceContext(channel, failurePolicy);
     }
 
     /**
@@ -143,17 +173,12 @@ class ChannelRegistry implements MessagingRuntime {
         Class<Object> payloadType = (Class<Object>) payloadType(channel, consumerRegistrations);
         MessagingChannel.Builder<Object> builder = MessagingChannel.<Object>builder()
                 .payloadType(payloadType);
+        builder.addBatchOutput(messages -> validateMessageTypes(consumerRegistrations, messages));
         for (ConsumerRegistration consumer : consumerRegistrations) {
             if (consumer.batch()) {
-                builder.addBatchOutput(messages -> {
-                    validatePayloadTypes(consumer, messages);
-                    dispatchBatch(consumer, messages);
-                });
+                builder.addBatchOutput(messages -> dispatchBatch(consumer, messages));
             } else {
-                builder.addOutput(message -> {
-                    validatePayloadType(consumer, message);
-                    consumer.dispatch(message);
-                });
+                builder.addOutput(consumer::dispatch);
             }
         }
         return builder.build();
@@ -164,25 +189,210 @@ class ChannelRegistry implements MessagingRuntime {
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private <T> void emitBatch(MessagingChannel<?> messagingChannel, List<Message<T>> messages) {
+    private <T> void emitBatch(MessagingChannel<?> messagingChannel, List<? extends Message<T>> messages) {
         ((MessagingChannel) messagingChannel).emitBatch(messages);
     }
 
     private Class<?> payloadType(String channel, List<ConsumerRegistration> consumerRegistrations) {
-        Class<?> payloadType = null;
+        GenericType<?> payloadType = null;
         for (ConsumerRegistration consumer : consumerRegistrations) {
             if (payloadType == null) {
-                payloadType = consumer.payloadType();
-            } else if (!payloadType.equals(consumer.payloadType())) {
+                payloadType = consumer.payloadGenericType();
+            } else if (!payloadType.equals(consumer.payloadGenericType())) {
                 throw new IllegalArgumentException("Channel " + channel + " has conflicting payload types "
-                                                           + payloadType.getName() + " and "
-                                                           + consumer.payloadType().getName());
+                                                           + payloadType.getTypeName() + " and "
+                                                           + consumer.payloadGenericType().getTypeName());
             }
         }
-        return payloadType;
+        validateEnvelopeTypes(channel, consumerRegistrations);
+        return payloadType == null ? Object.class : payloadType.rawType();
     }
 
-    private void validatePayloadType(ConsumerRegistration consumer, Message<?> message) {
+    private void validateEnvelopeTypes(String channel, List<ConsumerRegistration> consumers) {
+        for (int first = 0; first < consumers.size(); first++) {
+            ConsumerRegistration firstConsumer = consumers.get(first);
+            for (int second = first + 1; second < consumers.size(); second++) {
+                ConsumerRegistration secondConsumer = consumers.get(second);
+                if (!compatibleEnvelopeTypes(firstConsumer, secondConsumer)) {
+                    throw new IllegalArgumentException("Channel " + channel + " has conflicting message envelope types "
+                                                               + firstConsumer.envelopeGenericType().getTypeName() + " and "
+                                                               + secondConsumer.envelopeGenericType().getTypeName());
+                }
+            }
+        }
+    }
+
+    private boolean compatibleEnvelopeTypes(ConsumerRegistration first, ConsumerRegistration second) {
+        Type firstType = first.envelopeGenericType().type();
+        Type secondType = second.envelopeGenericType().type();
+        return typeAccepts(firstType, secondType) || typeAccepts(secondType, firstType);
+    }
+
+    private boolean typeAccepts(Type target, Type candidate) {
+        if (sameType(target, candidate)) {
+            return true;
+        }
+        if (target instanceof WildcardType wildcard) {
+            return wildcardAccepts(wildcard, candidate);
+        }
+
+        Class<?> targetRawType = GenericType.create(target).rawType();
+        Class<?> candidateRawType = GenericType.create(candidate).rawType();
+        if (!targetRawType.isAssignableFrom(candidateRawType)) {
+            return false;
+        }
+        if (target instanceof Class<?>) {
+            return true;
+        }
+        if (!(target instanceof ParameterizedType targetParameterized)) {
+            return false;
+        }
+
+        Type resolvedCandidate = resolveSupertype(candidate, targetRawType);
+        if (resolvedCandidate instanceof Class<?>) {
+            return true;
+        }
+        if (!(resolvedCandidate instanceof ParameterizedType candidateParameterized)) {
+            return false;
+        }
+        return typeArgumentsAccept(targetParameterized.getActualTypeArguments(),
+                                   candidateParameterized.getActualTypeArguments());
+    }
+
+    private boolean typeArgumentsAccept(Type[] targetArguments, Type[] candidateArguments) {
+        if (targetArguments.length != candidateArguments.length) {
+            return false;
+        }
+        for (int i = 0; i < targetArguments.length; i++) {
+            if (!typeArgumentAccepts(targetArguments[i], candidateArguments[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean typeArgumentAccepts(Type target, Type candidate) {
+        if (sameType(target, candidate)) {
+            return true;
+        }
+        if (target instanceof WildcardType wildcard) {
+            return wildcardAccepts(wildcard, candidate);
+        }
+        if (target instanceof ParameterizedType targetParameterized
+                && candidate instanceof ParameterizedType candidateParameterized
+                && sameType(targetParameterized.getRawType(), candidateParameterized.getRawType())) {
+            return typeArgumentsAccept(targetParameterized.getActualTypeArguments(),
+                                       candidateParameterized.getActualTypeArguments());
+        }
+        if (target instanceof GenericArrayType targetArray
+                && candidate instanceof GenericArrayType candidateArray) {
+            return typeArgumentAccepts(targetArray.getGenericComponentType(),
+                                       candidateArray.getGenericComponentType());
+        }
+        return false;
+    }
+
+    private boolean wildcardAccepts(WildcardType wildcard, Type candidate) {
+        if (candidate instanceof WildcardType) {
+            return false;
+        }
+        for (Type lowerBound : wildcard.getLowerBounds()) {
+            if (!typeAccepts(candidate, lowerBound)) {
+                return false;
+            }
+        }
+        for (Type upperBound : wildcard.getUpperBounds()) {
+            if (!typeAccepts(upperBound, candidate)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private Type resolveSupertype(Type candidate, Class<?> targetRawType) {
+        Class<?> candidateRawType = GenericType.create(candidate).rawType();
+        if (candidateRawType.equals(targetRawType)) {
+            return candidate;
+        }
+
+        Map<TypeVariable<?>, Type> bindings = typeBindings(candidateRawType, candidate);
+        for (Type genericInterface : candidateRawType.getGenericInterfaces()) {
+            Type resolvedInterface = resolveType(genericInterface, bindings);
+            Class<?> interfaceRawType = GenericType.create(resolvedInterface).rawType();
+            if (targetRawType.isAssignableFrom(interfaceRawType)) {
+                Type resolved = resolveSupertype(resolvedInterface, targetRawType);
+                if (resolved != null) {
+                    return resolved;
+                }
+            }
+        }
+        Type genericSuperclass = candidateRawType.getGenericSuperclass();
+        if (genericSuperclass != null) {
+            Type resolvedSuperclass = resolveType(genericSuperclass, bindings);
+            Class<?> superclassRawType = GenericType.create(resolvedSuperclass).rawType();
+            if (targetRawType.isAssignableFrom(superclassRawType)) {
+                return resolveSupertype(resolvedSuperclass, targetRawType);
+            }
+        }
+        return null;
+    }
+
+    private Map<TypeVariable<?>, Type> typeBindings(Class<?> rawType, Type type) {
+        Map<TypeVariable<?>, Type> bindings = new HashMap<>();
+        if (type instanceof ParameterizedType parameterizedType) {
+            TypeVariable<?>[] variables = rawType.getTypeParameters();
+            Type[] arguments = parameterizedType.getActualTypeArguments();
+            for (int i = 0; i < Math.min(variables.length, arguments.length); i++) {
+                bindings.put(variables[i], arguments[i]);
+            }
+        }
+        return bindings;
+    }
+
+    private Type resolveType(Type type, Map<TypeVariable<?>, Type> bindings) {
+        if (type instanceof TypeVariable<?> variable) {
+            return bindings.getOrDefault(variable, variable);
+        }
+        if (type instanceof ParameterizedType parameterizedType) {
+            Type[] arguments = parameterizedType.getActualTypeArguments();
+            Type[] resolvedArguments = new Type[arguments.length];
+            for (int i = 0; i < arguments.length; i++) {
+                resolvedArguments[i] = resolveType(arguments[i], bindings);
+            }
+            Type owner = parameterizedType.getOwnerType();
+            return new ResolvedParameterizedType(owner == null ? null : resolveType(owner, bindings),
+                                                 parameterizedType.getRawType(),
+                                                 resolvedArguments);
+        }
+        if (type instanceof WildcardType wildcardType) {
+            return new ResolvedWildcardType(resolveTypes(wildcardType.getLowerBounds(), bindings),
+                                            resolveTypes(wildcardType.getUpperBounds(), bindings));
+        }
+        if (type instanceof GenericArrayType arrayType) {
+            return new ResolvedGenericArrayType(resolveType(arrayType.getGenericComponentType(), bindings));
+        }
+        return type;
+    }
+
+    private Type[] resolveTypes(Type[] types, Map<TypeVariable<?>, Type> bindings) {
+        Type[] resolved = new Type[types.length];
+        for (int i = 0; i < types.length; i++) {
+            resolved[i] = resolveType(types[i], bindings);
+        }
+        return resolved;
+    }
+
+    private boolean sameType(Type first, Type second) {
+        return first.equals(second) || second.equals(first);
+    }
+
+    private void validateMessageType(ConsumerRegistration consumer, Message<?> message) {
+        if (!consumer.envelopeType().isInstance(message)) {
+            throw new IllegalArgumentException("Channel " + consumer.channel()
+                                                       + " expected message envelope type "
+                                                       + consumer.envelopeType().getName()
+                                                       + " but received " + message.getClass().getName());
+        }
         Object entity = message.entity();
         if (entity != null && !consumer.payloadType().isInstance(entity)) {
             throw new IllegalArgumentException("Channel " + consumer.channel()
@@ -192,9 +402,15 @@ class ChannelRegistry implements MessagingRuntime {
         }
     }
 
-    private void validatePayloadTypes(ConsumerRegistration consumer, List<? extends Message<?>> messages) {
+    private void validateMessageTypes(ConsumerRegistration consumer, List<? extends Message<?>> messages) {
         for (Message<?> message : messages) {
-            validatePayloadType(consumer, message);
+            validateMessageType(consumer, message);
+        }
+    }
+
+    private void validateMessageTypes(List<ConsumerRegistration> consumers, List<? extends Message<?>> messages) {
+        for (ConsumerRegistration consumer : consumers) {
+            validateMessageTypes(consumer, messages);
         }
     }
 
@@ -203,11 +419,9 @@ class ChannelRegistry implements MessagingRuntime {
         consumer.dispatchBatch((List) messages);
     }
 
-    private void configureOutgoingConnectors(Config root, List<OutgoingConnector<?>> outgoingConnectors) {
-        if (outgoingConnectors.isEmpty()) {
-            return;
-        }
-
+    private List<OutgoingBinding> prepareOutgoingBindings(Config root,
+                                                          List<OutgoingConnector<?>> outgoingConnectors) {
+        List<OutgoingBinding> bindings = new ArrayList<>();
         Map<String, OutgoingConnector<?>> connectors = outgoingConnectors(outgoingConnectors);
         for (String channel : configuredChannels(root, ConnectorConfig.OUTGOING_PREFIX)) {
             Config channelConfig = root.get(ConnectorConfig.OUTGOING_PREFIX + channel);
@@ -228,15 +442,14 @@ class ChannelRegistry implements MessagingRuntime {
                                                              ConnectorConfig.Direction.OUTGOING,
                                                              channel,
                                                              connectorName);
-            addOutgoingConnector(channel, createSink(connector, connectorConfig));
+            bindings.add(new OutgoingBinding(channel, connector, connectorConfig));
         }
+        return List.copyOf(bindings);
     }
 
-    private void startIncomingConnectors(Config root, List<IncomingConnector<?>> incomingConnectors) {
-        if (incomingConnectors.isEmpty()) {
-            return;
-        }
-
+    private List<IncomingDescriptor> prepareIncomingDescriptors(Config root,
+                                                                List<IncomingConnector<?>> incomingConnectors) {
+        List<IncomingDescriptor> descriptors = new ArrayList<>();
         Map<String, IncomingConnector<?>> connectors = incomingConnectors(incomingConnectors);
         for (String channel : configuredChannels(root, ConnectorConfig.INCOMING_PREFIX)) {
             Config channelConfig = root.get(ConnectorConfig.INCOMING_PREFIX + channel);
@@ -257,15 +470,126 @@ class ChannelRegistry implements MessagingRuntime {
                                                              ConnectorConfig.Direction.INCOMING,
                                                              channel,
                                                              connectorName);
-            ConnectorSource source = createSource(connector, connectorConfig, incomingContext(channel));
+            FailurePolicy failurePolicy = FailurePolicy.create(channelConfig.get("failure"));
+            descriptors.add(new IncomingDescriptor(channel, failurePolicy, connector, connectorConfig));
+        }
+        return List.copyOf(descriptors);
+    }
+
+    private void configureOutgoingConnectors(List<OutgoingBinding> bindings) {
+        for (OutgoingBinding binding : bindings) {
+            addOutgoingConnector(binding.channel(), createSink(binding.connector(), binding.config()));
+        }
+    }
+
+    private List<IncomingBinding> createIncomingBindings(List<IncomingDescriptor> descriptors) {
+        List<IncomingBinding> bindings = new ArrayList<>(descriptors.size());
+        for (IncomingDescriptor descriptor : descriptors) {
+            ConnectorSourceContext context = incomingContext(descriptor.channel(), descriptor.failurePolicy());
+            ConnectorSource source = createSource(descriptor.connector(), descriptor.config(), context);
+            bindings.add(new IncomingBinding(descriptor.channel(), source));
+        }
+        return List.copyOf(bindings);
+    }
+
+    private void startIncomingConnectors(List<IncomingBinding> bindings) {
+        for (IncomingBinding binding : bindings) {
             Thread.ofVirtual()
-                    .name("helidon-messaging-connector-source-" + channel)
+                    .name("helidon-messaging-connector-source-" + binding.channel())
                     .inheritInheritableThreadLocals(false)
                     .uncaughtExceptionHandler((thread, throwable) -> LOGGER.log(System.Logger.Level.ERROR,
                                                                                 "Incoming connector source failed",
                                                                                 throwable))
-                    .start(source);
+                    .start(binding.source());
         }
+    }
+
+    private void validateIncomingOutputs(List<IncomingDescriptor> bindings, Set<String> outputChannels) {
+        for (IncomingDescriptor binding : bindings) {
+            if (!outputChannels.contains(binding.channel())) {
+                throw new IllegalArgumentException("Incoming channel " + binding.channel() + " has no outputs");
+            }
+        }
+    }
+
+    private void validateFailureRoutes(List<IncomingDescriptor> bindings,
+                                       Set<String> outputChannels,
+                                       Map<String, List<ConsumerRegistration>> consumers) {
+        Map<String, String> routes = new LinkedHashMap<>();
+        for (IncomingDescriptor binding : bindings) {
+            FailurePolicy policy = binding.failurePolicy();
+            if (policy.onExhausted() != FailureDisposition.DEAD_LETTER) {
+                continue;
+            }
+
+            String source = binding.channel();
+            String target = policy.deadLetterChannel().orElseThrow();
+            if (source.equals(target)) {
+                throw new IllegalArgumentException("Dead-letter channel must not reference itself: " + source);
+            }
+            if (!channels.containsKey(target)) {
+                throw new IllegalArgumentException("Unknown dead-letter channel " + target
+                                                           + " configured for incoming channel " + source);
+            }
+            if (!outputChannels.contains(target)) {
+                throw new IllegalArgumentException("Dead-letter channel " + target
+                                                           + " configured for incoming channel " + source
+                                                           + " has no outputs");
+            }
+            validateDeadLetterConsumers(source, target, consumers.getOrDefault(target, List.of()));
+            routes.put(source, target);
+        }
+        validateFailureRouteCycles(routes);
+    }
+
+    private void validateDeadLetterConsumers(String source,
+                                             String target,
+                                             List<ConsumerRegistration> consumers) {
+        for (ConsumerRegistration consumer : consumers) {
+            if (!consumer.envelopeType().isAssignableFrom(DeadLetterMessage.class)) {
+                throw new IllegalArgumentException("Dead-letter channel " + target
+                                                           + " configured for incoming channel " + source
+                                                           + " has consumer envelope "
+                                                           + consumer.envelopeGenericType().getTypeName()
+                                                           + " that cannot accept "
+                                                           + DeadLetterMessage.class.getName());
+            }
+        }
+    }
+
+    private void validateFailureRouteCycles(Map<String, String> routes) {
+        Set<String> visited = new LinkedHashSet<>();
+        Set<String> visiting = new LinkedHashSet<>();
+        List<String> path = new ArrayList<>();
+        for (String source : routes.keySet()) {
+            visitFailureRoute(source, routes, visited, visiting, path);
+        }
+    }
+
+    private void visitFailureRoute(String source,
+                                   Map<String, String> routes,
+                                   Set<String> visited,
+                                   Set<String> visiting,
+                                   List<String> path) {
+        if (visited.contains(source)) {
+            return;
+        }
+        if (!visiting.add(source)) {
+            int cycleStart = path.indexOf(source);
+            List<String> cycle = new ArrayList<>(path.subList(cycleStart, path.size()));
+            cycle.add(source);
+            throw new IllegalArgumentException("Cyclic dead-letter channel route: " + String.join(" -> ", cycle));
+        }
+        path.add(source);
+
+        String target = routes.get(source);
+        if (target != null) {
+            visitFailureRoute(target, routes, visited, visiting, path);
+        }
+
+        path.removeLast();
+        visiting.remove(source);
+        visited.add(source);
     }
 
     private Map<String, OutgoingConnector<?>> outgoingConnectors(List<OutgoingConnector<?>> outgoingConnectors) {
@@ -333,6 +657,7 @@ class ChannelRegistry implements MessagingRuntime {
         Map<String, String> properties = new LinkedHashMap<>();
         root.get(ConnectorConfig.CONNECTOR_PREFIX + connector).detach().asMap().ifPresent(properties::putAll);
         channelConfig.detach().asMap().ifPresent(properties::putAll);
+        properties.keySet().removeIf(key -> key.equals("failure") || key.startsWith("failure."));
         return properties;
     }
 
@@ -383,9 +708,11 @@ class ChannelRegistry implements MessagingRuntime {
 
     private final class RegistryConnectorSourceContext implements ConnectorSourceContext {
         private final String channel;
+        private final FailurePolicy failurePolicy;
 
-        private RegistryConnectorSourceContext(String channel) {
+        private RegistryConnectorSourceContext(String channel, FailurePolicy failurePolicy) {
             this.channel = channel;
+            this.failurePolicy = failurePolicy;
         }
 
         @Override
@@ -394,13 +721,174 @@ class ChannelRegistry implements MessagingRuntime {
         }
 
         @Override
+        public FailurePolicy failurePolicy() {
+            return failurePolicy;
+        }
+
+        @Override
         public <T> void emit(Message<T> message) {
             ChannelRegistry.this.emit(channel, message);
         }
 
         @Override
-        public <T> void emitBatch(List<Message<T>> messages) {
+        public <T> void emitBatch(List<? extends Message<T>> messages) {
             ChannelRegistry.this.emitBatch(channel, messages);
         }
+
+        @Override
+        public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+                                               int failedAttempt,
+                                               RuntimeException failure) {
+            if (failedAttempt < 1) {
+                throw new IllegalArgumentException("failedAttempt must be greater than zero");
+            }
+            if (failurePolicy.maxAttempts() == 0 || failedAttempt < failurePolicy.maxAttempts()) {
+                return FailureResult.RETRY;
+            }
+
+            return switch (failurePolicy.onExhausted()) {
+            case FAIL -> throw failure;
+            case DROP -> {
+                LOGGER.log(System.Logger.Level.WARNING,
+                           "Messaging delivery failed after " + failedAttempt
+                                   + " attempt(s); dropping " + messages.size()
+                                   + " message(s) from channel " + channel,
+                           failure);
+                yield FailureResult.SETTLED;
+            }
+            case DEAD_LETTER -> {
+                String target = failurePolicy.deadLetterChannel().orElseThrow();
+                List<DeadLetterMessage<T>> deadLetters = new ArrayList<>(messages.size());
+                for (Message<T> message : messages) {
+                    deadLetters.add(DeadLetterMessage.create(message, channel, failedAttempt, failure));
+                }
+                try {
+                    ChannelRegistry.this.emitBatch(target, deadLetters);
+                } catch (RuntimeException routeFailure) {
+                    MessagingException result = new MessagingException(
+                            "Dead-letter delivery from channel " + channel
+                                    + " to channel " + target + " failed",
+                            routeFailure);
+                    result.addSuppressed(failure);
+                    throw result;
+                }
+                yield FailureResult.SETTLED;
+            }
+            };
+        }
+    }
+
+    private static final class ResolvedParameterizedType implements ParameterizedType {
+        private final Type ownerType;
+        private final Type rawType;
+        private final Type[] actualTypeArguments;
+
+        private ResolvedParameterizedType(Type ownerType, Type rawType, Type[] actualTypeArguments) {
+            this.ownerType = ownerType;
+            this.rawType = rawType;
+            this.actualTypeArguments = actualTypeArguments.clone();
+        }
+
+        @Override
+        public Type[] getActualTypeArguments() {
+            return actualTypeArguments.clone();
+        }
+
+        @Override
+        public Type getRawType() {
+            return rawType;
+        }
+
+        @Override
+        public Type getOwnerType() {
+            return ownerType;
+        }
+
+        @Override
+        public boolean equals(Object object) {
+            if (!(object instanceof ParameterizedType other)) {
+                return false;
+            }
+            return Objects.equals(ownerType, other.getOwnerType())
+                    && rawType.equals(other.getRawType())
+                    && Arrays.equals(actualTypeArguments, other.getActualTypeArguments());
+        }
+
+        @Override
+        public int hashCode() {
+            return Arrays.hashCode(actualTypeArguments)
+                    ^ Objects.hashCode(ownerType)
+                    ^ Objects.hashCode(rawType);
+        }
+    }
+
+    private static final class ResolvedWildcardType implements WildcardType {
+        private final Type[] lowerBounds;
+        private final Type[] upperBounds;
+
+        private ResolvedWildcardType(Type[] lowerBounds, Type[] upperBounds) {
+            this.lowerBounds = lowerBounds.clone();
+            this.upperBounds = upperBounds.clone();
+        }
+
+        @Override
+        public Type[] getUpperBounds() {
+            return upperBounds.clone();
+        }
+
+        @Override
+        public Type[] getLowerBounds() {
+            return lowerBounds.clone();
+        }
+
+        @Override
+        public boolean equals(Object object) {
+            if (!(object instanceof WildcardType other)) {
+                return false;
+            }
+            return Arrays.equals(lowerBounds, other.getLowerBounds())
+                    && Arrays.equals(upperBounds, other.getUpperBounds());
+        }
+
+        @Override
+        public int hashCode() {
+            return Arrays.hashCode(lowerBounds) ^ Arrays.hashCode(upperBounds);
+        }
+    }
+
+    private static final class ResolvedGenericArrayType implements GenericArrayType {
+        private final Type componentType;
+
+        private ResolvedGenericArrayType(Type componentType) {
+            this.componentType = componentType;
+        }
+
+        @Override
+        public Type getGenericComponentType() {
+            return componentType;
+        }
+
+        @Override
+        public boolean equals(Object object) {
+            return object instanceof GenericArrayType other
+                    && componentType.equals(other.getGenericComponentType());
+        }
+
+        @Override
+        public int hashCode() {
+            return componentType.hashCode();
+        }
+    }
+
+    private record OutgoingBinding(String channel, OutgoingConnector<?> connector, ConnectorConfig config) {
+    }
+
+    private record IncomingDescriptor(String channel,
+                                      FailurePolicy failurePolicy,
+                                      IncomingConnector<?> connector,
+                                      ConnectorConfig config) {
+    }
+
+    private record IncomingBinding(String channel, ConnectorSource source) {
     }
 }

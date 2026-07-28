@@ -16,25 +16,18 @@
 
 package io.helidon.extensions.messaging;
 
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
 /**
  * Message envelope with payload and headers.
+ * <p>
+ * Implementations must be immutable snapshots and must return an immutable map from {@link #headers()}.
  *
  * @param <T> payload type
  */
-public final class Message<T> {
-    private final T entity;
-    private final Map<String, String> headers;
-
-    private Message(T entity, Map<String, String> headers) {
-        this.entity = entity;
-        this.headers = Map.copyOf(headers);
-    }
-
+public interface Message<T> {
     /**
      * Create a message builder.
      *
@@ -42,7 +35,7 @@ public final class Message<T> {
      * @param <T> payload type
      * @return builder
      */
-    public static <T> Builder<T> builder(T entity) {
+    static <T> Builder<T> builder(T entity) {
         return new Builder<>(entity);
     }
 
@@ -53,7 +46,7 @@ public final class Message<T> {
      * @param <T> payload type
      * @return message
      */
-    public static <T> Message<T> create(T entity) {
+    static <T> Message<T> create(T entity) {
         return builder(entity).build();
     }
 
@@ -62,18 +55,14 @@ public final class Message<T> {
      *
      * @return payload
      */
-    public T entity() {
-        return entity;
-    }
+    T entity();
 
     /**
      * Headers.
      *
      * @return immutable headers
      */
-    public Map<String, String> headers() {
-        return headers;
-    }
+    Map<String, String> headers();
 
     /**
      * Header value.
@@ -81,8 +70,8 @@ public final class Message<T> {
      * @param name header name
      * @return header value
      */
-    public Optional<String> header(String name) {
-        return Optional.ofNullable(headers.get(name));
+    default Optional<String> header(String name) {
+        return Optional.ofNullable(headers().get(name));
     }
 
     /**
@@ -90,7 +79,7 @@ public final class Message<T> {
      *
      * @param <T> payload type
      */
-    public static final class Builder<T> {
+    final class Builder<T> {
         private final T entity;
         private final Map<String, String> headers = new LinkedHashMap<>();
 
@@ -113,10 +102,10 @@ public final class Message<T> {
         /**
          * Create the message.
          *
-         * @return message
+         * @return immutable message
          */
         public Message<T> build() {
-            return new Message<>(entity, Collections.unmodifiableMap(headers));
+            return new DefaultMessage<>(entity, headers);
         }
     }
 }

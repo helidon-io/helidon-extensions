@@ -25,7 +25,7 @@ import io.helidon.extensions.messaging.ConnectorConfig;
 /**
  * File connector configuration.
  */
-@Prototype.Blueprint
+@Prototype.Blueprint(decorator = FileConnectorConfigSupport.BuilderDecorator.class)
 @Prototype.Configured
 @Prototype.CustomMethods(FileConnectorConfigSupport.class)
 interface FileConnectorConfigBlueprint extends ConnectorConfig {

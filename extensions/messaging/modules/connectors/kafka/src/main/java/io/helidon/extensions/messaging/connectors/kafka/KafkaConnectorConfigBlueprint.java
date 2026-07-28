@@ -27,7 +27,7 @@ import io.helidon.extensions.messaging.ConnectorConfig;
 /**
  * Kafka connector configuration.
  */
-@Prototype.Blueprint(decorator = KafkaConnectorConfigBlueprint.BuilderDecorator.class)
+@Prototype.Blueprint
 @Prototype.Configured
 @Prototype.CustomMethods(KafkaConnectorConfigSupport.class)
 interface KafkaConnectorConfigBlueprint extends ConnectorConfig {
@@ -112,18 +112,8 @@ interface KafkaConnectorConfigBlueprint extends ConnectorConfig {
     Duration pollTimeout();
 
     /**
-     * Delay before redelivering an incoming poll whose message processing failed.
-     * The complete poll is retried without an attempt limit, so handlers that completed
-     * before another handler failed may observe duplicates under at-least-once delivery.
-     *
-     * @return redelivery delay
-     */
-    @Option.Configured(KafkaConnectorConfigSupport.REDELIVERY_DELAY_PROPERTY)
-    @Option.Default(KafkaConnectorConfigSupport.DEFAULT_REDELIVERY_DELAY)
-    Duration redeliveryDelay();
-
-    /**
-     * Maximum duration to wait for a producer send to complete.
+     * Maximum duration to wait for the future returned by a Kafka producer send.
+     * Successful completion follows the producer {@code acks} configuration.
      *
      * @return send timeout
      */
@@ -132,7 +122,9 @@ interface KafkaConnectorConfigBlueprint extends ConnectorConfig {
     Duration sendTimeout();
 
     /**
-     * Maximum duration to wait while closing a Kafka client.
+     * Maximum duration to wait for an active incoming delivery to become quiescent after interruption,
+     * and while closing a Kafka client. If an incoming delivery does not finish within this duration,
+     * connector close reports a failure and retains the delivery until it finishes.
      *
      * @return close timeout
      */
@@ -149,16 +141,4 @@ interface KafkaConnectorConfigBlueprint extends ConnectorConfig {
     @Option.Singular("property")
     Map<String, String> properties();
 
-    /**
-     * Validates Kafka connector configuration.
-     */
-    class BuilderDecorator implements Prototype.BuilderDecorator<KafkaConnectorConfig.BuilderBase<?, ?>> {
-        @Override
-        public void decorate(KafkaConnectorConfig.BuilderBase<?, ?> target) {
-            Duration redeliveryDelay = target.redeliveryDelay();
-            if (redeliveryDelay.isZero() || redeliveryDelay.isNegative()) {
-                throw new IllegalArgumentException("redelivery.delay must be greater than zero");
-            }
-        }
-    }
 }

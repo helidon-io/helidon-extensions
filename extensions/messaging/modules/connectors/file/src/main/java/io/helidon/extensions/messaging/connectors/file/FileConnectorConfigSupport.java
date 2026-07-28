@@ -43,4 +43,15 @@ final class FileConnectorConfigSupport {
     private FileConnectorConfigSupport() {
     }
 
+    /**
+     * Validates file connector configuration.
+     */
+    static final class BuilderDecorator implements Prototype.BuilderDecorator<FileConnectorConfig.BuilderBase<?, ?>> {
+        @Override
+        public void decorate(FileConnectorConfig.BuilderBase<?, ?> target) {
+            if (target.lineSeparator().isEmpty()) {
+                throw new IllegalArgumentException("line-separator must not be empty");
+            }
+        }
+    }
 }

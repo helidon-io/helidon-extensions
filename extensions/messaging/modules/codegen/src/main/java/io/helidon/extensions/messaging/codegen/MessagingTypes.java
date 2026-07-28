@@ -24,6 +24,7 @@ final class MessagingTypes {
             TypeName.create("io.helidon.extensions.messaging.ConsumerRegistration");
     static final TypeName EMITTER = TypeName.create("io.helidon.extensions.messaging.Emitter");
     static final TypeName ENTITY = TypeName.create("io.helidon.extensions.messaging.Messaging.Entity");
+    static final TypeName GENERIC_TYPE = TypeName.create("io.helidon.common.GenericType");
     static final TypeName HEADER_PARAM =
             TypeName.create("io.helidon.extensions.messaging.Messaging.HeaderParam");
     static final TypeName LIST = TypeNames.LIST;

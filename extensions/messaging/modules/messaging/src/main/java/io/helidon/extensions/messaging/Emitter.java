@@ -21,7 +21,11 @@ import java.util.List;
 import io.helidon.service.registry.Service;
 
 /**
- * Emitter facade matching the design-doc shape.
+ * Synchronous emitter for a named messaging channel.
+ * <p>
+ * A method returns only after every required channel output completes successfully. Outputs are invoked sequentially
+ * and the first failure is propagated to the caller without invoking remaining outputs. An earlier output may have
+ * completed before a later output fails, so retrying can deliver the same message more than once.
  *
  * @param <T> payload type
  */
@@ -29,24 +33,39 @@ import io.helidon.service.registry.Service;
 public interface Emitter<T> {
     /**
      * Emit a payload-only message.
+     * <p>
+     * A successful return means end-to-end delivery to all required outputs completed. A thrown exception means
+     * delivery failed or its outcome is indeterminate.
      *
      * @param entity payload
+     * @throws MessagingException if the target channel does not exist
+     * @throws RuntimeException if a handler or outgoing connector fails
      */
     void emit(T entity);
 
     /**
      * Emit a message with metadata.
+     * <p>
+     * A successful return means end-to-end delivery to all required outputs completed. A thrown exception means
+     * delivery failed or its outcome is indeterminate.
      *
      * @param message message
+     * @throws MessagingException if the target channel does not exist
+     * @throws RuntimeException if a handler or outgoing connector fails
      */
     void emit(Message<T> message);
 
     /**
      * Emit a batch of messages.
+     * <p>
+     * The default implementation emits messages sequentially and stops at the first failure. Messages delivered
+     * before that failure are not rolled back and can be duplicated if the caller retries the batch.
      *
      * @param messages messages
+     * @throws MessagingException if the target channel does not exist
+     * @throws RuntimeException if a handler or outgoing connector fails
      */
-    default void emitBatch(List<Message<T>> messages) {
+    default void emitBatch(List<? extends Message<T>> messages) {
         for (Message<T> message : messages) {
             emit(message);
         }

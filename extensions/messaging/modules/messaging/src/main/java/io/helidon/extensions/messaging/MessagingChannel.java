@@ -21,7 +21,12 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
- * Imperative messaging channel API.
+ * Imperative synchronous messaging channel API.
+ * <p>
+ * All configured outputs are required. An emission invokes them sequentially in configuration order and returns only
+ * after all of them complete successfully. The first output failure is propagated to the caller and remaining outputs
+ * are not invoked. Outputs completed before a failure are not rolled back, so retrying can deliver the same message
+ * more than once.
  *
  * @param <T> payload type
  */
@@ -38,24 +43,36 @@ public interface MessagingChannel<T> {
 
     /**
      * Emit a payload-only message.
+     * <p>
+     * A successful return means all required outputs completed. A thrown exception means delivery failed or its
+     * outcome is indeterminate.
      *
      * @param entity payload
+     * @throws RuntimeException if an output fails
      */
     void emit(T entity);
 
     /**
      * Emit a message to all channel outputs.
+     * <p>
+     * A successful return means all required outputs completed. A thrown exception means delivery failed or its
+     * outcome is indeterminate.
      *
      * @param message message
+     * @throws RuntimeException if an output fails
      */
     void emit(Message<T> message);
 
     /**
      * Emit a batch of messages to all channel outputs.
+     * <p>
+     * The same batch is delivered sequentially to every required output. Completed outputs are not rolled back if a
+     * later output fails.
      *
      * @param messages messages
+     * @throws RuntimeException if an output fails
      */
-    void emitBatch(List<Message<T>> messages);
+    void emitBatch(List<? extends Message<T>> messages);
 
     /**
      * Start this channel's lifecycle inputs.
@@ -95,7 +112,9 @@ public interface MessagingChannel<T> {
         Builder<T> addInput(MessagingChannel<?> input);
 
         /**
-         * Add an output consumer.
+         * Add a required output consumer.
+         * <p>
+         * Outputs are invoked sequentially in the order in which they are added.
          *
          * @param output output consumer
          * @return updated builder
@@ -103,7 +122,9 @@ public interface MessagingChannel<T> {
         Builder<T> addOutput(Consumer<Message<T>> output);
 
         /**
-         * Add a batch output consumer.
+         * Add a required batch output consumer.
+         * <p>
+         * Outputs are invoked sequentially in the order in which they are added.
          *
          * @param output output consumer
          * @return updated builder
@@ -111,7 +132,9 @@ public interface MessagingChannel<T> {
         Builder<T> addBatchOutput(Consumer<List<Message<T>>> output);
 
         /**
-         * Add an outgoing connector as an output.
+         * Add an outgoing connector as a required output.
+         * <p>
+         * Outputs are invoked sequentially in the order in which they are added.
          *
          * @param output outgoing connector sink
          * @return updated builder

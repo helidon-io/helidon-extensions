@@ -88,12 +88,6 @@ final class KafkaConnectorConfigSupport {
     static final String POLL_TIMEOUT_PROPERTY = "poll.timeout";
 
     /**
-     * Config property for the delay before redelivering a failed incoming batch.
-     */
-    @Prototype.Constant
-    static final String REDELIVERY_DELAY_PROPERTY = "redelivery.delay";
-
-    /**
      * Config property for the producer send timeout.
      */
     @Prototype.Constant
@@ -148,12 +142,6 @@ final class KafkaConnectorConfigSupport {
     static final String DEFAULT_POLL_TIMEOUT = "PT0.1S";
 
     /**
-     * Default delay before redelivering a failed incoming batch.
-     */
-    @Prototype.Constant
-    static final String DEFAULT_REDELIVERY_DELAY = "PT1S";
-
-    /**
      * Default producer send timeout.
      */
     @Prototype.Constant
@@ -170,7 +158,6 @@ final class KafkaConnectorConfigSupport {
                                                                    "direction",
                                                                    TOPIC_PROPERTY,
                                                                    POLL_TIMEOUT_PROPERTY,
-                                                                   REDELIVERY_DELAY_PROPERTY,
                                                                    SEND_TIMEOUT_PROPERTY,
                                                                    CLOSE_TIMEOUT_PROPERTY);
 
