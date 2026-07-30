@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.messaging.connectors.kafka;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -24,22 +25,23 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import io.helidon.extensions.messaging.ConnectorDelivery;
+import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
 import io.helidon.extensions.messaging.ConnectorSource;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.IncomingConnector;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingException;
+import io.helidon.extensions.messaging.MessagingRejectedException;
 import io.helidon.service.registry.Service;
 
 import org.apache.kafka.clients.consumer.Consumer;
@@ -61,6 +63,16 @@ import org.apache.kafka.common.errors.WakeupException;
  * owner thread continues polling with all assigned partitions paused. Next offsets are committed only after dispatch
  * succeeds, or after the portable failure policy explicitly settles the failure. Retrying a poll can duplicate work
  * completed before another required output failed.
+ * <p>
+ * The connector caps {@code max.poll.records}, {@code fetch.max.bytes}, and
+ * {@code max.partition.fetch.bytes} using the channel delivery limits. These Kafka settings are acquisition hints, not
+ * admission guarantees: Kafka may return an oversized first record batch and may retain additional fetched records in
+ * its client cache. Before every normal poll, the source reserves the channel's maximum delivery budget; while that
+ * reservation is unavailable, assigned partitions remain paused and only heartbeat-maintenance polls run. Every
+ * materialized poll is then weighed again, including its settlement metadata, before the reservation transfers to the
+ * actual delivery. An oversized poll is rejected without committing it. Broker and topic record-batch limits must be
+ * aligned separately when oversized batches need to be rejected before consumption; runtime admission does not bound
+ * transient Kafka-client or deserializer memory.
  */
 @Service.Singleton
 public class KafkaIncomingConnector implements IncomingConnector<KafkaConnectorConfig> {
@@ -139,7 +151,7 @@ public class KafkaIncomingConnector implements IncomingConnector<KafkaConnectorC
         private final AtomicBoolean closed = new AtomicBoolean();
         private final AtomicBoolean runFinished = new AtomicBoolean();
         private final AtomicReference<Consumer<Object, Object>> activeConsumer = new AtomicReference<>();
-        private final AtomicReference<DeliveryTask> activeDelivery = new AtomicReference<>();
+        private final AtomicReference<ActiveDelivery> activeDelivery = new AtomicReference<>();
         private final CountDownLatch closeSignal = new CountDownLatch(1);
         private final Object commitGate = new Object();
         private final Object deliveryGate = new Object();
@@ -169,7 +181,10 @@ public class KafkaIncomingConnector implements IncomingConnector<KafkaConnectorC
             Consumer<Object, Object> consumer = null;
             Throwable primaryFailure = null;
             try {
-                consumer = consumerFactory.create(KafkaConnectorConfigSupport.consumerProperties(config));
+                consumer = consumerFactory.create(KafkaConnectorConfigSupport.consumerProperties(
+                        config,
+                        context.maxDeliveryMessages(),
+                        context.maxDeliveryBytes()));
                 activeConsumer.set(consumer);
                 if (!closed.get()) {
                     consume(consumer);
@@ -216,36 +231,113 @@ public class KafkaIncomingConnector implements IncomingConnector<KafkaConnectorC
         private void consume(Consumer<Object, Object> consumer) {
             SourceRebalanceListener rebalanceListener = new SourceRebalanceListener(consumer);
             consumer.subscribe(List.of(config.topic()), rebalanceListener);
+            boolean hasPolled = false;
             while (!closed.get()) {
-                ConsumerRecords<Object, Object> records = consumer.poll(config.pollTimeout());
-                List<Message<Object>> messages = new ArrayList<>();
-                for (ConsumerRecord<Object, Object> record : records) {
-                    messages.add(toMessage(record));
-                }
-                if (messages.isEmpty()) {
-                    continue;
-                }
-                PendingPoll pendingPoll = PendingPoll.create(records, List.copyOf(messages));
-                if (!processPoll(consumer, rebalanceListener, pendingPoll)) {
+                AdmissionBudget admissionBudget = new AdmissionBudget();
+                ConnectorDeliveryReservation reservation = awaitPollReservation(consumer,
+                                                                                 rebalanceListener,
+                                                                                 admissionBudget,
+                                                                                 hasPolled);
+                if (reservation == null) {
                     return;
                 }
+                try (reservation) {
+                    if (closed.get()) {
+                        return;
+                    }
+                    consumer.resume(consumer.assignment());
+                    ConsumerRecords<Object, Object> records = consumer.poll(config.pollTimeout());
+                    hasPolled = true;
+                    List<Message<Object>> messages = new ArrayList<>();
+                    for (ConsumerRecord<Object, Object> record : records) {
+                        messages.add(toMessage(record));
+                    }
+                    if (messages.isEmpty()) {
+                        continue;
+                    }
+                    PendingPoll pendingPoll = PendingPoll.create(records,
+                                                                 List.copyOf(messages),
+                                                                 context);
+                    if (!processPoll(consumer,
+                                     rebalanceListener,
+                                     pendingPoll,
+                                     reservation,
+                                     admissionBudget)) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        private ConnectorDeliveryReservation awaitPollReservation(Consumer<Object, Object> consumer,
+                                                                   SourceRebalanceListener rebalanceListener,
+                                                                   AdmissionBudget admissionBudget,
+                                                                   boolean hasPolled) {
+            rebalanceListener.capacityWaiting(true);
+            try {
+                while (!closed.get()) {
+                    Set<TopicPartition> assignment = consumer.assignment();
+                    if (!assignment.isEmpty()) {
+                        consumer.pause(assignment);
+                    }
+                    admissionBudget.requireAvailable();
+                    Optional<ConnectorDeliveryReservation> reservation = context.tryReserveDelivery(
+                            context.maxDeliveryMessages(),
+                            context.maxDeliveryBytes());
+                    if (reservation.isPresent()) {
+                        return reservation.get();
+                    }
+                    if (closed.get()) {
+                        return null;
+                    }
+
+                    assignment = consumer.assignment();
+                    if (assignment.isEmpty() && !hasPolled) {
+                        if (!awaitReservationRetry(admissionBudget)) {
+                            return null;
+                        }
+                    } else {
+                        consumer.pause(assignment);
+                        maintenancePoll(consumer, admissionBudget);
+                    }
+                }
+                return null;
+            } finally {
+                rebalanceListener.capacityWaiting(false);
             }
         }
 
         private boolean processPoll(Consumer<Object, Object> consumer,
                                     SourceRebalanceListener rebalanceListener,
-                                    PendingPoll pendingPoll) {
+                                    PendingPoll pendingPoll,
+                                    ConnectorDeliveryReservation reservation,
+                                    AdmissionBudget admissionBudget) {
             rebalanceListener.pending(pendingPoll);
             consumer.pause(consumer.assignment());
-            DeliveryTask deliveryTask = startDelivery(pendingPoll);
-            if (deliveryTask == null) {
-                rebalanceListener.clear(pendingPoll);
-                return false;
-            }
+            ActiveDelivery deliveryTask = null;
             try {
-                while (!deliveryTask.completion().isDone()) {
+                deliveryTask = awaitDeliveryAdmission(consumer,
+                                                      pendingPoll,
+                                                      reservation,
+                                                      admissionBudget);
+                if (deliveryTask == null) {
+                    if (pendingPoll.stale() && !closed.get()) {
+                        recoverStalePoll(consumer, pendingPoll);
+                        return true;
+                    }
+                    return false;
+                }
+                while (!deliveryTask.isDone()) {
                     if (closed.get()) {
                         return false;
+                    }
+                    if (pendingPoll.stale()) {
+                        awaitStaleDeliveryStop(consumer, deliveryTask);
+                        if (closed.get()) {
+                            return false;
+                        }
+                        recoverStalePoll(consumer, pendingPoll);
+                        return true;
                     }
                     maintenancePoll(consumer);
                 }
@@ -253,54 +345,67 @@ public class KafkaIncomingConnector implements IncomingConnector<KafkaConnectorC
                     return false;
                 }
 
-                rethrowDeliveryFailure(deliveryTask);
                 pendingPoll.invalidateMissing(consumer.assignment());
                 if (pendingPoll.stale()) {
                     recoverStalePoll(consumer, pendingPoll);
                     return true;
                 }
+                rethrowDeliveryFailure(deliveryTask);
                 return commitPoll(consumer, pendingPoll);
             } finally {
                 rebalanceListener.clear(pendingPoll);
-                stopDelivery(deliveryTask);
+                if (deliveryTask != null) {
+                    stopDelivery(deliveryTask);
+                }
                 if (!closed.get()) {
                     consumer.resume(consumer.assignment());
                 }
             }
         }
 
-        private DeliveryTask startDelivery(PendingPoll pendingPoll) {
-            CompletableFuture<Void> completion = new CompletableFuture<>();
-            Thread thread = Thread.ofVirtual()
-                    .name("helidon-messaging-kafka-delivery-" + context.channelName())
-                    .inheritInheritableThreadLocals(false)
-                    .unstarted(() -> runDelivery(pendingPoll, completion));
-            DeliveryTask deliveryTask = new DeliveryTask(thread, completion);
+        private ActiveDelivery awaitDeliveryAdmission(Consumer<Object, Object> consumer,
+                                                      PendingPoll pendingPoll,
+                                                      ConnectorDeliveryReservation reservation,
+                                                      AdmissionBudget admissionBudget) {
+            while (!closed.get() && !pendingPoll.stale()) {
+                admissionBudget.requireAvailable();
+                ActiveDelivery deliveryTask = tryStartDelivery(pendingPoll, reservation);
+                if (deliveryTask != null) {
+                    return deliveryTask;
+                }
+                maintenancePoll(consumer, admissionBudget);
+            }
+            return null;
+        }
+
+        private ActiveDelivery tryStartDelivery(PendingPoll pendingPoll,
+                                                ConnectorDeliveryReservation reservation) {
+            if (closed.get()) {
+                return null;
+            }
+            ActiveDelivery active = new ActiveDelivery(pendingPoll);
             synchronized (deliveryGate) {
                 if (closed.get()) {
                     return null;
                 }
-                if (!activeDelivery.compareAndSet(null, deliveryTask)) {
+                Optional<ConnectorDelivery> admitted = reservation.tryStart(pendingPoll.messages(),
+                                                                            pendingPoll.admissionBytes(),
+                                                                            active::run);
+                if (admitted.isEmpty()) {
+                    return null;
+                }
+                active.attach(admitted.get());
+                if (!activeDelivery.compareAndSet(null, active)) {
+                    cancelAndRelease(active);
                     throw new IllegalStateException("Kafka source already has an active delivery");
                 }
-                thread.start();
-            }
-            return deliveryTask;
-        }
-
-        private void runDelivery(PendingPoll pendingPoll, CompletableFuture<Void> completion) {
-            try {
-                deliver(pendingPoll);
-                completion.complete(null);
-            } catch (Throwable t) {
-                completion.completeExceptionally(t);
-            } finally {
-                DeliveryTask deliveryTask = activeDelivery.get();
-                if (deliveryTask != null && deliveryTask.thread() == Thread.currentThread()) {
-                    activeDelivery.compareAndSet(deliveryTask, null);
+                if (closed.get()) {
+                    cancelAndRelease(active);
+                    active.releaseWhenFinished();
+                    return null;
                 }
-                removeIfQuiescent();
             }
+            return active;
         }
 
         private void deliver(PendingPoll pendingPoll) {
@@ -458,7 +563,21 @@ public class KafkaIncomingConnector implements IncomingConnector<KafkaConnectorC
         }
 
         private void maintenancePoll(Consumer<Object, Object> consumer) {
-            ConsumerRecords<Object, Object> records = consumer.poll(maintenancePollTimeout);
+            maintenancePoll(consumer, maintenancePollTimeout);
+        }
+
+        private void maintenancePoll(Consumer<Object, Object> consumer, AdmissionBudget admissionBudget) {
+            Duration timeout = admissionBudget.waitTimeout();
+            long waitStarted = System.nanoTime();
+            try {
+                maintenancePoll(consumer, timeout);
+            } finally {
+                admissionBudget.spentSince(waitStarted);
+            }
+        }
+
+        private void maintenancePoll(Consumer<Object, Object> consumer, Duration timeout) {
+            ConsumerRecords<Object, Object> records = consumer.poll(timeout);
             for (TopicPartition partition : records.partitions()) {
                 if (consumer.assignment().contains(partition)) {
                     consumer.seek(partition, records.records(partition).getFirst().offset());
@@ -475,28 +594,91 @@ public class KafkaIncomingConnector implements IncomingConnector<KafkaConnectorC
             }
         }
 
-        private void rethrowDeliveryFailure(DeliveryTask deliveryTask) {
-            try {
-                deliveryTask.completion().join();
-            } catch (CompletionException e) {
-                Throwable cause = e.getCause();
-                if (cause instanceof RuntimeException runtimeException) {
-                    throw runtimeException;
+        private void awaitStaleDeliveryStop(Consumer<Object, Object> consumer, ActiveDelivery deliveryTask) {
+            deliveryTask.cancel();
+            long remainingNanos = config.closeTimeout().toNanos();
+            while (!deliveryTask.isDone()) {
+                if (closed.get()) {
+                    return;
                 }
-                if (cause instanceof Error error) {
-                    throw error;
+                if (remainingNanos <= 0) {
+                    deliveryTask.close();
+                    deliveryTask.releaseWhenFinished();
+                    throw new MessagingException("Kafka stale delivery did not stop after "
+                                                         + config.closeTimeout() + " on channel "
+                                                         + context.channelName());
                 }
-                throw new MessagingException("Kafka incoming message processing failed", cause);
+                Duration timeout = Duration.ofNanos(Math.min(remainingNanos, maintenancePollTimeout.toNanos()));
+                long pollStarted = System.nanoTime();
+                maintenancePoll(consumer, timeout);
+                remainingNanos -= System.nanoTime() - pollStarted;
             }
         }
 
-        private void stopDelivery(DeliveryTask deliveryTask) {
-            if (!deliveryTask.completion().isDone()) {
-                deliveryTask.thread().interrupt();
-            } else {
-                activeDelivery.compareAndSet(deliveryTask, null);
+        private void rethrowDeliveryFailure(ActiveDelivery deliveryTask) {
+            try {
+                deliveryTask.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                if (!closed.get()) {
+                    throw new MessagingException("Kafka incoming message processing was interrupted", e);
+                }
             }
+        }
+
+        private void stopDelivery(ActiveDelivery deliveryTask) {
+            if (!deliveryTask.isDone()) {
+                deliveryTask.cancel();
+                deliveryTask.close();
+                if (deliveryTask.releaseRequested()) {
+                    removeIfQuiescent();
+                    return;
+                }
+                boolean stopped = false;
+                try {
+                    stopped = deliveryTask.await(config.closeTimeout());
+                } catch (RuntimeException e) {
+                    // Processing is quiescent; its failure belongs to the already-closing source.
+                    stopped = true;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                if (stopped) {
+                    activeDelivery.compareAndSet(deliveryTask, null);
+                } else {
+                    deliveryTask.releaseWhenFinished();
+                }
+                removeIfQuiescent();
+                return;
+            }
+            deliveryTask.close();
+            activeDelivery.compareAndSet(deliveryTask, null);
             removeIfQuiescent();
+        }
+
+        private void cancelAndRelease(ActiveDelivery deliveryTask) {
+            deliveryTask.cancel();
+            deliveryTask.close();
+        }
+
+        private boolean awaitReservationRetry(AdmissionBudget admissionBudget) {
+            Duration timeout = admissionBudget.waitTimeout();
+            long waitStarted = System.nanoTime();
+            try {
+                return !closeSignal.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                if (closed.get()) {
+                    return false;
+                }
+                throw new MessagingRejectedException(
+                        context.channelName(),
+                        MessagingRejectedException.Reason.CANCELLED,
+                        "Kafka delivery reservation wait was interrupted on channel " + context.channelName(),
+                        e);
+            } finally {
+                admissionBudget.spentSince(waitStarted);
+            }
         }
 
         private boolean prepareRedelivery(int recordCount,
@@ -539,12 +721,12 @@ public class KafkaIncomingConnector implements IncomingConnector<KafkaConnectorC
                 closed.set(true);
             }
             closeSignal.countDown();
-            DeliveryTask deliveryTask;
+            ActiveDelivery deliveryTask;
             synchronized (deliveryGate) {
                 deliveryTask = activeDelivery.get();
             }
             if (deliveryTask != null) {
-                deliveryTask.thread().interrupt();
+                deliveryTask.cancel();
             }
             Consumer<Object, Object> consumer = activeConsumer.get();
             if (consumer != null) {
@@ -553,32 +735,155 @@ public class KafkaIncomingConnector implements IncomingConnector<KafkaConnectorC
             awaitDelivery(deliveryTask);
         }
 
-        private void awaitDelivery(DeliveryTask deliveryTask) {
-            if (deliveryTask == null || deliveryTask.thread() == Thread.currentThread()) {
+        private void awaitDelivery(ActiveDelivery deliveryTask) {
+            if (deliveryTask == null || deliveryTask.isCurrentThread()) {
                 return;
             }
+            boolean stopped;
             try {
-                deliveryTask.completion().get(TimeUnit.NANOSECONDS.convert(config.closeTimeout()),
-                                              TimeUnit.NANOSECONDS);
-            } catch (ExecutionException e) {
+                stopped = deliveryTask.await(config.closeTimeout());
+            } catch (RuntimeException e) {
                 // The delivery is quiescent. Its processing failure belongs to the source owner thread.
-            } catch (TimeoutException e) {
-                String message = "Kafka incoming connector close timed out after "
-                        + config.closeTimeout() + " while waiting for active delivery on channel "
-                        + context.channelName() + "; the delivery remains tracked until it finishes";
-                LOGGER.log(System.Logger.Level.ERROR, message);
-                throw new MessagingException(message, e);
+                activeDelivery.compareAndSet(deliveryTask, null);
+                removeIfQuiescent();
+                return;
             } catch (InterruptedException e) {
+                deliveryTask.releaseWhenFinished();
                 Thread.currentThread().interrupt();
                 throw new MessagingException("Interrupted while waiting for active Kafka delivery on channel "
                                                      + context.channelName() + " to finish",
                                              e);
             }
+            if (stopped) {
+                activeDelivery.compareAndSet(deliveryTask, null);
+                removeIfQuiescent();
+                return;
+            }
+            deliveryTask.releaseWhenFinished();
+            String message = "Kafka incoming connector close timed out after "
+                    + config.closeTimeout() + " while waiting for active delivery on channel "
+                    + context.channelName() + "; the delivery remains tracked until it finishes";
+            LOGGER.log(System.Logger.Level.ERROR, message);
+            throw new MessagingException(message);
         }
 
         private void removeIfQuiescent() {
             if (runFinished.get() && activeDelivery.get() == null) {
                 sources.remove(this);
+            }
+        }
+
+        private final class AdmissionBudget {
+            private final Optional<Duration> configuredTimeout = context.admissionTimeout();
+            private long remainingNanos = configuredTimeout
+                    .map(TimeUnit.NANOSECONDS::convert)
+                    .orElse(Long.MAX_VALUE);
+
+            private void requireAvailable() {
+                if (remainingNanos <= 0) {
+                    throw new MessagingRejectedException(
+                            context.channelName(),
+                            MessagingRejectedException.Reason.TIMEOUT,
+                            "Kafka delivery admission timed out after " + configuredTimeout.orElseThrow()
+                                    + " on channel " + context.channelName());
+                }
+            }
+
+            private Duration waitTimeout() {
+                requireAvailable();
+                return remainingNanos == Long.MAX_VALUE
+                        ? maintenancePollTimeout
+                        : Duration.ofNanos(Math.min(remainingNanos, maintenancePollTimeout.toNanos()));
+            }
+
+            private void spentSince(long started) {
+                if (remainingNanos != Long.MAX_VALUE) {
+                    remainingNanos = Math.max(0, remainingNanos - (System.nanoTime() - started));
+                }
+            }
+        }
+
+        private final class ActiveDelivery implements ConnectorDelivery {
+            private final PendingPoll pendingPoll;
+            private final AtomicReference<ConnectorDelivery> delegate = new AtomicReference<>();
+            private final AtomicBoolean actionFinished = new AtomicBoolean();
+            private final AtomicBoolean delegateClosed = new AtomicBoolean();
+            private final AtomicBoolean releaseWhenFinished = new AtomicBoolean();
+            private final AtomicBoolean releasedFromSource = new AtomicBoolean();
+
+            private ActiveDelivery(PendingPoll pendingPoll) {
+                this.pendingPoll = pendingPoll;
+            }
+
+            @Override
+            public boolean isDone() {
+                return delegate().isDone();
+            }
+
+            @Override
+            public boolean isCurrentThread() {
+                return delegate().isCurrentThread();
+            }
+
+            @Override
+            public void await() throws InterruptedException {
+                delegate().await();
+            }
+
+            @Override
+            public boolean await(Duration timeout) throws InterruptedException {
+                return delegate().await(timeout);
+            }
+
+            @Override
+            public void cancel() {
+                delegate().cancel();
+            }
+
+            @Override
+            public void close() {
+                if (delegateClosed.compareAndSet(false, true)) {
+                    delegate().close();
+                }
+            }
+
+            private void run() {
+                try {
+                    deliver(pendingPoll);
+                } finally {
+                    actionFinished.set(true);
+                    releaseFromSourceWhenFinished();
+                }
+            }
+
+            private void attach(ConnectorDelivery delivery) {
+                if (!delegate.compareAndSet(null, Objects.requireNonNull(delivery))) {
+                    throw new IllegalStateException("Kafka delivery delegate was already attached");
+                }
+                releaseFromSourceWhenFinished();
+            }
+
+            private void releaseWhenFinished() {
+                releaseWhenFinished.set(true);
+                releaseFromSourceWhenFinished();
+            }
+
+            private boolean releaseRequested() {
+                return releaseWhenFinished.get();
+            }
+
+            private void releaseFromSourceWhenFinished() {
+                if (releaseWhenFinished.get()
+                        && actionFinished.get()
+                        && delegate.get() != null
+                        && releasedFromSource.compareAndSet(false, true)) {
+                    activeDelivery.compareAndSet(this, null);
+                    removeIfQuiescent();
+                }
+            }
+
+            private ConnectorDelivery delegate() {
+                return Objects.requireNonNull(delegate.get(), "Kafka delivery delegate");
             }
         }
 
@@ -595,6 +900,7 @@ public class KafkaIncomingConnector implements IncomingConnector<KafkaConnectorC
         private final class SourceRebalanceListener implements ConsumerRebalanceListener {
             private final Consumer<Object, Object> consumer;
             private PendingPoll pendingPoll;
+            private boolean capacityWaiting;
 
             private SourceRebalanceListener(Consumer<Object, Object> consumer) {
                 this.consumer = consumer;
@@ -607,7 +913,7 @@ public class KafkaIncomingConnector implements IncomingConnector<KafkaConnectorC
 
             @Override
             public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
-                if (pendingPoll != null) {
+                if (capacityWaiting || pendingPoll != null) {
                     consumer.pause(consumer.assignment());
                 }
             }
@@ -627,46 +933,145 @@ public class KafkaIncomingConnector implements IncomingConnector<KafkaConnectorC
                 }
             }
 
+            private void capacityWaiting(boolean capacityWaiting) {
+                this.capacityWaiting = capacityWaiting;
+            }
+
             private void invalidate(Collection<TopicPartition> partitions) {
                 if (pendingPoll != null && pendingPoll.invalidate(partitions)) {
-                    DeliveryTask deliveryTask = activeDelivery.get();
-                    if (deliveryTask != null) {
-                        deliveryTask.thread().interrupt();
+                    synchronized (deliveryGate) {
+                        ActiveDelivery deliveryTask = activeDelivery.get();
+                        if (deliveryTask != null) {
+                            deliveryTask.cancel();
+                        }
                     }
                 }
             }
         }
     }
 
-    private record DeliveryTask(Thread thread, CompletableFuture<Void> completion) {
-    }
-
     private static final class PendingPoll {
+        // Batch count plus stale state.
+        private static final long POLL_STATE_BYTES = Integer.BYTES + Byte.BYTES;
+        // Partition id, first offset, next offset, and invalidation state.
+        private static final long PARTITION_STATE_BYTES = Integer.BYTES
+                + Long.BYTES
+                + Long.BYTES
+                + Byte.BYTES;
+
         private final List<Message<Object>> messages;
         private final Map<TopicPartition, OffsetAndMetadata> nextOffsets;
         private final Map<TopicPartition, Long> firstOffsets;
+        private final long admissionBytes;
         private final Set<TopicPartition> invalidatedPartitions = new HashSet<>();
         private final AtomicBoolean stale = new AtomicBoolean();
 
         private PendingPoll(List<Message<Object>> messages,
                             Map<TopicPartition, OffsetAndMetadata> nextOffsets,
-                            Map<TopicPartition, Long> firstOffsets) {
+                            Map<TopicPartition, Long> firstOffsets,
+                            long admissionBytes) {
             this.messages = messages;
             this.nextOffsets = nextOffsets;
             this.firstOffsets = firstOffsets;
+            this.admissionBytes = admissionBytes;
         }
 
         private static PendingPoll create(ConsumerRecords<Object, Object> records,
-                                          List<Message<Object>> messages) {
+                                          List<Message<Object>> messages,
+                                          ConnectorSourceContext context) {
+            String channel = context.channelName();
+            int maxDeliveryMessages = context.maxDeliveryMessages();
+            long maxDeliveryBytes = context.maxDeliveryBytes();
+            if (messages.size() > maxDeliveryMessages) {
+                throw new MessagingRejectedException(
+                        channel,
+                        MessagingRejectedException.Reason.OVERSIZED,
+                        "Kafka poll contains " + messages.size() + " messages, exceeding channel "
+                                + channel + " limit " + maxDeliveryMessages);
+            }
             Map<TopicPartition, Long> firstOffsets = new LinkedHashMap<>();
             for (TopicPartition partition : records.partitions()) {
                 firstOffsets.put(partition, records.records(partition).getFirst().offset());
             }
-            return new PendingPoll(messages, Map.copyOf(records.nextOffsets()), Map.copyOf(firstOffsets));
+            Map<TopicPartition, OffsetAndMetadata> nextOffsets = Map.copyOf(records.nextOffsets());
+            Map<TopicPartition, Long> immutableFirstOffsets = Map.copyOf(firstOffsets);
+            long admissionBytes = 0;
+            for (Message<Object> message : messages) {
+                OptionalLong estimate = Objects.requireNonNull(
+                        context.messageAdmissionBytes(message),
+                        "Connector source message admission byte size");
+                long messageBytes = estimate
+                        .orElseThrow(() -> new MessagingRejectedException(
+                                channel,
+                                MessagingRejectedException.Reason.UNKNOWN_SIZE,
+                                "Kafka record admission size is unknown on channel " + channel));
+                if (messageBytes < 0) {
+                    throw new IllegalArgumentException("Message admission byte size must be zero or greater");
+                }
+                KafkaMessageImpl<?, ?> kafkaMessage = (KafkaMessageImpl<?, ?>) message;
+                long recordLowerBound = kafkaMessage.recordAdmissionLowerBound()
+                        .orElseThrow(() -> new IllegalStateException(
+                                "Incoming Kafka message is missing its record admission lower bound"));
+                messageBytes = Math.max(messageBytes, recordLowerBound);
+                try {
+                    admissionBytes = Math.addExact(admissionBytes, messageBytes);
+                } catch (ArithmeticException e) {
+                    throw new MessagingRejectedException(
+                            channel,
+                            MessagingRejectedException.Reason.OVERSIZED,
+                            "Kafka poll admission size exceeds the supported range on channel " + channel,
+                            e);
+                }
+            }
+            try {
+                admissionBytes = Math.addExact(admissionBytes,
+                                               settlementAdmissionBytes(nextOffsets, immutableFirstOffsets));
+            } catch (ArithmeticException e) {
+                throw new MessagingRejectedException(
+                        channel,
+                        MessagingRejectedException.Reason.OVERSIZED,
+                        "Kafka poll admission size exceeds the supported range on channel " + channel,
+                        e);
+            }
+            if (admissionBytes > maxDeliveryBytes) {
+                throw new MessagingRejectedException(
+                        channel,
+                        MessagingRejectedException.Reason.OVERSIZED,
+                        "Kafka poll contains " + admissionBytes + " admission bytes, exceeding channel "
+                                + channel + " limit " + maxDeliveryBytes);
+            }
+            return new PendingPoll(messages,
+                                   nextOffsets,
+                                   immutableFirstOffsets,
+                                   admissionBytes);
+        }
+
+        private static long settlementAdmissionBytes(Map<TopicPartition, OffsetAndMetadata> nextOffsets,
+                                                     Map<TopicPartition, Long> firstOffsets) {
+            Set<TopicPartition> partitions = new HashSet<>(firstOffsets.keySet());
+            partitions.addAll(nextOffsets.keySet());
+            long result = POLL_STATE_BYTES;
+            for (TopicPartition partition : partitions) {
+                result = Math.addExact(result, partition.topic().getBytes(StandardCharsets.UTF_8).length);
+                result = Math.addExact(result, PARTITION_STATE_BYTES);
+                OffsetAndMetadata nextOffset = nextOffsets.get(partition);
+                if (nextOffset != null) {
+                    result = Math.addExact(result,
+                                           nextOffset.metadata().getBytes(StandardCharsets.UTF_8).length);
+                    if (nextOffset.leaderEpoch().isPresent()) {
+                        result = Math.addExact(result, Integer.BYTES);
+                    }
+                }
+            }
+            return result;
         }
 
         private List<Message<Object>> messages() {
             return messages;
+        }
+
+        private long admissionBytes() {
+            return admissionBytes;
         }
 
         private Map<TopicPartition, OffsetAndMetadata> nextOffsets() {

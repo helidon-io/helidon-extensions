@@ -20,8 +20,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -31,26 +31,28 @@ import java.util.stream.Stream;
  * @param <T> payload type
  */
 final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
-    private static final System.Logger LOGGER = System.getLogger(DefaultMessagingChannel.class.getName());
-    private static final ThreadFactory STREAM_THREAD_FACTORY = Thread.ofVirtual()
-            .name("helidon-messaging-channel-input-", 1)
-            .inheritInheritableThreadLocals(false)
-            .uncaughtExceptionHandler((thread, throwable) -> LOGGER.log(System.Logger.Level.ERROR,
-                                                                        "Messaging channel stream input failed",
-                                                                        throwable))
-            .factory();
+    private static final AtomicLong CHANNEL_SEQUENCE = new AtomicLong();
 
     private final Class<T> payloadType;
     private final List<Stream<?>> inputs;
     private final List<Consumer<List<Message<?>>>> outputs;
+    private final DeliveryEngine deliveryEngine;
+    private final String channelName;
+    private final boolean ownsDeliveryEngine;
     private final AtomicBoolean started = new AtomicBoolean();
 
     private DefaultMessagingChannel(Class<T> payloadType,
                                     List<Stream<?>> inputs,
-                                    List<Consumer<List<Message<?>>>> outputs) {
+                                    List<Consumer<List<Message<?>>>> outputs,
+                                    DeliveryEngine deliveryEngine,
+                                    String channelName,
+                                    boolean ownsDeliveryEngine) {
         this.payloadType = payloadType;
         this.inputs = List.copyOf(inputs);
         this.outputs = new CopyOnWriteArrayList<>(outputs);
+        this.deliveryEngine = deliveryEngine;
+        this.channelName = channelName;
+        this.ownsDeliveryEngine = ownsDeliveryEngine;
     }
 
     @Override
@@ -73,8 +75,16 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
         if (!started.compareAndSet(false, true)) {
             return;
         }
+        int index = 0;
         for (Stream<?> input : inputs) {
-            STREAM_THREAD_FACTORY.newThread(() -> drainInput(input)).start();
+            deliveryEngine.startSource(channelName + "-input-" + ++index, () -> drainInput(input));
+        }
+    }
+
+    @Override
+    public void close() {
+        if (ownsDeliveryEngine) {
+            deliveryEngine.close();
         }
     }
 
@@ -101,6 +111,10 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
             return;
         }
         List<Message<?>> batch = toBatch(messages);
+        deliveryEngine.dispatch(channelName, batch, () -> dispatchBatch(batch));
+    }
+
+    private void dispatchBatch(List<Message<?>> batch) {
         for (Consumer<List<Message<?>>> output : outputs) {
             output.accept(batch);
         }
@@ -132,11 +146,27 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
         private final List<Stream<?>> inputs = new ArrayList<>();
         private final List<MessagingChannel<?>> inputChannels = new ArrayList<>();
         private final List<Consumer<List<Message<?>>>> outputs = new ArrayList<>();
+        private final List<MessageSizeEstimator> messageSizeEstimators = new ArrayList<>();
         private Class<T> payloadType;
+        private MessagingExecutionConfig executionConfig = MessagingExecutionConfig.builder().build();
+        private DeliveryEngine deliveryEngine;
+        private String channelName;
 
         @Override
         public MessagingChannel.Builder<T> payloadType(Class<T> payloadType) {
             this.payloadType = Objects.requireNonNull(payloadType);
+            return this;
+        }
+
+        @Override
+        public MessagingChannel.Builder<T> executionConfig(MessagingExecutionConfig executionConfig) {
+            this.executionConfig = Objects.requireNonNull(executionConfig);
+            return this;
+        }
+
+        @Override
+        public MessagingChannel.Builder<T> addMessageSizeEstimator(MessageSizeEstimator estimator) {
+            messageSizeEstimators.add(Objects.requireNonNull(estimator));
             return this;
         }
 
@@ -172,9 +202,22 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
 
         @Override
         public MessagingChannel<T> build() {
+            boolean ownsDeliveryEngine = deliveryEngine == null;
+            DeliveryEngine actualDeliveryEngine = ownsDeliveryEngine
+                    ? new DeliveryEngine(executionConfig, messageSizeEstimators)
+                    : deliveryEngine;
+            String actualChannelName = channelName == null
+                    ? "imperative-" + CHANNEL_SEQUENCE.incrementAndGet()
+                    : channelName;
+            if (ownsDeliveryEngine) {
+                actualDeliveryEngine.registerChannel(actualChannelName, executionConfig);
+            }
             DefaultMessagingChannel<T> channel = new DefaultMessagingChannel<>(payloadType,
                                                                                inputs,
-                                                                               outputs);
+                                                                               outputs,
+                                                                               actualDeliveryEngine,
+                                                                               actualChannelName,
+                                                                               ownsDeliveryEngine);
 
             for (MessagingChannel<?> inputChannel : inputChannels) {
                 if (!(inputChannel instanceof DefaultMessagingChannel<?> defaultInputChannel)) {
@@ -184,6 +227,16 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
                 defaultInputChannel.addBatchOutput(channel::emitBatchObject);
             }
             return channel;
+        }
+
+        Builder<T> deliveryEngine(DeliveryEngine deliveryEngine,
+                                  String channelName,
+                                  MessagingExecutionConfig executionConfig) {
+            this.deliveryEngine = Objects.requireNonNull(deliveryEngine);
+            this.channelName = Objects.requireNonNull(channelName);
+            this.executionConfig = Objects.requireNonNull(executionConfig);
+            deliveryEngine.registerChannel(channelName, executionConfig);
+            return this;
         }
 
         @SuppressWarnings("unchecked")

@@ -1,0 +1,1853 @@
+/*
+ * Copyright (c) 2026 Oracle and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.helidon.extensions.messaging;
+
+import java.nio.ByteBuffer;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+
+import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+
+@Timeout(value = 10)
+class DeliveryEngineTest {
+    private static final Duration WAIT = Duration.ofSeconds(5);
+
+    @Test
+    void dispatchUsesNamedRuntimeVirtualThreadAndCompletesSynchronously() throws Exception {
+        MessagingExecutionConfig config = configBuilder().build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch entered = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            AtomicReference<Thread> runtimeThread = new AtomicReference<>();
+            AtomicBoolean outputCompleted = new AtomicBoolean();
+            AtomicBoolean callerObservedCompletion = new AtomicBoolean();
+
+            AsyncTask caller = async(() -> {
+                engine.dispatch("orders", List.of(message(1)), () -> {
+                    runtimeThread.set(Thread.currentThread());
+                    entered.countDown();
+                    await(release);
+                    outputCompleted.set(true);
+                });
+                callerObservedCompletion.set(outputCompleted.get());
+            });
+
+            await(entered);
+            Thread dispatchThread = runtimeThread.get();
+            assertTrue(dispatchThread.isVirtual());
+            assertTrue(dispatchThread.getName().startsWith("helidon-messaging-dispatch-"));
+            assertFalse(caller.completion().isDone());
+
+            release.countDown();
+            await(caller);
+            assertTrue(callerObservedCompletion.get());
+        }
+    }
+
+    @Test
+    void enforcesMaximumConcurrency() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .concurrency(2)
+                .queueCapacity(1)
+                .maxInFlightMessages(3)
+                .maxInFlightBytes(3)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch activeStarted = new CountDownLatch(2);
+            CountDownLatch thirdStarted = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            AtomicInteger active = new AtomicInteger();
+            AtomicInteger maximumActive = new AtomicInteger();
+
+            Runnable blockingAction = () -> {
+                int current = active.incrementAndGet();
+                maximumActive.accumulateAndGet(current, Math::max);
+                activeStarted.countDown();
+                try {
+                    await(release);
+                } finally {
+                    active.decrementAndGet();
+                }
+            };
+            ConnectorDelivery first = engine.submitConnectorDelivery("orders",
+                                                                      List.of(message(1)),
+                                                                      1,
+                                                                      blockingAction);
+            ConnectorDelivery second = engine.submitConnectorDelivery("orders",
+                                                                       List.of(message(1)),
+                                                                       1,
+                                                                       blockingAction);
+
+            await(activeStarted);
+            ConnectorDelivery third = engine.submitConnectorDelivery("orders",
+                                                                      List.of(message(1)),
+                                                                      1,
+                                                                      thirdStarted::countDown);
+
+            assertEquals(2, maximumActive.get());
+            assertEquals(1, thirdStarted.getCount());
+            assertFalse(third.isDone());
+
+            release.countDown();
+            await(first);
+            await(second);
+            await(third);
+            assertEquals(2, maximumActive.get());
+            assertEquals(0, thirdStarted.getCount());
+        }
+    }
+
+    @Test
+    void admitsExactMessageAndByteLimitsAndRejectsOversizedBatchAtomically() {
+        MessagingExecutionConfig config = configBuilder()
+                .maxInFlightMessages(2)
+                .maxInFlightBytes(10)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            AtomicInteger invocations = new AtomicInteger();
+            List<Message<?>> exact = List.of(message(4), message(6));
+
+            engine.dispatch("orders", exact, invocations::incrementAndGet);
+
+            MessagingRejectedException messageLimit = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> engine.dispatch("orders",
+                                          List.of(message(1), message(1), message(1)),
+                                          invocations::incrementAndGet));
+            MessagingRejectedException byteLimit = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> engine.dispatch("orders",
+                                          List.of(message(5), message(6)),
+                                          invocations::incrementAndGet));
+
+            assertEquals(MessagingRejectedException.Reason.OVERSIZED, messageLimit.reason());
+            assertEquals(MessagingRejectedException.Reason.OVERSIZED, byteLimit.reason());
+            assertEquals(1, invocations.get());
+
+            engine.dispatch("orders", exact, invocations::incrementAndGet);
+            assertEquals(2, invocations.get());
+        }
+    }
+
+    @Test
+    void zeroQueueCapacityBlocksAdmissionAndHonorsAdmissionTimeout() throws Exception {
+        MessagingExecutionConfig blockingConfig = configBuilder()
+                .queueCapacity(0)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(blockingConfig, "orders")) {
+            CountDownLatch firstStarted = new CountDownLatch(1);
+            CountDownLatch releaseFirst = new CountDownLatch(1);
+            CountDownLatch secondStarted = new CountDownLatch(1);
+            ConnectorDelivery first = engine.submitConnectorDelivery("orders",
+                                                                      List.of(message(1)),
+                                                                      1,
+                                                                      () -> {
+                                                                          firstStarted.countDown();
+                                                                          await(releaseFirst);
+                                                                      });
+            await(firstStarted);
+
+            AsyncTask second = async(() -> engine.dispatch("orders",
+                                                           List.of(message(1)),
+                                                           secondStarted::countDown));
+            awaitWaiting(second);
+            assertFalse(second.completion().isDone());
+            assertEquals(1, secondStarted.getCount());
+
+            releaseFirst.countDown();
+            await(first);
+            await(second);
+            assertEquals(0, secondStarted.getCount());
+        }
+
+        MessagingExecutionConfig timeoutConfig = configBuilder()
+                .queueCapacity(0)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .admissionTimeout(Duration.ofMillis(50))
+                .build();
+        try (DeliveryEngine engine = engine(timeoutConfig, "orders")) {
+            CountDownLatch firstStarted = new CountDownLatch(1);
+            CountDownLatch releaseFirst = new CountDownLatch(1);
+            ConnectorDelivery first = engine.submitConnectorDelivery("orders",
+                                                                      List.of(message(1)),
+                                                                      1,
+                                                                      () -> {
+                                                                          firstStarted.countDown();
+                                                                          await(releaseFirst);
+                                                                      });
+            await(firstStarted);
+            try {
+                MessagingRejectedException failure = assertThrows(
+                        MessagingRejectedException.class,
+                        () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+                assertEquals(MessagingRejectedException.Reason.TIMEOUT, failure.reason());
+            } finally {
+                releaseFirst.countDown();
+            }
+            await(first);
+        }
+    }
+
+    @Test
+    void boundsAggregatePendingMessageAndByteRetention() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingAdmissions(3)
+                .maxPendingMessages(2)
+                .maxPendingBytes(2)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch activeStarted = new CountDownLatch(1);
+            CountDownLatch releaseActive = new CountDownLatch(1);
+            ConnectorDelivery active = engine.submitConnectorDelivery(
+                    "orders",
+                    List.of(message(1)),
+                    1,
+                    () -> {
+                        activeStarted.countDown();
+                        await(releaseActive);
+                    });
+            await(activeStarted);
+
+            AsyncTask firstPending = async(() -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+            awaitWaiting(firstPending);
+            AsyncTask secondPending = async(() -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+            awaitWaiting(secondPending);
+
+            MessagingRejectedException saturated = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+            assertEquals(MessagingRejectedException.Reason.SATURATED, saturated.reason());
+
+            releaseActive.countDown();
+            await(active);
+            await(firstPending);
+            await(secondPending);
+        }
+    }
+
+    @Test
+    void immediateAdmissionDoesNotConsumeOrRequirePendingCapacity() {
+        MessagingExecutionConfig config = configBuilder()
+                .concurrency(2)
+                .maxPendingAdmissions(1)
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .maxInFlightMessages(2)
+                .maxInFlightBytes(2)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders");
+             ConnectorDeliveryReservation ignored = engine.reserveConnectorDelivery("orders", 1, 1)) {
+            AtomicBoolean delivered = new AtomicBoolean();
+            engine.dispatch("orders", List.of(message(1)), () -> delivered.set(true));
+            assertTrue(delivered.get());
+        }
+    }
+
+    @Test
+    void directAdmissionRejectsDispatcherContentionWithoutLeakingPendingBudget() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingAdmissions(1)
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch lockHeld = new CountDownLatch(1);
+            CountDownLatch releaseLock = new CountDownLatch(1);
+            AsyncTask lockHolder = async(() -> engine.runWithChannelAdmissionLock("orders", () -> {
+                lockHeld.countDown();
+                await(releaseLock);
+            }));
+            await(lockHeld);
+            try {
+                MessagingRejectedException rejection = assertThrows(
+                        MessagingRejectedException.class,
+                        () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+                assertEquals(MessagingRejectedException.Reason.SATURATED, rejection.reason());
+            } finally {
+                releaseLock.countDown();
+                await(lockHolder);
+            }
+
+            AtomicBoolean admitted = new AtomicBoolean();
+            engine.dispatch("orders", List.of(message(1)), () -> admitted.set(true));
+            assertTrue(admitted.get());
+        }
+    }
+
+    @Test
+    void reservationRejectsDispatcherContentionWithoutLeakingPendingBudget() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingAdmissions(1)
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch lockHeld = new CountDownLatch(1);
+            CountDownLatch releaseLock = new CountDownLatch(1);
+            AsyncTask lockHolder = async(() -> engine.runWithChannelAdmissionLock("orders", () -> {
+                lockHeld.countDown();
+                await(releaseLock);
+            }));
+            await(lockHeld);
+            try {
+                MessagingRejectedException rejection = assertThrows(
+                        MessagingRejectedException.class,
+                        () -> engine.reserveConnectorDelivery("orders", 1, 1));
+                assertEquals(MessagingRejectedException.Reason.SATURATED, rejection.reason());
+            } finally {
+                releaseLock.countDown();
+                await(lockHolder);
+            }
+
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            reservation.close();
+            engine.reserveConnectorDelivery("orders", 1, 1).close();
+        }
+    }
+
+    @Test
+    void connectorReservationsBoundPreAcquisitionRetention() {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingAdmissions(2)
+                .maxPendingMessages(2)
+                .maxPendingBytes(2)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            ConnectorDeliveryReservation full = engine.reserveConnectorDelivery("orders", 2, 2);
+            assertTrue(engine.tryReserveConnectorDelivery("orders", 1, 1).isEmpty());
+
+            full.close();
+            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 2, 2)
+                    .orElseThrow();
+            recovered.close();
+        }
+    }
+
+    @Test
+    void blockingReservationWaitsWithoutRetainingTransportData() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingAdmissions(2)
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            ConnectorDeliveryReservation first = engine.reserveConnectorDelivery("orders", 1, 1);
+            AtomicReference<ConnectorDeliveryReservation> second = new AtomicReference<>();
+            AsyncTask waiting = async(() -> second.set(engine.reserveConnectorDelivery("orders", 1, 1)));
+            awaitWaiting(waiting);
+
+            first.close();
+            await(waiting);
+            second.get().close();
+        }
+    }
+
+    @Test
+    void blockingReservationTimeoutDoesNotLeakPendingCapacity() {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingAdmissions(2)
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .admissionTimeout(Duration.ofMillis(50))
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            ConnectorDeliveryReservation first = engine.reserveConnectorDelivery("orders", 1, 1);
+            MessagingRejectedException timeout = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> engine.reserveConnectorDelivery("orders", 1, 1));
+            assertEquals(MessagingRejectedException.Reason.TIMEOUT, timeout.reason());
+
+            first.close();
+            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1, 1)
+                    .orElseThrow();
+            recovered.close();
+        }
+    }
+
+    @Test
+    void compatibilityReservationEnforcesItsDeclaredBounds() {
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "orders";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+            }
+        };
+        ConnectorDeliveryReservation reservation = context.reserveDelivery(1, 1);
+        MessagingRejectedException oversized = assertThrows(
+                MessagingRejectedException.class,
+                () -> reservation.start(List.of(message(1), message(1)), 1, () -> { }));
+        assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
+        assertThrows(IllegalStateException.class,
+                     () -> reservation.start(List.of(message(1)), 1, () -> { }));
+
+        ConnectorDeliveryReservation empty = context.reserveDelivery(1, 1);
+        assertThrows(IllegalArgumentException.class,
+                     () -> empty.start(List.of(), 0, () -> { }));
+        assertThrows(IllegalArgumentException.class,
+                     () -> context.submitDelivery(List.of(), 0, () -> { }));
+
+        Message<Object> negative = new Message<>() {
+            @Override
+            public Object entity() {
+                return new Object();
+            }
+
+            @Override
+            public Map<String, String> headers() {
+                return Map.of();
+            }
+
+            @Override
+            public java.util.OptionalLong admissionBytes() {
+                return java.util.OptionalLong.of(-1);
+            }
+        };
+        ConnectorDeliveryReservation invalid = context.reserveDelivery(1, 1);
+        assertThrows(IllegalArgumentException.class,
+                     () -> invalid.start(List.of(negative), 0, () -> { }));
+    }
+
+    @Test
+    void compatibilityReservationCountsKnownBytesInMixedSizeBatch() {
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "orders";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+            }
+        };
+        ConnectorDeliveryReservation reservation = context.reserveDelivery(2, 5);
+
+        MessagingRejectedException oversized = assertThrows(
+                MessagingRejectedException.class,
+                () -> reservation.start(List.of(unknownMessage(), message(6)), 1, () -> { }));
+
+        assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
+    }
+
+    @Test
+    void compatibilityReservationRejectsOverflowingDeadLetterSize() {
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "orders-dlq";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+            }
+        };
+        ConnectorDeliveryReservation reservation = context.reserveDelivery(1, 1);
+
+        MessagingRejectedException oversized = assertThrows(
+                MessagingRejectedException.class,
+                () -> reservation.start(List.of(overflowingDeadLetter()), 1, () -> { }));
+
+        assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
+    }
+
+    @Test
+    void compatibilityReservationRejectsNullDeliveryHandle() {
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "orders";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+            }
+
+            @Override
+            public <T> ConnectorDelivery submitDelivery(List<? extends Message<T>> messages,
+                                                        long admissionBytes,
+                                                        Runnable delivery) {
+                return null;
+            }
+        };
+        ConnectorDeliveryReservation reservation = context.reserveDelivery(1, 1);
+        assertThrows(NullPointerException.class,
+                     () -> reservation.start(List.of(message(1)), 1, () -> { }));
+        assertThrows(IllegalStateException.class,
+                     () -> reservation.start(List.of(message(1)), 1, () -> { }));
+    }
+
+    @Test
+    void runtimeReservationRejectsActualCostBeyondReservedDimensionsAndCloses() {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingMessages(2)
+                .maxPendingBytes(2)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            MessagingRejectedException oversized = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> reservation.start(List.of(message(2)), 2, () -> { }));
+            assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
+            MessagingRejectedException closed = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> reservation.start(List.of(message(1)), 1, () -> { }));
+            assertEquals(MessagingRejectedException.Reason.CANCELLED, closed.reason());
+
+            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1, 1)
+                    .orElseThrow();
+            recovered.close();
+        }
+    }
+
+    @Test
+    void runtimeReservationCountsKnownBytesInMixedSizeBatch() {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingMessages(2)
+                .maxPendingBytes(5)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 2, 5);
+
+            MessagingRejectedException oversized = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> reservation.start(List.of(unknownMessage(), message(6)), 1, () -> { }));
+
+            assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
+            engine.reserveConnectorDelivery("orders", 2, 5).close();
+        }
+    }
+
+    @Test
+    void runtimeReservationRejectsNegativeDeclaredBytes() {
+        MessagingExecutionConfig config = configBuilder().build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            ConnectorDeliveryReservation blocking = engine.reserveConnectorDelivery("orders", 1, 1);
+            IllegalArgumentException blockingFailure = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> blocking.start(List.of(message(1)), -1, () -> { }));
+            assertEquals("admissionBytes must be zero or greater", blockingFailure.getMessage());
+
+            ConnectorDeliveryReservation nonBlocking = engine.reserveConnectorDelivery("orders", 1, 1);
+            IllegalArgumentException nonBlockingFailure = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> nonBlocking.tryStart(List.of(message(1)), -1, () -> { }));
+            assertEquals("admissionBytes must be zero or greater", nonBlockingFailure.getMessage());
+
+            engine.reserveConnectorDelivery("orders", 1, 1).close();
+        }
+    }
+
+    @Test
+    void reservationStartAtomicallyShrinksAndTransfersToSettlementLease() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingMessages(2)
+                .maxPendingBytes(2)
+                .maxInFlightMessages(2)
+                .maxInFlightBytes(2)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 2, 2);
+            ConnectorDelivery delivery = reservation.start(List.of(message(1)), 1, () -> { });
+            assertTrue(delivery.await(WAIT));
+
+            ConnectorDeliveryReservation pendingCapacity = engine.tryReserveConnectorDelivery("orders", 2, 2)
+                    .orElseThrow();
+            pendingCapacity.close();
+            assertTrue(engine.trySubmitConnectorDelivery("orders",
+                                                         List.of(message(2)),
+                                                         2,
+                                                         () -> { }).isEmpty());
+
+            delivery.close();
+            ConnectorDelivery fullDelivery = engine.trySubmitConnectorDelivery("orders",
+                                                                                 List.of(message(2)),
+                                                                                 2,
+                                                                                 () -> { })
+                    .orElseThrow();
+            await(fullDelivery);
+        }
+    }
+
+    @Test
+    void reservationStartLockContentionConsumesAdmissionTimeout() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingAdmissions(1)
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .admissionTimeout(Duration.ofMillis(50))
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            CountDownLatch lockHeld = new CountDownLatch(1);
+            CountDownLatch releaseLock = new CountDownLatch(1);
+            AsyncTask lockHolder = async(() -> engine.runWithChannelAdmissionLock("orders", () -> {
+                lockHeld.countDown();
+                await(releaseLock);
+            }));
+            await(lockHeld);
+
+            AsyncTask waiting = async(() -> {
+                ConnectorDelivery delivery = reservation.start(List.of(message(1)), 1, () -> { });
+                delivery.close();
+            });
+            try {
+                awaitWaiting(waiting);
+                Thread.sleep(150);
+                assertTrue(waiting.completion().isDone(),
+                           "reservation start did not return when admission lock wait timed out");
+                MessagingRejectedException timeout = assertInstanceOf(
+                        MessagingRejectedException.class,
+                        failure(waiting));
+                assertEquals(MessagingRejectedException.Reason.TIMEOUT, timeout.reason());
+            } finally {
+                releaseLock.countDown();
+                await(lockHolder);
+            }
+
+            ConnectorDeliveryReservation recovered = null;
+            long deadline = System.nanoTime() + WAIT.toNanos();
+            while (recovered == null && System.nanoTime() < deadline) {
+                recovered = engine.tryReserveConnectorDelivery("orders", 1, 1).orElse(null);
+                Thread.onSpinWait();
+            }
+            assertTrue(recovered != null, "deferred reservation cleanup did not restore capacity");
+            recovered.close();
+        }
+    }
+
+    @Test
+    void shutdownSerializesDeferredCleanupThreadRegistration() throws Exception {
+        DeliveryEngine engine = engine(configBuilder().build(), "orders");
+        CountDownLatch registryHeld = new CountDownLatch(1);
+        CountDownLatch releaseRegistry = new CountDownLatch(1);
+        AsyncTask registryHolder = async(() -> engine.runWithDispatchThreadRegistryLock(() -> {
+            registryHeld.countDown();
+            await(releaseRegistry);
+        }));
+        await(registryHeld);
+
+        AsyncTask shutdown = async(engine::close);
+        AsyncTask registration = null;
+        try {
+            awaitBlocked(shutdown);
+            AtomicBoolean cleanupRan = new AtomicBoolean();
+            AtomicBoolean cleanupStarted = new AtomicBoolean();
+            registration = async(() -> cleanupStarted.set(
+                    engine.startCleanup(() -> cleanupRan.set(true))));
+            awaitBlocked(registration);
+
+            releaseRegistry.countDown();
+            await(registryHolder);
+            await(shutdown);
+            await(registration);
+
+            assertFalse(cleanupStarted.get(), "cleanup thread started after shutdown began");
+            assertFalse(cleanupRan.get(), "cleanup ran after shutdown");
+        } finally {
+            releaseRegistry.countDown();
+            if (!shutdown.completion().isDone()) {
+                await(shutdown);
+            }
+            if (registration != null && !registration.completion().isDone()) {
+                await(registration);
+            }
+        }
+    }
+
+    @Test
+    void reservationStartTimeoutReleasesPendingCapacity() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingAdmissions(1)
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .admissionTimeout(Duration.ofMillis(50))
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch activeStarted = new CountDownLatch(1);
+            CountDownLatch releaseActive = new CountDownLatch(1);
+            ConnectorDelivery active = engine.submitConnectorDelivery(
+                    "orders",
+                    List.of(message(1)),
+                    1,
+                    () -> {
+                        activeStarted.countDown();
+                        await(releaseActive);
+                    });
+            await(activeStarted);
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+
+            MessagingRejectedException timeout = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> reservation.start(List.of(message(1)), 1, () -> { }));
+            assertEquals(MessagingRejectedException.Reason.TIMEOUT, timeout.reason());
+            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1, 1)
+                    .orElseThrow();
+            recovered.close();
+
+            releaseActive.countDown();
+            await(active);
+        }
+    }
+
+    @Test
+    void reservationTryStartRetainsPendingCapacityUntilInFlightIsAvailable() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            CountDownLatch activeStarted = new CountDownLatch(1);
+            CountDownLatch releaseActive = new CountDownLatch(1);
+            ConnectorDelivery active = engine.submitConnectorDelivery(
+                    "orders",
+                    List.of(message(1)),
+                    1,
+                    () -> {
+                        activeStarted.countDown();
+                        await(releaseActive);
+                    });
+            await(activeStarted);
+
+            assertTrue(reservation.tryStart(List.of(message(1)), 1, () -> { }).isEmpty());
+            assertTrue(engine.tryReserveConnectorDelivery("orders", 1, 1).isEmpty());
+
+            releaseActive.countDown();
+            await(active);
+            ConnectorDelivery delivery = reservation.tryStart(List.of(message(1)), 1, () -> { })
+                    .orElseThrow();
+            await(delivery);
+        }
+    }
+
+    @Test
+    void interruptedReservationStartReleasesPendingCapacity() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingAdmissions(1)
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch activeStarted = new CountDownLatch(1);
+            CountDownLatch releaseActive = new CountDownLatch(1);
+            ConnectorDelivery active = engine.submitConnectorDelivery(
+                    "orders",
+                    List.of(message(1)),
+                    1,
+                    () -> {
+                        activeStarted.countDown();
+                        await(releaseActive);
+                    });
+            await(activeStarted);
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            AsyncTask waiting = async(() -> reservation.start(List.of(message(1)), 1, () -> { }));
+            awaitWaiting(waiting);
+
+            waiting.thread().interrupt();
+            MessagingRejectedException cancelled = assertInstanceOf(
+                    MessagingRejectedException.class,
+                    failure(waiting));
+            assertEquals(MessagingRejectedException.Reason.CANCELLED, cancelled.reason());
+            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1, 1)
+                    .orElseThrow();
+            recovered.close();
+
+            releaseActive.countDown();
+            await(active);
+        }
+    }
+
+    @Test
+    void reservationAllowsOnlyOneConcurrentStartAttempt() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch activeStarted = new CountDownLatch(1);
+            CountDownLatch releaseActive = new CountDownLatch(1);
+            ConnectorDelivery active = engine.submitConnectorDelivery(
+                    "orders",
+                    List.of(message(1)),
+                    1,
+                    () -> {
+                        activeStarted.countDown();
+                        await(releaseActive);
+                    });
+            await(activeStarted);
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            AsyncTask firstStart = async(() -> reservation.start(List.of(message(1)), 1, () -> { }));
+            awaitWaiting(firstStart);
+
+            assertThrows(IllegalStateException.class,
+                         () -> reservation.start(List.of(message(1)), 1, () -> { }));
+            reservation.close();
+            MessagingRejectedException cancelled = assertInstanceOf(
+                    MessagingRejectedException.class,
+                    failure(firstStart));
+            assertEquals(MessagingRejectedException.Reason.CANCELLED, cancelled.reason());
+
+            releaseActive.countDown();
+            await(active);
+        }
+    }
+
+    @Test
+    void invalidSecondConcurrentStartCannotCancelFirstStart() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch activeStarted = new CountDownLatch(1);
+            CountDownLatch releaseActive = new CountDownLatch(1);
+            ConnectorDelivery active = engine.submitConnectorDelivery(
+                    "orders",
+                    List.of(message(1)),
+                    1,
+                    () -> {
+                        activeStarted.countDown();
+                        await(releaseActive);
+                    });
+            await(activeStarted);
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            AtomicReference<ConnectorDelivery> firstDelivery = new AtomicReference<>();
+            AsyncTask firstStart = async(() -> firstDelivery.set(
+                    reservation.start(List.of(message(1)), 1, () -> { })));
+            awaitWaiting(firstStart);
+
+            assertThrows(IllegalStateException.class,
+                         () -> reservation.start(List.of(message(2)), 2, () -> { }));
+
+            releaseActive.countDown();
+            await(active);
+            await(firstStart);
+            await(firstDelivery.get());
+        }
+    }
+
+    @Test
+    void reservationAcquisitionTimeDoesNotConsumeCapacityWaitBudget() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .admissionTimeout(Duration.ofMillis(20))
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            Thread.sleep(50);
+            ConnectorDelivery delivery = reservation.start(List.of(message(1)), 1, () -> { });
+            await(delivery);
+        }
+    }
+
+    @Test
+    void reservationAndStartShareOneCapacityWaitBudget() throws Exception {
+        Duration timeout = Duration.ofMillis(500);
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingAdmissions(2)
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .admissionTimeout(timeout)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch activeStarted = new CountDownLatch(1);
+            CountDownLatch releaseActive = new CountDownLatch(1);
+            ConnectorDelivery active = engine.submitConnectorDelivery(
+                    "orders",
+                    List.of(message(1)),
+                    1,
+                    () -> {
+                        activeStarted.countDown();
+                        await(releaseActive);
+                    });
+            await(activeStarted);
+            ConnectorDeliveryReservation first = engine.reserveConnectorDelivery("orders", 1, 1);
+            long started = System.nanoTime();
+            AsyncTask waiting = async(() -> {
+                ConnectorDeliveryReservation second = engine.reserveConnectorDelivery("orders", 1, 1);
+                second.start(List.of(message(1)), 1, () -> { });
+            });
+            awaitWaiting(waiting);
+            Thread.sleep(300);
+            first.close();
+
+            MessagingRejectedException timedOut = assertInstanceOf(
+                    MessagingRejectedException.class,
+                    failure(waiting));
+            assertEquals(MessagingRejectedException.Reason.TIMEOUT, timedOut.reason());
+            long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+            assertTrue(elapsedMillis < 700,
+                       () -> "reserve and start used separate timeout budgets: " + elapsedMillis + "ms");
+
+            releaseActive.countDown();
+            await(active);
+        }
+    }
+
+    @Test
+    void closingOrShuttingDownReservationReleasesCapacityExactlyOnce() {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingAdmissions(1)
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .build();
+        DeliveryEngine engine = engine(config, "orders");
+        ConnectorDeliveryReservation closedReservation = engine.reserveConnectorDelivery("orders", 1, 1);
+        closedReservation.close();
+        closedReservation.close();
+        MessagingRejectedException cancelled = assertThrows(
+                MessagingRejectedException.class,
+                () -> closedReservation.start(List.of(message(1)), 1, () -> { }));
+        assertEquals(MessagingRejectedException.Reason.CANCELLED, cancelled.reason());
+
+        ConnectorDeliveryReservation shutdownReservation = engine.reserveConnectorDelivery("orders", 1, 1);
+        engine.close();
+        MessagingRejectedException shutdown = assertThrows(
+                MessagingRejectedException.class,
+                () -> shutdownReservation.start(List.of(message(1)), 1, () -> { }));
+        assertEquals(MessagingRejectedException.Reason.SHUTDOWN, shutdown.reason());
+    }
+
+    @Test
+    void runtimeDeliveryLimitFitsBothInFlightAndPendingBudgets() {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingMessages(3)
+                .maxPendingBytes(4)
+                .maxInFlightMessages(5)
+                .maxInFlightBytes(6)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            assertEquals(3, engine.maxDeliveryMessages("orders"));
+            assertEquals(4, engine.maxDeliveryBytes("orders"));
+        }
+    }
+
+    @Test
+    void validatesExecutionLimitsAndDefaults() {
+        assertThrows(IllegalArgumentException.class,
+                     () -> MessagingExecutionConfig.builder().concurrency(0).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> MessagingExecutionConfig.builder().queueCapacity(-1).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> MessagingExecutionConfig.builder().maxPendingAdmissions(0).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> MessagingExecutionConfig.builder().maxPendingMessages(0).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> MessagingExecutionConfig.builder().maxPendingBytes(0).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> MessagingExecutionConfig.builder().maxInFlightMessages(0).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> MessagingExecutionConfig.builder().maxInFlightBytes(0).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> MessagingExecutionConfig.builder().admissionTimeout(Duration.ZERO).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> MessagingExecutionConfig.builder().admissionTimeout(Duration.ofNanos(-1)).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> MessagingExecutionConfig.builder()
+                             .admissionTimeout(Duration.ofSeconds(Long.MAX_VALUE))
+                             .build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> MessagingExecutionConfig.builder().shutdownTimeout(Duration.ZERO).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> MessagingExecutionConfig.builder().shutdownTimeout(Duration.ofNanos(-1)).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> MessagingExecutionConfig.builder()
+                             .shutdownTimeout(Duration.ofSeconds(Long.MAX_VALUE))
+                             .build());
+
+        MessagingExecutionConfig minimums = MessagingExecutionConfig.builder()
+                .concurrency(1)
+                .queueCapacity(0)
+                .maxPendingAdmissions(1)
+                .maxPendingMessages(1)
+                .maxPendingBytes(1)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .admissionTimeout(Duration.ofNanos(1))
+                .shutdownTimeout(Duration.ofNanos(1))
+                .build();
+        assertEquals(1, minimums.concurrency());
+        assertEquals(0, minimums.queueCapacity());
+        assertEquals(1, minimums.maxPendingAdmissions());
+        assertEquals(1, minimums.maxPendingMessages());
+        assertEquals(1, minimums.maxPendingBytes());
+        assertEquals(1, minimums.maxInFlightMessages());
+        assertEquals(1, minimums.maxInFlightBytes());
+        assertEquals(Duration.ofNanos(1), minimums.admissionTimeout().orElseThrow());
+        assertEquals(Duration.ofNanos(1), minimums.shutdownTimeout());
+
+        MessagingExecutionConfig defaults = MessagingExecutionConfig.builder().build();
+        assertEquals(1, defaults.concurrency());
+        assertEquals(0, defaults.queueCapacity());
+        assertEquals(64, defaults.maxPendingAdmissions());
+        assertEquals(1024, defaults.maxPendingMessages());
+        assertEquals(67_108_864, defaults.maxPendingBytes());
+        assertEquals(1024, defaults.maxInFlightMessages());
+        assertEquals(67_108_864, defaults.maxInFlightBytes());
+        assertTrue(defaults.admissionTimeout().isEmpty());
+        assertEquals(Duration.ofSeconds(10), defaults.shutdownTimeout());
+    }
+
+    @Test
+    void dispatchesQueuedTasksInFifoOrderAtConcurrencyOne() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .queueCapacity(2)
+                .maxInFlightMessages(3)
+                .maxInFlightBytes(3)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch firstStarted = new CountDownLatch(1);
+            CountDownLatch releaseFirst = new CountDownLatch(1);
+            List<Integer> order = new CopyOnWriteArrayList<>();
+
+            ConnectorDelivery first = engine.submitConnectorDelivery("orders",
+                                                                      List.of(message(1)),
+                                                                      1,
+                                                                      () -> {
+                                                                          order.add(1);
+                                                                          firstStarted.countDown();
+                                                                          await(releaseFirst);
+                                                                      });
+            await(firstStarted);
+            ConnectorDelivery second = engine.submitConnectorDelivery("orders",
+                                                                       List.of(message(1)),
+                                                                       1,
+                                                                       () -> order.add(2));
+            ConnectorDelivery third = engine.submitConnectorDelivery("orders",
+                                                                      List.of(message(1)),
+                                                                      1,
+                                                                      () -> order.add(3));
+
+            assertEquals(List.of(1), order);
+            releaseFirst.countDown();
+            await(first);
+            await(second);
+            await(third);
+            assertEquals(List.of(1, 2, 3), order);
+        }
+    }
+
+    @Test
+    void interruptionCancelsAdmissionAndActiveConnectorDelivery() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .queueCapacity(0)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch firstStarted = new CountDownLatch(1);
+            CountDownLatch releaseFirst = new CountDownLatch(1);
+            AtomicBoolean rejectedActionRan = new AtomicBoolean();
+            ConnectorDelivery first = engine.submitConnectorDelivery("orders",
+                                                                      List.of(message(1)),
+                                                                      1,
+                                                                      () -> {
+                                                                          firstStarted.countDown();
+                                                                          await(releaseFirst);
+                                                                      });
+            await(firstStarted);
+
+            AsyncTask waiting = async(() -> engine.dispatch("orders",
+                                                            List.of(message(1)),
+                                                            () -> rejectedActionRan.set(true)));
+            awaitWaiting(waiting);
+            waiting.thread().interrupt();
+
+            Throwable waitingFailure = failure(waiting);
+            MessagingRejectedException rejection =
+                    assertInstanceOf(MessagingRejectedException.class, waitingFailure);
+            assertEquals(MessagingRejectedException.Reason.CANCELLED, rejection.reason());
+            assertTrue(waiting.thread().isInterrupted());
+            assertFalse(rejectedActionRan.get());
+
+            releaseFirst.countDown();
+            await(first);
+            engine.dispatch("orders", List.of(message(1)), () -> { });
+        }
+
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch activeStarted = new CountDownLatch(1);
+            CountDownLatch interrupted = new CountDownLatch(1);
+            ConnectorDelivery active = engine.submitConnectorDelivery("orders",
+                                                                       List.of(message(1)),
+                                                                       1,
+                                                                       () -> {
+                                                                           activeStarted.countDown();
+                                                                           awaitInterruption(interrupted);
+                                                                       });
+            await(activeStarted);
+
+            active.cancel();
+            MessagingRejectedException cancellation = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> active.await(WAIT));
+            assertEquals(MessagingRejectedException.Reason.CANCELLED, cancellation.reason());
+            await(interrupted);
+
+            assertTrue(engine.trySubmitConnectorDelivery("orders",
+                                                         List.of(message(1)),
+                                                         1,
+                                                         () -> { }).isEmpty());
+            active.close();
+            AtomicBoolean nextRan = new AtomicBoolean();
+            engine.dispatch("orders", List.of(message(1)), () -> nextRan.set(true));
+            assertTrue(nextRan.get());
+        }
+    }
+
+    @Test
+    void releasesPermitsWhenDeliveryFails() {
+        MessagingExecutionConfig config = configBuilder()
+                .queueCapacity(0)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            IllegalStateException expected = new IllegalStateException("failed");
+
+            IllegalStateException actual = assertThrows(
+                    IllegalStateException.class,
+                    () -> engine.dispatch("orders", List.of(message(1)), () -> {
+                        throw expected;
+                    }));
+            assertSame(expected, actual);
+
+            AtomicBoolean nextRan = new AtomicBoolean();
+            engine.dispatch("orders", List.of(message(1)), () -> nextRan.set(true));
+            assertTrue(nextRan.get());
+        }
+    }
+
+    @Test
+    void connectorDeliveryRetainsLeaseAcrossRetryStyleDispatch() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .queueCapacity(0)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch firstAttemptStarted = new CountDownLatch(1);
+            CountDownLatch allowRetry = new CountDownLatch(1);
+            CountDownLatch competitorStarted = new CountDownLatch(1);
+            List<String> order = new CopyOnWriteArrayList<>();
+            Message<?> retained = message(1);
+            Runnable retryWork = () -> {
+                engine.dispatch("orders", List.of(retained), () -> {
+                    order.add("attempt-1");
+                    firstAttemptStarted.countDown();
+                    await(allowRetry);
+                });
+                engine.dispatch("orders", List.of(retained), () -> order.add("attempt-2"));
+            };
+
+            ConnectorDelivery delivery = engine.submitConnectorDelivery("orders",
+                                                                         List.of(retained),
+                                                                         1,
+                                                                         retryWork);
+            await(firstAttemptStarted);
+
+            AsyncTask competitor = async(() -> engine.dispatch("orders",
+                                                               List.of(message(1)),
+                                                               () -> {
+                                                                   order.add("competitor");
+                                                                   competitorStarted.countDown();
+                                                               }));
+            awaitWaiting(competitor);
+            assertEquals(1, competitorStarted.getCount());
+
+            allowRetry.countDown();
+            await(delivery);
+            await(competitor);
+            assertEquals(List.of("attempt-1", "attempt-2", "competitor"), order);
+        }
+    }
+
+    @Test
+    void connectorDeliveryRetainsAdmissionThroughSettlementLease() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            ConnectorDelivery delivery = engine.submitConnectorDelivery("orders",
+                                                                         List.of(message(1)),
+                                                                         1,
+                                                                         () -> { });
+            assertTrue(delivery.await(WAIT));
+
+            CountDownLatch competitorStarted = new CountDownLatch(1);
+            AsyncTask competitor = async(() -> engine.dispatch("orders",
+                                                               List.of(message(1)),
+                                                               competitorStarted::countDown));
+            awaitWaiting(competitor);
+            assertEquals(1, competitorStarted.getCount());
+
+            delivery.close();
+            await(competitor);
+            assertEquals(0, competitorStarted.getCount());
+        }
+    }
+
+    @Test
+    void boundsPendingAdmissionCallersAndSupportsNonBlockingConnectorAdmission() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingAdmissions(1)
+                .maxInFlightMessages(1)
+                .maxInFlightBytes(1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch activeStarted = new CountDownLatch(1);
+            CountDownLatch releaseActive = new CountDownLatch(1);
+            ConnectorDelivery active = engine.submitConnectorDelivery("orders",
+                                                                       List.of(message(1)),
+                                                                       1,
+                                                                       () -> {
+                                                                           activeStarted.countDown();
+                                                                           await(releaseActive);
+                                                                       });
+            await(activeStarted);
+
+            AsyncTask pending = async(() -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+            awaitWaiting(pending);
+
+            MessagingRejectedException saturated = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+            assertEquals(MessagingRejectedException.Reason.SATURATED, saturated.reason());
+            assertTrue(engine.trySubmitConnectorDelivery("orders",
+                                                         List.of(message(1)),
+                                                         1,
+                                                         () -> { }).isEmpty());
+
+            releaseActive.countDown();
+            await(active);
+            await(pending);
+        }
+    }
+
+    @Test
+    void concurrentCrossChannelCycleRejectsInsteadOfWaitingForCapacity() throws Exception {
+        MessagingExecutionConfig config = configBuilder().build();
+        try (DeliveryEngine engine = engine(config, "a", "b")) {
+            CountDownLatch rootsStarted = new CountDownLatch(2);
+            CountDownLatch nestedRejected = new CountDownLatch(2);
+            Runnable aToB = () -> {
+                rootsStarted.countDown();
+                await(rootsStarted);
+                try {
+                    engine.dispatch("b", List.of(message(1)), () -> { });
+                    fail("nested delivery unexpectedly ran");
+                } catch (MessagingRejectedException e) {
+                    nestedRejected.countDown();
+                    await(nestedRejected);
+                    throw e;
+                }
+            };
+            Runnable bToA = () -> {
+                rootsStarted.countDown();
+                await(rootsStarted);
+                try {
+                    engine.dispatch("a", List.of(message(1)), () -> { });
+                    fail("nested delivery unexpectedly ran");
+                } catch (MessagingRejectedException e) {
+                    nestedRejected.countDown();
+                    await(nestedRejected);
+                    throw e;
+                }
+            };
+
+            AsyncTask first = async(() -> engine.dispatch("a", List.of(message(1)), aToB));
+            AsyncTask second = async(() -> engine.dispatch("b", List.of(message(1)), bToA));
+
+            MessagingRejectedException firstFailure =
+                    assertInstanceOf(MessagingRejectedException.class, failure(first));
+            MessagingRejectedException secondFailure =
+                    assertInstanceOf(MessagingRejectedException.class, failure(second));
+            assertEquals(MessagingRejectedException.Reason.SATURATED, firstFailure.reason());
+            assertEquals(MessagingRejectedException.Reason.SATURATED, secondFailure.reason());
+        }
+    }
+
+    @Test
+    void nestedCycleAcrossIndependentChannelEnginesAlsoRejects() {
+        MessagingExecutionConfig config = configBuilder().build();
+        try (DeliveryEngine firstEngine = engine(config, "a");
+             DeliveryEngine secondEngine = engine(config, "b")) {
+            CountDownLatch rootsStarted = new CountDownLatch(2);
+            CountDownLatch nestedRejected = new CountDownLatch(2);
+            Runnable aToB = () -> rejectTogether(
+                    rootsStarted,
+                    nestedRejected,
+                    () -> secondEngine.dispatch("b", List.of(message(1)), () -> { }));
+            Runnable bToA = () -> rejectTogether(
+                    rootsStarted,
+                    nestedRejected,
+                    () -> firstEngine.dispatch("a", List.of(message(1)), () -> { }));
+
+            AsyncTask first = async(() -> firstEngine.dispatch("a", List.of(message(1)), aToB));
+            AsyncTask second = async(() -> secondEngine.dispatch("b", List.of(message(1)), bToA));
+
+            assertEquals(MessagingRejectedException.Reason.SATURATED,
+                         assertInstanceOf(MessagingRejectedException.class, failure(first)).reason());
+            assertEquals(MessagingRejectedException.Reason.SATURATED,
+                         assertInstanceOf(MessagingRejectedException.class, failure(second)).reason());
+        }
+    }
+
+    @Test
+    void usesLargestDeclaredOrEstimatedAdmissionWeight() {
+        MessagingExecutionConfig config = configBuilder()
+                .maxInFlightBytes(5)
+                .build();
+        try (DeliveryEngine engine = new DeliveryEngine(config, List.of(message -> java.util.OptionalLong.of(10)))) {
+            engine.registerChannel("orders", config);
+            MessagingRejectedException failure = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+            assertEquals(MessagingRejectedException.Reason.OVERSIZED, failure.reason());
+        }
+    }
+
+    @Test
+    void dispatchStillRejectsUnknownSizeInMixedBatch() {
+        MessagingExecutionConfig config = configBuilder().build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            MessagingRejectedException failure = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> engine.dispatch("orders",
+                                          List.of(unknownMessage(), message(1)),
+                                          () -> { }));
+
+            assertEquals(MessagingRejectedException.Reason.UNKNOWN_SIZE, failure.reason());
+        }
+    }
+
+    @Test
+    void deliverySizeInspectionContinuesAfterUnknownMessage() {
+        Message<String> invalidEstimatorResult = message(1);
+        MessageSizeEstimator estimator = message -> message == invalidEstimatorResult
+                ? null
+                : java.util.OptionalLong.empty();
+        MessagingExecutionConfig config = configBuilder().build();
+        try (DeliveryEngine engine = new DeliveryEngine(config, List.of(estimator))) {
+            engine.registerChannel("orders", config);
+
+            NullPointerException failure = assertThrows(
+                    NullPointerException.class,
+                    () -> engine.dispatch("orders",
+                                          List.of(unknownMessage(), invalidEstimatorResult),
+                                          () -> { }));
+
+            assertEquals("Message size estimator result", failure.getMessage());
+        }
+    }
+
+    @Test
+    void carriesOriginalEstimatorWeightIntoDeadLetterEnvelope() {
+        MessagingExecutionConfig config = configBuilder()
+                .maxInFlightBytes(1024)
+                .build();
+        Message<Object> original = new Message<>() {
+            @Override
+            public Object entity() {
+                return new Object();
+            }
+
+            @Override
+            public Map<String, String> headers() {
+                return Map.of();
+            }
+        };
+        MessageSizeEstimator estimator = message -> message == original
+                ? java.util.OptionalLong.of(5)
+                : java.util.OptionalLong.empty();
+        try (DeliveryEngine engine = new DeliveryEngine(config, List.of(estimator))) {
+            engine.registerChannel("orders-dlq", config);
+            AtomicBoolean delivered = new AtomicBoolean();
+
+            engine.dispatch("orders-dlq",
+                            List.of(DeadLetterMessage.create(original,
+                                                            "orders",
+                                                            1,
+                                                            new IllegalStateException("failed"))),
+                            () -> delivered.set(true));
+
+            assertTrue(delivered.get());
+        }
+    }
+
+    @Test
+    void rejectsOverflowingDeadLetterSizeForConnectorDeliveries() {
+        DeadLetterMessage<Object> deadLetter = overflowingDeadLetter();
+        MessagingExecutionConfig config = configBuilder()
+                .maxInFlightBytes(10)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders-dlq")) {
+            MessagingRejectedException direct = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> engine.submitConnectorDelivery("orders-dlq",
+                                                         List.of(deadLetter),
+                                                         1,
+                                                         () -> { }));
+            assertEquals(MessagingRejectedException.Reason.OVERSIZED, direct.reason());
+
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders-dlq", 1, 1);
+            MessagingRejectedException reserved = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> reservation.start(List.of(deadLetter), 1, () -> { }));
+            assertEquals(MessagingRejectedException.Reason.OVERSIZED, reserved.reason());
+
+            engine.reserveConnectorDelivery("orders-dlq", 1, 1).close();
+        }
+    }
+
+    @Test
+    void connectorLeaseRejectsEmissionBeyondItsReservation() throws Exception {
+        MessagingExecutionConfig config = configBuilder().build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            ConnectorDelivery delivery = engine.submitConnectorDelivery(
+                    "orders",
+                    List.of(message(1)),
+                    1,
+                    () -> engine.dispatch("orders", List.of(message(2)), () -> { }));
+            try {
+                MessagingRejectedException failure = assertThrows(
+                        MessagingRejectedException.class,
+                        () -> delivery.await(WAIT));
+                assertEquals(MessagingRejectedException.Reason.OVERSIZED, failure.reason());
+            } finally {
+                delivery.close();
+            }
+        }
+    }
+
+    @Test
+    void connectorLeaseRejectsDifferentMessageWithinItsReservation() throws Exception {
+        MessagingExecutionConfig config = configBuilder().build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            ConnectorDelivery delivery = engine.submitConnectorDelivery(
+                    "orders",
+                    List.of(message(1)),
+                    1,
+                    () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+            try {
+                MessagingRejectedException failure = assertThrows(
+                        MessagingRejectedException.class,
+                        () -> delivery.await(WAIT));
+                assertEquals(MessagingRejectedException.Reason.OVERSIZED, failure.reason());
+            } finally {
+                delivery.close();
+            }
+        }
+    }
+
+    @Test
+    void connectorLeaseAcceptsItsRetainedUnknownSizeEnvelope() throws Exception {
+        MessagingExecutionConfig config = configBuilder().build();
+        List<Message<String>> retained = List.of(unknownMessage());
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            AtomicBoolean emitted = new AtomicBoolean();
+            ConnectorDelivery delivery = engine.submitConnectorDelivery(
+                    "orders",
+                    retained,
+                    5,
+                    () -> engine.dispatch("orders", retained, () -> emitted.set(true)));
+            await(delivery);
+            assertTrue(emitted.get());
+        }
+    }
+
+    @Test
+    void rejectsEmptyConnectorDeliveryAndUsesStableByteBufferCapacity() {
+        MessagingExecutionConfig config = configBuilder().build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            assertThrows(IllegalArgumentException.class,
+                         () -> engine.submitConnectorDelivery("orders", List.of(), 0, () -> { }));
+
+            ByteBuffer mutable = ByteBuffer.allocate(8);
+            mutable.limit(1);
+            Message<ByteBuffer> message = Message.create(mutable);
+            assertEquals(8, message.admissionBytes().orElseThrow());
+        }
+    }
+
+    @Test
+    void explicitAdmissionBytesCannotUnderdeclareKnownPayloadSize() {
+        byte[] payload = new byte[1_000_000];
+        Message<byte[]> message = Message.builder(payload)
+                .admissionBytes(1)
+                .build();
+        assertEquals(payload.length, message.admissionBytes().orElseThrow());
+
+        MessagingExecutionConfig config = configBuilder()
+                .maxInFlightBytes(payload.length - 1)
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            MessagingRejectedException oversized = assertThrows(
+                    MessagingRejectedException.class,
+                    () -> engine.dispatch("orders", List.of(message), () -> { }));
+            assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
+        }
+
+        assertEquals(1, Message.builder(new Object())
+                .admissionBytes(1)
+                .build()
+                .admissionBytes()
+                .orElseThrow());
+    }
+
+    @Test
+    void shutdownRejectsQueuedAndNewWorkAndInterruptsActiveAndSourceTasks() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .queueCapacity(1)
+                .maxInFlightMessages(2)
+                .maxInFlightBytes(2)
+                .shutdownTimeout(WAIT)
+                .build();
+        DeliveryEngine engine = engine(config, "orders");
+        CountDownLatch activeStarted = new CountDownLatch(1);
+        CountDownLatch activeInterrupted = new CountDownLatch(1);
+        CountDownLatch sourceStarted = new CountDownLatch(1);
+        CountDownLatch sourceInterrupted = new CountDownLatch(1);
+        AtomicBoolean queuedRan = new AtomicBoolean();
+
+        ConnectorDelivery active = engine.submitConnectorDelivery("orders",
+                                                                   List.of(message(1)),
+                                                                   1,
+                                                                   () -> {
+                                                                       activeStarted.countDown();
+                                                                       awaitInterruption(activeInterrupted);
+                                                                   });
+        await(activeStarted);
+        ConnectorDelivery queued = engine.submitConnectorDelivery("orders",
+                                                                   List.of(message(1)),
+                                                                   1,
+                                                                   () -> queuedRan.set(true));
+        engine.startSource("orders-source", () -> {
+            sourceStarted.countDown();
+            awaitInterruption(sourceInterrupted);
+        });
+        await(sourceStarted);
+
+        engine.close();
+
+        await(activeInterrupted);
+        await(sourceInterrupted);
+        MessagingRejectedException activeFailure = assertThrows(
+                MessagingRejectedException.class,
+                () -> active.await(WAIT));
+        active.close();
+        assertEquals(MessagingRejectedException.Reason.SHUTDOWN, activeFailure.reason());
+        MessagingRejectedException queuedFailure = assertThrows(
+                MessagingRejectedException.class,
+                () -> queued.await(WAIT));
+        assertEquals(MessagingRejectedException.Reason.SHUTDOWN, queuedFailure.reason());
+        assertFalse(queuedRan.get());
+
+        MessagingRejectedException dispatchFailure = assertThrows(
+                MessagingRejectedException.class,
+                () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+        MessagingRejectedException sourceFailure = assertThrows(
+                MessagingRejectedException.class,
+                () -> engine.startSource("new-source", () -> { }));
+        assertEquals(MessagingRejectedException.Reason.SHUTDOWN, dispatchFailure.reason());
+        assertEquals(MessagingRejectedException.Reason.SHUTDOWN, sourceFailure.reason());
+    }
+
+    @Test
+    void nestedChannelDispatchWorksAndSameChannelRecursionIsRejected() {
+        MessagingExecutionConfig config = configBuilder().build();
+        try (DeliveryEngine engine = engine(config, "a", "b")) {
+            AtomicBoolean nestedRan = new AtomicBoolean();
+            engine.dispatch("a",
+                            List.of(message(1)),
+                            () -> engine.dispatch("b",
+                                                  List.of(message(1)),
+                                                  () -> nestedRan.set(true)));
+            assertTrue(nestedRan.get());
+
+            MessagingException failure = assertThrows(
+                    MessagingException.class,
+                    () -> engine.dispatch("a",
+                                          List.of(message(1)),
+                                          () -> engine.dispatch("a",
+                                                                List.of(message(1)),
+                                                                () -> { })));
+            assertThat(failure.getMessage(), containsString("a -> a"));
+        }
+    }
+
+    @Test
+    void connectorDeliveryCannotBeSubmittedFromMessagingDispatch() {
+        MessagingExecutionConfig config = configBuilder().build();
+        try (DeliveryEngine engine = engine(config, "a", "b")) {
+            MessagingException failure = assertThrows(
+                    MessagingException.class,
+                    () -> engine.dispatch(
+                            "a",
+                            List.of(message(1)),
+                            () -> engine.submitConnectorDelivery("b",
+                                                                 List.of(message(1)),
+                                                                 1,
+                                                                 () -> { })));
+            assertThat(failure.getMessage(), containsString("cannot be submitted from messaging dispatch"));
+        }
+    }
+
+    @Test
+    void sameNamedChannelsInDifferentEnginesAreDistinctCycleNodes() {
+        MessagingExecutionConfig config = configBuilder().build();
+        try (DeliveryEngine firstEngine = engine(config, "orders");
+             DeliveryEngine secondEngine = engine(config, "orders")) {
+            AtomicBoolean nestedRan = new AtomicBoolean();
+            firstEngine.dispatch("orders",
+                                 List.of(message(1)),
+                                 () -> secondEngine.dispatch("orders",
+                                                             List.of(message(1)),
+                                                             () -> nestedRan.set(true)));
+            assertTrue(nestedRan.get());
+
+            MessagingException cycle = assertThrows(
+                    MessagingException.class,
+                    () -> firstEngine.dispatch(
+                            "orders",
+                            List.of(message(1)),
+                            () -> secondEngine.dispatch(
+                                    "orders",
+                                    List.of(message(1)),
+                                    () -> firstEngine.dispatch("orders",
+                                                               List.of(message(1)),
+                                                               () -> { }))));
+            assertThat(cycle.getMessage(), containsString("orders -> orders -> orders"));
+        }
+    }
+
+    private static MessagingExecutionConfig.Builder configBuilder() {
+        return MessagingExecutionConfig.builder()
+                .concurrency(1)
+                .queueCapacity(0)
+                .maxInFlightMessages(10)
+                .maxInFlightBytes(10)
+                .shutdownTimeout(WAIT);
+    }
+
+    private static DeliveryEngine engine(MessagingExecutionConfig config, String... channels) {
+        DeliveryEngine engine = new DeliveryEngine(config, List.of());
+        for (String channel : channels) {
+            engine.registerChannel(channel, config);
+        }
+        return engine;
+    }
+
+    private static Message<String> message(long bytes) {
+        return Message.builder("")
+                .admissionBytes(bytes)
+                .build();
+    }
+
+    private static Message<String> unknownMessage() {
+        return new Message<>() {
+            @Override
+            public String entity() {
+                return "";
+            }
+
+            @Override
+            public Map<String, String> headers() {
+                return Map.of();
+            }
+        };
+    }
+
+    private static DeadLetterMessage<Object> overflowingDeadLetter() {
+        Message<Object> original = new Message<>() {
+            @Override
+            public Object entity() {
+                return new Object();
+            }
+
+            @Override
+            public Map<String, String> headers() {
+                return Map.of();
+            }
+
+            @Override
+            public java.util.OptionalLong admissionBytes() {
+                return java.util.OptionalLong.of(Long.MAX_VALUE);
+            }
+        };
+        return DeadLetterMessage.create(
+                original,
+                "orders",
+                1,
+                new IllegalStateException("failed"));
+    }
+
+    private static AsyncTask async(Runnable runnable) {
+        CompletableFuture<Void> completion = new CompletableFuture<>();
+        Thread thread = Thread.ofVirtual().start(() -> {
+            try {
+                runnable.run();
+                completion.complete(null);
+            } catch (Throwable throwable) {
+                completion.completeExceptionally(throwable);
+            }
+        });
+        return new AsyncTask(thread, completion);
+    }
+
+    private static void rejectTogether(CountDownLatch rootsStarted,
+                                       CountDownLatch nestedRejected,
+                                       Runnable nestedDelivery) {
+        rootsStarted.countDown();
+        await(rootsStarted);
+        try {
+            nestedDelivery.run();
+            fail("nested delivery unexpectedly ran");
+        } catch (MessagingRejectedException e) {
+            nestedRejected.countDown();
+            await(nestedRejected);
+            throw e;
+        }
+    }
+
+    private static void await(AsyncTask task) throws Exception {
+        task.completion().get(WAIT.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    private static void await(ConnectorDelivery delivery) throws InterruptedException {
+        try {
+            assertTrue(delivery.await(WAIT), "delivery did not complete");
+        } finally {
+            delivery.close();
+        }
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), "latch did not open");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("interrupted while awaiting latch", e);
+        }
+    }
+
+    private static void awaitInterruption(CountDownLatch interrupted) {
+        try {
+            new CountDownLatch(1).await();
+            fail("blocking task unexpectedly resumed");
+        } catch (InterruptedException e) {
+            interrupted.countDown();
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void awaitWaiting(AsyncTask task) {
+        long deadline = System.nanoTime() + WAIT.toNanos();
+        Thread.State state;
+        do {
+            if (task.completion().isDone()) {
+                fail("task completed instead of waiting");
+            }
+            state = task.thread().getState();
+            if (state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING) {
+                return;
+            }
+            Thread.onSpinWait();
+        } while (System.nanoTime() < deadline);
+        fail("task did not enter a waiting state; last state was " + state);
+    }
+
+    private static void awaitBlocked(AsyncTask task) {
+        long deadline = System.nanoTime() + WAIT.toNanos();
+        Thread.State state;
+        do {
+            if (task.completion().isDone()) {
+                fail("task completed instead of blocking");
+            }
+            state = task.thread().getState();
+            if (state == Thread.State.BLOCKED) {
+                return;
+            }
+            Thread.onSpinWait();
+        } while (System.nanoTime() < deadline);
+        fail("task did not enter a blocked state; last state was " + state);
+    }
+
+    private static Throwable failure(AsyncTask task) {
+        ExecutionException exception = assertThrows(
+                ExecutionException.class,
+                () -> task.completion().get(WAIT.toMillis(), TimeUnit.MILLISECONDS));
+        return exception.getCause();
+    }
+
+    private static <T> T assertInstanceOf(Class<T> type, Object value) {
+        assertTrue(type.isInstance(value), () -> "expected " + type.getName() + " but got " + value);
+        return type.cast(value);
+    }
+
+    private record AsyncTask(Thread thread, CompletableFuture<Void> completion) {
+    }
+}

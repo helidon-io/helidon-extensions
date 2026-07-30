@@ -27,10 +27,14 @@ import java.util.stream.Stream;
  * after all of them complete successfully. The first output failure is propagated to the caller and remaining outputs
  * are not invoked. Outputs completed before a failure are not rolled back, so retrying can deliver the same message
  * more than once.
+ * <p>
+ * Runtime execution is FIFO when configured concurrency is one. Higher concurrency may reorder independent delivery
+ * units, while order inside one batch and output registration order remain stable. A synchronous nested emission never
+ * waits for another channel's saturated execution slot; it is rejected to avoid capacity cycles between channels.
  *
  * @param <T> payload type
  */
-public interface MessagingChannel<T> {
+public interface MessagingChannel<T> extends AutoCloseable {
     /**
      * Create a new channel builder.
      *
@@ -82,6 +86,15 @@ public interface MessagingChannel<T> {
     void start();
 
     /**
+     * Stop admission and cancel this channel's runtime-owned source and dispatch tasks.
+     * <p>
+     * The compatibility default does nothing; runtime-provided channels override it.
+     */
+    @Override
+    default void close() {
+    }
+
+    /**
      * Imperative channel builder.
      *
      * @param <T> payload type
@@ -94,6 +107,31 @@ public interface MessagingChannel<T> {
          * @return updated builder
          */
         Builder<T> payloadType(Class<T> payloadType);
+
+        /**
+         * Configure bounded admission and dispatch execution.
+         *
+         * @param config execution configuration
+         * @return updated builder
+         * @throws UnsupportedOperationException if this builder does not support execution configuration
+         */
+        default Builder<T> executionConfig(MessagingExecutionConfig config) {
+            throw new UnsupportedOperationException("This channel builder does not support execution configuration");
+        }
+
+        /**
+         * Add a message size estimator used by this channel's standalone delivery runtime.
+         * <p>
+         * This method may be invoked repeatedly. When multiple estimators apply, the runtime uses the largest
+         * conservative estimate.
+         *
+         * @param estimator message size estimator
+         * @return updated builder
+         * @throws UnsupportedOperationException if this builder does not support message size estimators
+         */
+        default Builder<T> addMessageSizeEstimator(MessageSizeEstimator estimator) {
+            throw new UnsupportedOperationException("This channel builder does not support message size estimators");
+        }
 
         /**
          * Add an input stream. Stream items can be raw payloads or {@link Message} instances.

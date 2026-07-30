@@ -17,9 +17,12 @@
 package io.helidon.extensions.messaging.tests.poc;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -31,6 +34,7 @@ import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.Emitter;
 import io.helidon.extensions.messaging.IncomingConnector;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageSizeEstimator;
 import io.helidon.extensions.messaging.Messaging;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.service.registry.Service;
@@ -283,6 +287,83 @@ class ChannelMessagingTypes {
 
         Optional<RuntimeException> deliveryFailure() {
             return Optional.ofNullable(deliveryFailure.get());
+        }
+    }
+
+    @Service.Singleton
+    static class CustomMessageSizeEstimator implements MessageSizeEstimator {
+        @Override
+        public OptionalLong estimate(Message<?> message) {
+            Object key;
+            if (message instanceof CustomMessage<?, ?> customMessage) {
+                key = customMessage.key();
+            } else if (message instanceof IntermediateMessage<?, ?> intermediateMessage) {
+                key = intermediateMessage.key();
+            } else {
+                return OptionalLong.empty();
+            }
+            OptionalLong keyBytes = contentBytes(key);
+            OptionalLong payloadBytes = contentBytes(message.entity());
+            if (keyBytes.isEmpty() || payloadBytes.isEmpty()) {
+                return OptionalLong.empty();
+            }
+            try {
+                long result = Math.addExact(keyBytes.getAsLong(), payloadBytes.getAsLong());
+                for (Map.Entry<String, String> header : message.headers().entrySet()) {
+                    result = Math.addExact(result, utf8Bytes(header.getKey()));
+                    result = Math.addExact(result, utf8Bytes(header.getValue()));
+                }
+                return OptionalLong.of(result);
+            } catch (ArithmeticException e) {
+                return OptionalLong.empty();
+            }
+        }
+
+        private OptionalLong contentBytes(Object value) {
+            if (value == null) {
+                return OptionalLong.of(0);
+            }
+            if (value instanceof byte[] bytes) {
+                return OptionalLong.of(bytes.length);
+            }
+            if (value instanceof ByteBuffer buffer) {
+                return OptionalLong.of(buffer.capacity());
+            }
+            if (value instanceof String text) {
+                return OptionalLong.of(utf8Bytes(text));
+            }
+            if (value instanceof Byte || value instanceof Boolean) {
+                return OptionalLong.of(Byte.BYTES);
+            }
+            if (value instanceof Short || value instanceof Character) {
+                return OptionalLong.of(Short.BYTES);
+            }
+            if (value instanceof Integer || value instanceof Float) {
+                return OptionalLong.of(Integer.BYTES);
+            }
+            if (value instanceof Long || value instanceof Double) {
+                return OptionalLong.of(Long.BYTES);
+            }
+            if (value instanceof List<?> values) {
+                long result = 0;
+                for (Object element : values) {
+                    OptionalLong elementBytes = contentBytes(element);
+                    if (elementBytes.isEmpty()) {
+                        return OptionalLong.empty();
+                    }
+                    try {
+                        result = Math.addExact(result, elementBytes.getAsLong());
+                    } catch (ArithmeticException e) {
+                        return OptionalLong.empty();
+                    }
+                }
+                return OptionalLong.of(result);
+            }
+            return OptionalLong.empty();
+        }
+
+        private int utf8Bytes(String value) {
+            return value.getBytes(StandardCharsets.UTF_8).length;
         }
     }
 

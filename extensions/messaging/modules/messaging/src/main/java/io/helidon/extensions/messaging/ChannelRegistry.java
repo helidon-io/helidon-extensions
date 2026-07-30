@@ -23,6 +23,7 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -32,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -47,13 +49,39 @@ import io.helidon.service.registry.Service;
 class ChannelRegistry implements MessagingRuntime {
     private static final System.Logger LOGGER = System.getLogger(ChannelRegistry.class.getName());
 
-    private final Map<String, MessagingChannel<?>> channels;
+    private Map<String, MessagingChannel<?>> channels = Map.of();
+    private final DeliveryEngine deliveryEngine;
 
     @Service.Inject
     ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
                     Config config,
                     List<IncomingConnector<?>> incomingConnectors,
+                    List<OutgoingConnector<?>> outgoingConnectors,
+                    List<MessageSizeEstimator> sizeEstimators) {
+        MessagingExecutionConfig defaultExecutionConfig = executionConfig(config, null);
+        this.deliveryEngine = new DeliveryEngine(defaultExecutionConfig, sizeEstimators);
+        try {
+            initialize(consumerRegistrations,
+                       config,
+                       incomingConnectors,
+                       outgoingConnectors);
+        } catch (RuntimeException | Error e) {
+            deliveryEngine.close();
+            throw e;
+        }
+    }
+
+    ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
+                    Config config,
+                    List<IncomingConnector<?>> incomingConnectors,
                     List<OutgoingConnector<?>> outgoingConnectors) {
+        this(consumerRegistrations, config, incomingConnectors, outgoingConnectors, List.of());
+    }
+
+    private void initialize(List<ConsumerRegistration> consumerRegistrations,
+                            Config config,
+                            List<IncomingConnector<?>> incomingConnectors,
+                            List<OutgoingConnector<?>> outgoingConnectors) {
         Map<String, List<ConsumerRegistration>> grouped = new HashMap<>();
         for (ConsumerRegistration registration : consumerRegistrations) {
             grouped.computeIfAbsent(registration.channel(), ignored -> new ArrayList<>())
@@ -61,9 +89,11 @@ class ChannelRegistry implements MessagingRuntime {
         }
 
         Map<String, MessagingChannel<?>> channels = new HashMap<>();
-        grouped.forEach((channel, consumers) -> channels.put(channel, createChannel(channel, consumers)));
-        configuredChannels(config, ConnectorConfig.OUTGOING_PREFIX).forEach(channel -> ensureChannel(channels, channel));
-        configuredChannels(config, ConnectorConfig.INCOMING_PREFIX).forEach(channel -> ensureChannel(channels, channel));
+        grouped.forEach((channel, consumers) -> channels.put(channel, createChannel(config, channel, consumers)));
+        configuredChannels(config, ConnectorConfig.OUTGOING_PREFIX)
+                .forEach(channel -> ensureChannel(config, channels, channel));
+        configuredChannels(config, ConnectorConfig.INCOMING_PREFIX)
+                .forEach(channel -> ensureChannel(config, channels, channel));
         this.channels = Map.copyOf(channels);
 
         List<OutgoingBinding> outgoingBindings = prepareOutgoingBindings(config, outgoingConnectors);
@@ -126,6 +156,11 @@ class ChannelRegistry implements MessagingRuntime {
         return Optional.ofNullable(channels.get(channel));
     }
 
+    @Service.PreDestroy
+    public void close() {
+        deliveryEngine.close();
+    }
+
     /**
      * Add an outgoing connector sink to a named channel.
      *
@@ -165,13 +200,16 @@ class ChannelRegistry implements MessagingRuntime {
      * @param connector connector source factory
      */
     void runIncoming(String channel, Function<ConnectorSourceContext, ConnectorSource> connector) {
-        connector.apply(incomingContext(channel)).run();
+        deliveryEngine.startSource(channel, connector.apply(incomingContext(channel)));
     }
 
     @SuppressWarnings("unchecked")
-    private MessagingChannel<?> createChannel(String channel, List<ConsumerRegistration> consumerRegistrations) {
+    private MessagingChannel<?> createChannel(Config config,
+                                              String channel,
+                                              List<ConsumerRegistration> consumerRegistrations) {
         Class<Object> payloadType = (Class<Object>) payloadType(channel, consumerRegistrations);
-        MessagingChannel.Builder<Object> builder = MessagingChannel.<Object>builder()
+        DefaultMessagingChannel.Builder<Object> builder = new DefaultMessagingChannel.Builder<>();
+        builder.deliveryEngine(deliveryEngine, channel, executionConfig(config, channel))
                 .payloadType(payloadType);
         builder.addBatchOutput(messages -> validateMessageTypes(consumerRegistrations, messages));
         for (ConsumerRegistration consumer : consumerRegistrations) {
@@ -184,8 +222,10 @@ class ChannelRegistry implements MessagingRuntime {
         return builder.build();
     }
 
-    private MessagingChannel<?> createConfiguredChannel() {
-        return MessagingChannel.builder().build();
+    private MessagingChannel<?> createConfiguredChannel(Config config, String channel) {
+        DefaultMessagingChannel.Builder<Object> builder = new DefaultMessagingChannel.Builder<>();
+        builder.deliveryEngine(deliveryEngine, channel, executionConfig(config, channel));
+        return builder.build();
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -494,13 +534,7 @@ class ChannelRegistry implements MessagingRuntime {
 
     private void startIncomingConnectors(List<IncomingBinding> bindings) {
         for (IncomingBinding binding : bindings) {
-            Thread.ofVirtual()
-                    .name("helidon-messaging-connector-source-" + binding.channel())
-                    .inheritInheritableThreadLocals(false)
-                    .uncaughtExceptionHandler((thread, throwable) -> LOGGER.log(System.Logger.Level.ERROR,
-                                                                                "Incoming connector source failed",
-                                                                                throwable))
-                    .start(binding.source());
+            deliveryEngine.startSource("connector-" + binding.channel(), binding.source());
         }
     }
 
@@ -622,8 +656,26 @@ class ChannelRegistry implements MessagingRuntime {
         return channels;
     }
 
-    private void ensureChannel(Map<String, MessagingChannel<?>> channels, String channel) {
-        channels.computeIfAbsent(channel, ignored -> createConfiguredChannel());
+    private void ensureChannel(Config config, Map<String, MessagingChannel<?>> channels, String channel) {
+        channels.computeIfAbsent(channel, ignored -> createConfiguredChannel(config, channel));
+    }
+
+    static MessagingExecutionConfig executionConfig(Config root, String channel) {
+        Map<String, String> properties = new LinkedHashMap<>();
+        root.get("helidon.messaging.execution").detach().asMap().ifPresent(properties::putAll);
+        if (channel != null) {
+            Map<String, String> channelProperties = new LinkedHashMap<>();
+            root.get("helidon.messaging.channel." + channel + ".execution")
+                    .detach()
+                    .asMap()
+                    .ifPresent(channelProperties::putAll);
+            if (channelProperties.containsKey("shutdown-timeout")) {
+                throw new IllegalArgumentException("Channel execution configuration must not override global "
+                                                           + "shutdown-timeout: " + channel);
+            }
+            properties.putAll(channelProperties);
+        }
+        return MessagingExecutionConfig.create(Config.just(ConfigSources.create(properties)));
     }
 
     private ConnectorConfig connectorConfig(Config root,
@@ -726,6 +778,36 @@ class ChannelRegistry implements MessagingRuntime {
         }
 
         @Override
+        public int maxDeliveryMessages() {
+            return deliveryEngine.maxDeliveryMessages(channel);
+        }
+
+        @Override
+        public long maxDeliveryBytes() {
+            return deliveryEngine.maxDeliveryBytes(channel);
+        }
+
+        @Override
+        public OptionalLong messageAdmissionBytes(Message<?> message) {
+            return deliveryEngine.messageAdmissionBytes(message);
+        }
+
+        @Override
+        public Optional<Duration> admissionTimeout() {
+            return deliveryEngine.admissionTimeout(channel);
+        }
+
+        @Override
+        public ConnectorDeliveryReservation reserveDelivery(int maxMessages, long maxAdmissionBytes) {
+            return deliveryEngine.reserveConnectorDelivery(channel, maxMessages, maxAdmissionBytes);
+        }
+
+        @Override
+        public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages, long maxAdmissionBytes) {
+            return deliveryEngine.tryReserveConnectorDelivery(channel, maxMessages, maxAdmissionBytes);
+        }
+
+        @Override
         public <T> void emit(Message<T> message) {
             ChannelRegistry.this.emit(channel, message);
         }
@@ -733,6 +815,20 @@ class ChannelRegistry implements MessagingRuntime {
         @Override
         public <T> void emitBatch(List<? extends Message<T>> messages) {
             ChannelRegistry.this.emitBatch(channel, messages);
+        }
+
+        @Override
+        public <T> ConnectorDelivery submitDelivery(List<? extends Message<T>> messages,
+                                                    long admissionBytes,
+                                                    Runnable delivery) {
+            return deliveryEngine.submitConnectorDelivery(channel, messages, admissionBytes, delivery);
+        }
+
+        @Override
+        public <T> Optional<ConnectorDelivery> trySubmitDelivery(List<? extends Message<T>> messages,
+                                                                 long admissionBytes,
+                                                                 Runnable delivery) {
+            return deliveryEngine.trySubmitConnectorDelivery(channel, messages, admissionBytes, delivery);
         }
 
         @Override

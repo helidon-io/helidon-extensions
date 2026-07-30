@@ -19,6 +19,7 @@ package io.helidon.extensions.messaging;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 /**
  * Message envelope with payload and headers.
@@ -65,6 +66,22 @@ public interface Message<T> {
     Map<String, String> headers();
 
     /**
+     * Declared logical byte weight of this complete message for admission control.
+     * <p>
+     * This is a stable content budget, not a JVM object-graph measurement. Implementations must return
+     * {@link OptionalLong#empty()} when they cannot provide a conservative weight without guessing. A present value
+     * must cover the payload, headers, metadata, and any other logical content retained while the message occupies
+     * pending or in-flight admission, including an unsettled connector delivery. The runtime uses the largest value
+     * supplied by the envelope and all applicable
+     * {@link MessageSizeEstimator} services.
+     *
+     * @return complete message admission weight, or empty when unknown
+     */
+    default OptionalLong admissionBytes() {
+        return OptionalLong.empty();
+    }
+
+    /**
      * Header value.
      *
      * @param name header name
@@ -82,6 +99,7 @@ public interface Message<T> {
     final class Builder<T> {
         private final T entity;
         private final Map<String, String> headers = new LinkedHashMap<>();
+        private OptionalLong admissionBytes = OptionalLong.empty();
 
         private Builder(T entity) {
             this.entity = entity;
@@ -100,12 +118,31 @@ public interface Message<T> {
         }
 
         /**
+         * Set the logical byte weight of this complete message for admission control.
+         * <p>
+         * The supplied value is a content budget rather than a JVM object-graph measurement. It must conservatively
+         * account for the payload, headers, metadata, and any other logical content retained while the message occupies
+         * pending or in-flight admission, including an unsettled connector delivery.
+         *
+         * @param admissionBytes full message admission weight
+         * @return updated builder
+         * @throws IllegalArgumentException if the size is negative
+         */
+        public Builder<T> admissionBytes(long admissionBytes) {
+            if (admissionBytes < 0) {
+                throw new IllegalArgumentException("Message admission bytes must be zero or greater");
+            }
+            this.admissionBytes = OptionalLong.of(admissionBytes);
+            return this;
+        }
+
+        /**
          * Create the message.
          *
          * @return immutable message
          */
         public Message<T> build() {
-            return new DefaultMessage<>(entity, headers);
+            return new DefaultMessage<>(entity, headers, admissionBytes);
         }
     }
 }

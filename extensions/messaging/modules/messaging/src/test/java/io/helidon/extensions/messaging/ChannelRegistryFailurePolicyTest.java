@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.messaging;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,6 +40,74 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ChannelRegistryFailurePolicyTest {
+    @Test
+    void testGlobalAndChannelExecutionConfigurationMerge() {
+        Config config = yaml("""
+                helidon:
+                  messaging:
+                    execution:
+                      concurrency: 2
+                      queue-capacity: 3
+                      max-pending-admissions: 4
+                      max-pending-messages: 5
+                      max-pending-bytes: 6
+                      max-in-flight-messages: 7
+                      max-in-flight-bytes: 8
+                      admission-timeout: PT0.009S
+                      shutdown-timeout: PT0.01S
+                    channel:
+                      orders:
+                        execution:
+                          concurrency: 11
+                          queue-capacity: 12
+                          max-pending-messages: 14
+                          max-in-flight-bytes: 17
+                          admission-timeout: PT0.018S
+                """);
+
+        MessagingExecutionConfig global = ChannelRegistry.executionConfig(config, null);
+        assertThat(global.concurrency(), is(2));
+        assertThat(global.queueCapacity(), is(3));
+        assertThat(global.maxPendingAdmissions(), is(4));
+        assertThat(global.maxPendingMessages(), is(5));
+        assertThat(global.maxPendingBytes(), is(6L));
+        assertThat(global.maxInFlightMessages(), is(7));
+        assertThat(global.maxInFlightBytes(), is(8L));
+        assertThat(global.admissionTimeout(), is(java.util.Optional.of(Duration.ofMillis(9))));
+        assertThat(global.shutdownTimeout(), is(Duration.ofMillis(10)));
+
+        MessagingExecutionConfig orders = ChannelRegistry.executionConfig(config, "orders");
+        assertThat(orders.concurrency(), is(11));
+        assertThat(orders.queueCapacity(), is(12));
+        assertThat(orders.maxPendingAdmissions(), is(4));
+        assertThat(orders.maxPendingMessages(), is(14));
+        assertThat(orders.maxPendingBytes(), is(6L));
+        assertThat(orders.maxInFlightMessages(), is(7));
+        assertThat(orders.maxInFlightBytes(), is(17L));
+        assertThat(orders.admissionTimeout(), is(java.util.Optional.of(Duration.ofMillis(18))));
+        assertThat(orders.shutdownTimeout(), is(Duration.ofMillis(10)));
+    }
+
+    @Test
+    void testChannelCannotOverrideGlobalShutdownTimeout() {
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> new ChannelRegistry(
+                        List.of(registration("orders", ignored -> { })),
+                        yaml("""
+                                helidon:
+                                  messaging:
+                                    channel:
+                                      orders:
+                                        execution:
+                                          shutdown-timeout: PT1S
+                                """),
+                        List.of(),
+                        List.of()));
+
+        assertThat(failure.getMessage(), containsString("must not override global shutdown-timeout"));
+    }
+
     @Test
     void testDeadLetterPolicyCountsInitialAttemptAndStripsConnectorProperties() {
         TestIncomingConnector incoming = new TestIncomingConnector();

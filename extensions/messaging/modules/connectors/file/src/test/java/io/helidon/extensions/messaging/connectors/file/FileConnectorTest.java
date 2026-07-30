@@ -18,6 +18,9 @@ package io.helidon.extensions.messaging.connectors.file;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.ClosedByInterruptException;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,21 +29,26 @@ import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.Watchable;
+import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.extensions.messaging.ConnectorConfig;
+import io.helidon.extensions.messaging.ConnectorDelivery;
+import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
 import io.helidon.extensions.messaging.ConnectorSink;
 import io.helidon.extensions.messaging.ConnectorSource;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
@@ -48,6 +56,7 @@ import io.helidon.extensions.messaging.FailurePolicy;
 import io.helidon.extensions.messaging.IncomingConnector;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingChannel;
+import io.helidon.extensions.messaging.MessagingRejectedException;
 import io.helidon.service.registry.ServiceRegistryManager;
 
 import org.junit.jupiter.api.Test;
@@ -434,19 +443,900 @@ class FileConnectorTest {
         List<List<String>> deliveries = new ArrayList<>();
         ConnectorSourceContext context = retryingContext(messages -> deliveries.add(entities(messages)));
         var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+        FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
 
-        int offset = source.emitAppendedLines(input, 0);
+        cursor = source.emitAppendedLines(input, cursor);
 
         assertThat(deliveries, is(List.of(List.of("first"))));
-        assertThat(offset, is("first\n".getBytes(StandardCharsets.UTF_8).length));
+        assertThat(cursor.offset(), is((long) "first\n".getBytes(StandardCharsets.UTF_8).length));
 
         Files.write(input,
                     new byte[] {emoji[2], emoji[3], '\n'},
                     StandardOpenOption.APPEND);
-        offset = source.emitAppendedLines(input, offset);
+        cursor = source.emitAppendedLines(input, cursor);
 
         assertThat(deliveries, is(List.of(List.of("first"), List.of("\uD83D\uDE00"))));
+        assertThat(cursor.offset(), is(Files.size(input)));
+    }
+
+    @Test
+    void testIncomingLinesAreChunkedByMessageLimit(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "first\nsecond\nthird\nfourth\nfifth\n");
+        List<List<String>> deliveries = new ArrayList<>();
+        ConnectorSourceContext context = boundedContext(2,
+                                                        1024,
+                                                        messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(deliveries,
+                   is(List.of(List.of("first", "second"),
+                              List.of("third", "fourth"),
+                              List.of("fifth"))));
         assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testUnreadTailRewriteDoesNotReplayCommittedLine(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "good\nx\n");
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicBoolean rewritten = new AtomicBoolean();
+        ConnectorSourceContext context = boundedContext(10, 4, messages -> {
+            deliveries.add(entities(messages));
+            if (rewritten.compareAndSet(false, true)) {
+                try {
+                    Files.writeString(input, "good\ny\n");
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+        });
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input),
+                                                          context,
+                                                          new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(rewritten.get(), is(true));
+        assertThat(deliveries, is(List.of(List.of("good"), List.of("y"))));
+        assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testIncompleteTailCorrectionDoesNotReplayCommittedLine(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "good\n");
+        List<List<String>> deliveries = new ArrayList<>();
+        ConnectorSourceContext context = boundedContext(10,
+                                                        32,
+                                                        messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input),
+                                                          context,
+                                                          new AtomicBoolean());
+        FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
+
+        cursor = source.emitAppendedLines(input, cursor);
+        append(input, "old");
+        cursor = source.emitAppendedLines(input, cursor);
+        Files.writeString(input, "good\nnew\n");
+        cursor = source.emitAppendedLines(input, cursor);
+
+        assertThat(deliveries, is(List.of(List.of("good"), List.of("new"))));
+        assertThat(cursor.offset(), is(Files.size(input)));
+    }
+
+    @Test
+    void testShorterIncompleteTailCorrectionDoesNotReplayCommittedLine(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "good\nlong-tail");
+        List<List<String>> deliveries = new ArrayList<>();
+        ConnectorSourceContext context = boundedContext(10,
+                                                        32,
+                                                        messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input),
+                                                          context,
+                                                          new AtomicBoolean());
+        FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
+
+        cursor = source.emitAppendedLines(input, cursor);
+        assertThat(deliveries, is(List.of(List.of("good"))));
+        assertThat(cursor.offset(), is((long) "good\n".getBytes(StandardCharsets.UTF_8).length));
+
+        Files.writeString(input, "good\nx\n");
+        cursor = source.emitAppendedLines(input, cursor);
+
+        assertThat(deliveries, is(List.of(List.of("good"), List.of("x"))));
+        assertThat(cursor.offset(), is(Files.size(input)));
+    }
+
+    @Test
+    void testChunkReadStartsAfterPendingReservation(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "first\n");
+        TrackingReservationContext context = new TrackingReservationContext(4, 64, ignored -> {
+        });
+        AtomicBoolean readObserved = new AtomicBoolean();
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input),
+                context,
+                new AtomicBoolean(),
+                new FileIncomingConnector.WatchRegistrationListener() {
+                },
+                path -> {
+                    assertThat(context.hasOpenReservation(), is(true));
+                    readObserved.set(true);
+                });
+
+        source.emitAppendedLines(input, 0);
+
+        assertThat(readObserved.get(), is(true));
+        assertThat(context.reservations().getFirst().reservedMessages(), is(4));
+        assertThat(context.reservations().getFirst().reservedBytes(), is(64L));
+    }
+
+    @Test
+    void testEmptyChunkReadReleasesPendingReservation(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "");
+        TrackingReservationContext context = new TrackingReservationContext(4, 64, ignored -> {
+        });
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(offset, is(0));
+        assertThat(context.reservations().size(), is(1));
+        TrackingReservation reservation = context.reservations().getFirst();
+        assertThat(reservation.started(), is(false));
+        assertThat(reservation.closed(), is(true));
+    }
+
+    @Test
+    void testActualChunkShrinksPendingReservationBeforeStart(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "one\n");
+        TrackingReservationContext context = new TrackingReservationContext(10, 100, ignored -> {
+        });
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(offset, is((int) Files.size(input)));
+        TrackingReservation started = context.reservations().getFirst();
+        assertThat(started.reservedMessages(), is(10));
+        assertThat(started.reservedBytes(), is(100L));
+        assertThat(started.actualMessages(), is(1));
+        assertThat(started.actualBytes(), is(3L));
+        assertThat(started.delivery().closed(), is(true));
+        TrackingReservation empty = context.reservations().get(1);
+        assertThat(empty.started(), is(false));
+        assertThat(empty.closed(), is(true));
+    }
+
+    @Test
+    void testRetryAndSettlementRetainStartedDeliveryLease(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "one\n");
+        AtomicInteger attempts = new AtomicInteger();
+        AtomicBoolean leaseRetainedDuringFailureHandling = new AtomicBoolean();
+        TrackingReservationContext context = new TrackingReservationContext(10, 100, ignored -> {
+            if (attempts.getAndIncrement() == 0) {
+                throw new IllegalStateException("expected downstream failure");
+            }
+        }) {
+            @Override
+            public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                TrackingDelivery delivery = reservations().getFirst().delivery();
+                leaseRetainedDuringFailureHandling.set(delivery != null && !delivery.closed());
+                return FailureResult.RETRY;
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(offset, is((int) Files.size(input)));
+        assertThat(attempts.get(), is(2));
+        assertThat(leaseRetainedDuringFailureHandling.get(), is(true));
+        assertThat(context.reservations().getFirst().delivery().closed(), is(true));
+    }
+
+    @Test
+    void testBoundedChunksDetectFileReplacement(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        String original = "old-one\nold-two\n";
+        String replacement = "new-one\nnew-two\n";
+        assertThat(replacement.length(), is(original.length()));
+        Files.writeString(input, original);
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicBoolean replaced = new AtomicBoolean();
+        ConnectorSourceContext context = boundedContext(1, 1024, messages -> {
+            deliveries.add(entities(messages));
+            if (replaced.compareAndSet(false, true)) {
+                replace(input, replacement);
+            }
+        });
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(deliveries,
+                   is(List.of(List.of("old-one"),
+                              List.of("new-one"),
+                              List.of("new-two"))));
+        assertThat(offset, is(replacement.length()));
+    }
+
+    @Test
+    void testBoundedChunksDetectTruncation(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "old-one\nold-two\n");
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicBoolean truncated = new AtomicBoolean();
+        ConnectorSourceContext context = boundedContext(1, 1024, messages -> {
+            deliveries.add(entities(messages));
+            if (truncated.compareAndSet(false, true)) {
+                try {
+                    Files.writeString(input, "new\n");
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+        });
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(deliveries, is(List.of(List.of("old-one"), List.of("new"))));
+        assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testSameFileRewriteDuringReadRetriesWithoutMixedContent(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        String originalPayload = "old-" + "a".repeat(16_384);
+        String replacementPayload = "new-" + "b".repeat(16_384);
+        String replacement = replacementPayload + "\n";
+        Files.writeString(input, originalPayload + "\n");
+        var lastModified = Files.getLastModifiedTime(input);
+        assertThat(replacement.length(), is((int) Files.size(input)));
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicBoolean rewritten = new AtomicBoolean();
+        ConnectorSourceContext context = boundedContext(2,
+                                                        100_000,
+                                                        messages -> deliveries.add(entities(messages)));
+        var readListener = new FileIncomingConnector.FileReadListener() {
+            @Override
+            public void beforeRead(Path path) {
+            }
+
+            @Override
+            public void afterRead(Path path) throws IOException {
+                if (rewritten.compareAndSet(false, true)) {
+                    Files.writeString(path, replacement);
+                    Files.setLastModifiedTime(path, lastModified);
+                }
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input),
+                context,
+                new AtomicBoolean(),
+                new FileIncomingConnector.WatchRegistrationListener() {
+                },
+                readListener);
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(rewritten.get(), is(true));
+        assertThat(deliveries, is(List.of(List.of(replacementPayload))));
+        assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testSameFileRewriteAndAppendDuringFinalValidationRetriesWithRestoredTimestamp(@TempDir Path tempDir)
+            throws Exception {
+        int guardBytes = 8_192;
+        String originalPayload = "a".repeat(guardBytes * 2);
+        String replacementPayload = "b" + originalPayload.substring(1);
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, originalPayload + "\n");
+        FileTime originalTime = Files.getLastModifiedTime(input);
+        long framedBytes = Files.size(input);
+        long finalValidationStart = framedBytes * 2 + guardBytes;
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicLong validationBytes = new AtomicLong();
+        AtomicBoolean rewritten = new AtomicBoolean();
+        ConnectorSourceContext context = boundedContext(2,
+                                                        originalPayload.length() + "later".length(),
+                                                        messages -> deliveries.add(entities(messages)));
+        var readListener = new FileIncomingConnector.FileReadListener() {
+            @Override
+            public void beforeRead(Path path) {
+            }
+
+            @Override
+            public void afterValidationRead(Path path, int bytes) throws IOException {
+                if (validationBytes.addAndGet(bytes) > finalValidationStart
+                        && rewritten.compareAndSet(false, true)) {
+                    Files.write(path, new byte[] {'b'}, StandardOpenOption.WRITE);
+                    append(path, "later\n");
+                    Files.setLastModifiedTime(path, originalTime);
+                }
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input),
+                context,
+                new AtomicBoolean(),
+                new FileIncomingConnector.WatchRegistrationListener() {
+                },
+                readListener);
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(rewritten.get(), is(true));
+        assertThat(deliveries, is(List.of(List.of(replacementPayload, "later"))));
+        assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testContinuousAppendDuringValidationDoesNotExhaustSnapshotAttempts(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "initial\n");
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicInteger validationReads = new AtomicInteger();
+        AtomicInteger appends = new AtomicInteger();
+        ConnectorSourceContext context = boundedContext(1,
+                                                        64,
+                                                        messages -> deliveries.add(entities(messages)));
+        var readListener = new FileIncomingConnector.FileReadListener() {
+            @Override
+            public void beforeRead(Path path) {
+                validationReads.set(0);
+            }
+
+            @Override
+            public void afterValidationRead(Path path, int bytes) {
+                if (validationReads.incrementAndGet() == 2 && appends.get() < 3) {
+                    int append = appends.incrementAndGet();
+                    FileConnectorTest.append(path, "tail-" + append + "\n");
+                }
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input),
+                context,
+                new AtomicBoolean(),
+                new FileIncomingConnector.WatchRegistrationListener() {
+                },
+                readListener);
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(appends.get(), is(3));
+        assertThat(deliveries,
+                   is(List.of(List.of("initial"),
+                              List.of("tail-1"),
+                              List.of("tail-2"),
+                              List.of("tail-3"))));
+        assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testBoundedChunksDetectRewriteOfPreviouslyCommittedWindow(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        String originalFirst = "old-" + "a".repeat(9_000);
+        String replacementFirst = "new-" + "b".repeat(9_000);
+        String second = "second-" + "c".repeat(9_000);
+        assertThat(replacementFirst.length(), is(originalFirst.length()));
+        Files.writeString(input, originalFirst + "\n" + second + "\n");
+        long secondOffset = (originalFirst + "\n").getBytes(StandardCharsets.UTF_8).length;
+        var lastModified = Files.getLastModifiedTime(input);
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicBoolean rewritten = new AtomicBoolean();
+        ConnectorSourceContext context = boundedContext(1,
+                                                        20_000,
+                                                        messages -> deliveries.add(entities(messages)));
+        var readListener = new FileIncomingConnector.FileReadListener() {
+            @Override
+            public void beforeRead(Path path) {
+            }
+
+            @Override
+            public void afterRead(Path path, long offset, int bytes) throws IOException {
+                if (offset >= secondOffset && rewritten.compareAndSet(false, true)) {
+                    Files.write(path,
+                                (replacementFirst + "\n").getBytes(StandardCharsets.UTF_8),
+                                StandardOpenOption.WRITE);
+                    Files.setLastModifiedTime(path, lastModified);
+                }
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input),
+                context,
+                new AtomicBoolean(),
+                new FileIncomingConnector.WatchRegistrationListener() {
+                },
+                readListener);
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(rewritten.get(), is(true));
+        assertThat(deliveries,
+                   is(List.of(List.of(originalFirst), List.of(replacementFirst), List.of(second))));
+        assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testCurrentCursorRetriesSameSizeRewriteWithRestoredTimestamp(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        String originalFirst = "old-first";
+        String originalSecond = "old-second";
+        String replacementFirst = "new-first";
+        String replacementSecond = "new-second";
+        String original = originalFirst + "\n" + originalSecond + "\n";
+        String replacement = replacementFirst + "\n" + replacementSecond + "\n";
+        assertThat(replacement.length(), is(original.length()));
+        Files.writeString(input, original);
+        var lastModified = Files.getLastModifiedTime(input);
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicBoolean rewritten = new AtomicBoolean();
+        ConnectorSourceContext context = boundedContext(2,
+                                                        100_000,
+                                                        messages -> deliveries.add(entities(messages)));
+        var readListener = new FileIncomingConnector.FileReadListener() {
+            @Override
+            public void beforeRead(Path path) {
+            }
+
+            @Override
+            public void afterCursorRead(Path path) throws IOException {
+                if (rewritten.compareAndSet(false, true)) {
+                    Files.writeString(path, replacement);
+                    Files.setLastModifiedTime(path, lastModified);
+                }
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input),
+                context,
+                new AtomicBoolean(),
+                new FileIncomingConnector.WatchRegistrationListener() {
+                },
+                readListener);
+
+        int offset = source.emitAppendedLines(input, originalFirst.length() + 1);
+
+        assertThat(rewritten.get(), is(true));
+        assertThat(deliveries, is(List.of(List.of(replacementSecond))));
+        assertThat(offset, is(replacement.length()));
+    }
+
+    @Test
+    void testCurrentCursorReadsOnlyBoundedGuard(@TempDir Path tempDir) throws Exception {
+        int guardBytes = 8_192;
+        Path input = tempDir.resolve("events.log");
+        Files.write(input, new byte[guardBytes * 4]);
+        AtomicLong cursorBytes = new AtomicLong();
+        AtomicLong validationBytes = new AtomicLong();
+        ConnectorSourceContext context = boundedContext(1, 1, messages -> {
+        });
+        var readListener = new FileIncomingConnector.FileReadListener() {
+            @Override
+            public void beforeRead(Path path) {
+            }
+
+            @Override
+            public void afterCursorRead(Path path, long offset, int bytes) {
+                cursorBytes.addAndGet(bytes);
+            }
+
+            @Override
+            public void afterValidationRead(Path path, int bytes) {
+                validationBytes.addAndGet(bytes);
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input),
+                context,
+                new AtomicBoolean(),
+                new FileIncomingConnector.WatchRegistrationListener() {
+                },
+                readListener);
+
+        FileIncomingConnector.FileCursor cursor =
+                source.currentCursor(input, Math.toIntExact(Files.size(input)));
+
+        assertThat(cursor.offset(), is(Files.size(input)));
+        assertThat(cursorBytes.get(), is((long) guardBytes));
+        assertThat(validationBytes.get(), is((long) guardBytes));
+    }
+
+    @Test
+    void testCommittedCursorGuardRemainsBoundedAfterLargeDelivery(@TempDir Path tempDir) throws Exception {
+        int guardBytes = 8_192;
+        String payload = "x".repeat(guardBytes * 4);
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, payload + "\n");
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicLong validationBytes = new AtomicLong();
+        ConnectorSourceContext context = boundedContext(1,
+                                                        payload.length(),
+                                                        messages -> deliveries.add(entities(messages)));
+        var readListener = new FileIncomingConnector.FileReadListener() {
+            @Override
+            public void beforeRead(Path path) {
+            }
+
+            @Override
+            public void afterValidationRead(Path path, int bytes) {
+                validationBytes.addAndGet(bytes);
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input),
+                context,
+                new AtomicBoolean(),
+                new FileIncomingConnector.WatchRegistrationListener() {
+                },
+                readListener);
+        FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
+
+        cursor = source.emitAppendedLines(input, cursor);
+        validationBytes.set(0);
+        append(input, "y");
+        cursor = source.emitAppendedLines(input, cursor);
+
+        assertThat(deliveries, is(List.of(List.of(payload))));
+        assertThat(cursor.offset(), is((long) payload.getBytes(StandardCharsets.UTF_8).length + 1));
+        assertThat(validationBytes.get() <= guardBytes * 2L + 1, is(true));
+    }
+
+    @Test
+    void testTinyDeliveryPreservesPriorCommittedGuardWindow(@TempDir Path tempDir) throws Exception {
+        int guardBytes = 8_192;
+        String originalPayload = "a".repeat(guardBytes * 2);
+        int rewrittenOffset = originalPayload.length() - 100;
+        String rewrittenPayload = originalPayload.substring(0, rewrittenOffset)
+                + "b"
+                + originalPayload.substring(rewrittenOffset + 1);
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, originalPayload + "\n");
+        List<List<String>> deliveries = new ArrayList<>();
+        ConnectorSourceContext context = boundedContext(10,
+                                                        100_000,
+                                                        messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input),
+                                                          context,
+                                                          new AtomicBoolean());
+        FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
+
+        cursor = source.emitAppendedLines(input, cursor);
+        append(input, "tiny\n");
+        cursor = source.emitAppendedLines(input, cursor);
+
+        FileTime lastModified = Files.getLastModifiedTime(input);
+        try (FileChannel channel = FileChannel.open(input, StandardOpenOption.WRITE)) {
+            channel.write(ByteBuffer.wrap(new byte[] {'b'}), rewrittenOffset);
+        }
+        Files.setLastModifiedTime(input, lastModified);
+        append(input, "next\n");
+        cursor = source.emitAppendedLines(input, cursor);
+
+        assertThat(deliveries,
+                   is(List.of(List.of(originalPayload),
+                              List.of("tiny"),
+                              List.of(rewrittenPayload, "tiny", "next"))));
+        assertThat(cursor.offset(), is(Files.size(input)));
+    }
+
+    @Test
+    void testCompletedIncrementalLineRevalidatesAllPreviouslyScannedBytes(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "old");
+        var lastModified = Files.getLastModifiedTime(input);
+        List<List<String>> deliveries = new ArrayList<>();
+        ConnectorSourceContext context = boundedContext(1,
+                                                        32,
+                                                        messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input),
+                                                          context,
+                                                          new AtomicBoolean());
+        FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
+
+        cursor = source.emitAppendedLines(input, cursor);
+        append(input, "x");
+        cursor = source.emitAppendedLines(input, cursor);
+        Files.write(input, new byte[] {'n'}, StandardOpenOption.WRITE);
+        Files.setLastModifiedTime(input, lastModified);
+        append(input, "\n");
+        cursor = source.emitAppendedLines(input, cursor);
+
+        assertThat(deliveries, is(List.of(List.of("nldx"))));
+        assertThat(cursor.offset(), is(Files.size(input)));
+    }
+
+    @Test
+    void testSameFileTruncationDuringReadRetriesFromBeginning(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "old-" + "a".repeat(16_384) + "\n");
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicBoolean truncated = new AtomicBoolean();
+        ConnectorSourceContext context = boundedContext(2,
+                                                        100_000,
+                                                        messages -> deliveries.add(entities(messages)));
+        var readListener = new FileIncomingConnector.FileReadListener() {
+            @Override
+            public void beforeRead(Path path) {
+            }
+
+            @Override
+            public void afterRead(Path path) throws IOException {
+                if (truncated.compareAndSet(false, true)) {
+                    Files.writeString(path, "new\n");
+                }
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input),
+                context,
+                new AtomicBoolean(),
+                new FileIncomingConnector.WatchRegistrationListener() {
+                },
+                readListener);
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(truncated.get(), is(true));
+        assertThat(deliveries, is(List.of(List.of("new"))));
+        assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testAppendDuringReadPreservesAppendOnlyContent(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        String initialPayload = "initial-" + "a".repeat(16_384);
+        Files.writeString(input, initialPayload + "\n");
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicBoolean appended = new AtomicBoolean();
+        ConnectorSourceContext context = boundedContext(2,
+                                                        100_000,
+                                                        messages -> deliveries.add(entities(messages)));
+        var readListener = new FileIncomingConnector.FileReadListener() {
+            @Override
+            public void beforeRead(Path path) {
+            }
+
+            @Override
+            public void afterRead(Path path) {
+                if (appended.compareAndSet(false, true)) {
+                    append(path, "appended\n");
+                }
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input),
+                context,
+                new AtomicBoolean(),
+                new FileIncomingConnector.WatchRegistrationListener() {
+                },
+                readListener);
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(appended.get(), is(true));
+        assertThat(deliveries, is(List.of(List.of(initialPayload, "appended"))));
+        assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testIncomingLinesAreChunkedByUtf8ByteLimit(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "one\n\u00E9\u00E9\nx\n");
+        List<List<String>> deliveries = new ArrayList<>();
+        ConnectorSourceContext context = boundedContext(10,
+                                                        5,
+                                                        messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(deliveries, is(List.of(List.of("one"), List.of("\u00E9\u00E9", "x"))));
+        assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testUtf8MultiByteSeparatorCanCrossReadBufferBoundary(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        String payload = "a".repeat(8191);
+        String separator = "\u2028";
+        Files.writeString(input, payload + separator);
+        List<List<String>> deliveries = new ArrayList<>();
+        ConnectorSourceContext context = boundedContext(1,
+                                                        payload.length(),
+                                                        messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input, separator),
+                                                          context,
+                                                          new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(deliveries, is(List.of(List.of(payload))));
+        assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testUnterminatedUtf8SeparatorBytePrefixWaitsForRemainingByte(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        String payload = "value";
+        byte[] separator = "\u2028".getBytes(StandardCharsets.UTF_8);
+        byte[] initial = Arrays.copyOf(payload.getBytes(StandardCharsets.UTF_8),
+                                      payload.getBytes(StandardCharsets.UTF_8).length + 2);
+        System.arraycopy(separator, 0, initial, payload.getBytes(StandardCharsets.UTF_8).length, 2);
+        Files.write(input, initial);
+        List<List<String>> deliveries = new ArrayList<>();
+        ConnectorSourceContext context = boundedContext(1,
+                                                        payload.length(),
+                                                        messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input, "\u2028"),
+                                                          context,
+                                                          new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(offset, is(0));
+        assertThat(deliveries, is(List.of()));
+
+        Files.write(input, new byte[] {separator[2]}, StandardOpenOption.APPEND);
+        offset = source.emitAppendedLines(input, offset);
+
+        assertThat(deliveries, is(List.of(List.of(payload))));
+        assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testUnterminatedMultiByteSeparatorPrefixDoesNotCountAsPayload(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "xaba");
+        List<List<String>> deliveries = new ArrayList<>();
+        ConnectorSourceContext context = boundedContext(1,
+                                                        1,
+                                                        messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input, "abab"),
+                                                          context,
+                                                          new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(offset, is(0));
+        assertThat(deliveries, is(List.of()));
+
+        append(input, "b");
+        offset = source.emitAppendedLines(input, offset);
+
+        assertThat(deliveries, is(List.of(List.of("x"))));
+        assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testOversizedUnterminatedLineIsRejectedAfterFirstRead(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "x".repeat(32_768));
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicInteger reads = new AtomicInteger();
+        ConnectorSourceContext context = boundedContext(10,
+                                                        4,
+                                                        messages -> deliveries.add(entities(messages)));
+        var readListener = new FileIncomingConnector.FileReadListener() {
+            @Override
+            public void beforeRead(Path path) {
+            }
+
+            @Override
+            public void afterRead(Path path) {
+                reads.incrementAndGet();
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input),
+                context,
+                new AtomicBoolean(),
+                new FileIncomingConnector.WatchRegistrationListener() {
+                },
+                readListener);
+        MessagingRejectedException failure =
+                assertThrows(MessagingRejectedException.class, () -> source.emitAppendedLines(input, 0));
+
+        assertThat(failure.channel(), is("events"));
+        assertThat(failure.reason(), is(MessagingRejectedException.Reason.OVERSIZED));
+        assertThat(failure.getMessage(),
+                   is("File line at byte offset 0 requires 5 admission bytes, exceeding the channel limit of 4"));
+        assertThat(reads.get(), is(1));
+        assertThat(deliveries, is(List.of()));
+    }
+
+    @Test
+    void testCapacityFullBatchIsDeliveredBeforeMalformedNextLine(@TempDir Path tempDir) throws Exception {
+        byte[] first = "good\n".getBytes(StandardCharsets.UTF_8);
+        byte[] content = Arrays.copyOf(first, first.length + 2);
+        content[first.length] = (byte) 0xFF;
+        content[first.length + 1] = '\n';
+
+        for (int maxBytes : List.of(4, 5)) {
+            Path input = tempDir.resolve("events-" + maxBytes + ".log");
+            Files.write(input, content);
+            List<List<String>> deliveries = new ArrayList<>();
+            ConnectorSourceContext context = boundedContext(2,
+                                                            maxBytes,
+                                                            messages -> deliveries.add(entities(messages)));
+            var source = new FileIncomingConnector.FileSource(incomingConfig(input),
+                                                              context,
+                                                              new AtomicBoolean());
+
+            assertThrows(IOException.class, () -> source.emitAppendedLines(input, 0));
+
+            assertThat(deliveries, is(List.of(List.of("good"))));
+        }
+    }
+
+    @Test
+    void testIncrementalIncompleteLineScansAndValidatesOnlyBoundedWindows(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.write(input, new byte[0]);
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicLong scannedBytes = new AtomicLong();
+        AtomicLong validatedBytes = new AtomicLong();
+        ConnectorSourceContext context = boundedContext(1,
+                                                        1_024,
+                                                        messages -> deliveries.add(entities(messages)));
+        var readListener = new FileIncomingConnector.FileReadListener() {
+            @Override
+            public void beforeRead(Path path) {
+            }
+
+            @Override
+            public void afterRead(Path path, long offset, int bytes) {
+                scannedBytes.addAndGet(bytes);
+            }
+
+            @Override
+            public void afterValidationRead(Path path, int bytes) {
+                validatedBytes.addAndGet(bytes);
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input),
+                context,
+                new AtomicBoolean(),
+                new FileIncomingConnector.WatchRegistrationListener() {
+                },
+                readListener);
+        FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
+        scannedBytes.set(0);
+        validatedBytes.set(0);
+
+        String chunk = "abcd";
+        int chunks = 64;
+        for (int i = 0; i < chunks; i++) {
+            append(input, chunk);
+            cursor = source.emitAppendedLines(input, cursor);
+            assertThat(cursor.offset(), is(0L));
+        }
+        append(input, "\n");
+        cursor = source.emitAppendedLines(input, cursor);
+
+        long fileBytes = Files.size(input);
+        assertThat(deliveries, is(List.of(List.of(chunk.repeat(chunks)))));
+        assertThat(cursor.offset(), is(fileBytes));
+        assertThat(scannedBytes.get(), is(fileBytes));
+        assertThat(validatedBytes.get() <= fileBytes * 6, is(true));
     }
 
     @Test
@@ -592,6 +1482,185 @@ class FileConnectorTest {
 
     @Test
     @Timeout(value = 5)
+    void testConnectorCloseInterruptsReservationWait(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "");
+        CountDownLatch reservationWait = new CountDownLatch(1);
+        CountDownLatch neverReleased = new CountDownLatch(1);
+        ConnectorSourceContext context = new TrackingReservationContext(1, 64, ignored -> {
+        }) {
+            @Override
+            public ConnectorDeliveryReservation reserveDelivery(int maxMessages, long maxAdmissionBytes) {
+                reservationWait.countDown();
+                try {
+                    neverReleased.await();
+                    throw new AssertionError("Reservation wait should be interrupted");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new MessagingRejectedException("events",
+                                                          MessagingRejectedException.Reason.CANCELLED,
+                                                          "Reservation wait interrupted",
+                                                          e);
+                }
+            }
+        };
+        FileIncomingConnector connector = new FileIncomingConnector();
+        ConnectorSource source = connector.createSource(incomingConfig(input), context);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicBoolean interruptedOnExit = new AtomicBoolean();
+        Thread sourceThread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
+                .start(() -> {
+                    source.run();
+                    interruptedOnExit.set(Thread.currentThread().isInterrupted());
+                });
+        assertThat(reservationWait.await(1, TimeUnit.SECONDS), is(true));
+
+        connector.close();
+        sourceThread.join(TimeUnit.SECONDS.toMillis(1));
+
+        assertThat(sourceThread.isAlive(), is(false));
+        assertThat(failure.get(), nullValue());
+        assertThat(interruptedOnExit.get(), is(true));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testConnectorCloseInterruptsDeliveryStartWaitAndClosesReservation(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "");
+        CountDownLatch initialReadFinished = new CountDownLatch(1);
+        CountDownLatch startWait = new CountDownLatch(1);
+        CountDownLatch neverReleased = new CountDownLatch(1);
+        AtomicInteger reservationCount = new AtomicInteger();
+        AtomicBoolean blockedReservationClosed = new AtomicBoolean();
+        ConnectorSourceContext context = new TrackingReservationContext(1, 64, ignored -> {
+        }) {
+            @Override
+            public ConnectorDeliveryReservation reserveDelivery(int maxMessages, long maxAdmissionBytes) {
+                if (reservationCount.incrementAndGet() == 1) {
+                    return new ConnectorDeliveryReservation() {
+                        @Override
+                        public <T> ConnectorDelivery start(List<? extends Message<T>> messages,
+                                                           long admissionBytes,
+                                                           Runnable delivery) {
+                            throw new AssertionError("Initial empty read must not start a delivery");
+                        }
+
+                        @Override
+                        public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
+                                                                       long admissionBytes,
+                                                                       Runnable delivery) {
+                            throw new AssertionError("Initial empty read must not start a delivery");
+                        }
+
+                        @Override
+                        public void close() {
+                            initialReadFinished.countDown();
+                        }
+                    };
+                }
+                return new ConnectorDeliveryReservation() {
+                    @Override
+                    public <T> ConnectorDelivery start(List<? extends Message<T>> messages,
+                                                       long admissionBytes,
+                                                       Runnable delivery) {
+                        startWait.countDown();
+                        try {
+                            neverReleased.await();
+                            throw new AssertionError("Delivery start wait should be interrupted");
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new MessagingRejectedException("events",
+                                                                  MessagingRejectedException.Reason.CANCELLED,
+                                                                  "Delivery start wait interrupted",
+                                                                  e);
+                        }
+                    }
+
+                    @Override
+                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
+                                                                   long admissionBytes,
+                                                                   Runnable delivery) {
+                        return Optional.of(start(messages, admissionBytes, delivery));
+                    }
+
+                    @Override
+                    public void close() {
+                        blockedReservationClosed.set(true);
+                    }
+                };
+            }
+        };
+        FileIncomingConnector connector = new FileIncomingConnector();
+        ConnectorSource source = connector.createSource(incomingConfig(input), context);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicBoolean interruptedOnExit = new AtomicBoolean();
+        Thread sourceThread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
+                .start(() -> {
+                    source.run();
+                    interruptedOnExit.set(Thread.currentThread().isInterrupted());
+                });
+        assertThat(initialReadFinished.await(1, TimeUnit.SECONDS), is(true));
+        append(input, "first\n");
+        assertThat(startWait.await(1, TimeUnit.SECONDS), is(true));
+
+        connector.close();
+        sourceThread.join(TimeUnit.SECONDS.toMillis(1));
+
+        assertThat(sourceThread.isAlive(), is(false));
+        assertThat(failure.get(), nullValue());
+        assertThat(interruptedOnExit.get(), is(true));
+        assertThat(blockedReservationClosed.get(), is(true));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testRuntimeShutdownDuringFileReadIsNormalCancellation(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "");
+        CountDownLatch readStarted = new CountDownLatch(1);
+        CountDownLatch neverReleased = new CountDownLatch(1);
+        TrackingReservationContext context = new TrackingReservationContext(1, 64, ignored -> {
+        });
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input),
+                context,
+                new AtomicBoolean(),
+                new FileIncomingConnector.WatchRegistrationListener() {
+                },
+                path -> {
+                    readStarted.countDown();
+                    try {
+                        neverReleased.await();
+                        throw new AssertionError("File read should be interrupted");
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new ClosedByInterruptException();
+                    }
+                });
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicBoolean interruptedOnExit = new AtomicBoolean();
+        Thread sourceThread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
+                .start(() -> {
+                    source.run();
+                    interruptedOnExit.set(Thread.currentThread().isInterrupted());
+                });
+        assertThat(readStarted.await(1, TimeUnit.SECONDS), is(true));
+
+        sourceThread.interrupt();
+        sourceThread.join(TimeUnit.SECONDS.toMillis(1));
+
+        assertThat(sourceThread.isAlive(), is(false));
+        assertThat(failure.get(), nullValue());
+        assertThat(interruptedOnExit.get(), is(true));
+        assertThat(context.reservations().getFirst().closed(), is(true));
+    }
+
+    @Test
+    @Timeout(value = 5)
     void testServiceRegistryShutdownStopsSource(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         AtomicReference<Throwable> failure = new AtomicReference<>();
@@ -707,11 +1776,16 @@ class FileConnectorTest {
     }
 
     private static FileConnectorConfig incomingConfig(Path path) {
+        return incomingConfig(path, FileConnectorConfig.DEFAULT_LINE_SEPARATOR);
+    }
+
+    private static FileConnectorConfig incomingConfig(Path path, String lineSeparator) {
         return FileConnectorConfig.builder()
                 .direction(ConnectorConfig.Direction.INCOMING)
                 .channel("events")
                 .connector(FileOutgoingConnector.CONNECTOR)
                 .path(path)
+                .lineSeparator(lineSeparator)
                 .build();
     }
 
@@ -767,6 +1841,37 @@ class FileConnectorTest {
         };
     }
 
+    private static ConnectorSourceContext boundedContext(int maxMessages,
+                                                         long maxBytes,
+                                                         BatchConsumer consumer) {
+        return new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "events";
+            }
+
+            @Override
+            public int maxDeliveryMessages() {
+                return maxMessages;
+            }
+
+            @Override
+            public long maxDeliveryBytes() {
+                return maxBytes;
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+                throw new AssertionError("File source must emit appended lines as a batch");
+            }
+
+            @Override
+            public <T> void emitBatch(List<? extends Message<T>> messages) {
+                consumer.accept(messages);
+            }
+        };
+    }
+
     private static List<String> entities(List<? extends Message<?>> messages) {
         return messages.stream()
                 .map(message -> String.valueOf(message.entity()))
@@ -787,6 +1892,198 @@ class FileConnectorTest {
             Thread.sleep(10);
         }
         assertThat(deliveries.size(), is(expectedCount));
+    }
+
+    private static class TrackingReservationContext implements ConnectorSourceContext {
+        private final int maxMessages;
+        private final long maxBytes;
+        private final BatchConsumer consumer;
+        private final List<TrackingReservation> reservations = new ArrayList<>();
+
+        private TrackingReservationContext(int maxMessages, long maxBytes, BatchConsumer consumer) {
+            this.maxMessages = maxMessages;
+            this.maxBytes = maxBytes;
+            this.consumer = consumer;
+        }
+
+        @Override
+        public String channelName() {
+            return "events";
+        }
+
+        @Override
+        public int maxDeliveryMessages() {
+            return maxMessages;
+        }
+
+        @Override
+        public long maxDeliveryBytes() {
+            return maxBytes;
+        }
+
+        @Override
+        public ConnectorDeliveryReservation reserveDelivery(int maxMessages, long maxAdmissionBytes) {
+            TrackingReservation reservation = new TrackingReservation(maxMessages, maxAdmissionBytes);
+            reservations.add(reservation);
+            return reservation;
+        }
+
+        @Override
+        public <T> void emit(Message<T> message) {
+            throw new AssertionError("File source must emit appended lines as a batch");
+        }
+
+        @Override
+        public <T> void emitBatch(List<? extends Message<T>> messages) {
+            consumer.accept(messages);
+        }
+
+        private boolean hasOpenReservation() {
+            return reservations.stream().anyMatch(TrackingReservation::open);
+        }
+
+        protected List<TrackingReservation> reservations() {
+            return reservations;
+        }
+    }
+
+    private static final class TrackingReservation implements ConnectorDeliveryReservation {
+        private final int reservedMessages;
+        private final long reservedBytes;
+        private boolean started;
+        private boolean closed;
+        private int actualMessages;
+        private long actualBytes;
+        private TrackingDelivery delivery;
+
+        private TrackingReservation(int reservedMessages, long reservedBytes) {
+            this.reservedMessages = reservedMessages;
+            this.reservedBytes = reservedBytes;
+        }
+
+        @Override
+        public <T> ConnectorDelivery start(List<? extends Message<T>> messages,
+                                           long admissionBytes,
+                                           Runnable action) {
+            if (!open()) {
+                throw new IllegalStateException("Reservation is not open");
+            }
+            if (messages.size() > reservedMessages || admissionBytes > reservedBytes) {
+                throw new IllegalArgumentException("Actual delivery exceeds reservation");
+            }
+            started = true;
+            actualMessages = messages.size();
+            actualBytes = admissionBytes;
+            delivery = new TrackingDelivery(action);
+            delivery.run();
+            return delivery;
+        }
+
+        @Override
+        public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
+                                                        long admissionBytes,
+                                                        Runnable action) {
+            return Optional.of(start(messages, admissionBytes, action));
+        }
+
+        @Override
+        public void close() {
+            if (!started) {
+                closed = true;
+            }
+        }
+
+        private boolean open() {
+            return !started && !closed;
+        }
+
+        private int reservedMessages() {
+            return reservedMessages;
+        }
+
+        private long reservedBytes() {
+            return reservedBytes;
+        }
+
+        private boolean started() {
+            return started;
+        }
+
+        private boolean closed() {
+            return closed;
+        }
+
+        private int actualMessages() {
+            return actualMessages;
+        }
+
+        private long actualBytes() {
+            return actualBytes;
+        }
+
+        private TrackingDelivery delivery() {
+            return delivery;
+        }
+    }
+
+    private static final class TrackingDelivery implements ConnectorDelivery {
+        private final Runnable action;
+        private RuntimeException failure;
+        private boolean done;
+        private boolean closed;
+        private Thread executionThread;
+
+        private TrackingDelivery(Runnable action) {
+            this.action = action;
+        }
+
+        @Override
+        public boolean isDone() {
+            return done;
+        }
+
+        @Override
+        public boolean isCurrentThread() {
+            return Thread.currentThread() == executionThread;
+        }
+
+        @Override
+        public void await() {
+            if (failure != null) {
+                throw failure;
+            }
+        }
+
+        @Override
+        public boolean await(Duration timeout) {
+            await();
+            return true;
+        }
+
+        @Override
+        public void cancel() {
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+        }
+
+        private void run() {
+            executionThread = Thread.currentThread();
+            try {
+                action.run();
+            } catch (RuntimeException e) {
+                failure = e;
+            } finally {
+                executionThread = null;
+                done = true;
+            }
+        }
+
+        private boolean closed() {
+            return closed;
+        }
     }
 
     private static final class TestWatchKey implements WatchKey {
