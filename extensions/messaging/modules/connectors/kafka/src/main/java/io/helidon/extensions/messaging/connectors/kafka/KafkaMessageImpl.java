@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.messaging.connectors.kafka;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -30,6 +31,11 @@ import java.util.OptionalLong;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 
 final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
+    private static final long REQUIRED_RECORD_METADATA_BYTES = Integer.BYTES
+            + Long.BYTES
+            + Long.BYTES
+            + Byte.BYTES;
+
     private final K key;
     private final V entity;
     private final Map<String, String> headers;
@@ -40,6 +46,8 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
     private final OptionalLong timestamp;
     private final Optional<KafkaMessage.TimestampType> timestampType;
     private final OptionalInt leaderEpoch;
+    private final OptionalLong admissionBytes;
+    private final OptionalLong recordAdmissionLowerBound;
 
     private KafkaMessageImpl(K key,
                              V entity,
@@ -49,7 +57,9 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
                              OptionalLong offset,
                              OptionalLong timestamp,
                              Optional<KafkaMessage.TimestampType> timestampType,
-                             OptionalInt leaderEpoch) {
+                             OptionalInt leaderEpoch,
+                             OptionalLong admissionBytes,
+                             OptionalLong recordAdmissionLowerBound) {
         this.key = key;
         this.entity = entity;
         this.kafkaHeaders = snapshot(headers);
@@ -60,6 +70,8 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
         this.timestamp = timestamp;
         this.timestampType = timestampType;
         this.leaderEpoch = leaderEpoch;
+        this.admissionBytes = admissionBytes;
+        this.recordAdmissionLowerBound = recordAdmissionLowerBound;
     }
 
     static KafkaMessage.Header header(String name, byte[] value) {
@@ -68,7 +80,20 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
 
     static <K, V> KafkaMessage<K, V> create(K key,
                                              V entity,
-                                             List<? extends KafkaMessage.Header> headers) {
+                                             List<? extends KafkaMessage.Header> headers,
+                                             OptionalLong admissionBytes) {
+        Optional<ProgrammaticAdmissionBytes> knownBytes = programmaticAdmissionBytes(key, entity, headers);
+        OptionalLong actualAdmissionBytes;
+        if (knownBytes.isEmpty()) {
+            actualAdmissionBytes = OptionalLong.empty();
+        } else if (admissionBytes.isPresent()) {
+            actualAdmissionBytes = OptionalLong.of(Math.max(admissionBytes.getAsLong(),
+                                                            knownBytes.get().lowerBoundBytes()));
+        } else if (knownBytes.get().complete()) {
+            actualAdmissionBytes = OptionalLong.of(knownBytes.get().lowerBoundBytes());
+        } else {
+            actualAdmissionBytes = OptionalLong.empty();
+        }
         return new KafkaMessageImpl<>(key,
                                       entity,
                                       headers,
@@ -77,7 +102,9 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
                                       OptionalLong.empty(),
                                       OptionalLong.empty(),
                                       Optional.empty(),
-                                      OptionalInt.empty());
+                                      OptionalInt.empty(),
+                                      actualAdmissionBytes,
+                                      OptionalLong.empty());
     }
 
     static <K, V> KafkaMessage<K, V> create(ConsumerRecord<K, V> record) {
@@ -97,7 +124,9 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
                                       Optional.of(timestampType(record.timestampType())),
                                       leaderEpoch.isPresent()
                                               ? OptionalInt.of(leaderEpoch.get())
-                                              : OptionalInt.empty());
+                                              : OptionalInt.empty(),
+                                      admissionBytes(record, headers),
+                                      recordAdmissionLowerBound(record, headers));
     }
 
     @Override
@@ -108,6 +137,15 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
     @Override
     public Map<String, String> headers() {
         return headers;
+    }
+
+    @Override
+    public OptionalLong admissionBytes() {
+        return admissionBytes;
+    }
+
+    OptionalLong recordAdmissionLowerBound() {
+        return recordAdmissionLowerBound;
     }
 
     @Override
@@ -175,6 +213,133 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
         case CREATE_TIME -> KafkaMessage.TimestampType.CREATE_TIME;
         case LOG_APPEND_TIME -> KafkaMessage.TimestampType.LOG_APPEND_TIME;
         };
+    }
+
+    private static OptionalLong admissionBytes(ConsumerRecord<?, ?> record,
+                                               List<? extends KafkaMessage.Header> headers) {
+        OptionalLong keyBytes = contentBytes(record.key(), record.serializedKeySize());
+        OptionalLong valueBytes = contentBytes(record.value(), record.serializedValueSize());
+        if (keyBytes.isEmpty() || valueBytes.isEmpty()) {
+            return OptionalLong.empty();
+        }
+        return completeRecordBytes(record, headers, keyBytes.getAsLong(), valueBytes.getAsLong());
+    }
+
+    private static OptionalLong recordAdmissionLowerBound(ConsumerRecord<?, ?> record,
+                                                          List<? extends KafkaMessage.Header> headers) {
+        long keyBytes = Math.max(0, record.serializedKeySize());
+        long valueBytes = Math.max(0, record.serializedValueSize());
+        OptionalLong result = completeRecordBytes(record, headers, keyBytes, valueBytes);
+        return result.isPresent() ? result : OptionalLong.of(Long.MAX_VALUE);
+    }
+
+    private static OptionalLong completeRecordBytes(ConsumerRecord<?, ?> record,
+                                                    List<? extends KafkaMessage.Header> headers,
+                                                    long keyBytes,
+                                                    long valueBytes) {
+        try {
+            long result = keyBytes;
+            result = Math.addExact(result, valueBytes);
+            result = Math.addExact(result, record.topic().getBytes(StandardCharsets.UTF_8).length);
+            result = Math.addExact(result, REQUIRED_RECORD_METADATA_BYTES);
+            if (record.leaderEpoch().isPresent()) {
+                result = Math.addExact(result, Integer.BYTES);
+            }
+            for (KafkaMessage.Header header : headers) {
+                result = Math.addExact(result, header.name().getBytes(StandardCharsets.UTF_8).length);
+                Optional<byte[]> value = header.value();
+                if (value.isPresent()) {
+                    result = Math.addExact(result, value.get().length);
+                }
+            }
+            result = Math.addExact(result, portableHeaderValueBytes(headers));
+            return OptionalLong.of(result);
+        } catch (ArithmeticException e) {
+            return OptionalLong.empty();
+        }
+    }
+
+    private static Optional<ProgrammaticAdmissionBytes> programmaticAdmissionBytes(
+            Object key,
+            Object entity,
+            List<? extends KafkaMessage.Header> headers) {
+        OptionalLong keyBytes = contentBytes(key, ConsumerRecord.NULL_SIZE);
+        OptionalLong valueBytes = contentBytes(entity, ConsumerRecord.NULL_SIZE);
+        try {
+            long result = keyBytes.orElse(0);
+            result = Math.addExact(result, valueBytes.orElse(0));
+            for (KafkaMessage.Header header : headers) {
+                result = Math.addExact(result, header.name().getBytes(StandardCharsets.UTF_8).length);
+                Optional<byte[]> value = header.value();
+                if (value.isPresent()) {
+                    result = Math.addExact(result, value.get().length);
+                }
+            }
+            result = Math.addExact(result, portableHeaderValueBytes(headers));
+            return Optional.of(new ProgrammaticAdmissionBytes(result,
+                                                              keyBytes.isPresent() && valueBytes.isPresent()));
+        } catch (ArithmeticException e) {
+            return Optional.empty();
+        }
+    }
+
+    private static long portableHeaderValueBytes(List<? extends KafkaMessage.Header> headers) {
+        Map<String, String> values = new LinkedHashMap<>();
+        for (KafkaMessage.Header header : headers) {
+            header.value().ifPresent(value -> values.put(header.name(),
+                                                        new String(value, StandardCharsets.UTF_8)));
+        }
+        return portableHeaderValueBytes(values);
+    }
+
+    private static long portableHeaderValueBytes(Map<String, String> values) {
+        long result = 0;
+        for (String value : values.values()) {
+            result = Math.addExact(result, value.getBytes(StandardCharsets.UTF_8).length);
+        }
+        return result;
+    }
+
+    private static OptionalLong contentBytes(Object value, int serializedBytes) {
+        OptionalLong retainedBytes = retainedContentBytes(value);
+        if (retainedBytes.isEmpty()) {
+            return OptionalLong.empty();
+        }
+        if (serializedBytes >= 0) {
+            return OptionalLong.of(Math.max(serializedBytes, retainedBytes.getAsLong()));
+        }
+        return retainedBytes;
+    }
+
+    private static OptionalLong retainedContentBytes(Object value) {
+        if (value == null) {
+            return OptionalLong.of(0);
+        }
+        if (value instanceof byte[] bytes) {
+            return OptionalLong.of(bytes.length);
+        }
+        if (value instanceof ByteBuffer buffer) {
+            return OptionalLong.of(buffer.capacity());
+        }
+        if (value instanceof String text) {
+            return OptionalLong.of(text.getBytes(StandardCharsets.UTF_8).length);
+        }
+        if (value instanceof Byte || value instanceof Boolean) {
+            return OptionalLong.of(Byte.BYTES);
+        }
+        if (value instanceof Short || value instanceof Character) {
+            return OptionalLong.of(Short.BYTES);
+        }
+        if (value instanceof Integer || value instanceof Float) {
+            return OptionalLong.of(Integer.BYTES);
+        }
+        if (value instanceof Long || value instanceof Double) {
+            return OptionalLong.of(Long.BYTES);
+        }
+        return OptionalLong.empty();
+    }
+
+    private record ProgrammaticAdmissionBytes(long lowerBoundBytes, boolean complete) {
     }
 
     private static final class ImmutableHeader implements KafkaMessage.Header {

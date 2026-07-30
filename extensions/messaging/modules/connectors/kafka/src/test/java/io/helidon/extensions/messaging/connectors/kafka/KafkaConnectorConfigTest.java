@@ -22,6 +22,7 @@ import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.extensions.messaging.ConnectorConfig;
 
+import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
@@ -101,6 +102,24 @@ class KafkaConnectorConfigTest {
         assertThat(properties.get(KafkaConnectorConfig.AUTO_OFFSET_RESET_PROPERTY), is("earliest"));
         assertThat(properties.get(KafkaConnectorConfig.ENABLE_AUTO_COMMIT_PROPERTY), is(false));
         assertThat(properties.get("fetch.min.bytes"), is("128"));
+    }
+
+    @Test
+    void testConsumerAcquisitionIsCappedByRuntimeDeliveryLimits() {
+        KafkaConnectorConfig config = builder()
+                .direction(ConnectorConfig.Direction.INCOMING)
+                .bootstrapServers("broker:9092")
+                .topic(TOPIC)
+                .properties(Map.of(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "500",
+                                   ConsumerConfig.FETCH_MAX_BYTES_CONFIG, "52428800",
+                                   ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, "1048576"))
+                .build();
+
+        Map<String, Object> properties = KafkaConnectorConfigSupport.consumerProperties(config, 7, 2_048);
+
+        assertThat(properties.get(ConsumerConfig.MAX_POLL_RECORDS_CONFIG), is(7));
+        assertThat(properties.get(ConsumerConfig.FETCH_MAX_BYTES_CONFIG), is(2_048));
+        assertThat(properties.get(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG), is(2_048));
     }
 
     private static KafkaConnectorConfig.Builder builder() {

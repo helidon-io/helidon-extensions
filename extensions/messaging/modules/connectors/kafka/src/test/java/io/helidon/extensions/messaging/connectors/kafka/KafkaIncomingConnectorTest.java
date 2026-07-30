@@ -23,20 +23,25 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.extensions.messaging.ConnectorConfig;
+import io.helidon.extensions.messaging.ConnectorDelivery;
+import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
 import io.helidon.extensions.messaging.ConnectorSource;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.DeadLetterMessage;
 import io.helidon.extensions.messaging.FailurePolicy;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingException;
+import io.helidon.extensions.messaging.MessagingRejectedException;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -346,6 +351,89 @@ class KafkaIncomingConnectorTest {
         assertThat(dispatchAttempts.get(), is(1));
         assertThat(consumer.commitCount(), is(0));
         assertThat(consumer.closed(), is(true));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testNonCooperativeStaleDeliveryFailsInsteadOfPollingAnotherUnit() throws InterruptedException {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
+        CountDownLatch handlerStarted = new CountDownLatch(1);
+        CountDownLatch releaseHandler = new CountDownLatch(1);
+        CountDownLatch handlerFinished = new CountDownLatch(1);
+        AtomicInteger deliveryCloses = new AtomicInteger();
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "audit";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+                throw new AssertionError("Kafka source must emit a poll as a batch");
+            }
+
+            @Override
+            public <T> void emitBatch(List<? extends Message<T>> messages) {
+                handlerStarted.countDown();
+                try {
+                    while (releaseHandler.getCount() != 0) {
+                        try {
+                            releaseHandler.await();
+                        } catch (InterruptedException ignored) {
+                            // Deliberately non-cooperative.
+                        }
+                    }
+                } finally {
+                    handlerFinished.countDown();
+                }
+            }
+
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
+                                                                             long maxAdmissionBytes) {
+                ConnectorDeliveryReservation delegate = ConnectorSourceContext.super
+                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
+                        .orElseThrow();
+                return Optional.of(new ForwardingReservation(delegate) {
+                    @Override
+                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
+                                                                    long admissionBytes,
+                                                                    Runnable delivery) {
+                        return super.tryStart(messages, admissionBytes, delivery)
+                                .map(deliveryTask -> new TrackingDelivery(deliveryTask, deliveryCloses));
+                    }
+                });
+            }
+        };
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+        Thread sourceThread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
+                .start(connector.createSource(config(Duration.ofMillis(25)), context));
+
+        try {
+            assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
+            consumer.schedulePollTask(() -> {
+                consumer.updateBeginningOffsets(Map.of(SECOND_TOPIC_PARTITION, 10L));
+                consumer.rebalance(List.of(SECOND_TOPIC_PARTITION));
+            });
+            sourceThread.join(TimeUnit.SECONDS.toMillis(5));
+
+            assertThat(sourceThread.isAlive(), is(false));
+            assertThat(sourceFailure.get(), instanceOf(MessagingException.class));
+            assertThat(sourceFailure.get().getMessage().contains("stale delivery did not stop"), is(true));
+            assertThat(handlerFinished.getCount(), is(1L));
+            assertThat(deliveryCloses.get(), is(1));
+            assertThat(consumer.commitCount(), is(0));
+            assertThat(consumer.closed(), is(true));
+        } finally {
+            releaseHandler.countDown();
+        }
+
+        assertThat(handlerFinished.await(5, TimeUnit.SECONDS), is(true));
+        connector.close();
+        assertThat(deliveryCloses.get(), is(1));
     }
 
     @Test
@@ -727,6 +815,481 @@ class KafkaIncomingConnectorTest {
     }
 
     @Test
+    void testUnavailableAdmissionKeepsMaintenancePolling() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
+        AtomicInteger admissionAttempts = new AtomicInteger();
+        AtomicInteger pollsAtAdmission = new AtomicInteger();
+        ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
+                                                                             long maxAdmissionBytes) {
+                ConnectorDeliveryReservation delegate = super
+                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
+                        .orElseThrow();
+                return Optional.of(new ForwardingReservation(delegate) {
+                    @Override
+                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
+                                                                    long admissionBytes,
+                                                                    Runnable delivery) {
+                        if (admissionAttempts.incrementAndGet() < 3) {
+                            return Optional.empty();
+                        }
+                        pollsAtAdmission.set(consumer.pollCount());
+                        return super.tryStart(messages, admissionBytes, delivery);
+                    }
+                });
+            }
+        };
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        consumer.afterCommit(connector::close);
+
+        connector.createSource(config(), context).run();
+
+        assertThat(admissionAttempts.get(), is(3));
+        assertThat("the owner must maintenance-poll after every unavailable admission attempt",
+                   pollsAtAdmission.get() >= 3,
+                   is(true));
+        assertThat(consumer.commitCount(), is(1));
+    }
+
+    @Test
+    void testAdmissionTimeoutIsTypedAndDoesNotCommit() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
+        ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public Optional<Duration> admissionTimeout() {
+                return Optional.of(Duration.ofMillis(25));
+            }
+
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
+                                                                             long maxAdmissionBytes) {
+                ConnectorDeliveryReservation delegate = super
+                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
+                        .orElseThrow();
+                return Optional.of(new ForwardingReservation(delegate) {
+                    @Override
+                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
+                                                                    long admissionBytes,
+                                                                    Runnable delivery) {
+                        return Optional.empty();
+                    }
+                });
+            }
+        };
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+
+        MessagingRejectedException failure = assertThrows(
+                MessagingRejectedException.class,
+                () -> connector.createSource(config(), context).run());
+
+        assertThat(failure.reason(), is(MessagingRejectedException.Reason.TIMEOUT));
+        assertThat(failure.channel(), is("audit"));
+        assertThat(consumer.pollCount() > 1, is(true));
+        assertThat(consumer.commitCount(), is(0));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testCloseStopsSourceWithoutPollingWhileReservationIsUnavailable() throws InterruptedException {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
+        CountDownLatch reservationAttempted = new CountDownLatch(1);
+        ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
+                                                                             long maxAdmissionBytes) {
+                reservationAttempted.countDown();
+                return Optional.empty();
+            }
+        };
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+        Thread sourceThread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
+                .start(connector.createSource(config(), context));
+
+        assertThat(reservationAttempted.await(5, TimeUnit.SECONDS), is(true));
+        assertThat("a source without assignment must not poll or join before reserving capacity",
+                   consumer.pollCount(),
+                   is(0));
+        connector.close();
+        sourceThread.join(TimeUnit.SECONDS.toMillis(5));
+
+        assertThat(sourceThread.isAlive(), is(false));
+        assertThat(sourceFailure.get(), nullValue());
+        assertThat(consumer.commitCount(), is(0));
+        assertThat(consumer.closed(), is(true));
+    }
+
+    @Test
+    void testReservationTimeoutWithoutAssignmentDoesNotPoll() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public Optional<Duration> admissionTimeout() {
+                return Optional.of(Duration.ofMillis(25));
+            }
+
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
+                                                                             long maxAdmissionBytes) {
+                return Optional.empty();
+            }
+        };
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+
+        MessagingRejectedException failure = assertThrows(
+                MessagingRejectedException.class,
+                () -> connector.createSource(config(), context).run());
+
+        assertThat(failure.reason(), is(MessagingRejectedException.Reason.TIMEOUT));
+        assertThat(consumer.pollCount(), is(0));
+        assertThat(consumer.commitCount(), is(0));
+        assertThat(consumer.closed(), is(true));
+    }
+
+    @Test
+    void testPreviouslyPolledConsumerWithoutAssignmentUsesMaintenancePollsWhileReservationIsUnavailable() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        AtomicInteger reservationAttempts = new AtomicInteger();
+        AtomicInteger reservationCloses = new AtomicInteger();
+        AtomicReference<KafkaIncomingConnector> connectorRef = new AtomicReference<>();
+        ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
+                                                                             long maxAdmissionBytes) {
+                return switch (reservationAttempts.incrementAndGet()) {
+                case 1 -> Optional.of(unusedReservation(reservationCloses));
+                case 2 -> Optional.empty();
+                default -> {
+                    connectorRef.get().close();
+                    yield Optional.empty();
+                }
+                };
+            }
+        };
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        connectorRef.set(connector);
+
+        connector.createSource(config(), context).run();
+
+        assertThat(reservationAttempts.get(), is(3));
+        assertThat(reservationCloses.get(), is(1));
+        assertThat(consumer.assignment(), is(Set.of()));
+        assertThat("a previously polled consumer must keep polling even when it currently has no assignment",
+                   consumer.pollCount(),
+                   is(2));
+        assertThat(consumer.commitCount(), is(0));
+    }
+
+    @Test
+    void testEmptyPollClosesUnusedReservation() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        AtomicInteger reservationAttempts = new AtomicInteger();
+        AtomicInteger reservationCloses = new AtomicInteger();
+        AtomicReference<KafkaIncomingConnector> connectorRef = new AtomicReference<>();
+        ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
+                                                                             long maxAdmissionBytes) {
+                if (reservationAttempts.incrementAndGet() > 1) {
+                    connectorRef.get().close();
+                    return Optional.empty();
+                }
+                return Optional.of(unusedReservation(reservationCloses));
+            }
+        };
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        connectorRef.set(connector);
+
+        connector.createSource(config(), context).run();
+
+        assertThat(reservationAttempts.get(), is(2));
+        assertThat(reservationCloses.get(), is(1));
+        assertThat(consumer.pollCount(), is(1));
+        assertThat(consumer.commitCount(), is(0));
+    }
+
+    @Test
+    void testNewAssignmentIsPausedWhilePollReservationIsUnavailable() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        consumer.schedulePollTask(() -> {
+            consumer.rebalance(Set.of(TOPIC_PARTITION));
+            consumer.updateBeginningOffsets(Map.of(TOPIC_PARTITION, 0L));
+        });
+        consumer.schedulePollTask(() -> {
+            consumer.rebalance(Set.of(SECOND_TOPIC_PARTITION));
+            consumer.updateBeginningOffsets(Map.of(SECOND_TOPIC_PARTITION, 0L));
+        });
+        AtomicInteger reservationAttempts = new AtomicInteger();
+        AtomicBoolean existingAssignmentPausedBeforeAttempt = new AtomicBoolean();
+        AtomicReference<Set<TopicPartition>> pausedAfterAssignment = new AtomicReference<>();
+        AtomicReference<KafkaIncomingConnector> connectorRef = new AtomicReference<>();
+        ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
+                                                                             long maxAdmissionBytes) {
+                return switch (reservationAttempts.incrementAndGet()) {
+                case 1 -> Optional.of(unusedReservation(new AtomicInteger()));
+                case 2 -> {
+                    existingAssignmentPausedBeforeAttempt.set(consumer.paused().contains(TOPIC_PARTITION));
+                    yield Optional.empty();
+                }
+                default -> {
+                    pausedAfterAssignment.set(consumer.paused());
+                    connectorRef.get().close();
+                    yield Optional.empty();
+                }
+                };
+            }
+        };
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        connectorRef.set(connector);
+
+        connector.createSource(config(), context).run();
+
+        assertThat(reservationAttempts.get(), is(3));
+        assertThat(consumer.pollCount(), is(2));
+        assertThat(existingAssignmentPausedBeforeAttempt.get(), is(true));
+        assertThat(pausedAfterAssignment.get().contains(SECOND_TOPIC_PARTITION), is(true));
+        assertThat(consumer.commitCount(), is(0));
+    }
+
+    @Test
+    void testDeliveryLeaseIsReleasedOnlyAfterCommit() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
+        AtomicInteger leaseCloses = new AtomicInteger();
+        AtomicBoolean reservationOpen = new AtomicBoolean();
+        AtomicInteger reservedMessages = new AtomicInteger();
+        AtomicLong reservedBytes = new AtomicLong();
+        AtomicInteger actualMessages = new AtomicInteger();
+        AtomicLong actualBytes = new AtomicLong();
+        AtomicReference<ConnectorDelivery> trackedLease = new AtomicReference<>();
+        consumer.beforeNextPoll(() -> assertThat("normal poll must run inside an open reservation",
+                                                  reservationOpen.get(),
+                                                  is(true)));
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "audit";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+                throw new AssertionError("Kafka source must emit a poll as a batch");
+            }
+
+            @Override
+            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            }
+
+            @Override
+            public int maxDeliveryMessages() {
+                return 2;
+            }
+
+            @Override
+            public long maxDeliveryBytes() {
+                return 128;
+            }
+
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
+                                                                             long maxAdmissionBytes) {
+                reservedMessages.set(maxMessages);
+                reservedBytes.set(maxAdmissionBytes);
+                reservationOpen.set(true);
+                ConnectorDeliveryReservation delegate = ConnectorSourceContext.super
+                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
+                        .orElseThrow();
+                return Optional.of(new ForwardingReservation(delegate) {
+                    @Override
+                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
+                                                                    long admissionBytes,
+                                                                    Runnable delivery) {
+                        actualMessages.set(messages.size());
+                        actualBytes.set(admissionBytes);
+                        Optional<ConnectorDelivery> started = super.tryStart(messages, admissionBytes, delivery);
+                        if (started.isPresent()) {
+                            reservationOpen.set(false);
+                        }
+                        return started.map(deliveryTask -> {
+                                    ConnectorDelivery tracking = new TrackingDelivery(deliveryTask, leaseCloses);
+                                    trackedLease.set(tracking);
+                                    return tracking;
+                                });
+                    }
+
+                    @Override
+                    public void close() {
+                        super.close();
+                        reservationOpen.set(false);
+                    }
+                });
+            }
+        };
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        consumer.afterCommit(() -> {
+            assertThat("commit callback must run before the retained-delivery lease is released",
+                       leaseCloses.get(),
+                       is(0));
+            connector.close();
+        });
+
+        connector.createSource(config(), context).run();
+
+        assertThat(trackedLease.get().isDone(), is(true));
+        assertThat(reservedMessages.get(), is(2));
+        assertThat(reservedBytes.get(), is(128L));
+        assertThat(actualMessages.get() <= reservedMessages.get(), is(true));
+        assertThat(actualBytes.get() <= reservedBytes.get(), is(true));
+        assertThat(leaseCloses.get(), is(1));
+        assertThat(consumer.commitCount(), is(1));
+    }
+
+    @Test
+    void testPostPollSafetyCheckEnforcesLimitsWhenKafkaAcquisitionHintsAreExceeded() {
+        TrackingMockConsumer messageLimitedConsumer = trackingConsumer();
+        scheduleRecords(messageLimitedConsumer,
+                        record(0, "first", new RecordHeaders()),
+                        record(1, "second", new RecordHeaders()));
+        ConnectorSourceContext messageLimitedContext = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public int maxDeliveryMessages() {
+                return 1;
+            }
+        };
+        AtomicReference<Map<String, Object>> messageAcquisitionProperties = new AtomicReference<>();
+        KafkaIncomingConnector messageLimitedConnector = new KafkaIncomingConnector(properties -> {
+            messageAcquisitionProperties.set(properties);
+            return messageLimitedConsumer;
+        });
+
+        MessagingRejectedException messageFailure = assertThrows(
+                MessagingRejectedException.class,
+                () -> messageLimitedConnector.createSource(config(), messageLimitedContext).run());
+
+        assertThat(messageFailure.reason(), is(MessagingRejectedException.Reason.OVERSIZED));
+        assertThat(messageAcquisitionProperties.get().get(ConsumerConfig.MAX_POLL_RECORDS_CONFIG), is(1));
+        assertThat(messageLimitedConsumer.commitCount(), is(0));
+
+        TrackingMockConsumer byteLimitedConsumer = trackingConsumer();
+        scheduleRecords(byteLimitedConsumer, record(0, "first", new RecordHeaders()));
+        ConnectorSourceContext byteLimitedContext = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public long maxDeliveryBytes() {
+                return 1;
+            }
+        };
+        AtomicReference<Map<String, Object>> byteAcquisitionProperties = new AtomicReference<>();
+        KafkaIncomingConnector byteLimitedConnector = new KafkaIncomingConnector(properties -> {
+            byteAcquisitionProperties.set(properties);
+            return byteLimitedConsumer;
+        });
+
+        MessagingRejectedException byteFailure = assertThrows(
+                MessagingRejectedException.class,
+                () -> byteLimitedConnector.createSource(config(), byteLimitedContext).run());
+
+        assertThat(byteFailure.reason(), is(MessagingRejectedException.Reason.OVERSIZED));
+        assertThat(byteAcquisitionProperties.get().get(ConsumerConfig.FETCH_MAX_BYTES_CONFIG), is(1));
+        assertThat(byteAcquisitionProperties.get().get(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG), is(1));
+        assertThat(byteLimitedConsumer.commitCount(), is(0));
+    }
+
+    @Test
+    void testAdmissionIncludesRetainedPollSettlementMetadata() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
+        AtomicLong admissionBytes = new AtomicLong();
+        ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
+                                                                             long maxAdmissionBytes) {
+                ConnectorDeliveryReservation delegate = super
+                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
+                        .orElseThrow();
+                return Optional.of(new ForwardingReservation(delegate) {
+                    @Override
+                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
+                                                                    long deliveryBytes,
+                                                                    Runnable delivery) {
+                        admissionBytes.set(deliveryBytes);
+                        return super.tryStart(messages, deliveryBytes, delivery);
+                    }
+                });
+            }
+        };
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        consumer.afterCommit(connector::close);
+
+        connector.createSource(config(), context).run();
+
+        assertThat(admissionBytes.get(), is(76L));
+        assertThat(consumer.commitCount(), is(1));
+    }
+
+    @Test
+    void testRuntimeMessageEstimateCannotUnderstateSerializedRecord() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        Object payload = new Object();
+        scheduleRecords(consumer, new ConsumerRecord<>(TOPIC,
+                                                       TOPIC_PARTITION.partition(),
+                                                       0,
+                                                       ConsumerRecord.NO_TIMESTAMP,
+                                                       TimestampType.NO_TIMESTAMP_TYPE,
+                                                       ConsumerRecord.NULL_SIZE,
+                                                       10_000,
+                                                       null,
+                                                       payload,
+                                                       new RecordHeaders(),
+                                                       Optional.empty()));
+        AtomicInteger estimateCalls = new AtomicInteger();
+        AtomicLong admissionBytes = new AtomicLong();
+        AtomicReference<Message<?>> estimatedMessage = new AtomicReference<>();
+        RecordingContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public OptionalLong messageAdmissionBytes(Message<?> message) {
+                assertThat(message.admissionBytes().isEmpty(), is(true));
+                assertThat(message.entity(), sameInstance(payload));
+                estimatedMessage.set(message);
+                estimateCalls.incrementAndGet();
+                return OptionalLong.of(64);
+            }
+
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
+                                                                             long maxAdmissionBytes) {
+                ConnectorDeliveryReservation delegate = super
+                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
+                        .orElseThrow();
+                return Optional.of(new ForwardingReservation(delegate) {
+                    @Override
+                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
+                                                                    long deliveryBytes,
+                                                                    Runnable delivery) {
+                        admissionBytes.set(deliveryBytes);
+                        return super.tryStart(messages, deliveryBytes, delivery);
+                    }
+                });
+            }
+        };
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        consumer.afterCommit(connector::close);
+
+        connector.createSource(config(), context).run();
+
+        assertThat(estimateCalls.get(), is(1));
+        assertThat(context.messages().getFirst(), sameInstance(estimatedMessage.get()));
+        assertThat(admissionBytes.get(), is(10_071L));
+        assertThat(consumer.commitCount(), is(1));
+    }
+
+    @Test
     void testCloseWakesRedeliveryDelayWithoutCommitting() throws InterruptedException {
         TrackingMockConsumer consumer = trackingConsumer();
         scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
@@ -851,6 +1414,8 @@ class KafkaIncomingConnectorTest {
         CountDownLatch releaseHandler = new CountDownLatch(1);
         CountDownLatch handlerFinished = new CountDownLatch(1);
         AtomicInteger interrupts = new AtomicInteger();
+        AtomicInteger timedAwaits = new AtomicInteger();
+        AtomicReference<ConnectorDelivery> trackedDelivery = new AtomicReference<>();
         ConnectorSourceContext context = new ConnectorSourceContext() {
             @Override
             public String channelName() {
@@ -876,6 +1441,27 @@ class KafkaIncomingConnectorTest {
                 } finally {
                     handlerFinished.countDown();
                 }
+            }
+
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
+                                                                             long maxAdmissionBytes) {
+                ConnectorDeliveryReservation delegate = ConnectorSourceContext.super
+                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
+                        .orElseThrow();
+                return Optional.of(new ForwardingReservation(delegate) {
+                    @Override
+                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
+                                                                    long admissionBytes,
+                                                                    Runnable delivery) {
+                        return super.tryStart(messages, admissionBytes, delivery)
+                                .map(started -> {
+                                    ConnectorDelivery tracking = new AwaitCountingDelivery(started, timedAwaits);
+                                    trackedDelivery.set(tracking);
+                                    return tracking;
+                                });
+                    }
+                });
             }
         };
         KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
@@ -904,7 +1490,16 @@ class KafkaIncomingConnectorTest {
         }
 
         assertThat(handlerFinished.await(5, TimeUnit.SECONDS), is(true));
+        long deliveryDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!trackedDelivery.get().isDone() && System.nanoTime() < deliveryDeadline) {
+            Thread.onSpinWait();
+        }
+        assertThat(trackedDelivery.get().isDone(), is(true));
+        int awaitsBeforeFinalClose = timedAwaits.get();
         connector.close();
+        assertThat("finished abandoned delivery must remove its source without another close-time await",
+                   timedAwaits.get(),
+                   is(awaitsBeforeFinalClose));
         assertThat(sourceFailure.get(), nullValue());
         assertThat(consumer.commitCount(), is(0));
         assertThat(consumer.closed(), is(true));
@@ -1003,6 +1598,33 @@ class KafkaIncomingConnectorTest {
                 .build();
     }
 
+    private static ConnectorDeliveryReservation unusedReservation(AtomicInteger closes) {
+        return new ConnectorDeliveryReservation() {
+            private final AtomicBoolean closed = new AtomicBoolean();
+
+            @Override
+            public <T> ConnectorDelivery start(List<? extends Message<T>> messages,
+                                               long admissionBytes,
+                                               Runnable delivery) {
+                throw new AssertionError("An empty Kafka poll must not start its reservation");
+            }
+
+            @Override
+            public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
+                                                            long admissionBytes,
+                                                            Runnable delivery) {
+                throw new AssertionError("An empty Kafka poll must not start its reservation");
+            }
+
+            @Override
+            public void close() {
+                if (closed.compareAndSet(false, true)) {
+                    closes.incrementAndGet();
+                }
+            }
+        };
+    }
+
     private static ConnectorSourceContext failingContext(FailurePolicy failurePolicy,
                                                          Runnable beforeFailure,
                                                          FailureHandler failureHandler) {
@@ -1091,6 +1713,7 @@ class KafkaIncomingConnectorTest {
         private int commitCount;
         private Map<TopicPartition, OffsetAndMetadata> committedOffsets = Map.of();
         private Runnable afterCommit = () -> { };
+        private Runnable beforeNextPoll = () -> { };
         private boolean suppressNextCommitCallback;
         private RuntimeException nextCommitFailure;
         private RuntimeException commitFailure;
@@ -1102,10 +1725,14 @@ class KafkaIncomingConnectorTest {
 
         @Override
         public ConsumerRecords<Object, Object> poll(Duration timeout) {
+            Runnable beforePoll;
             synchronized (this) {
                 pollCount++;
+                beforePoll = beforeNextPoll;
+                beforeNextPoll = () -> { };
                 notifyAll();
             }
+            beforePoll.run();
             return super.poll(timeout);
         }
 
@@ -1219,6 +1846,10 @@ class KafkaIncomingConnectorTest {
             this.afterCommit = afterCommit;
         }
 
+        private synchronized void beforeNextPoll(Runnable beforeNextPoll) {
+            this.beforeNextPoll = beforeNextPoll;
+        }
+
         private synchronized void failCommit(RuntimeException commitFailure) {
             this.commitFailure = commitFailure;
         }
@@ -1314,6 +1945,115 @@ class KafkaIncomingConnectorTest {
 
         private List<Message<?>> messages() {
             return List.copyOf(messages);
+        }
+    }
+
+    private static final class TrackingDelivery implements ConnectorDelivery {
+        private final ConnectorDelivery delegate;
+        private final AtomicInteger closes;
+
+        private TrackingDelivery(ConnectorDelivery delegate, AtomicInteger closes) {
+            this.delegate = delegate;
+            this.closes = closes;
+        }
+
+        @Override
+        public boolean isDone() {
+            return delegate.isDone();
+        }
+
+        @Override
+        public boolean isCurrentThread() {
+            return delegate.isCurrentThread();
+        }
+
+        @Override
+        public void await() throws InterruptedException {
+            delegate.await();
+        }
+
+        @Override
+        public boolean await(Duration timeout) throws InterruptedException {
+            return delegate.await(timeout);
+        }
+
+        @Override
+        public void cancel() {
+            delegate.cancel();
+        }
+
+        @Override
+        public void close() {
+            closes.incrementAndGet();
+            delegate.close();
+        }
+    }
+
+    private static final class AwaitCountingDelivery implements ConnectorDelivery {
+        private final ConnectorDelivery delegate;
+        private final AtomicInteger timedAwaits;
+
+        private AwaitCountingDelivery(ConnectorDelivery delegate, AtomicInteger timedAwaits) {
+            this.delegate = delegate;
+            this.timedAwaits = timedAwaits;
+        }
+
+        @Override
+        public boolean isDone() {
+            return delegate.isDone();
+        }
+
+        @Override
+        public boolean isCurrentThread() {
+            return delegate.isCurrentThread();
+        }
+
+        @Override
+        public void await() throws InterruptedException {
+            delegate.await();
+        }
+
+        @Override
+        public boolean await(Duration timeout) throws InterruptedException {
+            timedAwaits.incrementAndGet();
+            return delegate.await(timeout);
+        }
+
+        @Override
+        public void cancel() {
+            delegate.cancel();
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
+    }
+
+    private static class ForwardingReservation implements ConnectorDeliveryReservation {
+        private final ConnectorDeliveryReservation delegate;
+
+        private ForwardingReservation(ConnectorDeliveryReservation delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public <T> ConnectorDelivery start(List<? extends Message<T>> messages,
+                                           long admissionBytes,
+                                           Runnable delivery) {
+            return delegate.start(messages, admissionBytes, delivery);
+        }
+
+        @Override
+        public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
+                                                        long admissionBytes,
+                                                        Runnable delivery) {
+            return delegate.tryStart(messages, admissionBytes, delivery);
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
         }
     }
 

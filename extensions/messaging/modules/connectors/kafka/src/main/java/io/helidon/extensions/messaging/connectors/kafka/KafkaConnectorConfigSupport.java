@@ -23,6 +23,8 @@ import java.util.Set;
 import io.helidon.builder.api.Prototype;
 import io.helidon.extensions.messaging.ConnectorConfig;
 
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+
 /**
  * Support methods and constants for {@link KafkaConnectorConfig}.
  */
@@ -173,6 +175,12 @@ final class KafkaConnectorConfigSupport {
     }
 
     static Map<String, Object> consumerProperties(KafkaConnectorConfig config) {
+        return consumerProperties(config, Integer.MAX_VALUE, Long.MAX_VALUE);
+    }
+
+    static Map<String, Object> consumerProperties(KafkaConnectorConfig config,
+                                                  int maxDeliveryMessages,
+                                                  long maxDeliveryBytes) {
         Map<String, Object> properties = kafkaProperties(config);
         properties.put(BOOTSTRAP_SERVERS_PROPERTY, config.bootstrapServers());
         properties.put(GROUP_ID_PROPERTY, config.groupId().orElse(config.channel()));
@@ -180,7 +188,31 @@ final class KafkaConnectorConfigSupport {
         properties.put(VALUE_DESERIALIZER_PROPERTY, config.valueDeserializer());
         properties.put(AUTO_OFFSET_RESET_PROPERTY, config.autoOffsetReset());
         properties.put(ENABLE_AUTO_COMMIT_PROPERTY, false);
+        bound(properties,
+              ConsumerConfig.MAX_POLL_RECORDS_CONFIG,
+              maxDeliveryMessages,
+              ConsumerConfig.DEFAULT_MAX_POLL_RECORDS);
+        int byteLimit = (int) Math.min(Integer.MAX_VALUE, maxDeliveryBytes);
+        bound(properties,
+              ConsumerConfig.FETCH_MAX_BYTES_CONFIG,
+              byteLimit,
+              ConsumerConfig.DEFAULT_FETCH_MAX_BYTES);
+        bound(properties,
+              ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG,
+              byteLimit,
+              ConsumerConfig.DEFAULT_MAX_PARTITION_FETCH_BYTES);
         return Map.copyOf(properties);
+    }
+
+    private static void bound(Map<String, Object> properties,
+                              String name,
+                              int runtimeLimit,
+                              int kafkaDefault) {
+        Object configured = properties.get(name);
+        int current = configured == null ? kafkaDefault : Integer.parseInt(String.valueOf(configured));
+        if (runtimeLimit < current) {
+            properties.put(name, runtimeLimit);
+        }
     }
 
     private static Map<String, Object> kafkaProperties(KafkaConnectorConfig config) {
