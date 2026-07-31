@@ -19,8 +19,13 @@ package io.helidon.extensions.messaging;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.OptionalLong;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -55,6 +60,52 @@ class DefaultMessagingChannelTest {
 
             assertThat(thrown.reason(), is(MessagingRejectedException.Reason.UNKNOWN_SIZE));
         }
+    }
+
+    @Test
+    void independentlyBuiltInputsCanFeedOneChannel() {
+        List<String> delivered = new ArrayList<>();
+        try (MessagingChannel<String> first = MessagingChannel.<String>builder().build();
+                MessagingChannel<String> second = MessagingChannel.<String>builder().build();
+                MessagingChannel<String> merged = MessagingChannel.<String>builder()
+                        .addInput(first)
+                        .addInput(second)
+                        .addOutput(message -> delivered.add(message.entity()))
+                        .build()) {
+            first.emit("first");
+            second.emit("second");
+
+            assertThat(delivered, is(List.of("first", "second")));
+        }
+    }
+
+    @Test
+    void closingBeforeStartClosesStreamInput() {
+        AtomicBoolean streamClosed = new AtomicBoolean();
+        MessagingChannel<Object> channel = MessagingChannel.builder()
+                .addInput(Stream.empty().onClose(() -> streamClosed.set(true)))
+                .build();
+
+        channel.close();
+
+        assertThat(streamClosed.get(), is(true));
+    }
+
+    @Test
+    @Timeout(5)
+    void activeUnboundedStreamClosesGracefully() throws InterruptedException {
+        CountDownLatch delivered = new CountDownLatch(1);
+        AtomicBoolean streamClosed = new AtomicBoolean();
+        MessagingChannel<Integer> channel = MessagingChannel.<Integer>builder()
+                .addInput(Stream.generate(() -> 1).onClose(() -> streamClosed.set(true)))
+                .addOutput(ignored -> delivered.countDown())
+                .build();
+        channel.start();
+        assertThat(delivered.await(1, TimeUnit.SECONDS), is(true));
+
+        channel.close();
+
+        assertThat(streamClosed.get(), is(true));
     }
 
     private record CustomPayload(String value) {

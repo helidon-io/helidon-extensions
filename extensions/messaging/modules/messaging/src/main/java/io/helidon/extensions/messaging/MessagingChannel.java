@@ -79,16 +79,20 @@ public interface MessagingChannel<T> extends AutoCloseable {
     void emitBatch(List<? extends Message<T>> messages);
 
     /**
-     * Start this channel's lifecycle inputs.
+     * Validate and start the complete imperative graph containing this channel.
      * <p>
-     * Stream inputs are consumed on virtual threads after this method returns.
+     * Startup is transitive: every channel, route, connector binding, and stream input already attached to the graph is
+     * prepared before any input is admitted. Stream inputs are then consumed on runtime-owned virtual threads.
+     * A failed or closed graph is terminal and cannot be restarted.
      */
     void start();
 
     /**
-     * Stop admission and cancel this channel's runtime-owned source and dispatch tasks.
+     * Close the complete imperative graph containing this channel.
      * <p>
-     * The compatibility default does nothing; runtime-provided channels override it.
+     * The graph first stops new source and delivery admission, drains admitted work up to its configured shutdown timeout,
+     * then forces any remaining tasks and closes managed connector bindings in reverse order. The compatibility default does
+     * nothing; runtime-provided channels override it.
      */
     @Override
     default void close() {

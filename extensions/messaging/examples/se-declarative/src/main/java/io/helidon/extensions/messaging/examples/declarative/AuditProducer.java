@@ -21,13 +21,14 @@ import java.util.List;
 import io.helidon.extensions.messaging.Emitter;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.Messaging;
+import io.helidon.extensions.messaging.MessagingRuntime;
 import io.helidon.service.registry.Service;
 
 /**
  * Audit producer using a generated named emitter.
  */
 @Service.Singleton
-@Service.RunLevel(Service.RunLevel.STARTUP)
+@Service.RunLevel(MessagingRuntime.RUN_LEVEL + 1)
 class AuditProducer {
     @Service.Inject
     @Service.Named(Main.AUDIT_CHANNEL)

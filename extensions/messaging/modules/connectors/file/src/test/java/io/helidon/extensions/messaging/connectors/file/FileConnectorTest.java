@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -54,6 +55,7 @@ import io.helidon.extensions.messaging.ConnectorSource;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.FailurePolicy;
 import io.helidon.extensions.messaging.IncomingConnector;
+import io.helidon.extensions.messaging.ManagedConnectorSource;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingChannel;
 import io.helidon.extensions.messaging.MessagingRejectedException;
@@ -1700,7 +1702,7 @@ class FileConnectorTest {
     void testWatchServiceDrainsEventsAndDeliversEachAppendOnce(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "existing content is tailed\n");
-        List<List<String>> deliveries = Collections.synchronizedList(new ArrayList<>());
+        List<List<String>> deliveries = new CopyOnWriteArrayList<>();
         CountDownLatch delivered = new CountDownLatch(2);
         ConnectorSourceContext context = new ConnectorSourceContext() {
             @Override
@@ -1740,6 +1742,78 @@ class FileConnectorTest {
         assertThat(sourceThread.isAlive(), is(false));
         assertThat(failure.get(), nullValue());
         assertThat(deliveries, is(List.of(List.of("first"), List.of("second"))));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testGraphManagedSourceReconcilesAppendOnlyAfterAdmissionStarts(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "existing content is tailed\n");
+        List<List<String>> deliveries = new CopyOnWriteArrayList<>();
+        CountDownLatch delivered = new CountDownLatch(1);
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "events";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+                throw new AssertionError("File source must emit appended lines as a batch");
+            }
+
+            @Override
+            public <T> void emitBatch(List<? extends Message<T>> messages) {
+                deliveries.add(entities(messages));
+                delivered.countDown();
+            }
+        };
+        FileIncomingConnector connector = new FileIncomingConnector();
+        ManagedConnectorSource source = (ManagedConnectorSource) connector.createSource(incomingConfig(input), context);
+        source.prepareForGraph();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread sourceThread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
+                .start(source);
+        source.awaitReady(Duration.ofSeconds(1));
+
+        append(input, "first\n");
+        assertThat(delivered.await(200, TimeUnit.MILLISECONDS), is(false));
+
+        source.startAdmission();
+        assertThat(delivered.await(1, TimeUnit.SECONDS), is(true));
+        source.stopAdmission();
+        sourceThread.join(TimeUnit.SECONDS.toMillis(1));
+        connector.close();
+
+        assertThat(sourceThread.isAlive(), is(false));
+        assertThat(failure.get(), nullValue());
+        assertThat(deliveries, is(List.of(List.of("first"))));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testCompletedSourceCannotBeRunAgain(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "");
+        FileIncomingConnector connector = new FileIncomingConnector();
+        ManagedConnectorSource source = (ManagedConnectorSource) connector.createSource(
+                incomingConfig(input),
+                new TrackingReservationContext(1, 64, ignored -> {
+                }));
+        source.prepareForGraph();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread sourceThread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
+                .start(source);
+        source.awaitReady(Duration.ofSeconds(1));
+        source.stopAdmission();
+        sourceThread.join(TimeUnit.SECONDS.toMillis(1));
+        connector.close();
+
+        assertThat(sourceThread.isAlive(), is(false));
+        assertThat(failure.get(), nullValue());
+        assertThrows(IllegalStateException.class, source::run);
     }
 
     @Test

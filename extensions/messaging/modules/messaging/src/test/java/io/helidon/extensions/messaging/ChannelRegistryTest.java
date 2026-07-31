@@ -16,6 +16,8 @@
 
 package io.helidon.extensions.messaging;
 
+import java.util.Optional;
+
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
@@ -25,5 +27,16 @@ class ChannelRegistryTest {
     @Test
     void doesNotExposeAutoCloseableAsAServiceContract() {
         assertThat(AutoCloseable.class.isAssignableFrom(ChannelRegistry.class), is(false));
+    }
+
+    @Test
+    void startsAtTheMessagingRunLevel() {
+        assertThat(ChannelRegistry__ServiceDescriptor.INSTANCE.runLevel(), is(Optional.of(MessagingRuntime.RUN_LEVEL)));
+    }
+
+    @Test
+    void lifecycleGuardStopsMessagingBeforeApplicationServices() {
+        assertThat(MessagingLifecycleGuard__ServiceDescriptor.INSTANCE.runLevel(),
+                   is(Optional.of(Double.MAX_VALUE)));
     }
 }

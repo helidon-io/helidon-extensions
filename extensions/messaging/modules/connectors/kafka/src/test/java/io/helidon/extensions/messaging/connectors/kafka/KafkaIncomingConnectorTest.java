@@ -25,12 +25,16 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 import io.helidon.extensions.messaging.ConnectorConfig;
 import io.helidon.extensions.messaging.ConnectorDelivery;
@@ -39,6 +43,7 @@ import io.helidon.extensions.messaging.ConnectorSource;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.DeadLetterMessage;
 import io.helidon.extensions.messaging.FailurePolicy;
+import io.helidon.extensions.messaging.ManagedConnectorSource;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.MessagingRejectedException;
@@ -51,6 +56,8 @@ import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.OffsetCommitCallback;
 import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 import org.apache.kafka.clients.consumer.RetriableCommitFailedException;
+import org.apache.kafka.common.Node;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.header.Headers;
@@ -77,6 +84,120 @@ class KafkaIncomingConnectorTest {
         KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> trackingConsumer());
 
         assertThat(connector.connectorName(), is(KafkaOutgoingConnector.CONNECTOR));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testGraphManagedSourceDoesNotPollBeforeAdmissionStarts() throws InterruptedException {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
+        RecordingContext context = new RecordingContext(new ArrayList<>());
+        AtomicReference<KafkaIncomingConnector> connectorRef = new AtomicReference<>();
+        consumer.afterCommit(() -> connectorRef.get().close());
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        connectorRef.set(connector);
+        ManagedConnectorSource source = (ManagedConnectorSource) connector.createSource(config(), context);
+        source.prepareForGraph();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread thread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
+                .start(source);
+
+        source.awaitReady(Duration.ofSeconds(1));
+
+        assertThat(consumer.pollCount(), is(0));
+        assertThat(context.messages(), is(List.of()));
+
+        source.startAdmission();
+        thread.join(TimeUnit.SECONDS.toMillis(5));
+
+        assertThat(thread.isAlive(), is(false));
+        assertThat(failure.get(), nullValue());
+        assertThat(context.messages().stream().map(Message::entity).toList(), is(List.of("first")));
+        assertThat(consumer.commitCount(), is(1));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testGraphManagedSourceCanStopBeforeAdmission() throws InterruptedException {
+        TrackingMockConsumer consumer = trackingConsumer();
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        ManagedConnectorSource source = (ManagedConnectorSource) connector.createSource(
+                config(),
+                new RecordingContext(new ArrayList<>()));
+        source.prepareForGraph();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread thread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
+                .start(source);
+
+        source.awaitReady(Duration.ofSeconds(1));
+        source.stopAdmission();
+        thread.join(TimeUnit.SECONDS.toMillis(5));
+        connector.close();
+
+        assertThat(thread.isAlive(), is(false));
+        assertThat(failure.get(), nullValue());
+        assertThat(consumer.pollCount(), is(0));
+        assertThat(consumer.closed(), is(true));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testGraphStopWakesIdlePollWithoutForcing() throws InterruptedException {
+        BlockingMockConsumer consumer = new BlockingMockConsumer();
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        ManagedConnectorSource source = (ManagedConnectorSource) connector.createSource(
+                config(Map.of("max.poll.interval.ms", "60000")),
+                new RecordingContext(new ArrayList<>()));
+        source.prepareForGraph();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread thread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
+                .start(source);
+
+        source.awaitReady(Duration.ofSeconds(1));
+        source.startAdmission();
+        assertThat(consumer.awaitPoll(), is(true));
+
+        source.stopAdmission();
+        thread.join(TimeUnit.SECONDS.toMillis(5));
+        source.close();
+
+        assertThat(thread.isAlive(), is(false));
+        assertThat(failure.get(), nullValue());
+        assertThat(consumer.wakeupCalled(), is(true));
+        assertThat(consumer.closed(), is(true));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testGraphReadinessReportsBrokerFailureBeforeAdmission() throws InterruptedException {
+        IllegalStateException metadataFailure = new IllegalStateException("metadata unavailable");
+        TrackingMockConsumer consumer = new TrackingMockConsumer() {
+            @Override
+            public List<PartitionInfo> partitionsFor(String topic, Duration timeout) {
+                throw metadataFailure;
+            }
+        };
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        ManagedConnectorSource source = (ManagedConnectorSource) connector.createSource(
+                config(),
+                new RecordingContext(new ArrayList<>()));
+        source.prepareForGraph();
+        AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+        Thread thread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
+                .start(source);
+
+        MessagingException failure = assertThrows(MessagingException.class,
+                                                  () -> source.awaitReady(Duration.ofSeconds(1)));
+        thread.join(TimeUnit.SECONDS.toMillis(5));
+
+        assertThat(failure.getCause(), sameInstance(metadataFailure));
+        assertThat(consumer.pollCount(), is(0));
+        assertThat(thread.isAlive(), is(false));
+        assertThat(sourceFailure.get(), sameInstance(failure));
     }
 
     @Test
@@ -1347,7 +1468,7 @@ class KafkaIncomingConnectorTest {
 
     @Test
     @Timeout(value = 5)
-    void testCloseBeforeCommitInitiationPreventsCommit() throws InterruptedException {
+    void testCloseBeforeCommitInitiationPreventsCommit() throws Exception {
         TrackingMockConsumer consumer = trackingConsumer();
         scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
         CountDownLatch handlerStarted = new CountDownLatch(1);
@@ -1388,8 +1509,16 @@ class KafkaIncomingConnectorTest {
                        consumer.awaitBlockedAssignment(),
                        is(true));
 
-            connector.close();
+            CompletableFuture<Void> closing = CompletableFuture.runAsync(connector::close);
+            long closeDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+            while (!consumer.wakeupCalled() && System.nanoTime() < closeDeadline) {
+                Thread.onSpinWait();
+            }
+            assertThat(consumer.wakeupCalled(), is(true));
+            assertThat(closing.isDone(), is(false));
             assertThat(consumer.commitInitiationCount(), is(0));
+            consumer.releaseBlockedAssignment();
+            closing.get(1, TimeUnit.SECONDS);
         } finally {
             allowSettlement.countDown();
             consumer.releaseBlockedAssignment();
@@ -1406,13 +1535,16 @@ class KafkaIncomingConnectorTest {
     }
 
     @Test
-    @Timeout(value = 5)
+    @Timeout(value = 10)
     void testCloseReportsNonCooperativeDeliveryUntilItActuallyFinishes() throws InterruptedException {
         TrackingMockConsumer consumer = trackingConsumer();
         scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
         CountDownLatch handlerStarted = new CountDownLatch(1);
         CountDownLatch releaseHandler = new CountDownLatch(1);
         CountDownLatch handlerFinished = new CountDownLatch(1);
+        CountDownLatch deliveryAdmitted = new CountDownLatch(1);
+        CountDownLatch releaseDeliveryPublication = new CountDownLatch(1);
+        CountDownLatch releaseDeliveryCompletion = new CountDownLatch(1);
         AtomicInteger interrupts = new AtomicInteger();
         AtomicInteger timedAwaits = new AtomicInteger();
         AtomicReference<ConnectorDelivery> trackedDelivery = new AtomicReference<>();
@@ -1454,12 +1586,23 @@ class KafkaIncomingConnectorTest {
                     public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
                                                                     long admissionBytes,
                                                                     Runnable delivery) {
-                        return super.tryStart(messages, admissionBytes, delivery)
+                        Optional<ConnectorDelivery> admitted = super.tryStart(messages, admissionBytes, delivery)
                                 .map(started -> {
-                                    ConnectorDelivery tracking = new AwaitCountingDelivery(started, timedAwaits);
+                                    ConnectorDelivery completionHolding = new CompletionHoldingDelivery(
+                                            started,
+                                            releaseDeliveryCompletion);
+                                    ConnectorDelivery tracking = new AwaitCountingDelivery(completionHolding, timedAwaits);
                                     trackedDelivery.set(tracking);
                                     return tracking;
                                 });
+                        deliveryAdmitted.countDown();
+                        try {
+                            releaseDeliveryPublication.await();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException("Delivery publication wait was interrupted", e);
+                        }
+                        return admitted;
                     }
                 });
             }
@@ -1468,13 +1611,24 @@ class KafkaIncomingConnectorTest {
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
-                .start(connector.createSource(config(Duration.ofMillis(25)), context));
+                .start(connector.createSource(config(Duration.ofSeconds(1)), context));
 
         try {
             assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
+            assertThat(deliveryAdmitted.await(5, TimeUnit.SECONDS), is(true));
 
-            MessagingException firstClose = assertThrows(MessagingException.class, connector::close);
+            AtomicReference<Throwable> firstCloseFailure = new AtomicReference<>();
+            Thread firstCloseThread = Thread.ofVirtual()
+                    .start(() -> captureFailure(connector::close, firstCloseFailure));
+            awaitWaiting(firstCloseThread);
+            releaseDeliveryPublication.countDown();
+            firstCloseThread.join(TimeUnit.SECONDS.toMillis(2));
+
+            assertThat(firstCloseThread.isAlive(), is(false));
+            assertThat(firstCloseFailure.get(), instanceOf(MessagingException.class));
+            MessagingException firstClose = (MessagingException) firstCloseFailure.get();
             assertThat(firstClose.getMessage().contains("close timed out"), is(true));
+            assertThat(firstClose.getMessage().contains("active delivery"), is(true));
             sourceThread.join(TimeUnit.SECONDS.toMillis(5));
             assertThat(sourceThread.isAlive(), is(false));
             assertThat("a timed-out delivery must remain tracked by the closed connector",
@@ -1486,20 +1640,29 @@ class KafkaIncomingConnectorTest {
             assertThat(interrupts.get() >= 2, is(true));
             assertThat(consumer.commitCount(), is(0));
         } finally {
+            releaseDeliveryPublication.countDown();
             releaseHandler.countDown();
         }
 
         assertThat(handlerFinished.await(5, TimeUnit.SECONDS), is(true));
+        try {
+            assertThat(trackedDelivery.get().isDone(), is(false));
+            MessagingException incompleteDelegateClose = assertThrows(MessagingException.class, connector::close);
+            assertThat(incompleteDelegateClose.getMessage().contains("active delivery"), is(true));
+        } finally {
+            releaseDeliveryCompletion.countDown();
+        }
         long deliveryDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (!trackedDelivery.get().isDone() && System.nanoTime() < deliveryDeadline) {
             Thread.onSpinWait();
         }
         assertThat(trackedDelivery.get().isDone(), is(true));
-        int awaitsBeforeFinalClose = timedAwaits.get();
+        connector.close();
+        int awaitsAfterCleanupClose = timedAwaits.get();
         connector.close();
         assertThat("finished abandoned delivery must remove its source without another close-time await",
                    timedAwaits.get(),
-                   is(awaitsBeforeFinalClose));
+                   is(awaitsAfterCleanupClose));
         assertThat(sourceFailure.get(), nullValue());
         assertThat(consumer.commitCount(), is(0));
         assertThat(consumer.closed(), is(true));
@@ -1564,6 +1727,127 @@ class KafkaIncomingConnectorTest {
         assertThat(consumer.wakeupCalled(), is(true));
         assertThat(consumer.closed(), is(true));
         assertThat(failure.get(), nullValue());
+    }
+
+    @Test
+    void testFailedSourceCannotBeRunAgainAfterConnectorClose() {
+        AtomicInteger consumerCreations = new AtomicInteger();
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> {
+            consumerCreations.incrementAndGet();
+            throw new IllegalStateException("consumer creation failed");
+        });
+        ConnectorSource source = connector.createSource(config(), new RecordingContext(new ArrayList<>()));
+
+        assertThrows(MessagingException.class, source::run);
+        connector.close();
+
+        assertThrows(IllegalStateException.class, source::run);
+        assertThat(consumerCreations.get(), is(1));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testConcurrentCloseSerializesConsumerCloseRetryWithinDeadline() throws Exception {
+        CountDownLatch consumerCloseStarted = new CountDownLatch(1);
+        CountDownLatch releaseConsumerClose = new CountDownLatch(1);
+        CountDownLatch retryCloseStarted = new CountDownLatch(1);
+        CountDownLatch releaseRetryClose = new CountDownLatch(1);
+        AtomicInteger closeAttempts = new AtomicInteger();
+        IllegalStateException closeFailure = new IllegalStateException("consumer close failed");
+        TrackingMockConsumer consumer = new TrackingMockConsumer() {
+            @Override
+            public void close(Duration timeout) {
+                int attempt = closeAttempts.incrementAndGet();
+                if (attempt == 1) {
+                    consumerCloseStarted.countDown();
+                    try {
+                        releaseConsumerClose.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("Consumer close was interrupted", e);
+                    }
+                    throw closeFailure;
+                }
+                if (attempt == 2) {
+                    retryCloseStarted.countDown();
+                    try {
+                        releaseRetryClose.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("Consumer close retry was interrupted", e);
+                    }
+                }
+                super.close(timeout);
+            }
+        };
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        ManagedConnectorSource source = (ManagedConnectorSource) connector.createSource(
+                config(Duration.ofMillis(100)),
+                new RecordingContext(new ArrayList<>()));
+        AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+        Thread sourceThread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
+                .start(source);
+        assertThat(consumer.awaitPollCount(1), is(true));
+
+        source.forceClose();
+        assertThat(consumerCloseStarted.await(1, TimeUnit.SECONDS), is(true));
+        releaseConsumerClose.countDown();
+        sourceThread.join(TimeUnit.SECONDS.toMillis(1));
+        assertThat(sourceThread.isAlive(), is(false));
+
+        AtomicReference<Throwable> firstCloseFailure = new AtomicReference<>();
+        AtomicReference<Throwable> secondCloseFailure = new AtomicReference<>();
+        Thread firstClose = Thread.ofVirtual().start(() -> captureFailure(source::close, firstCloseFailure));
+        assertThat(retryCloseStarted.await(1, TimeUnit.SECONDS), is(true));
+        Thread secondClose = Thread.ofVirtual().start(() -> captureFailure(source::close, secondCloseFailure));
+        try {
+            secondClose.join(TimeUnit.SECONDS.toMillis(1));
+            assertThat("a concurrent close must honor its deadline while another retry owns the close lock",
+                       secondClose.isAlive(),
+                       is(false));
+            assertThat(firstClose.isAlive(), is(true));
+            assertThat(closeAttempts.get(), is(2));
+        } finally {
+            releaseRetryClose.countDown();
+        }
+
+        firstClose.join(TimeUnit.SECONDS.toMillis(1));
+        assertThat(firstClose.isAlive(), is(false));
+        assertThat(closeAttempts.get(), is(2));
+        assertThat(consumer.closed(), is(true));
+        assertThat(sourceFailure.get(), instanceOf(MessagingException.class));
+        assertThat(firstCloseFailure.get(), instanceOf(MessagingException.class));
+        assertThat(firstCloseFailure.get().getCause(), sameInstance(closeFailure));
+        assertThat(secondCloseFailure.get(), sameInstance(firstCloseFailure.get()));
+    }
+
+    private static void captureFailure(Runnable action, AtomicReference<Throwable> failure) {
+        try {
+            action.run();
+        } catch (Throwable throwable) {
+            failure.set(throwable);
+        }
+    }
+
+    private static void awaitWaiting(Thread thread) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        Thread.State state;
+        do {
+            state = thread.getState();
+            if (isWaiting(state)) {
+                return;
+            }
+            if (state == Thread.State.TERMINATED) {
+                throw new AssertionError("Close task completed instead of waiting");
+            }
+            Thread.onSpinWait();
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("Close task did not enter a waiting state; last state was " + state);
+    }
+
+    private static boolean isWaiting(Thread.State state) {
+        return state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING;
     }
 
     private static KafkaConnectorConfig config() {
@@ -1708,6 +1992,8 @@ class KafkaIncomingConnectorTest {
         private final CountDownLatch releaseAssignment = new CountDownLatch(1);
         private final List<Integer> pollCountsAtCommitInitiation = new ArrayList<>();
         private final List<Map<TopicPartition, OffsetAndMetadata>> commitOffsets = new ArrayList<>();
+        private final ReentrantLock stateLock = new ReentrantLock();
+        private final Condition pollAdvanced = stateLock.newCondition();
         private int pollCount;
         private int commitInitiationCount;
         private int commitCount;
@@ -1721,16 +2007,25 @@ class KafkaIncomingConnectorTest {
 
         private TrackingMockConsumer() {
             super(OffsetResetStrategy.EARLIEST);
+            updatePartitions(TOPIC,
+                             List.of(new PartitionInfo(TOPIC,
+                                                       TOPIC_PARTITION.partition(),
+                                                       Node.noNode(),
+                                                       new Node[0],
+                                                       new Node[0])));
         }
 
         @Override
         public ConsumerRecords<Object, Object> poll(Duration timeout) {
             Runnable beforePoll;
-            synchronized (this) {
+            stateLock.lock();
+            try {
                 pollCount++;
                 beforePoll = beforeNextPoll;
                 beforeNextPoll = () -> { };
-                notifyAll();
+                pollAdvanced.signalAll();
+            } finally {
+                stateLock.unlock();
             }
             beforePoll.run();
             return super.poll(timeout);
@@ -1751,43 +2046,65 @@ class KafkaIncomingConnectorTest {
         }
 
         @Override
-        public synchronized void commitSync(Map<TopicPartition, OffsetAndMetadata> offsets) {
-            if (commitFailure != null) {
-                throw commitFailure;
+        public void commitSync(Map<TopicPartition, OffsetAndMetadata> offsets) {
+            Runnable completed = null;
+            stateLock.lock();
+            try {
+                if (commitFailure != null) {
+                    throw commitFailure;
+                }
+                super.commitSync(offsets);
+                committedOffsets = Map.copyOf(offsets);
+                commitCount++;
+                completed = afterCommit;
+            } finally {
+                stateLock.unlock();
             }
-            super.commitSync(offsets);
-            committedOffsets = Map.copyOf(offsets);
-            commitCount++;
-            afterCommit.run();
+            if (completed != null) {
+                completed.run();
+            }
         }
 
         @Override
-        public synchronized void commitAsync(Map<TopicPartition, OffsetAndMetadata> offsets,
-                                             OffsetCommitCallback callback) {
-            commitInitiationCount++;
-            pollCountsAtCommitInitiation.add(pollCount);
-            commitOffsets.add(Map.copyOf(offsets));
-            if (suppressNextCommitCallback) {
-                suppressNextCommitCallback = false;
-                return;
-            }
-            RuntimeException currentFailure = nextCommitFailure;
-            nextCommitFailure = null;
-            if (currentFailure == null) {
-                currentFailure = commitFailure;
+        public void commitAsync(Map<TopicPartition, OffsetAndMetadata> offsets,
+                                OffsetCommitCallback callback) {
+            RuntimeException currentFailure;
+            stateLock.lock();
+            try {
+                commitInitiationCount++;
+                pollCountsAtCommitInitiation.add(pollCount);
+                commitOffsets.add(Map.copyOf(offsets));
+                if (suppressNextCommitCallback) {
+                    suppressNextCommitCallback = false;
+                    return;
+                }
+                currentFailure = nextCommitFailure;
+                nextCommitFailure = null;
+                if (currentFailure == null) {
+                    currentFailure = commitFailure;
+                }
+            } finally {
+                stateLock.unlock();
             }
             if (currentFailure != null) {
                 callback.onComplete(offsets, currentFailure);
                 return;
             }
             super.commitAsync(offsets, (committed, failure) -> {
-                if (failure == null) {
-                    committedOffsets = Map.copyOf(committed);
-                    commitCount++;
+                Runnable completed = null;
+                stateLock.lock();
+                try {
+                    if (failure == null) {
+                        committedOffsets = Map.copyOf(committed);
+                        commitCount++;
+                        completed = afterCommit;
+                    }
+                } finally {
+                    stateLock.unlock();
                 }
                 callback.onComplete(committed, failure);
-                if (failure == null) {
-                    afterCommit.run();
+                if (completed != null) {
+                    completed.run();
                 }
             });
         }
@@ -1795,8 +2112,15 @@ class KafkaIncomingConnectorTest {
         @Override
         public void close(Duration timeout) {
             super.close(timeout);
-            if (closeFailure != null) {
-                throw closeFailure;
+            RuntimeException failure;
+            stateLock.lock();
+            try {
+                failure = closeFailure;
+            } finally {
+                stateLock.unlock();
+            }
+            if (failure != null) {
+                throw failure;
             }
         }
 
@@ -1806,64 +2130,128 @@ class KafkaIncomingConnectorTest {
             super.wakeup();
         }
 
-        private synchronized int commitCount() {
-            return commitCount;
-        }
-
-        private synchronized int commitInitiationCount() {
-            return commitInitiationCount;
-        }
-
-        private synchronized List<Integer> pollCountsAtCommitInitiation() {
-            return List.copyOf(pollCountsAtCommitInitiation);
-        }
-
-        private synchronized List<Map<TopicPartition, OffsetAndMetadata>> commitOffsets() {
-            return List.copyOf(commitOffsets);
-        }
-
-        private synchronized int pollCount() {
-            return pollCount;
-        }
-
-        private synchronized boolean awaitPollCount(int expected) throws InterruptedException {
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (pollCount < expected) {
-                long remaining = deadline - System.nanoTime();
-                if (remaining <= 0) {
-                    return false;
-                }
-                TimeUnit.NANOSECONDS.timedWait(this, remaining);
+        private int commitCount() {
+            stateLock.lock();
+            try {
+                return commitCount;
+            } finally {
+                stateLock.unlock();
             }
-            return true;
         }
 
-        private synchronized Map<TopicPartition, OffsetAndMetadata> committedOffsets() {
-            return committedOffsets;
+        private int commitInitiationCount() {
+            stateLock.lock();
+            try {
+                return commitInitiationCount;
+            } finally {
+                stateLock.unlock();
+            }
         }
 
-        private synchronized void afterCommit(Runnable afterCommit) {
-            this.afterCommit = afterCommit;
+        private List<Integer> pollCountsAtCommitInitiation() {
+            stateLock.lock();
+            try {
+                return List.copyOf(pollCountsAtCommitInitiation);
+            } finally {
+                stateLock.unlock();
+            }
         }
 
-        private synchronized void beforeNextPoll(Runnable beforeNextPoll) {
-            this.beforeNextPoll = beforeNextPoll;
+        private List<Map<TopicPartition, OffsetAndMetadata>> commitOffsets() {
+            stateLock.lock();
+            try {
+                return List.copyOf(commitOffsets);
+            } finally {
+                stateLock.unlock();
+            }
         }
 
-        private synchronized void failCommit(RuntimeException commitFailure) {
-            this.commitFailure = commitFailure;
+        private int pollCount() {
+            stateLock.lock();
+            try {
+                return pollCount;
+            } finally {
+                stateLock.unlock();
+            }
         }
 
-        private synchronized void failNextCommit(RuntimeException commitFailure) {
-            this.nextCommitFailure = commitFailure;
+        private boolean awaitPollCount(int expected) throws InterruptedException {
+            long remaining = TimeUnit.SECONDS.toNanos(5);
+            stateLock.lock();
+            try {
+                while (pollCount < expected) {
+                    if (remaining <= 0) {
+                        return false;
+                    }
+                    remaining = pollAdvanced.awaitNanos(remaining);
+                }
+                return true;
+            } finally {
+                stateLock.unlock();
+            }
         }
 
-        private synchronized void suppressNextCommitCallback() {
-            this.suppressNextCommitCallback = true;
+        private Map<TopicPartition, OffsetAndMetadata> committedOffsets() {
+            stateLock.lock();
+            try {
+                return committedOffsets;
+            } finally {
+                stateLock.unlock();
+            }
         }
 
-        private synchronized void failClose(RuntimeException closeFailure) {
-            this.closeFailure = closeFailure;
+        private void afterCommit(Runnable afterCommit) {
+            stateLock.lock();
+            try {
+                this.afterCommit = afterCommit;
+            } finally {
+                stateLock.unlock();
+            }
+        }
+
+        private void beforeNextPoll(Runnable beforeNextPoll) {
+            stateLock.lock();
+            try {
+                this.beforeNextPoll = beforeNextPoll;
+            } finally {
+                stateLock.unlock();
+            }
+        }
+
+        private void failCommit(RuntimeException commitFailure) {
+            stateLock.lock();
+            try {
+                this.commitFailure = commitFailure;
+            } finally {
+                stateLock.unlock();
+            }
+        }
+
+        private void failNextCommit(RuntimeException commitFailure) {
+            stateLock.lock();
+            try {
+                this.nextCommitFailure = commitFailure;
+            } finally {
+                stateLock.unlock();
+            }
+        }
+
+        private void suppressNextCommitCallback() {
+            stateLock.lock();
+            try {
+                this.suppressNextCommitCallback = true;
+            } finally {
+                stateLock.unlock();
+            }
+        }
+
+        private void failClose(RuntimeException closeFailure) {
+            stateLock.lock();
+            try {
+                this.closeFailure = closeFailure;
+            } finally {
+                stateLock.unlock();
+            }
         }
 
         private void blockNextAssignment() {
@@ -1890,6 +2278,12 @@ class KafkaIncomingConnectorTest {
 
         private BlockingMockConsumer() {
             super(OffsetResetStrategy.EARLIEST);
+            updatePartitions(TOPIC,
+                             List.of(new PartitionInfo(TOPIC,
+                                                       TOPIC_PARTITION.partition(),
+                                                       Node.noNode(),
+                                                       new Node[0],
+                                                       new Node[0])));
         }
 
         @Override
@@ -2017,6 +2411,55 @@ class KafkaIncomingConnectorTest {
         public boolean await(Duration timeout) throws InterruptedException {
             timedAwaits.incrementAndGet();
             return delegate.await(timeout);
+        }
+
+        @Override
+        public void cancel() {
+            delegate.cancel();
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
+    }
+
+    private static final class CompletionHoldingDelivery implements ConnectorDelivery {
+        private final ConnectorDelivery delegate;
+        private final CountDownLatch completionRelease;
+
+        private CompletionHoldingDelivery(ConnectorDelivery delegate, CountDownLatch completionRelease) {
+            this.delegate = delegate;
+            this.completionRelease = completionRelease;
+        }
+
+        @Override
+        public boolean isDone() {
+            return delegate.isDone() && completionRelease.getCount() == 0;
+        }
+
+        @Override
+        public boolean isCurrentThread() {
+            return delegate.isCurrentThread();
+        }
+
+        @Override
+        public void await() throws InterruptedException {
+            delegate.await();
+            completionRelease.await();
+        }
+
+        @Override
+        public boolean await(Duration timeout) throws InterruptedException {
+            long started = System.nanoTime();
+            if (!delegate.await(timeout)) {
+                return false;
+            }
+            if (completionRelease.getCount() == 0) {
+                return true;
+            }
+            long remaining = timeout.toNanos() - (System.nanoTime() - started);
+            return remaining > 0 && completionRelease.await(remaining, TimeUnit.NANOSECONDS);
         }
 
         @Override

@@ -676,12 +676,12 @@ class DeliveryEngineTest {
         AsyncTask shutdown = async(engine::close);
         AsyncTask registration = null;
         try {
-            awaitBlocked(shutdown);
+            awaitWaiting(shutdown);
             AtomicBoolean cleanupRan = new AtomicBoolean();
             AtomicBoolean cleanupStarted = new AtomicBoolean();
             registration = async(() -> cleanupStarted.set(
                     engine.startCleanup(() -> cleanupRan.set(true))));
-            awaitBlocked(registration);
+            awaitWaiting(registration);
 
             releaseRegistry.countDown();
             await(registryHolder);
@@ -1818,22 +1818,6 @@ class DeliveryEngineTest {
             Thread.onSpinWait();
         } while (System.nanoTime() < deadline);
         fail("task did not enter a waiting state; last state was " + state);
-    }
-
-    private static void awaitBlocked(AsyncTask task) {
-        long deadline = System.nanoTime() + WAIT.toNanos();
-        Thread.State state;
-        do {
-            if (task.completion().isDone()) {
-                fail("task completed instead of blocking");
-            }
-            state = task.thread().getState();
-            if (state == Thread.State.BLOCKED) {
-                return;
-            }
-            Thread.onSpinWait();
-        } while (System.nanoTime() < deadline);
-        fail("task did not enter a blocked state; last state was " + state);
     }
 
     private static Throwable failure(AsyncTask task) {

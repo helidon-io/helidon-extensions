@@ -34,18 +34,27 @@ import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 
 import io.helidon.extensions.messaging.ConnectorDelivery;
 import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
 import io.helidon.extensions.messaging.ConnectorSource;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.IncomingConnector;
+import io.helidon.extensions.messaging.ManagedConnectorSource;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.MessagingRejectedException;
@@ -78,7 +87,8 @@ public class FileIncomingConnector implements IncomingConnector<FileConnectorCon
     private static final int SNAPSHOT_ATTEMPTS = 3;
 
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final Set<Thread> sourceThreads = ConcurrentHashMap.newKeySet();
+    private final Set<FileSource> sources = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final ReentrantLock sourcesLock = new ReentrantLock();
 
     @Override
     public String connectorName() {
@@ -87,39 +97,118 @@ public class FileIncomingConnector implements IncomingConnector<FileConnectorCon
 
     @Override
     public ConnectorSource createSource(FileConnectorConfig config, ConnectorSourceContext context) {
-        return new FileSource(config, context, closed, sourceThreads);
+        sourcesLock.lock();
+        try {
+            if (closed.get()) {
+                throw new IllegalStateException("File incoming connector is closed");
+            }
+            FileSource source = FileSource.managed(config, context, this::removeSource);
+            sources.add(source);
+            return source;
+        } finally {
+            sourcesLock.unlock();
+        }
     }
 
     @Override
     @Service.PreDestroy
     public void close() {
-        synchronized (sourceThreads) {
+        List<FileSource> sourceSnapshot;
+        sourcesLock.lock();
+        try {
             closed.set(true);
-            sourceThreads.forEach(Thread::interrupt);
+            sourceSnapshot = List.copyOf(sources);
+        } finally {
+            sourcesLock.unlock();
+        }
+        for (FileSource source : sourceSnapshot) {
+            source.forceClose();
+        }
+    }
+
+    private void removeSource(FileSource source) {
+        sourcesLock.lock();
+        try {
+            sources.remove(source);
+        } finally {
+            sourcesLock.unlock();
         }
     }
 
     record FileSource(FileConnectorConfig config,
                       ConnectorSourceContext context,
                       AtomicBoolean closed,
+                      AtomicBoolean runStarted,
                       Set<Thread> sourceThreads,
+                      ReentrantLock sourceThreadsLock,
                       WatchRegistrationListener watchRegistrationListener,
-                      FileReadListener fileReadListener) implements ConnectorSource {
+                      FileReadListener fileReadListener,
+                      AtomicBoolean graphManaged,
+                      AtomicBoolean draining,
+                      CountDownLatch admissionSignal,
+                      CompletableFuture<Void> ready,
+                      Consumer<FileSource> completion) implements ManagedConnectorSource {
+        private static FileSource managed(FileConnectorConfig config,
+                                          ConnectorSourceContext context,
+                                          Consumer<FileSource> completion) {
+            return new FileSource(config,
+                                  context,
+                                  new AtomicBoolean(),
+                                  new AtomicBoolean(),
+                                  ConcurrentHashMap.newKeySet(),
+                                  new ReentrantLock(),
+                                  new WatchRegistrationListener() {
+                                  },
+                                  path -> {
+                                  },
+                                  new AtomicBoolean(),
+                                  new AtomicBoolean(),
+                                  new CountDownLatch(1),
+                                  new CompletableFuture<>(),
+                                  completion);
+        }
+
         FileSource(FileConnectorConfig config,
                    ConnectorSourceContext context,
                    AtomicBoolean closed) {
-            this(config, context, closed, ConcurrentHashMap.newKeySet(), new WatchRegistrationListener() {
-            }, path -> {
-            });
+            this(config,
+                 context,
+                 closed,
+                 new AtomicBoolean(),
+                 ConcurrentHashMap.newKeySet(),
+                 new ReentrantLock(),
+                 new WatchRegistrationListener() {
+                 },
+                 path -> {
+                 },
+                 new AtomicBoolean(),
+                 new AtomicBoolean(),
+                 new CountDownLatch(1),
+                 new CompletableFuture<>(),
+                 ignored -> {
+                 });
         }
 
         FileSource(FileConnectorConfig config,
                    ConnectorSourceContext context,
                    AtomicBoolean closed,
                    Set<Thread> sourceThreads) {
-            this(config, context, closed, sourceThreads, new WatchRegistrationListener() {
-            }, path -> {
-            });
+            this(config,
+                 context,
+                 closed,
+                 new AtomicBoolean(),
+                 sourceThreads,
+                 new ReentrantLock(),
+                 new WatchRegistrationListener() {
+                 },
+                 path -> {
+                 },
+                 new AtomicBoolean(),
+                 new AtomicBoolean(),
+                 new CountDownLatch(1),
+                 new CompletableFuture<>(),
+                 ignored -> {
+                 });
         }
 
         FileSource(FileConnectorConfig config,
@@ -129,10 +218,18 @@ public class FileIncomingConnector implements IncomingConnector<FileConnectorCon
             this(config,
                  context,
                  closed,
+                 new AtomicBoolean(),
                  ConcurrentHashMap.newKeySet(),
+                 new ReentrantLock(),
                  watchRegistrationListener,
                  path -> {
-            });
+            },
+                 new AtomicBoolean(),
+                 new AtomicBoolean(),
+                 new CountDownLatch(1),
+                 new CompletableFuture<>(),
+                 ignored -> {
+                 });
         }
 
         FileSource(FileConnectorConfig config,
@@ -143,26 +240,48 @@ public class FileIncomingConnector implements IncomingConnector<FileConnectorCon
             this(config,
                  context,
                  closed,
+                 new AtomicBoolean(),
                  ConcurrentHashMap.newKeySet(),
+                 new ReentrantLock(),
                  watchRegistrationListener,
-                 fileReadListener);
+                 fileReadListener,
+                 new AtomicBoolean(),
+                 new AtomicBoolean(),
+                 new CountDownLatch(1),
+                 new CompletableFuture<>(),
+                 ignored -> {
+                 });
         }
 
         @Override
         public void run() {
+            if (!runStarted.compareAndSet(false, true)) {
+                throw new IllegalStateException("File source can only be run once");
+            }
             Thread sourceThread = Thread.currentThread();
-            synchronized (sourceThreads) {
-                if (closed.get()) {
-                    return;
+            boolean closedBeforeStartup;
+            sourceThreadsLock.lock();
+            try {
+                closedBeforeStartup = closed.get();
+                if (!closedBeforeStartup) {
+                    sourceThreads.add(sourceThread);
                 }
-                sourceThreads.add(sourceThread);
+            } finally {
+                sourceThreadsLock.unlock();
+            }
+            if (closedBeforeStartup) {
+                ready.completeExceptionally(new MessagingException("File source was closed before startup"));
+                completion.accept(this);
+                return;
             }
             try {
                 try {
                     tailFile();
                 } catch (InterruptedException e) {
+                    ready.completeExceptionally(e);
                     Thread.currentThread().interrupt();
                 } catch (MessagingRejectedException e) {
+                    ready.completeExceptionally(e);
                     if (!isCancellation(e)) {
                         throw e;
                     }
@@ -170,17 +289,95 @@ public class FileIncomingConnector implements IncomingConnector<FileConnectorCon
                         Thread.currentThread().interrupt();
                     }
                 } catch (IOException e) {
+                    MessagingException failure = new MessagingException("File incoming connector failed", e);
+                    ready.completeExceptionally(failure);
                     if (Thread.currentThread().isInterrupted() || isInterruptDriven(e)) {
                         Thread.currentThread().interrupt();
                         return;
                     }
-                    throw new MessagingException("File incoming connector failed", e);
+                    throw failure;
+                } catch (RuntimeException | Error e) {
+                    ready.completeExceptionally(e);
+                    throw e;
                 }
             } finally {
-                synchronized (sourceThreads) {
+                closed.set(true);
+                ready.completeExceptionally(new MessagingException("File source stopped before startup completed"));
+                sourceThreadsLock.lock();
+                try {
                     sourceThreads.remove(sourceThread);
+                } finally {
+                    sourceThreadsLock.unlock();
                 }
+                completion.accept(this);
             }
+        }
+
+        @Override
+        public void prepareForGraph() {
+            if (ready.isDone()) {
+                throw new IllegalStateException("File source has already been started");
+            }
+            graphManaged.set(true);
+        }
+
+        @Override
+        public void awaitReady(java.time.Duration timeout) {
+            try {
+                ready.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new MessagingException("Interrupted while starting file source for channel "
+                                                     + context.channelName(),
+                                             e);
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                if (cause instanceof Error error) {
+                    throw error;
+                }
+                throw new MessagingException("Cannot start file source for channel " + context.channelName(), cause);
+            } catch (TimeoutException e) {
+                throw new MessagingException("File source startup timed out after " + timeout
+                                                     + " on channel " + context.channelName(),
+                                             e);
+            }
+        }
+
+        @Override
+        public void startAdmission() {
+            admissionSignal.countDown();
+        }
+
+        @Override
+        public void stopAdmission() {
+            draining.set(true);
+            admissionSignal.countDown();
+        }
+
+        @Override
+        public void forceClose() {
+            closed.set(true);
+            draining.set(true);
+            admissionSignal.countDown();
+            boolean quiescent;
+            sourceThreadsLock.lock();
+            try {
+                sourceThreads.forEach(Thread::interrupt);
+                quiescent = sourceThreads.isEmpty();
+            } finally {
+                sourceThreadsLock.unlock();
+            }
+            if (quiescent) {
+                completion.accept(this);
+            }
+        }
+
+        @Override
+        public void close() {
+            forceClose();
         }
 
         private void tailFile() throws IOException, InterruptedException {
@@ -196,10 +393,17 @@ public class FileIncomingConnector implements IncomingConnector<FileConnectorCon
                 watchRegistrationListener.beforeRegistration(path);
                 directory.register(watcher, ENTRY_CREATE, ENTRY_MODIFY);
                 watchRegistrationListener.afterRegistration();
+                ready.complete(null);
+                if (graphManaged.get()) {
+                    admissionSignal.await();
+                }
+                if (closed.get() || draining.get()) {
+                    return;
+                }
                 // Reconcile changes made after the initial snapshot but before watcher registration.
                 cursor = emitAppendedLines(path, cursor);
                 watchRegistrationListener.afterReconciliation();
-                while (!closed.get()) {
+                while (!closed.get() && !draining.get()) {
                     WatchKey key = watcher.poll(100, TimeUnit.MILLISECONDS);
                     if (key == null) {
                         continue;
@@ -230,10 +434,10 @@ public class FileIncomingConnector implements IncomingConnector<FileConnectorCon
 
         FileCursor emitAppendedLines(Path path, FileCursor cursor) throws IOException, InterruptedException {
             DeliveryLimits limits = deliveryLimits();
-            while (!closed.get()) {
+            while (!closed.get() && !draining.get()) {
                 try (ConnectorDeliveryReservation reservation =
                              context.reserveDelivery(limits.maxMessages(), limits.maxBytes())) {
-                    if (closed.get()) {
+                    if (closed.get() || draining.get()) {
                         break;
                     }
                     AppendedDelivery delivery = readAppendedLines(path,

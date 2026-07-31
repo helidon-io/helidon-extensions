@@ -35,7 +35,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
-import java.util.function.Function;
+import java.util.TreeSet;
 
 import io.helidon.common.GenericType;
 import io.helidon.config.Config;
@@ -46,29 +46,48 @@ import io.helidon.service.registry.Service;
  * In-memory channel graph assembled from generated consumer registrations.
  */
 @Service.Singleton
+@Service.RunLevel(MessagingRuntime.RUN_LEVEL)
 class ChannelRegistry implements MessagingRuntime {
     private static final System.Logger LOGGER = System.getLogger(ChannelRegistry.class.getName());
 
     private Map<String, MessagingChannel<?>> channels = Map.of();
     private final DeliveryEngine deliveryEngine;
+    private final MessagingGraph graph;
 
     @Service.Inject
     ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
                     Config config,
                     List<IncomingConnector<?>> incomingConnectors,
                     List<OutgoingConnector<?>> outgoingConnectors,
-                    List<MessageSizeEstimator> sizeEstimators) {
+                    List<MessageSizeEstimator> sizeEstimators,
+                    MessagingLifecycleGuard lifecycleGuard) {
         MessagingExecutionConfig defaultExecutionConfig = executionConfig(config, null);
         this.deliveryEngine = new DeliveryEngine(defaultExecutionConfig, sizeEstimators);
+        this.graph = new MessagingGraph(deliveryEngine);
         try {
             initialize(consumerRegistrations,
                        config,
                        incomingConnectors,
                        outgoingConnectors);
+            graph.prepare();
         } catch (RuntimeException | Error e) {
-            deliveryEngine.close();
+            graph.abortPreparation(e);
             throw e;
         }
+        lifecycleGuard.register(this);
+    }
+
+    ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
+                    Config config,
+                    List<IncomingConnector<?>> incomingConnectors,
+                    List<OutgoingConnector<?>> outgoingConnectors,
+                    List<MessageSizeEstimator> sizeEstimators) {
+        this(consumerRegistrations,
+             config,
+             incomingConnectors,
+             outgoingConnectors,
+             sizeEstimators,
+             new MessagingLifecycleGuard());
     }
 
     ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
@@ -104,8 +123,7 @@ class ChannelRegistry implements MessagingRuntime {
         validateIncomingOutputs(incomingDescriptors, outputChannels);
 
         configureOutgoingConnectors(outgoingBindings);
-        List<IncomingBinding> incomingBindings = createIncomingBindings(incomingDescriptors);
-        startIncomingConnectors(incomingBindings);
+        configureIncomingConnectors(incomingDescriptors);
     }
 
     /**
@@ -143,6 +161,7 @@ class ChannelRegistry implements MessagingRuntime {
         if (messagingChannel == null) {
             throw new MessagingException("Unknown messaging channel " + channel);
         }
+        graph.ensureRunning();
         emitBatch(messagingChannel, messages);
     }
 
@@ -156,9 +175,14 @@ class ChannelRegistry implements MessagingRuntime {
         return Optional.ofNullable(channels.get(channel));
     }
 
+    @Service.PostConstruct
+    void start() {
+        graph.start();
+    }
+
     @Service.PreDestroy
     public void close() {
-        deliveryEngine.close();
+        graph.close();
     }
 
     /**
@@ -176,6 +200,7 @@ class ChannelRegistry implements MessagingRuntime {
             throw new IllegalArgumentException("Unsupported channel implementation "
                                                        + messagingChannel.getClass().getName());
         }
+        graph.addBinding(connector);
         defaultMessagingChannel.addOutgoingConnector(connector);
     }
 
@@ -193,23 +218,13 @@ class ChannelRegistry implements MessagingRuntime {
         return new RegistryConnectorSourceContext(channel, failurePolicy);
     }
 
-    /**
-     * Run an incoming connector source against a named channel.
-     *
-     * @param channel channel name
-     * @param connector connector source factory
-     */
-    void runIncoming(String channel, Function<ConnectorSourceContext, ConnectorSource> connector) {
-        deliveryEngine.startSource(channel, connector.apply(incomingContext(channel)));
-    }
-
     @SuppressWarnings("unchecked")
     private MessagingChannel<?> createChannel(Config config,
                                               String channel,
                                               List<ConsumerRegistration> consumerRegistrations) {
         Class<Object> payloadType = (Class<Object>) payloadType(channel, consumerRegistrations);
         DefaultMessagingChannel.Builder<Object> builder = new DefaultMessagingChannel.Builder<>();
-        builder.deliveryEngine(deliveryEngine, channel, executionConfig(config, channel))
+        builder.messagingGraph(graph, channel, executionConfig(config, channel))
                 .payloadType(payloadType);
         builder.addBatchOutput(messages -> validateMessageTypes(consumerRegistrations, messages));
         for (ConsumerRegistration consumer : consumerRegistrations) {
@@ -224,7 +239,7 @@ class ChannelRegistry implements MessagingRuntime {
 
     private MessagingChannel<?> createConfiguredChannel(Config config, String channel) {
         DefaultMessagingChannel.Builder<Object> builder = new DefaultMessagingChannel.Builder<>();
-        builder.deliveryEngine(deliveryEngine, channel, executionConfig(config, channel));
+        builder.messagingGraph(graph, channel, executionConfig(config, channel));
         return builder.build();
     }
 
@@ -522,19 +537,11 @@ class ChannelRegistry implements MessagingRuntime {
         }
     }
 
-    private List<IncomingBinding> createIncomingBindings(List<IncomingDescriptor> descriptors) {
-        List<IncomingBinding> bindings = new ArrayList<>(descriptors.size());
+    private void configureIncomingConnectors(List<IncomingDescriptor> descriptors) {
         for (IncomingDescriptor descriptor : descriptors) {
             ConnectorSourceContext context = incomingContext(descriptor.channel(), descriptor.failurePolicy());
             ConnectorSource source = createSource(descriptor.connector(), descriptor.config(), context);
-            bindings.add(new IncomingBinding(descriptor.channel(), source));
-        }
-        return List.copyOf(bindings);
-    }
-
-    private void startIncomingConnectors(List<IncomingBinding> bindings) {
-        for (IncomingBinding binding : bindings) {
-            deliveryEngine.startSource("connector-" + binding.channel(), binding.source());
+            graph.addSource("connector-" + descriptor.channel(), source);
         }
     }
 
@@ -574,6 +581,7 @@ class ChannelRegistry implements MessagingRuntime {
             routes.put(source, target);
         }
         validateFailureRouteCycles(routes);
+        routes.forEach(graph::addRoute);
     }
 
     private void validateDeadLetterConsumers(String source,
@@ -629,7 +637,10 @@ class ChannelRegistry implements MessagingRuntime {
     private Map<String, OutgoingConnector<?>> outgoingConnectors(List<OutgoingConnector<?>> outgoingConnectors) {
         Map<String, OutgoingConnector<?>> connectors = new HashMap<>();
         for (OutgoingConnector<?> connector : outgoingConnectors) {
-            connectors.put(connector.connectorName(), connector);
+            OutgoingConnector<?> previous = connectors.putIfAbsent(connector.connectorName(), connector);
+            if (previous != null) {
+                throw new IllegalArgumentException("Duplicate outgoing connector named " + connector.connectorName());
+            }
         }
         return connectors;
     }
@@ -637,7 +648,10 @@ class ChannelRegistry implements MessagingRuntime {
     private Map<String, IncomingConnector<?>> incomingConnectors(List<IncomingConnector<?>> incomingConnectors) {
         Map<String, IncomingConnector<?>> connectors = new HashMap<>();
         for (IncomingConnector<?> connector : incomingConnectors) {
-            connectors.put(connector.connectorName(), connector);
+            IncomingConnector<?> previous = connectors.putIfAbsent(connector.connectorName(), connector);
+            if (previous != null) {
+                throw new IllegalArgumentException("Duplicate incoming connector named " + connector.connectorName());
+            }
         }
         return connectors;
     }
@@ -648,7 +662,7 @@ class ChannelRegistry implements MessagingRuntime {
             return Set.of();
         }
 
-        Set<String> channels = new LinkedHashSet<>();
+        Set<String> channels = new TreeSet<>();
         config.detach().asMap().orElse(Map.of()).keySet()
                 .stream()
                 .map(ChannelRegistry::firstSegment)
@@ -985,6 +999,4 @@ class ChannelRegistry implements MessagingRuntime {
                                       ConnectorConfig config) {
     }
 
-    private record IncomingBinding(String channel, ConnectorSource source) {
-    }
 }

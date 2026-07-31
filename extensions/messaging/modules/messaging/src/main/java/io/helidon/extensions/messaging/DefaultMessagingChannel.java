@@ -17,11 +17,15 @@
 package io.helidon.extensions.messaging;
 
 import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -34,25 +38,21 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
     private static final AtomicLong CHANNEL_SEQUENCE = new AtomicLong();
 
     private final Class<T> payloadType;
-    private final List<Stream<?>> inputs;
     private final List<Consumer<List<Message<?>>>> outputs;
     private final DeliveryEngine deliveryEngine;
     private final String channelName;
-    private final boolean ownsDeliveryEngine;
-    private final AtomicBoolean started = new AtomicBoolean();
+    private final MessagingGraph graph;
 
     private DefaultMessagingChannel(Class<T> payloadType,
-                                    List<Stream<?>> inputs,
                                     List<Consumer<List<Message<?>>>> outputs,
                                     DeliveryEngine deliveryEngine,
                                     String channelName,
-                                    boolean ownsDeliveryEngine) {
+                                    MessagingGraph graph) {
         this.payloadType = payloadType;
-        this.inputs = List.copyOf(inputs);
         this.outputs = new CopyOnWriteArrayList<>(outputs);
         this.deliveryEngine = deliveryEngine;
         this.channelName = channelName;
-        this.ownsDeliveryEngine = ownsDeliveryEngine;
+        this.graph = graph;
     }
 
     @Override
@@ -72,19 +72,15 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
 
     @Override
     public void start() {
-        if (!started.compareAndSet(false, true)) {
-            return;
-        }
-        int index = 0;
-        for (Stream<?> input : inputs) {
-            deliveryEngine.startSource(channelName + "-input-" + ++index, () -> drainInput(input));
+        if (graph != null) {
+            graph.start();
         }
     }
 
     @Override
     public void close() {
-        if (ownsDeliveryEngine) {
-            deliveryEngine.close();
+        if (graph != null) {
+            graph.close();
         }
     }
 
@@ -110,6 +106,9 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
         if (messages.isEmpty()) {
             return;
         }
+        if (graph != null) {
+            graph.ensureRunning();
+        }
         List<Message<?>> batch = toBatch(messages);
         deliveryEngine.dispatch(channelName, batch, () -> dispatchBatch(batch));
     }
@@ -117,12 +116,6 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
     private void dispatchBatch(List<Message<?>> batch) {
         for (Consumer<List<Message<?>>> output : outputs) {
             output.accept(batch);
-        }
-    }
-
-    private void drainInput(Stream<?> input) {
-        try (input) {
-            input.sequential().forEachOrdered(this::emitObject);
         }
     }
 
@@ -146,10 +139,11 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
         private final List<Stream<?>> inputs = new ArrayList<>();
         private final List<MessagingChannel<?>> inputChannels = new ArrayList<>();
         private final List<Consumer<List<Message<?>>>> outputs = new ArrayList<>();
+        private final List<ConnectorSink> connectorOutputs = new ArrayList<>();
         private final List<MessageSizeEstimator> messageSizeEstimators = new ArrayList<>();
         private Class<T> payloadType;
         private MessagingExecutionConfig executionConfig = MessagingExecutionConfig.builder().build();
-        private DeliveryEngine deliveryEngine;
+        private MessagingGraph messagingGraph;
         private String channelName;
 
         @Override
@@ -178,7 +172,7 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
 
         @Override
         public MessagingChannel.Builder<T> addInput(MessagingChannel<?> input) {
-            inputChannels.add(input);
+            inputChannels.add(Objects.requireNonNull(input));
             return this;
         }
 
@@ -196,46 +190,100 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
 
         @Override
         public MessagingChannel.Builder<T> addOutgoingConnector(ConnectorSink output) {
-            outputs.add(messages -> DefaultMessagingChannel.send(output, messages));
+            ConnectorSink connector = Objects.requireNonNull(output);
+            connectorOutputs.add(connector);
+            outputs.add(messages -> DefaultMessagingChannel.send(connector, messages));
             return this;
         }
 
         @Override
         public MessagingChannel<T> build() {
-            boolean ownsDeliveryEngine = deliveryEngine == null;
-            DeliveryEngine actualDeliveryEngine = ownsDeliveryEngine
-                    ? new DeliveryEngine(executionConfig, messageSizeEstimators)
-                    : deliveryEngine;
             String actualChannelName = channelName == null
                     ? "imperative-" + CHANNEL_SEQUENCE.incrementAndGet()
                     : channelName;
-            if (ownsDeliveryEngine) {
-                actualDeliveryEngine.registerChannel(actualChannelName, executionConfig);
-            }
+            MessagingGraph actualGraph = messagingGraph == null ? imperativeGraph() : messagingGraph;
+            DeliveryEngine actualDeliveryEngine = actualGraph.deliveryEngine();
             DefaultMessagingChannel<T> channel = new DefaultMessagingChannel<>(payloadType,
-                                                                               inputs,
                                                                                outputs,
                                                                                actualDeliveryEngine,
                                                                                actualChannelName,
-                                                                               ownsDeliveryEngine);
+                                                                               actualGraph);
 
+            Map<String, ConnectorSource> channelSources = new LinkedHashMap<>();
+            int inputIndex = 0;
+            for (Stream<?> input : inputs) {
+                channelSources.put(actualChannelName + "-input-" + ++inputIndex,
+                                   new StreamSource(input, channel::emitObject));
+            }
+            List<String> inputChannelNames = new ArrayList<>(inputChannels.size());
+            for (MessagingChannel<?> inputChannel : inputChannels) {
+                DefaultMessagingChannel<?> defaultInputChannel = (DefaultMessagingChannel<?>) inputChannel;
+                if (defaultInputChannel.graph == actualGraph) {
+                    inputChannelNames.add(defaultInputChannel.channelName);
+                }
+            }
+            actualGraph.addChannelContribution(actualChannelName,
+                                               channel,
+                                               executionConfig,
+                                               channelSources,
+                                               connectorOutputs,
+                                               inputChannelNames,
+                                               () -> {
+                                                   for (MessagingChannel<?> inputChannel : inputChannels) {
+                                                       DefaultMessagingChannel<?> defaultInputChannel =
+                                                               (DefaultMessagingChannel<?>) inputChannel;
+                                                       defaultInputChannel.addBatchOutput(channel::emitBatchObject);
+                                                   }
+                                               });
+            return channel;
+        }
+
+        private MessagingGraph imperativeGraph() {
+            if (inputChannels.isEmpty()) {
+                return newImperativeGraph();
+            }
+
+            MessagingGraph graph = null;
+            boolean sharedGraph = true;
             for (MessagingChannel<?> inputChannel : inputChannels) {
                 if (!(inputChannel instanceof DefaultMessagingChannel<?> defaultInputChannel)) {
                     throw new IllegalArgumentException("Unsupported channel implementation "
                                                                + inputChannel.getClass().getName());
                 }
-                defaultInputChannel.addBatchOutput(channel::emitBatchObject);
+                if (defaultInputChannel.graph == null) {
+                    throw new IllegalArgumentException("Declarative channels cannot be imperative graph inputs");
+                }
+                if (graph == null) {
+                    graph = defaultInputChannel.graph;
+                } else if (graph != defaultInputChannel.graph) {
+                    sharedGraph = false;
+                }
             }
-            return channel;
+            if (!sharedGraph) {
+                return newImperativeGraph();
+            }
+            if (!messageSizeEstimators.isEmpty()) {
+                throw new IllegalArgumentException("Message size estimators must be configured on the first channel "
+                                                           + "of an imperative messaging graph");
+            }
+            if (!graph.deliveryEngine().shutdownTimeout().equals(executionConfig.shutdownTimeout())) {
+                throw new IllegalArgumentException("Every channel in an imperative messaging graph must use the same "
+                                                           + "shutdown-timeout");
+            }
+            return graph;
         }
 
-        Builder<T> deliveryEngine(DeliveryEngine deliveryEngine,
+        private MessagingGraph newImperativeGraph() {
+            DeliveryEngine engine = new DeliveryEngine(executionConfig, messageSizeEstimators);
+            return new MessagingGraph(engine);
+        }
+
+        Builder<T> messagingGraph(MessagingGraph messagingGraph,
                                   String channelName,
                                   MessagingExecutionConfig executionConfig) {
-            this.deliveryEngine = Objects.requireNonNull(deliveryEngine);
+            this.messagingGraph = Objects.requireNonNull(messagingGraph);
             this.channelName = Objects.requireNonNull(channelName);
             this.executionConfig = Objects.requireNonNull(executionConfig);
-            deliveryEngine.registerChannel(channelName, executionConfig);
             return this;
         }
 
@@ -262,5 +310,66 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static void send(ConnectorSink output, List<Message<?>> messages) {
         output.sendBatch((List) messages);
+    }
+
+    private static final class StreamSource implements ConnectorSource, ManagedConnectorBinding {
+        private final Stream<?> stream;
+        private final Consumer<Object> consumer;
+        private final AtomicBoolean runStarted = new AtomicBoolean();
+        private final AtomicBoolean closed = new AtomicBoolean();
+        private final AtomicBoolean streamClosed = new AtomicBoolean();
+        private final AtomicReference<Thread> owner = new AtomicReference<>();
+
+        private StreamSource(Stream<?> stream, Consumer<Object> consumer) {
+            this.stream = stream;
+            this.consumer = consumer;
+        }
+
+        @Override
+        public void run() {
+            if (!runStarted.compareAndSet(false, true)) {
+                throw new IllegalStateException("Messaging stream source can only be run once");
+            }
+            if (closed.get()) {
+                return;
+            }
+            Thread current = Thread.currentThread();
+            owner.set(current);
+            try {
+                Iterator<?> iterator = stream.sequential().iterator();
+                while (!closed.get() && iterator.hasNext()) {
+                    consumer.accept(iterator.next());
+                }
+            } catch (MessagingRejectedException e) {
+                if (e.reason() != MessagingRejectedException.Reason.SHUTDOWN) {
+                    throw e;
+                }
+            } finally {
+                closed.set(true);
+                owner.compareAndSet(current, null);
+                closeStream();
+            }
+        }
+
+        @Override
+        public void forceClose() {
+            close();
+        }
+
+        @Override
+        public void close() {
+            closed.set(true);
+            closeStream();
+            Thread current = owner.get();
+            if (current != null && current != Thread.currentThread()) {
+                current.interrupt();
+            }
+        }
+
+        private void closeStream() {
+            if (streamClosed.compareAndSet(false, true)) {
+                stream.close();
+            }
+        }
     }
 }

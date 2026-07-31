@@ -19,6 +19,7 @@ package io.helidon.extensions.messaging.tests.poc;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,6 +36,7 @@ import io.helidon.extensions.messaging.Emitter;
 import io.helidon.extensions.messaging.IncomingConnector;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageSizeEstimator;
+import io.helidon.extensions.messaging.ManagedConnectorSource;
 import io.helidon.extensions.messaging.Messaging;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.service.registry.Service;
@@ -49,6 +51,8 @@ class ChannelMessagingTypes {
     static final String FORWARDING_OUTPUT_CHANNEL = "forwarding-output-channel";
     static final String FAILING_CHANNEL = "failing-channel";
     static final String TEST_CONNECTOR = "test";
+    static final String SHUTDOWN_CHANNEL = "shutdown-channel";
+    static final String SHUTDOWN_CONNECTOR = "shutdown-test";
     static final String UNKNOWN_CHANNEL = "unknown-channel";
 
     private ChannelMessagingTypes() {
@@ -287,6 +291,113 @@ class ChannelMessagingTypes {
 
         Optional<RuntimeException> deliveryFailure() {
             return Optional.ofNullable(deliveryFailure.get());
+        }
+    }
+
+    @Service.Singleton
+    static class ShutdownConsumer {
+        private static final List<String> EVENTS = new CopyOnWriteArrayList<>();
+
+        @Messaging.OnMessage(SHUTDOWN_CHANNEL)
+        void consume(String ignored) {
+        }
+
+        @Service.PreDestroy
+        void close() {
+            EVENTS.add("consumer-close");
+        }
+
+        static List<String> events() {
+            return EVENTS;
+        }
+    }
+
+    @Service.Singleton
+    static class ShutdownIncomingConnector implements IncomingConnector<ConnectorConfig> {
+        private final AtomicReference<ShutdownSource> source = new AtomicReference<>();
+
+        @Override
+        public String connectorName() {
+            return SHUTDOWN_CONNECTOR;
+        }
+
+        @Override
+        public ConnectorSource createSource(ConnectorConfig config, ConnectorSourceContext context) {
+            ShutdownSource newSource = new ShutdownSource();
+            if (!source.compareAndSet(null, newSource)) {
+                throw new IllegalStateException("Shutdown test source already exists");
+            }
+            return newSource;
+        }
+
+        @Override
+        @Service.PreDestroy
+        public void close() {
+            ShutdownSource current = source.get();
+            if (current != null) {
+                current.forceClose();
+            }
+        }
+
+        private static final class ShutdownSource implements ManagedConnectorSource {
+            private final CountDownLatch ready = new CountDownLatch(1);
+            private final CountDownLatch admission = new CountDownLatch(1);
+            private final CountDownLatch stop = new CountDownLatch(1);
+
+            @Override
+            public void prepareForGraph() {
+            }
+
+            @Override
+            public void run() {
+                ready.countDown();
+                await(admission);
+                await(stop);
+            }
+
+            @Override
+            public void awaitReady(Duration timeout) {
+                try {
+                    if (!ready.await(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
+                        throw new MessagingException("Shutdown test source readiness timed out");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new MessagingException("Shutdown test source readiness was interrupted", e);
+                }
+            }
+
+            @Override
+            public void startAdmission() {
+                ShutdownConsumer.events().add("source-start");
+                admission.countDown();
+            }
+
+            @Override
+            public void stopAdmission() {
+                ShutdownConsumer.events().add("source-stop");
+                admission.countDown();
+                stop.countDown();
+            }
+
+            @Override
+            public void forceClose() {
+                admission.countDown();
+                stop.countDown();
+            }
+
+            @Override
+            public void close() {
+                forceClose();
+            }
+
+            private static void await(CountDownLatch latch) {
+                try {
+                    latch.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
     }
 
