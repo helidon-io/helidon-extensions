@@ -23,27 +23,32 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
-import io.helidon.extensions.messaging.ConnectorSink;
+import io.helidon.extensions.messaging.ConnectorConfig;
 import io.helidon.extensions.messaging.DeadLetterMessage;
-import io.helidon.extensions.messaging.ManagedConnectorBinding;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingException;
-import io.helidon.extensions.messaging.OutgoingConnector;
-import io.helidon.service.registry.Service;
+import io.helidon.extensions.messaging.OutgoingEndpoint;
 
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.header.internals.RecordHeaders;
+
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_LEADER_EPOCH_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER;
 
 /**
  * Kafka outgoing connector.
@@ -56,46 +61,7 @@ import org.apache.kafka.common.header.internals.RecordHeaders;
  * {@code acks=1}, or all in-sync replica acknowledgements for {@code acks=all}. It
  * does not imply that a consumer has processed the message.
  */
-@Service.Singleton
-public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorConfig> {
-    /**
-     * Connector name used in messaging configuration.
-     */
-    public static final String CONNECTOR = "kafka";
-
-    /**
-     * Dead-letter header containing the original Kafka topic.
-     */
-    public static final String DLQ_ORIGINAL_TOPIC_HEADER = "dlq-orig-topic";
-
-    /**
-     * Dead-letter header containing the original Kafka partition.
-     */
-    public static final String DLQ_ORIGINAL_PARTITION_HEADER = "dlq-orig-partition";
-
-    /**
-     * Dead-letter header containing the original Kafka offset.
-     */
-    public static final String DLQ_ORIGINAL_OFFSET_HEADER = "dlq-orig-offset";
-
-    /**
-     * Dead-letter header containing the original Kafka record timestamp in milliseconds.
-     * <p>
-     * This is source metadata. The dead-letter record itself has its own publication timestamp.
-     */
-    public static final String DLQ_ORIGINAL_TIMESTAMP_HEADER = "dlq-orig-timestamp";
-
-    /**
-     * Dead-letter header containing the name of the original {@link KafkaMessage.TimestampType}.
-     */
-    public static final String DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER = "dlq-orig-timestamp-type";
-
-    /**
-     * Dead-letter header containing the original Kafka leader epoch.
-     */
-    public static final String DLQ_ORIGINAL_LEADER_EPOCH_HEADER = "dlq-orig-leader-epoch";
-
-    private static final System.Logger LOGGER = System.getLogger(KafkaOutgoingConnector.class.getName());
+final class KafkaOutgoingConnector {
     private static final Set<String> DLQ_RESERVED_HEADERS = Set.of(DeadLetterMessage.SOURCE_CHANNEL_HEADER,
                                                                    DeadLetterMessage.ATTEMPTS_HEADER,
                                                                    DeadLetterMessage.FAILURE_TYPE_HEADER,
@@ -108,14 +74,8 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
                                                                    DLQ_ORIGINAL_LEADER_EPOCH_HEADER);
 
     private final ProducerFactory producerFactory;
-    private final Set<ProducerResource> producers = ConcurrentHashMap.newKeySet();
-    private final AtomicBoolean closed = new AtomicBoolean();
 
-    /**
-     * Create a Kafka outgoing connector.
-     */
-    @Service.Inject
-    public KafkaOutgoingConnector() {
+    KafkaOutgoingConnector() {
         this(KafkaProducer::new);
     }
 
@@ -123,66 +83,18 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
         this.producerFactory = Objects.requireNonNull(producerFactory);
     }
 
-    @Override
-    public String connectorName() {
-        return CONNECTOR;
-    }
-
-    @Override
-    public ConnectorSink createSink(KafkaConnectorConfig config) {
+    OutgoingEndpoint createOutgoingEndpoint(KafkaConnectorConfig config) {
         Objects.requireNonNull(config);
-        if (closed.get()) {
-            throw new IllegalStateException("Kafka outgoing connector is closed");
-        }
-
-        Producer<Object, Object> producer;
-        try {
-            producer = producerFactory.create(KafkaConnectorConfigSupport.producerProperties(config));
-        } catch (RuntimeException e) {
-            throw new MessagingException("Cannot create Kafka producer for topic " + config.topic(), e);
-        }
-
-        ProducerResource resource = new ProducerResource(producer, config.closeTimeout());
-        producers.add(resource);
-        if (closed.get()) {
-            resource.close();
-            producers.remove(resource);
-            throw new IllegalStateException("Kafka outgoing connector is closed");
+        if (config.direction() != ConnectorConfig.Direction.OUTGOING) {
+            throw new IllegalArgumentException("Kafka connector configuration for channel " + config.channel()
+                                                       + " has direction " + config.direction()
+                                                       + ", expected " + ConnectorConfig.Direction.OUTGOING);
         }
         return new KafkaSink(config.topic(),
                              config.sendTimeout(),
-                             producer,
-                             () -> {
-                                 resource.forceClose();
-                                 producers.remove(resource);
-                             },
-                             () -> {
-                                 resource.close();
-                                 producers.remove(resource);
-                             });
-    }
-
-    @Override
-    @Service.PreDestroy
-    public void close() {
-        closed.set(true);
-        RuntimeException closeFailure = null;
-        for (ProducerResource producer : producers) {
-            try {
-                producer.close();
-                producers.remove(producer);
-            } catch (RuntimeException e) {
-                LOGGER.log(System.Logger.Level.ERROR, "Cannot close Kafka producer", e);
-                if (closeFailure == null) {
-                    closeFailure = e;
-                } else if (closeFailure != e) {
-                    closeFailure.addSuppressed(e);
-                }
-            }
-        }
-        if (closeFailure != null) {
-            throw closeFailure;
-        }
+                             config.closeTimeout(),
+                             KafkaConnectorConfigSupport.producerProperties(config),
+                             producerFactory);
     }
 
     @FunctionalInterface
@@ -190,23 +102,216 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
         Producer<Object, Object> create(Map<String, Object> properties);
     }
 
-    private static final class KafkaSink implements ConnectorSink, ManagedConnectorBinding {
+    private static final class KafkaSink implements OutgoingEndpoint {
         private final String topic;
         private final Duration sendTimeout;
-        private final Producer<Object, Object> producer;
-        private final Runnable forceClose;
-        private final Runnable close;
+        private final Duration closeTimeout;
+        private final Map<String, Object> producerProperties;
+        private final ProducerFactory producerFactory;
+        private final ReentrantLock lifecycleLock = new ReentrantLock();
+        private final Condition lifecycleChanged = lifecycleLock.newCondition();
+        private State state = State.NEW;
+        private Producer<Object, Object> producer;
+        private Throwable startupFailure;
+        private Thread startOwner;
+        private Thread closeOwner;
+        private boolean closeRequested;
+        private boolean closing;
 
         private KafkaSink(String topic,
                           Duration sendTimeout,
-                          Producer<Object, Object> producer,
-                          Runnable forceClose,
-                          Runnable close) {
+                          Duration closeTimeout,
+                          Map<String, Object> producerProperties,
+                          ProducerFactory producerFactory) {
             this.topic = topic;
             this.sendTimeout = sendTimeout;
-            this.producer = producer;
-            this.forceClose = forceClose;
-            this.close = close;
+            this.closeTimeout = closeTimeout;
+            this.producerProperties = producerProperties;
+            this.producerFactory = producerFactory;
+        }
+
+        @Override
+        public void start() {
+            lifecycleLock.lock();
+            try {
+                while (state == State.STARTING && !closeRequested) {
+                    awaitLifecycleChange("endpoint startup");
+                }
+                if (state == State.CLOSED || closeRequested) {
+                    throw new IllegalStateException("Kafka outgoing endpoint is closed");
+                }
+                if (state == State.READY) {
+                    return;
+                }
+                if (state == State.FAILED) {
+                    throw propagate(startupFailure == null
+                                            ? new IllegalStateException("Kafka outgoing endpoint startup failed")
+                                            : startupFailure);
+                }
+                state = State.STARTING;
+                startOwner = Thread.currentThread();
+            } finally {
+                lifecycleLock.unlock();
+            }
+
+            Producer<Object, Object> created;
+            try {
+                created = producerFactory.create(producerProperties);
+            } catch (RuntimeException | Error e) {
+                Throwable failure = e instanceof RuntimeException
+                        ? new MessagingException("Cannot create Kafka producer for topic " + topic, e)
+                        : e;
+                throw propagate(completeStart(null, failure));
+            }
+
+            if (!publishProducer(created)) {
+                Throwable failure = new IllegalStateException("Kafka outgoing endpoint was closed during startup");
+                try {
+                    created.close(Duration.ZERO);
+                } catch (RuntimeException | Error closeFailure) {
+                    if (closeFailure != failure) {
+                        closeFailure.addSuppressed(failure);
+                    }
+                    failure = closeFailure;
+                    retainProducerAfterCloseFailure(created, failure);
+                }
+                completeStart(created, failure);
+                throw propagate(failure);
+            }
+
+            Throwable failure = null;
+            try {
+                List<PartitionInfo> partitions = created.partitionsFor(topic);
+                if (partitions == null || partitions.isEmpty()) {
+                    throw new MessagingException("Kafka topic " + topic + " has no available partitions");
+                }
+            } catch (RuntimeException e) {
+                failure = e instanceof MessagingException
+                        ? e
+                        : new MessagingException("Cannot verify Kafka producer readiness for topic " + topic, e);
+            } catch (Error e) {
+                failure = e;
+            }
+
+            Throwable result = completeStart(created, failure);
+            if (result != null) {
+                throw propagate(result);
+            }
+        }
+
+        private boolean publishProducer(Producer<Object, Object> created) {
+            lifecycleLock.lock();
+            try {
+                if (state != State.STARTING || closeRequested) {
+                    return false;
+                }
+                producer = created;
+                lifecycleChanged.signalAll();
+                return true;
+            } finally {
+                lifecycleLock.unlock();
+            }
+        }
+
+        private Throwable completeStart(Producer<Object, Object> created, Throwable failure) {
+            boolean cleanup = false;
+            Throwable result;
+            lifecycleLock.lock();
+            try {
+                if (closing) {
+                    result = failure == null
+                            ? new IllegalStateException("Kafka outgoing endpoint was closed during startup")
+                            : failure;
+                    startOwner = null;
+                    lifecycleChanged.signalAll();
+                    return result;
+                }
+                boolean cancelled = closeRequested || state == State.CLOSED;
+                result = failure;
+                if (result == null && cancelled) {
+                    result = new IllegalStateException("Kafka outgoing endpoint was closed during startup");
+                }
+                if (result == null) {
+                    state = State.READY;
+                    startOwner = null;
+                    lifecycleChanged.signalAll();
+                    return null;
+                }
+                if (!cancelled && producer == created && created != null) {
+                    closing = true;
+                    closeOwner = Thread.currentThread();
+                    cleanup = true;
+                } else {
+                    if (state != State.CLOSED) {
+                        state = State.FAILED;
+                        if (startupFailure == null) {
+                            startupFailure = result;
+                        }
+                    }
+                    startOwner = null;
+                    lifecycleChanged.signalAll();
+                }
+            } finally {
+                lifecycleLock.unlock();
+            }
+
+            if (!cleanup) {
+                return result;
+            }
+
+            Throwable closeFailure = null;
+            try {
+                created.close(Duration.ZERO);
+            } catch (RuntimeException | Error e) {
+                closeFailure = e;
+                if (e != result) {
+                    if (e instanceof Error) {
+                        e.addSuppressed(result);
+                        result = e;
+                    } else {
+                        result.addSuppressed(e);
+                    }
+                }
+            }
+            lifecycleLock.lock();
+            try {
+                closing = false;
+                closeOwner = null;
+                if (closeFailure == null && producer == created) {
+                    producer = null;
+                }
+                state = closeRequested && closeFailure == null ? State.CLOSED : State.FAILED;
+                startupFailure = result;
+                startOwner = null;
+                lifecycleChanged.signalAll();
+            } finally {
+                lifecycleLock.unlock();
+            }
+            return result;
+        }
+
+        private void retainProducerAfterCloseFailure(Producer<Object, Object> created, Throwable failure) {
+            lifecycleLock.lock();
+            try {
+                if (producer == null) {
+                    producer = created;
+                }
+                state = State.FAILED;
+                startupFailure = failure;
+                lifecycleChanged.signalAll();
+            } finally {
+                lifecycleLock.unlock();
+            }
+        }
+
+        @Override
+        public void flush() {
+            Producer<Object, Object> current = readyProducer();
+            try {
+                current.flush();
+            } catch (RuntimeException e) {
+                throw new MessagingException("Cannot flush Kafka producer for topic " + topic, e);
+            }
         }
 
         @Override
@@ -232,12 +337,12 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
 
         @Override
         public void forceClose() {
-            forceClose.run();
+            close(Duration.ZERO, true);
         }
 
         @Override
         public void close() {
-            close.run();
+            close(closeTimeout, false);
         }
 
         private Future<RecordMetadata> enqueue(Message<?> message) {
@@ -257,8 +362,11 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
                                                                          message.entity(),
                                                                          headers);
             try {
-                return producer.send(record);
+                return readyProducer().send(record);
             } catch (RuntimeException e) {
+                if (e instanceof MessagingException messagingException) {
+                    throw messagingException;
+                }
                 throw new MessagingException("Cannot send Kafka message to topic " + topic, e);
             }
         }
@@ -326,9 +434,118 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
                                                                          entity,
                                                                          headers);
             try {
-                return producer.send(record);
+                return readyProducer().send(record);
             } catch (RuntimeException e) {
+                if (e instanceof MessagingException messagingException) {
+                    throw messagingException;
+                }
                 throw new MessagingException("Cannot send Kafka message to topic " + topic, e);
+            }
+        }
+
+        private Producer<Object, Object> readyProducer() {
+            lifecycleLock.lock();
+            try {
+                if (state != State.READY || closeRequested) {
+                    throw new IllegalStateException("Kafka outgoing endpoint is not ready");
+                }
+                return producer;
+            } finally {
+                lifecycleLock.unlock();
+            }
+        }
+
+        private void close(Duration timeout, boolean force) {
+            Producer<Object, Object> current;
+            Thread owner;
+            lifecycleLock.lock();
+            try {
+                closeRequested = true;
+                if (force && closing) {
+                    interruptLifecycle(closeOwner == null ? startOwner : closeOwner);
+                    return;
+                }
+                while (closing) {
+                    awaitLifecycleChange("endpoint close");
+                }
+                if (state == State.CLOSED) {
+                    return;
+                }
+                owner = startOwner;
+                current = producer;
+                if (current == null) {
+                    state = State.CLOSED;
+                    lifecycleChanged.signalAll();
+                    interruptLifecycle(owner);
+                    return;
+                }
+                closing = true;
+                closeOwner = Thread.currentThread();
+                if (state == State.STARTING && startupFailure == null) {
+                    startupFailure = new IllegalStateException("Kafka outgoing endpoint was closed during startup");
+                }
+            } finally {
+                lifecycleLock.unlock();
+            }
+
+            interruptLifecycle(owner);
+
+            Throwable failure = null;
+            try {
+                current.close(timeout);
+            } catch (RuntimeException | Error e) {
+                failure = e;
+            }
+
+            lifecycleLock.lock();
+            try {
+                closing = false;
+                closeOwner = null;
+                if (failure == null) {
+                    if (producer == current) {
+                        producer = null;
+                    }
+                    state = State.CLOSED;
+                } else {
+                    state = State.FAILED;
+                    if (startupFailure == null) {
+                        startupFailure = new MessagingException("Cannot close Kafka producer for topic " + topic,
+                                                                failure);
+                    }
+                }
+                lifecycleChanged.signalAll();
+            } finally {
+                lifecycleLock.unlock();
+            }
+            if (failure != null) {
+                throw propagate(failure);
+            }
+        }
+
+        private void interruptLifecycle(Thread owner) {
+            if (owner != null && owner != Thread.currentThread()) {
+                owner.interrupt();
+            }
+        }
+
+        private RuntimeException propagate(Throwable failure) {
+            if (failure instanceof Error error) {
+                throw error;
+            }
+            if (failure instanceof RuntimeException runtimeException) {
+                return runtimeException;
+            }
+            return new MessagingException("Kafka outgoing endpoint lifecycle failed for topic " + topic, failure);
+        }
+
+        private void awaitLifecycleChange(String operation) {
+            try {
+                lifecycleChanged.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new MessagingException("Interrupted while waiting for Kafka outgoing " + operation
+                                                     + " on topic " + topic,
+                                             e);
             }
         }
 
@@ -381,43 +598,13 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
                 throw new MessagingException("Timed out sending Kafka message to topic " + topic, e);
             }
         }
-    }
 
-    private static final class ProducerResource {
-        private final Producer<Object, Object> producer;
-        private final Duration closeTimeout;
-        private final ReentrantLock closeLock = new ReentrantLock();
-        private boolean closed;
-
-        private ProducerResource(Producer<Object, Object> producer, Duration closeTimeout) {
-            this.producer = producer;
-            this.closeTimeout = closeTimeout;
-        }
-
-        private void close() {
-            closeLock.lock();
-            try {
-                if (closed) {
-                    return;
-                }
-                producer.close(closeTimeout);
-                closed = true;
-            } finally {
-                closeLock.unlock();
-            }
-        }
-
-        private void forceClose() {
-            closeLock.lock();
-            try {
-                if (closed) {
-                    return;
-                }
-                producer.close(Duration.ZERO);
-                closed = true;
-            } finally {
-                closeLock.unlock();
-            }
+        private enum State {
+            NEW,
+            STARTING,
+            READY,
+            FAILED,
+            CLOSED
         }
     }
 }

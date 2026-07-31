@@ -16,7 +16,6 @@
 
 module io.helidon.extensions.messaging {
     requires transitive io.helidon.common;
-    requires transitive io.helidon.common.resumable;
     requires transitive io.helidon.builder.api;
     requires transitive io.helidon.config;
     requires io.helidon.service.registry;

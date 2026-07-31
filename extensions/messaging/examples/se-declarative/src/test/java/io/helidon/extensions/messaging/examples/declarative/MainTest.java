@@ -22,7 +22,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import io.helidon.extensions.messaging.Message;
-import io.helidon.extensions.messaging.connectors.file.FileOutgoingConnector;
+import io.helidon.extensions.messaging.connectors.file.FileConnectorProvider;
 import io.helidon.service.registry.ServiceRegistryManager;
 
 import org.junit.jupiter.api.Test;
@@ -52,16 +52,16 @@ class MainTest {
 
     private static void configureFileConnector(Path auditLog) {
         System.setProperty("helidon.messaging.outgoing." + Main.AUDIT_CHANNEL + ".connector",
-                           FileOutgoingConnector.CONNECTOR);
+                           FileConnectorProvider.CONNECTOR_TYPE);
         System.setProperty("helidon.messaging.outgoing." + Main.AUDIT_CHANNEL + ".path",
                            auditLog.toString());
-        System.setProperty("helidon.messaging.connector." + FileOutgoingConnector.CONNECTOR + ".line-separator",
+        System.setProperty("helidon.messaging.connector." + FileConnectorProvider.CONNECTOR_TYPE + ".line-separator",
                            "\n");
     }
 
     private static void clearFileConnectorConfig() {
         System.clearProperty("helidon.messaging.outgoing." + Main.AUDIT_CHANNEL + ".connector");
         System.clearProperty("helidon.messaging.outgoing." + Main.AUDIT_CHANNEL + ".path");
-        System.clearProperty("helidon.messaging.connector." + FileOutgoingConnector.CONNECTOR + ".line-separator");
+        System.clearProperty("helidon.messaging.connector." + FileConnectorProvider.CONNECTOR_TYPE + ".line-separator");
     }
 }

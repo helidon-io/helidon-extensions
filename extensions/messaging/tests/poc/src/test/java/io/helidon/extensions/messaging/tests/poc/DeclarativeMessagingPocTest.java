@@ -50,7 +50,7 @@ import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.MultiHopM
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.Producer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.SecondChannelOneConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ShutdownConsumer;
-import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.TestIncomingConnector;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.TestConnectorObserver;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryConfig;
 import io.helidon.service.registry.ServiceRegistryManager;
@@ -462,11 +462,11 @@ class DeclarativeMessagingPocTest {
         useConfig(Map.of("helidon.messaging.incoming." + ChannelMessagingTypes.FAILING_CHANNEL + ".connector",
                          ChannelMessagingTypes.TEST_CONNECTOR));
         registry.get(MessagingRuntime.class);
-        var connector = registry.get(TestIncomingConnector.class);
+        var observer = registry.get(TestConnectorObserver.class);
         var consumer = registry.get(FailingConsumer.class);
 
-        assertThat(connector.awaitDelivery(), is(true));
-        RuntimeException thrown = connector.deliveryFailure().orElseThrow();
+        assertThat(observer.awaitDelivery(), is(true));
+        RuntimeException thrown = observer.deliveryFailure().orElseThrow();
 
         assertThat(thrown, sameInstance(consumer.failure()));
         assertThat(thrown.getCause(), sameInstance(consumer.failure().getCause()));
@@ -504,10 +504,10 @@ class DeclarativeMessagingPocTest {
         useConfig(Map.of("helidon.messaging.incoming." + ChannelMessagingTypes.CHANNEL_ONE + ".connector",
                          ChannelMessagingTypes.TEST_CONNECTOR));
         registry.get(MessagingRuntime.class);
-        var connector = registry.get(TestIncomingConnector.class);
+        var observer = registry.get(TestConnectorObserver.class);
 
-        assertThat(connector.awaitDelivery(), is(true));
-        assertThat(connector.deliveryFailure().isEmpty(), is(true));
+        assertThat(observer.awaitDelivery(), is(true));
+        assertThat(observer.deliveryFailure().isEmpty(), is(true));
 
         var firstConsumer = registry.get(FirstChannelOneConsumer.class);
         var secondConsumer = registry.get(SecondChannelOneConsumer.class);

@@ -81,18 +81,20 @@ public interface MessagingChannel<T> extends AutoCloseable {
     /**
      * Validate and start the complete imperative graph containing this channel.
      * <p>
-     * Startup is transitive: every channel, route, connector binding, and stream input already attached to the graph is
-     * prepared before any input is admitted. Stream inputs are then consumed on runtime-owned virtual threads.
-     * A failed or closed graph is terminal and cannot be restarted.
+     * Startup is transitive: every channel, route, connector endpoint, and stream input already attached to the graph
+     * is prepared before any input is admitted. Outgoing endpoints are started first, then incoming endpoints establish
+     * readiness on runtime-owned virtual threads before source admission starts. A failed or closed graph is terminal
+     * and cannot be restarted.
      */
     void start();
 
     /**
      * Close the complete imperative graph containing this channel.
      * <p>
-     * The graph first stops new source and delivery admission, drains admitted work up to its configured shutdown timeout,
-     * then forces any remaining tasks and closes managed connector bindings in reverse order. The compatibility default does
-     * nothing; runtime-provided channels override it.
+     * The graph first stops new source and delivery admission and drains admitted work up to its configured shutdown
+     * timeout. After a successful drain it flushes outgoing endpoints, checkpoints incoming endpoints, and closes
+     * endpoints in reverse order. Failed or timed-out shutdown forces the remaining endpoints closed. The compatibility
+     * default does nothing; runtime-provided channels override it.
      */
     @Override
     default void close() {

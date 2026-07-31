@@ -33,14 +33,14 @@ import java.util.concurrent.TimeoutException;
 
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
-import io.helidon.extensions.messaging.ConnectorSink;
 import io.helidon.extensions.messaging.DeadLetterMessage;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingChannel;
 import io.helidon.extensions.messaging.MessagingRuntime;
+import io.helidon.extensions.messaging.OutgoingEndpoint;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorConfig;
+import io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaMessage;
-import io.helidon.extensions.messaging.connectors.kafka.KafkaOutgoingConnector;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.AlwaysFailIncomingReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.AlwaysFailIncomingReceiver.FailedBatch;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.DropReceiver;
@@ -94,12 +94,12 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.utility.DockerImageName;
 
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaOutgoingConnector.DLQ_ORIGINAL_LEADER_EPOCH_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaOutgoingConnector.DLQ_ORIGINAL_OFFSET_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaOutgoingConnector.DLQ_ORIGINAL_PARTITION_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaOutgoingConnector.DLQ_ORIGINAL_TIMESTAMP_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaOutgoingConnector.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaOutgoingConnector.DLQ_ORIGINAL_TOPIC_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_LEADER_EPOCH_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
@@ -121,20 +121,21 @@ class KafkaConnectorIT {
     void testDirectKafkaSinkPublishesPayloadMessageAndBatch() throws Exception {
         String topic = uniqueName("sink");
         createTopic(topic);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector();
+        KafkaConnectorProvider provider = new KafkaConnectorProvider();
+        OutgoingEndpoint endpoint = provider.createOutgoingEndpoint(outgoingConnectorConfig(topic));
 
         try {
-            ConnectorSink sink = connector.createSink(outgoingConnectorConfig(topic));
-            sink.send("sink payload");
-            sink.send(Message.builder("sink message")
-                              .header("trace-id", "Příliš žluťoučký")
-                              .build());
-            sink.sendBatch(List.of(Message.builder("sink batch first")
-                                           .header("trace-id", "sink-batch-1")
-                                           .build(),
-                                   Message.builder("sink batch second")
-                                           .header("trace-id", "sink-batch-2")
-                                           .build()));
+            endpoint.start();
+            endpoint.send("sink payload");
+            endpoint.send(Message.builder("sink message")
+                                  .header("trace-id", "Příliš žluťoučký")
+                                  .build());
+            endpoint.sendBatch(List.of(Message.builder("sink batch first")
+                                               .header("trace-id", "sink-batch-1")
+                                               .build(),
+                                       Message.builder("sink batch second")
+                                               .header("trace-id", "sink-batch-2")
+                                               .build()));
 
             assertRecords(awaitRecords(topic, 4),
                           List.of(ExpectedRecord.create("sink payload"),
@@ -142,7 +143,7 @@ class KafkaConnectorIT {
                                   ExpectedRecord.create("sink batch first", "sink-batch-1"),
                                   ExpectedRecord.create("sink batch second", "sink-batch-2")));
         } finally {
-            connector.close();
+            endpoint.close();
         }
     }
 
@@ -191,13 +192,14 @@ class KafkaConnectorIT {
     void testImperativeChannelPublishesPayloadMessageAndBatch() throws Exception {
         String topic = uniqueName("channel");
         createTopic(topic);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector();
+        KafkaConnectorProvider provider = new KafkaConnectorProvider();
+        OutgoingEndpoint endpoint = provider.createOutgoingEndpoint(outgoingConnectorConfig(topic));
+        MessagingChannel<String> channel = null;
 
         try {
-            ConnectorSink sink = connector.createSink(outgoingConnectorConfig(topic));
-            MessagingChannel<String> channel = MessagingChannel.<String>builder()
+            channel = MessagingChannel.<String>builder()
                     .payloadType(String.class)
-                    .addOutgoingConnector(sink)
+                    .addOutgoingConnector(endpoint)
                     .build();
 
             channel.emit("channel payload");
@@ -217,7 +219,11 @@ class KafkaConnectorIT {
                                   ExpectedRecord.create("channel batch first", "channel-batch-1"),
                                   ExpectedRecord.create("channel batch second", "channel-batch-2")));
         } finally {
-            connector.close();
+            if (channel == null) {
+                endpoint.close();
+            } else {
+                channel.close();
+            }
         }
     }
 

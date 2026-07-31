@@ -23,8 +23,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.function.UnaryOperator;
 
 import io.helidon.common.GenericType;
 import io.helidon.common.media.type.MediaTypes;
@@ -102,7 +104,6 @@ class ChannelRegistryFailurePolicyTest {
                                         execution:
                                           shutdown-timeout: PT1S
                                 """),
-                        List.of(),
                         List.of()));
 
         assertThat(failure.getMessage(), containsString("must not override global shutdown-timeout"));
@@ -130,10 +131,11 @@ class ChannelRegistryFailurePolicyTest {
                                           orders-dlq:
                                             connector: test-out
                                     """),
-                            List.of(incoming),
-                            List.of(outgoing));
+                            List.of(incoming, outgoing));
 
         TestConnectorConfig connectorConfig = incoming.config("orders");
+        assertThat(incoming.configCreatedCount(), is(1));
+        assertThat(outgoing.configCreatedCount(), is(1));
         assertThat(connectorConfig.properties().keySet()
                            .stream()
                            .noneMatch(key -> key.equals("failure") || key.startsWith("failure.")),
@@ -179,8 +181,7 @@ class ChannelRegistryFailurePolicyTest {
                                               dead-letter:
                                                 channel: orders-dlq
                                     """),
-                            List.of(incoming),
-                            List.of());
+                            List.of(incoming));
 
         RuntimeException failure = new IllegalStateException("failed");
         ConnectorSourceContext.FailureResult result = incoming.context("orders")
@@ -212,8 +213,7 @@ class ChannelRegistryFailurePolicyTest {
                                                 max-attempts: 1
                                               on-exhausted: DROP
                                     """),
-                            List.of(incoming),
-                            List.of());
+                            List.of(incoming));
 
         Message<String> message = Message.create("order-1");
         IllegalStateException fail = new IllegalStateException("fail");
@@ -258,8 +258,7 @@ class ChannelRegistryFailurePolicyTest {
                                                              audit:
                                                                connector: test-out
                                                        """),
-                                               List.of(incoming),
-                                               List.of(outgoing)));
+                                               List.of(incoming, outgoing)));
 
         assertThat(incoming.createdCount(), is(0));
         assertThat(outgoing.createdCount(), is(0));
@@ -288,8 +287,7 @@ class ChannelRegistryFailurePolicyTest {
                                           orders-dlq:
                                             connector: test-out
                                     """),
-                            List.of(incoming),
-                            List.of(outgoing));
+                            List.of(incoming, outgoing));
 
         IllegalStateException processingFailure = new IllegalStateException("handler failed");
         MessagingException result = assertThrows(
@@ -329,8 +327,7 @@ class ChannelRegistryFailurePolicyTest {
                                                         audit:
                                                           connector: test-out
                                                   """),
-                                          List.of(incoming),
-                                          List.of(outgoing)));
+                                          List.of(incoming, outgoing)));
 
         assertThat(failure.getMessage(), containsString("Unknown dead-letter channel missing"));
         assertThat(incoming.createdCount(), is(0));
@@ -359,8 +356,7 @@ class ChannelRegistryFailurePolicyTest {
                                                         empty:
                                                           connector: test-in
                                                   """),
-                                          List.of(outputless),
-                                          List.of()));
+                                          List.of(outputless)));
         assertThat(outputlessFailure.getMessage(), containsString("has no outputs"));
         assertThat(outputless.createdCount(), is(0));
         assertThat(outputless.awaitAnyStart(), is(false));
@@ -382,8 +378,7 @@ class ChannelRegistryFailurePolicyTest {
                                                             dead-letter:
                                                               channel: orders
                                                   """),
-                                          List.of(self),
-                                          List.of()));
+                                          List.of(self)));
         assertThat(selfFailure.getMessage(), containsString("must not reference itself"));
         assertThat(self.createdCount(), is(0));
         assertThat(self.awaitAnyStart(), is(false));
@@ -428,8 +423,7 @@ class ChannelRegistryFailurePolicyTest {
                                           dead-letter:
                                             channel: a
                                 """),
-                        List.of(incoming),
-                        List.of()));
+                        List.of(incoming)));
 
         assertThat(failure.getMessage(), containsString("Cyclic dead-letter channel route"));
         assertThat(failure.getMessage(), containsString("a"));
@@ -455,9 +449,8 @@ class ChannelRegistryFailurePolicyTest {
                                                         audit:
                                                           connector: test-out
                                                   """),
-                                          List.of(),
                                           List.of(outgoing)));
-        assertThat(incomingFailure.getMessage(), containsString("No incoming connector named missing-in"));
+        assertThat(incomingFailure.getMessage(), containsString("No connector provider of type missing-in"));
         assertThat(outgoing.createdCount(), is(0));
 
         IllegalArgumentException outgoingFailure = assertThrows(
@@ -470,9 +463,91 @@ class ChannelRegistryFailurePolicyTest {
                                                         orders:
                                                           connector: missing-out
                                                   """),
-                                          List.of(),
                                           List.of()));
-        assertThat(outgoingFailure.getMessage(), containsString("No outgoing connector named missing-out"));
+        assertThat(outgoingFailure.getMessage(), containsString("No connector provider of type missing-out"));
+    }
+
+    @Test
+    void testUnsupportedProviderDirectionIsRejectedBeforeEndpointCreation() {
+        TestOutgoingConnector outgoing = new TestOutgoingConnector();
+
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> new ChannelRegistry(List.of(registration("orders", ignored -> { })),
+                                          yaml("""
+                                                  helidon:
+                                                    messaging:
+                                                      incoming:
+                                                        orders:
+                                                          connector: test-out
+                                                  """),
+                                          List.of(outgoing)));
+
+        assertThat(failure.getMessage(), containsString("does not support incoming channel orders"));
+        assertThat(outgoing.createdCount(), is(0));
+    }
+
+    @Test
+    void testDuplicateConnectorProviderTypeIsRejected() {
+        TestOutgoingConnector first = new TestOutgoingConnector();
+        TestOutgoingConnector second = new TestOutgoingConnector();
+
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> new ChannelRegistry(List.of(), yaml("{}"), List.of(first, second)));
+
+        assertThat(failure.getMessage(), containsString("Duplicate connector provider type test-out"));
+        assertThat(first.createdCount(), is(0));
+        assertThat(second.createdCount(), is(0));
+    }
+
+    @Test
+    void testBlankConnectorProviderTypeIsRejected() {
+        AtomicInteger configCreated = new AtomicInteger();
+        ConnectorProvider<TestConnectorConfig> provider = new ConnectorProvider<>() {
+            @Override
+            public String connectorType() {
+                return " ";
+            }
+
+            @Override
+            public TestConnectorConfig createConfig(Config config) {
+                configCreated.incrementAndGet();
+                return TestConnectorConfig.from(config);
+            }
+        };
+
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> new ChannelRegistry(List.of(), yaml("{}"), List.of(provider)));
+
+        assertThat(failure.getMessage(), containsString("Connector provider type must not be blank"));
+        assertThat(configCreated.get(), is(0));
+    }
+
+    @Test
+    void testProviderConfigurationIdentityIsValidatedBeforeEndpointCreation() {
+        assertInvalidConnectorConfiguration(
+                config -> new TestConnectorConfig(ConnectorConfig.Direction.INCOMING,
+                                                  config.channel(),
+                                                  config.connector(),
+                                                  config.properties()),
+                "direction INCOMING",
+                "expected OUTGOING");
+        assertInvalidConnectorConfiguration(
+                config -> new TestConnectorConfig(config.direction(),
+                                                  "other-channel",
+                                                  config.connector(),
+                                                  config.properties()),
+                "channel other-channel",
+                "expected orders");
+        assertInvalidConnectorConfiguration(
+                config -> new TestConnectorConfig(config.direction(),
+                                                  config.channel(),
+                                                  "other-connector",
+                                                  config.properties()),
+                "connector type other-connector",
+                "expected test-out");
     }
 
     @Test
@@ -493,8 +568,7 @@ class ChannelRegistryFailurePolicyTest {
                                                         audit:
                                                           connector: test-out
                                                   """),
-                                          List.of(incoming),
-                                          List.of(outgoing)));
+                                          List.of(incoming, outgoing)));
 
         assertThat(failure.getMessage(), containsString("Incoming channel orders has no outputs"));
         assertThat(incoming.createdCount(), is(0));
@@ -521,7 +595,7 @@ class ChannelRegistryFailurePolicyTest {
                 new GenericType<TestKeyedMessage<String, Integer>>() { },
                 ignored -> keyedDispatches.incrementAndGet());
 
-        ChannelRegistry registry = new ChannelRegistry(List.of(broad, keyed), yaml("{}"), List.of(), List.of());
+        ChannelRegistry registry = new ChannelRegistry(List.of(broad, keyed), yaml("{}"), List.of());
         IllegalArgumentException dispatchFailure = assertThrows(
                 IllegalArgumentException.class,
                 () -> registry.emit("orders", Message.create(1)));
@@ -537,7 +611,7 @@ class ChannelRegistryFailurePolicyTest {
                 new GenericType<TestKeyedMessage<Long, Integer>>() { });
         IllegalArgumentException envelopeFailure = assertThrows(
                 IllegalArgumentException.class,
-                () -> new ChannelRegistry(List.of(keyed, conflictingKeyed), yaml("{}"), List.of(), List.of()));
+                () -> new ChannelRegistry(List.of(keyed, conflictingKeyed), yaml("{}"), List.of()));
         assertThat(envelopeFailure.getMessage(), containsString("conflicting message envelope types"));
 
         ConsumerRegistration conflictingSubtype = registration(
@@ -549,7 +623,6 @@ class ChannelRegistryFailurePolicyTest {
         assertThrows(IllegalArgumentException.class,
                      () -> new ChannelRegistry(List.of(keyed, conflictingSubtype),
                                                yaml("{}"),
-                                               List.of(),
                                                List.of()));
 
         ConsumerRegistration stringList = registration(
@@ -566,7 +639,7 @@ class ChannelRegistryFailurePolicyTest {
                 new GenericType<Message<List<Integer>>>() { });
         IllegalArgumentException payloadFailure = assertThrows(
                 IllegalArgumentException.class,
-                () -> new ChannelRegistry(List.of(stringList, integerList), yaml("{}"), List.of(), List.of()));
+                () -> new ChannelRegistry(List.of(stringList, integerList), yaml("{}"), List.of()));
         assertThat(payloadFailure.getMessage(), containsString("conflicting payload types"));
         assertThat(payloadFailure.getMessage(), containsString("java.util.List<java.lang.String>"));
         assertThat(payloadFailure.getMessage(), containsString("java.util.List<java.lang.Integer>"));
@@ -604,8 +677,7 @@ class ChannelRegistryFailurePolicyTest {
                                       audit:
                                         connector: test-out
                                 """),
-                        List.of(incoming),
-                        List.of(outgoing)));
+                        List.of(incoming, outgoing)));
 
         assertThat(failure.getMessage(), containsString("cannot accept"));
         assertThat(failure.getMessage(), containsString(DeadLetterMessage.class.getName()));
@@ -616,6 +688,29 @@ class ChannelRegistryFailurePolicyTest {
 
     private static Config yaml(String yaml) {
         return Config.just(yaml, MediaTypes.APPLICATION_YAML);
+    }
+
+    private static void assertInvalidConnectorConfiguration(UnaryOperator<TestConnectorConfig> configMapper,
+                                                            String actual,
+                                                            String expected) {
+        TestOutgoingConnector outgoing = new TestOutgoingConnector(configMapper);
+
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> new ChannelRegistry(List.of(),
+                                          yaml("""
+                                                  helidon:
+                                                    messaging:
+                                                      outgoing:
+                                                        orders:
+                                                          connector: test-out
+                                                  """),
+                                          List.of(outgoing)));
+
+        assertThat(failure.getMessage(), containsString(actual));
+        assertThat(failure.getMessage(), containsString(expected));
+        assertThat(outgoing.configCreatedCount(), is(1));
+        assertThat(outgoing.createdCount(), is(0));
     }
 
     private static ConsumerRegistration registration(String channel, Consumer<Message<?>> consumer) {
@@ -692,7 +787,7 @@ class ChannelRegistryFailurePolicyTest {
                                       String channel,
                                       String connector,
                                       Map<String, String> properties) implements ConnectorConfig {
-        public static TestConnectorConfig create(Config config) {
+        private static TestConnectorConfig from(Config config) {
             return new TestConnectorConfig(
                     ConnectorConfig.Direction.valueOf(config.get("direction").asString().orElseThrow()),
                     config.get(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE).asString().orElseThrow(),
@@ -701,23 +796,91 @@ class ChannelRegistryFailurePolicyTest {
         }
     }
 
-    static final class TestIncomingConnector implements IncomingConnector<TestConnectorConfig> {
+    static final class TestIncomingConnector implements IncomingConnectorProvider<TestConnectorConfig> {
         private final Map<String, ConnectorSourceContext> contexts = new ConcurrentHashMap<>();
         private final Map<String, TestConnectorConfig> configs = new ConcurrentHashMap<>();
+        private final AtomicInteger configCreated = new AtomicInteger();
         private final AtomicInteger created = new AtomicInteger();
         private final CountDownLatch anyStart = new CountDownLatch(1);
 
         @Override
-        public String connectorName() {
+        public String connectorType() {
             return "test-in";
         }
 
         @Override
-        public ConnectorSource createSource(TestConnectorConfig config, ConnectorSourceContext context) {
+        public TestConnectorConfig createConfig(Config config) {
+            configCreated.incrementAndGet();
+            return TestConnectorConfig.from(config);
+        }
+
+        @Override
+        public IncomingEndpoint createIncomingEndpoint(TestConnectorConfig config, ConnectorSourceContext context) {
             created.incrementAndGet();
             configs.put(config.channel(), config);
             contexts.put(config.channel(), context);
-            return anyStart::countDown;
+            return new IncomingEndpoint() {
+                private final CountDownLatch ready = new CountDownLatch(1);
+                private final CountDownLatch admission = new CountDownLatch(1);
+                private final CountDownLatch stopped = new CountDownLatch(1);
+                private final AtomicBoolean closed = new AtomicBoolean();
+
+                @Override
+                public void prepareForGraph() {
+                }
+
+                @Override
+                public void run() {
+                    anyStart.countDown();
+                    ready.countDown();
+                    await(admission, Duration.ofDays(1), "admission");
+                    await(stopped, Duration.ofDays(1), "stop");
+                }
+
+                @Override
+                public void awaitReady(Duration timeout) {
+                    await(ready, timeout, "readiness");
+                }
+
+                @Override
+                public void startAdmission() {
+                    admission.countDown();
+                }
+
+                @Override
+                public void stopAdmission() {
+                    admission.countDown();
+                    stopped.countDown();
+                }
+
+                @Override
+                public void checkpoint() {
+                }
+
+                @Override
+                public void forceClose() {
+                    close();
+                }
+
+                @Override
+                public void close() {
+                    if (closed.compareAndSet(false, true)) {
+                        admission.countDown();
+                        stopped.countDown();
+                    }
+                }
+            };
+        }
+
+        private static void await(CountDownLatch latch, Duration timeout, String operation) {
+            try {
+                if (!latch.await(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
+                    throw new MessagingException("Test incoming endpoint " + operation + " timed out");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new MessagingException("Test incoming endpoint " + operation + " was interrupted", e);
+            }
         }
 
         private ConnectorSourceContext context(String channel) {
@@ -732,34 +895,60 @@ class ChannelRegistryFailurePolicyTest {
             return created.get();
         }
 
+        private int configCreatedCount() {
+            return configCreated.get();
+        }
+
         private boolean awaitAnyStart() throws InterruptedException {
             return anyStart.await(100, TimeUnit.MILLISECONDS);
         }
     }
 
-    static final class TestOutgoingConnector implements OutgoingConnector<TestConnectorConfig> {
+    static final class TestOutgoingConnector implements OutgoingConnectorProvider<TestConnectorConfig> {
         private final List<Message<?>> messages = new CopyOnWriteArrayList<>();
+        private final AtomicInteger configCreated = new AtomicInteger();
         private final AtomicInteger created = new AtomicInteger();
         private final AtomicInteger sends = new AtomicInteger();
         private final RuntimeException failure;
+        private final UnaryOperator<TestConnectorConfig> configMapper;
 
         private TestOutgoingConnector() {
-            this(null);
+            this(null, UnaryOperator.identity());
         }
 
         private TestOutgoingConnector(RuntimeException failure) {
+            this(failure, UnaryOperator.identity());
+        }
+
+        private TestOutgoingConnector(UnaryOperator<TestConnectorConfig> configMapper) {
+            this(null, configMapper);
+        }
+
+        private TestOutgoingConnector(RuntimeException failure,
+                                      UnaryOperator<TestConnectorConfig> configMapper) {
             this.failure = failure;
+            this.configMapper = configMapper;
         }
 
         @Override
-        public String connectorName() {
+        public String connectorType() {
             return "test-out";
         }
 
         @Override
-        public ConnectorSink createSink(TestConnectorConfig config) {
+        public TestConnectorConfig createConfig(Config config) {
+            configCreated.incrementAndGet();
+            return configMapper.apply(TestConnectorConfig.from(config));
+        }
+
+        @Override
+        public OutgoingEndpoint createOutgoingEndpoint(TestConnectorConfig config) {
             created.incrementAndGet();
-            return new ConnectorSink() {
+            return new OutgoingEndpoint() {
+                @Override
+                public void start() {
+                }
+
                 @Override
                 public <T> void send(Message<T> message) {
                     sends.incrementAndGet();
@@ -767,6 +956,18 @@ class ChannelRegistryFailurePolicyTest {
                         throw failure;
                     }
                     messages.add(message);
+                }
+
+                @Override
+                public void flush() {
+                }
+
+                @Override
+                public void forceClose() {
+                }
+
+                @Override
+                public void close() {
                 }
             };
         }
@@ -781,6 +982,10 @@ class ChannelRegistryFailurePolicyTest {
 
         private int createdCount() {
             return created.get();
+        }
+
+        private int configCreatedCount() {
+            return configCreated.get();
         }
     }
 }

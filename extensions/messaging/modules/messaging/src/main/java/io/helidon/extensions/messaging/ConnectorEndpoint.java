@@ -16,23 +16,24 @@
 
 package io.helidon.extensions.messaging;
 
-import io.helidon.common.Api;
-
 /**
- * Internal lifecycle contract implemented by connector resources owned by one messaging graph.
+ * Lifecycle owned by one messaging-graph binding.
  * <p>
- * This bridge keeps connector discovery compatible while graph lifecycle and the final endpoint SPI are developed
- * independently. Implementations must make both operations idempotent.
+ * Implementations are one-shot and must make forced and normal close idempotent. A closed endpoint cannot be
+ * restarted or reused by another binding.
  */
-@Api.Internal
-public interface ManagedConnectorBinding extends AutoCloseable {
+public interface ConnectorEndpoint extends AutoCloseable {
     /**
-     * Signal prompt forced shutdown without waiting for normal delivery settlement.
+     * Force prompt shutdown without waiting for normal delivery settlement.
+     * <p>
+     * This method must promptly unblock every in-progress lifecycle, source, or transport operation owned by this
+     * endpoint, including preparation, startup, readiness, admission, and polling as applicable. It may be invoked
+     * concurrently with those operations and must be idempotent.
      */
     void forceClose();
 
     /**
-     * Close the binding after delivery work has drained.
+     * Close this binding after its delivery work has drained.
      */
     @Override
     void close();

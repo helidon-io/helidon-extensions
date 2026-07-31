@@ -312,7 +312,7 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
         output.sendBatch((List) messages);
     }
 
-    private static final class StreamSource implements ConnectorSource, ManagedConnectorBinding {
+    private static final class StreamSource implements ConnectorSource, ConnectorEndpoint {
         private final Stream<?> stream;
         private final Consumer<Object> consumer;
         private final AtomicBoolean runStarted = new AtomicBoolean();

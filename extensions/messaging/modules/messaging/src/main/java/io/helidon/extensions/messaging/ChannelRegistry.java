@@ -17,8 +17,6 @@
 package io.helidon.extensions.messaging;
 
 import java.lang.reflect.GenericArrayType;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
@@ -57,8 +55,7 @@ class ChannelRegistry implements MessagingRuntime {
     @Service.Inject
     ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
                     Config config,
-                    List<IncomingConnector<?>> incomingConnectors,
-                    List<OutgoingConnector<?>> outgoingConnectors,
+                    List<ConnectorProvider<?>> connectorProviders,
                     List<MessageSizeEstimator> sizeEstimators,
                     MessagingLifecycleGuard lifecycleGuard) {
         MessagingExecutionConfig defaultExecutionConfig = executionConfig(config, null);
@@ -67,8 +64,7 @@ class ChannelRegistry implements MessagingRuntime {
         try {
             initialize(consumerRegistrations,
                        config,
-                       incomingConnectors,
-                       outgoingConnectors);
+                       connectorProviders);
             graph.prepare();
         } catch (RuntimeException | Error e) {
             graph.abortPreparation(e);
@@ -79,28 +75,24 @@ class ChannelRegistry implements MessagingRuntime {
 
     ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
                     Config config,
-                    List<IncomingConnector<?>> incomingConnectors,
-                    List<OutgoingConnector<?>> outgoingConnectors,
+                    List<ConnectorProvider<?>> connectorProviders,
                     List<MessageSizeEstimator> sizeEstimators) {
         this(consumerRegistrations,
              config,
-             incomingConnectors,
-             outgoingConnectors,
+             connectorProviders,
              sizeEstimators,
              new MessagingLifecycleGuard());
     }
 
     ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
                     Config config,
-                    List<IncomingConnector<?>> incomingConnectors,
-                    List<OutgoingConnector<?>> outgoingConnectors) {
-        this(consumerRegistrations, config, incomingConnectors, outgoingConnectors, List.of());
+                    List<ConnectorProvider<?>> connectorProviders) {
+        this(consumerRegistrations, config, connectorProviders, List.of());
     }
 
     private void initialize(List<ConsumerRegistration> consumerRegistrations,
                             Config config,
-                            List<IncomingConnector<?>> incomingConnectors,
-                            List<OutgoingConnector<?>> outgoingConnectors) {
+                            List<ConnectorProvider<?>> connectorProviders) {
         Map<String, List<ConsumerRegistration>> grouped = new HashMap<>();
         for (ConsumerRegistration registration : consumerRegistrations) {
             grouped.computeIfAbsent(registration.channel(), ignored -> new ArrayList<>())
@@ -115,8 +107,9 @@ class ChannelRegistry implements MessagingRuntime {
                 .forEach(channel -> ensureChannel(config, channels, channel));
         this.channels = Map.copyOf(channels);
 
-        List<OutgoingBinding> outgoingBindings = prepareOutgoingBindings(config, outgoingConnectors);
-        List<IncomingDescriptor> incomingDescriptors = prepareIncomingDescriptors(config, incomingConnectors);
+        Map<String, ConnectorProvider<?>> providers = connectorProviders(connectorProviders);
+        List<OutgoingBinding> outgoingBindings = prepareOutgoingBindings(config, providers);
+        List<IncomingDescriptor> incomingDescriptors = prepareIncomingDescriptors(config, providers);
         Set<String> outputChannels = new LinkedHashSet<>(grouped.keySet());
         outgoingBindings.stream().map(OutgoingBinding::channel).forEach(outputChannels::add);
         validateFailureRoutes(incomingDescriptors, outputChannels, grouped);
@@ -475,73 +468,87 @@ class ChannelRegistry implements MessagingRuntime {
     }
 
     private List<OutgoingBinding> prepareOutgoingBindings(Config root,
-                                                          List<OutgoingConnector<?>> outgoingConnectors) {
+                                                          Map<String, ConnectorProvider<?>> providers) {
         List<OutgoingBinding> bindings = new ArrayList<>();
-        Map<String, OutgoingConnector<?>> connectors = outgoingConnectors(outgoingConnectors);
         for (String channel : configuredChannels(root, ConnectorConfig.OUTGOING_PREFIX)) {
             Config channelConfig = root.get(ConnectorConfig.OUTGOING_PREFIX + channel);
-            String connectorName = channelConfig.get(ConnectorConfig.CONNECTOR_ATTRIBUTE).asString().orElse(null);
-            if (connectorName == null) {
+            String connectorType = channelConfig.get(ConnectorConfig.CONNECTOR_ATTRIBUTE).asString().orElse(null);
+            if (connectorType == null) {
                 continue;
             }
-            OutgoingConnector<?> connector = connectors.get(connectorName);
-            if (connector == null) {
-                throw new IllegalArgumentException("No outgoing connector named " + connectorName
-                                                           + " for channel " + channel);
+            ConnectorProvider<?> provider = providers.get(connectorType);
+            if (provider == null) {
+                throw new IllegalArgumentException("No connector provider of type " + connectorType
+                                                           + " for outgoing channel " + channel);
+            }
+            if (!(provider instanceof OutgoingConnectorProvider<?> outgoingProvider)) {
+                throw new IllegalArgumentException("Connector provider type " + connectorType
+                                                           + " does not support outgoing channel " + channel);
             }
 
-            Class<? extends ConnectorConfig> configType = outgoingConfigType(connector);
-            ConnectorConfig connectorConfig = connectorConfig(root,
-                                                             channelConfig,
-                                                             configType,
-                                                             ConnectorConfig.Direction.OUTGOING,
-                                                             channel,
-                                                             connectorName);
-            bindings.add(new OutgoingBinding(channel, connector, connectorConfig));
+            Config connectorConfig = connectorConfig(root,
+                                                     channelConfig,
+                                                     ConnectorConfig.Direction.OUTGOING,
+                                                     channel,
+                                                     connectorType);
+            bindings.add(new OutgoingBinding(channel, connectorType, outgoingProvider, connectorConfig));
         }
         return List.copyOf(bindings);
     }
 
     private List<IncomingDescriptor> prepareIncomingDescriptors(Config root,
-                                                                List<IncomingConnector<?>> incomingConnectors) {
+                                                                Map<String, ConnectorProvider<?>> providers) {
         List<IncomingDescriptor> descriptors = new ArrayList<>();
-        Map<String, IncomingConnector<?>> connectors = incomingConnectors(incomingConnectors);
         for (String channel : configuredChannels(root, ConnectorConfig.INCOMING_PREFIX)) {
             Config channelConfig = root.get(ConnectorConfig.INCOMING_PREFIX + channel);
-            String connectorName = channelConfig.get(ConnectorConfig.CONNECTOR_ATTRIBUTE).asString().orElse(null);
-            if (connectorName == null) {
+            String connectorType = channelConfig.get(ConnectorConfig.CONNECTOR_ATTRIBUTE).asString().orElse(null);
+            if (connectorType == null) {
                 continue;
             }
-            IncomingConnector<?> connector = connectors.get(connectorName);
-            if (connector == null) {
-                throw new IllegalArgumentException("No incoming connector named " + connectorName
-                                                           + " for channel " + channel);
+            ConnectorProvider<?> provider = providers.get(connectorType);
+            if (provider == null) {
+                throw new IllegalArgumentException("No connector provider of type " + connectorType
+                                                           + " for incoming channel " + channel);
+            }
+            if (!(provider instanceof IncomingConnectorProvider<?> incomingProvider)) {
+                throw new IllegalArgumentException("Connector provider type " + connectorType
+                                                           + " does not support incoming channel " + channel);
             }
 
-            Class<? extends ConnectorConfig> configType = incomingConfigType(connector);
-            ConnectorConfig connectorConfig = connectorConfig(root,
-                                                             channelConfig,
-                                                             configType,
-                                                             ConnectorConfig.Direction.INCOMING,
-                                                             channel,
-                                                             connectorName);
+            Config connectorConfig = connectorConfig(root,
+                                                     channelConfig,
+                                                     ConnectorConfig.Direction.INCOMING,
+                                                     channel,
+                                                     connectorType);
             FailurePolicy failurePolicy = FailurePolicy.create(channelConfig.get("failure"));
-            descriptors.add(new IncomingDescriptor(channel, failurePolicy, connector, connectorConfig));
+            descriptors.add(new IncomingDescriptor(channel,
+                                                   connectorType,
+                                                   failurePolicy,
+                                                   incomingProvider,
+                                                   connectorConfig));
         }
         return List.copyOf(descriptors);
     }
 
     private void configureOutgoingConnectors(List<OutgoingBinding> bindings) {
         for (OutgoingBinding binding : bindings) {
-            addOutgoingConnector(binding.channel(), createSink(binding.connector(), binding.config()));
+            OutgoingEndpoint endpoint = createOutgoingEndpoint(binding.provider(),
+                                                               binding.config(),
+                                                               binding.channel(),
+                                                               binding.connectorType());
+            addOutgoingConnector(binding.channel(), endpoint);
         }
     }
 
     private void configureIncomingConnectors(List<IncomingDescriptor> descriptors) {
         for (IncomingDescriptor descriptor : descriptors) {
             ConnectorSourceContext context = incomingContext(descriptor.channel(), descriptor.failurePolicy());
-            ConnectorSource source = createSource(descriptor.connector(), descriptor.config(), context);
-            graph.addSource("connector-" + descriptor.channel(), source);
+            IncomingEndpoint endpoint = createIncomingEndpoint(descriptor.provider(),
+                                                               descriptor.config(),
+                                                               descriptor.channel(),
+                                                               descriptor.connectorType(),
+                                                               context);
+            graph.addSource("connector-" + descriptor.channel(), endpoint);
         }
     }
 
@@ -634,26 +641,20 @@ class ChannelRegistry implements MessagingRuntime {
         visited.add(source);
     }
 
-    private Map<String, OutgoingConnector<?>> outgoingConnectors(List<OutgoingConnector<?>> outgoingConnectors) {
-        Map<String, OutgoingConnector<?>> connectors = new HashMap<>();
-        for (OutgoingConnector<?> connector : outgoingConnectors) {
-            OutgoingConnector<?> previous = connectors.putIfAbsent(connector.connectorName(), connector);
+    private Map<String, ConnectorProvider<?>> connectorProviders(List<ConnectorProvider<?>> connectorProviders) {
+        Map<String, ConnectorProvider<?>> providers = new HashMap<>();
+        for (ConnectorProvider<?> provider : connectorProviders) {
+            Objects.requireNonNull(provider, "Connector provider");
+            String connectorType = Objects.requireNonNull(provider.connectorType(), "Connector provider type");
+            if (connectorType.isBlank()) {
+                throw new IllegalArgumentException("Connector provider type must not be blank");
+            }
+            ConnectorProvider<?> previous = providers.putIfAbsent(connectorType, provider);
             if (previous != null) {
-                throw new IllegalArgumentException("Duplicate outgoing connector named " + connector.connectorName());
+                throw new IllegalArgumentException("Duplicate connector provider type " + connectorType);
             }
         }
-        return connectors;
-    }
-
-    private Map<String, IncomingConnector<?>> incomingConnectors(List<IncomingConnector<?>> incomingConnectors) {
-        Map<String, IncomingConnector<?>> connectors = new HashMap<>();
-        for (IncomingConnector<?> connector : incomingConnectors) {
-            IncomingConnector<?> previous = connectors.putIfAbsent(connector.connectorName(), connector);
-            if (previous != null) {
-                throw new IllegalArgumentException("Duplicate incoming connector named " + connector.connectorName());
-            }
-        }
-        return connectors;
+        return Map.copyOf(providers);
     }
 
     private Set<String> configuredChannels(Config root, String prefix) {
@@ -692,31 +693,16 @@ class ChannelRegistry implements MessagingRuntime {
         return MessagingExecutionConfig.create(Config.just(ConfigSources.create(properties)));
     }
 
-    private ConnectorConfig connectorConfig(Config root,
-                                            Config channelConfig,
-                                            Class<? extends ConnectorConfig> configType,
-                                            ConnectorConfig.Direction direction,
-                                            String channel,
-                                            String connector) {
+    private Config connectorConfig(Config root,
+                                   Config channelConfig,
+                                   ConnectorConfig.Direction direction,
+                                   String channel,
+                                   String connector) {
         Map<String, String> properties = connectorProperties(root, channelConfig, connector);
         properties.put(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, channel);
         properties.put(ConnectorConfig.CONNECTOR_ATTRIBUTE, connector);
         properties.put("direction", direction.name());
-
-        Config config = Config.just(ConfigSources.create(properties));
-        try {
-            Method create = configType.getMethod("create", Config.class);
-            return configType.cast(create.invoke(null, config));
-        } catch (NoSuchMethodException e) {
-            throw new IllegalArgumentException("Connector config " + configType.getName()
-                                                       + " must expose static create(Config)", e);
-        } catch (IllegalAccessException e) {
-            throw new IllegalArgumentException("Connector config " + configType.getName()
-                                                       + " create(Config) is not accessible", e);
-        } catch (InvocationTargetException e) {
-            throw new IllegalArgumentException("Cannot create connector config " + configType.getName(),
-                                               e.getCause());
-        }
+        return Config.just(ConfigSources.create(properties));
     }
 
     private Map<String, String> connectorProperties(Config root, Config channelConfig, String connector) {
@@ -727,44 +713,69 @@ class ChannelRegistry implements MessagingRuntime {
         return properties;
     }
 
-    @SuppressWarnings("unchecked")
-    private ConnectorSink createSink(OutgoingConnector<?> connector, ConnectorConfig config) {
-        return ((OutgoingConnector<ConnectorConfig>) connector).createSink(config);
+    private <C extends ConnectorConfig> OutgoingEndpoint createOutgoingEndpoint(OutgoingConnectorProvider<C> provider,
+                                                                                Config config,
+                                                                                String channel,
+                                                                                String connectorType) {
+        C connectorConfig = createConnectorConfig(provider,
+                                                  config,
+                                                  ConnectorConfig.Direction.OUTGOING,
+                                                  channel,
+                                                  connectorType);
+        return Objects.requireNonNull(provider.createOutgoingEndpoint(connectorConfig), "Outgoing endpoint");
     }
 
-    @SuppressWarnings("unchecked")
-    private ConnectorSource createSource(IncomingConnector<?> connector,
-                                         ConnectorConfig config,
-                                         ConnectorSourceContext context) {
-        return ((IncomingConnector<ConnectorConfig>) connector).createSource(config, context);
+    private <C extends ConnectorConfig> IncomingEndpoint createIncomingEndpoint(IncomingConnectorProvider<C> provider,
+                                                                                Config config,
+                                                                                String channel,
+                                                                                String connectorType,
+                                                                                ConnectorSourceContext context) {
+        C connectorConfig = createConnectorConfig(provider,
+                                                  config,
+                                                  ConnectorConfig.Direction.INCOMING,
+                                                  channel,
+                                                  connectorType);
+        return Objects.requireNonNull(provider.createIncomingEndpoint(connectorConfig, context), "Incoming endpoint");
     }
 
-    @SuppressWarnings("unchecked")
-    private Class<? extends ConnectorConfig> outgoingConfigType(OutgoingConnector<?> connector) {
-        return (Class<? extends ConnectorConfig>) connectorConfigType(connector.getClass(), "createSink", 1);
-    }
-
-    @SuppressWarnings("unchecked")
-    private Class<? extends ConnectorConfig> incomingConfigType(IncomingConnector<?> connector) {
-        return (Class<? extends ConnectorConfig>) connectorConfigType(connector.getClass(), "createSource", 2);
-    }
-
-    private Class<?> connectorConfigType(Class<?> connectorType, String methodName, int parameterCount) {
-        for (Method method : connectorType.getMethods()) {
-            if (method.isBridge() || !method.getName().equals(methodName)) {
-                continue;
-            }
-            Class<?>[] parameterTypes = method.getParameterTypes();
-            if (parameterTypes.length != parameterCount) {
-                continue;
-            }
-            if (ConnectorConfig.class.isAssignableFrom(parameterTypes[0])) {
-                return parameterTypes[0];
-            }
+    private <C extends ConnectorConfig> C createConnectorConfig(ConnectorProvider<C> provider,
+                                                                Config config,
+                                                                ConnectorConfig.Direction direction,
+                                                                String channel,
+                                                                String connectorType) {
+        C connectorConfig = Objects.requireNonNull(provider.createConfig(config), "Connector configuration");
+        if (connectorConfig.direction() != direction) {
+            throw invalidConnectorConfig(connectorType,
+                                         channel,
+                                         "direction",
+                                         direction,
+                                         connectorConfig.direction());
         }
-        throw new IllegalArgumentException("Connector " + connectorType.getName()
-                                                   + " must declare " + methodName
-                                                   + " with a ConnectorConfig parameter");
+        if (!channel.equals(connectorConfig.channel())) {
+            throw invalidConnectorConfig(connectorType,
+                                         channel,
+                                         "channel",
+                                         channel,
+                                         connectorConfig.channel());
+        }
+        if (!connectorType.equals(connectorConfig.connector())) {
+            throw invalidConnectorConfig(connectorType,
+                                         channel,
+                                         "connector type",
+                                         connectorType,
+                                         connectorConfig.connector());
+        }
+        return connectorConfig;
+    }
+
+    private IllegalArgumentException invalidConnectorConfig(String connectorType,
+                                                            String channel,
+                                                            String property,
+                                                            Object expected,
+                                                            Object actual) {
+        return new IllegalArgumentException("Connector provider type " + connectorType
+                                                    + " returned configuration with " + property + " " + actual
+                                                    + " for channel " + channel + "; expected " + expected);
     }
 
     private static String firstSegment(String key) {
@@ -990,13 +1001,17 @@ class ChannelRegistry implements MessagingRuntime {
         }
     }
 
-    private record OutgoingBinding(String channel, OutgoingConnector<?> connector, ConnectorConfig config) {
+    private record OutgoingBinding(String channel,
+                                   String connectorType,
+                                   OutgoingConnectorProvider<?> provider,
+                                   Config config) {
     }
 
     private record IncomingDescriptor(String channel,
+                                      String connectorType,
                                       FailurePolicy failurePolicy,
-                                      IncomingConnector<?> connector,
-                                      ConnectorConfig config) {
+                                      IncomingConnectorProvider<?> provider,
+                                      Config config) {
     }
 
 }

@@ -34,8 +34,6 @@ import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -51,14 +49,11 @@ import java.util.function.Consumer;
 
 import io.helidon.extensions.messaging.ConnectorDelivery;
 import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
-import io.helidon.extensions.messaging.ConnectorSource;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
-import io.helidon.extensions.messaging.IncomingConnector;
-import io.helidon.extensions.messaging.ManagedConnectorSource;
+import io.helidon.extensions.messaging.IncomingEndpoint;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.MessagingRejectedException;
-import io.helidon.service.registry.Service;
 
 import static java.nio.file.StandardOpenOption.APPEND;
 import static java.nio.file.StandardOpenOption.CREATE;
@@ -68,7 +63,7 @@ import static java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY;
 import static java.nio.file.StandardWatchEventKinds.OVERFLOW;
 
 /**
- * File incoming connector.
+ * File incoming endpoint implementation.
  * <p>
  * Within an active source lifetime, a complete appended-line batch remains pending until delivery succeeds or the
  * portable failure policy settles it. The connector does not advance its in-memory file offset or deliver later
@@ -80,59 +75,16 @@ import static java.nio.file.StandardWatchEventKinds.OVERFLOW;
  * The file offset is not persisted. A replacement source starts at the file's current end and does not recover an
  * unsettled batch from an earlier source lifetime.
  */
-@Service.Singleton
-public class FileIncomingConnector implements IncomingConnector<FileConnectorConfig> {
+final class FileIncomingConnector {
     private static final long CLOSE_CHECK_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(100);
     private static final int READ_BUFFER_SIZE = 8192;
     private static final int SNAPSHOT_ATTEMPTS = 3;
 
-    private final AtomicBoolean closed = new AtomicBoolean();
-    private final Set<FileSource> sources = Collections.newSetFromMap(new IdentityHashMap<>());
-    private final ReentrantLock sourcesLock = new ReentrantLock();
-
-    @Override
-    public String connectorName() {
-        return FileOutgoingConnector.CONNECTOR;
+    private FileIncomingConnector() {
     }
 
-    @Override
-    public ConnectorSource createSource(FileConnectorConfig config, ConnectorSourceContext context) {
-        sourcesLock.lock();
-        try {
-            if (closed.get()) {
-                throw new IllegalStateException("File incoming connector is closed");
-            }
-            FileSource source = FileSource.managed(config, context, this::removeSource);
-            sources.add(source);
-            return source;
-        } finally {
-            sourcesLock.unlock();
-        }
-    }
-
-    @Override
-    @Service.PreDestroy
-    public void close() {
-        List<FileSource> sourceSnapshot;
-        sourcesLock.lock();
-        try {
-            closed.set(true);
-            sourceSnapshot = List.copyOf(sources);
-        } finally {
-            sourcesLock.unlock();
-        }
-        for (FileSource source : sourceSnapshot) {
-            source.forceClose();
-        }
-    }
-
-    private void removeSource(FileSource source) {
-        sourcesLock.lock();
-        try {
-            sources.remove(source);
-        } finally {
-            sourcesLock.unlock();
-        }
+    static IncomingEndpoint createEndpoint(FileConnectorConfig config, ConnectorSourceContext context) {
+        return FileSource.managed(Objects.requireNonNull(config), Objects.requireNonNull(context), ignored -> { });
     }
 
     record FileSource(FileConnectorConfig config,
@@ -147,7 +99,7 @@ public class FileIncomingConnector implements IncomingConnector<FileConnectorCon
                       AtomicBoolean draining,
                       CountDownLatch admissionSignal,
                       CompletableFuture<Void> ready,
-                      Consumer<FileSource> completion) implements ManagedConnectorSource {
+                      Consumer<FileSource> completion) implements IncomingEndpoint {
         private static FileSource managed(FileConnectorConfig config,
                                           ConnectorSourceContext context,
                                           Consumer<FileSource> completion) {
@@ -355,6 +307,11 @@ public class FileIncomingConnector implements IncomingConnector<FileConnectorCon
         public void stopAdmission() {
             draining.set(true);
             admissionSignal.countDown();
+        }
+
+        @Override
+        public void checkpoint() {
+            // File delivery is synchronous and the in-memory cursor advances before the runtime drain completes.
         }
 
         @Override
