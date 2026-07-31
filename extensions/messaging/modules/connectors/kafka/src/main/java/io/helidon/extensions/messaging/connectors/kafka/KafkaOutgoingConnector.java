@@ -29,9 +29,11 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 import io.helidon.extensions.messaging.ConnectorSink;
 import io.helidon.extensions.messaging.DeadLetterMessage;
+import io.helidon.extensions.messaging.ManagedConnectorBinding;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.OutgoingConnector;
@@ -143,27 +145,44 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
         ProducerResource resource = new ProducerResource(producer, config.closeTimeout());
         producers.add(resource);
         if (closed.get()) {
-            producers.remove(resource);
             resource.close();
+            producers.remove(resource);
             throw new IllegalStateException("Kafka outgoing connector is closed");
         }
-        return new KafkaSink(config.topic(), config.sendTimeout(), producer);
+        return new KafkaSink(config.topic(),
+                             config.sendTimeout(),
+                             producer,
+                             () -> {
+                                 resource.forceClose();
+                                 producers.remove(resource);
+                             },
+                             () -> {
+                                 resource.close();
+                                 producers.remove(resource);
+                             });
     }
 
     @Override
     @Service.PreDestroy
     public void close() {
-        if (!closed.compareAndSet(false, true)) {
-            return;
-        }
+        closed.set(true);
+        RuntimeException closeFailure = null;
         for (ProducerResource producer : producers) {
             try {
                 producer.close();
+                producers.remove(producer);
             } catch (RuntimeException e) {
                 LOGGER.log(System.Logger.Level.ERROR, "Cannot close Kafka producer", e);
+                if (closeFailure == null) {
+                    closeFailure = e;
+                } else if (closeFailure != e) {
+                    closeFailure.addSuppressed(e);
+                }
             }
         }
-        producers.clear();
+        if (closeFailure != null) {
+            throw closeFailure;
+        }
     }
 
     @FunctionalInterface
@@ -171,15 +190,23 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
         Producer<Object, Object> create(Map<String, Object> properties);
     }
 
-    private static final class KafkaSink implements ConnectorSink {
+    private static final class KafkaSink implements ConnectorSink, ManagedConnectorBinding {
         private final String topic;
         private final Duration sendTimeout;
         private final Producer<Object, Object> producer;
+        private final Runnable forceClose;
+        private final Runnable close;
 
-        private KafkaSink(String topic, Duration sendTimeout, Producer<Object, Object> producer) {
+        private KafkaSink(String topic,
+                          Duration sendTimeout,
+                          Producer<Object, Object> producer,
+                          Runnable forceClose,
+                          Runnable close) {
             this.topic = topic;
             this.sendTimeout = sendTimeout;
             this.producer = producer;
+            this.forceClose = forceClose;
+            this.close = close;
         }
 
         @Override
@@ -201,6 +228,16 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
             for (Future<RecordMetadata> result : results) {
                 await(result);
             }
+        }
+
+        @Override
+        public void forceClose() {
+            forceClose.run();
+        }
+
+        @Override
+        public void close() {
+            close.run();
         }
 
         private Future<RecordMetadata> enqueue(Message<?> message) {
@@ -349,7 +386,8 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
     private static final class ProducerResource {
         private final Producer<Object, Object> producer;
         private final Duration closeTimeout;
-        private final AtomicBoolean closed = new AtomicBoolean();
+        private final ReentrantLock closeLock = new ReentrantLock();
+        private boolean closed;
 
         private ProducerResource(Producer<Object, Object> producer, Duration closeTimeout) {
             this.producer = producer;
@@ -357,8 +395,28 @@ public class KafkaOutgoingConnector implements OutgoingConnector<KafkaConnectorC
         }
 
         private void close() {
-            if (closed.compareAndSet(false, true)) {
+            closeLock.lock();
+            try {
+                if (closed) {
+                    return;
+                }
                 producer.close(closeTimeout);
+                closed = true;
+            } finally {
+                closeLock.unlock();
+            }
+        }
+
+        private void forceClose() {
+            closeLock.lock();
+            try {
+                if (closed) {
+                    return;
+                }
+                producer.close(Duration.ZERO);
+                closed = true;
+            } finally {
+                closeLock.unlock();
             }
         }
     }

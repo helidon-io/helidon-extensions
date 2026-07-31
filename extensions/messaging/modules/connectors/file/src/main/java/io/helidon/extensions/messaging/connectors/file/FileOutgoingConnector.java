@@ -21,6 +21,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 
 import io.helidon.extensions.messaging.ConnectorSink;
 import io.helidon.extensions.messaging.Message;
@@ -36,11 +37,11 @@ import io.helidon.service.registry.Service;
  */
 @Service.Singleton
 public class FileOutgoingConnector implements OutgoingConnector<FileConnectorConfig> {
-    private static final Object[] WRITE_LOCKS = new Object[64];
+    private static final ReentrantLock[] WRITE_LOCKS = new ReentrantLock[64];
 
     static {
         for (int i = 0; i < WRITE_LOCKS.length; i++) {
-            WRITE_LOCKS[i] = new Object();
+            WRITE_LOCKS[i] = new ReentrantLock();
         }
     }
 
@@ -57,11 +58,11 @@ public class FileOutgoingConnector implements OutgoingConnector<FileConnectorCon
     @Override
     public ConnectorSink createSink(FileConnectorConfig config) {
         Path path = config.path().toAbsolutePath().normalize();
-        Object writeLock = WRITE_LOCKS[Math.floorMod(path.hashCode(), WRITE_LOCKS.length)];
+        ReentrantLock writeLock = WRITE_LOCKS[Math.floorMod(path.hashCode(), WRITE_LOCKS.length)];
         return new FileSink(config, path, writeLock);
     }
 
-    private record FileSink(FileConnectorConfig config, Path path, Object writeLock) implements ConnectorSink {
+    private record FileSink(FileConnectorConfig config, Path path, ReentrantLock writeLock) implements ConnectorSink {
         @Override
         public <T> void send(Message<T> message) {
             write(String.valueOf(message.entity()) + config.lineSeparator());
@@ -81,7 +82,8 @@ public class FileOutgoingConnector implements OutgoingConnector<FileConnectorCon
         }
 
         private void write(String content) {
-            synchronized (writeLock) {
+            writeLock.lock();
+            try {
                 Path parent = path.getParent();
                 try {
                     if (parent != null) {
@@ -94,6 +96,8 @@ public class FileOutgoingConnector implements OutgoingConnector<FileConnectorCon
                 } catch (IOException e) {
                     throw new MessagingException("File outgoing connector failed", e);
                 }
+            } finally {
+                writeLock.unlock();
             }
         }
     }

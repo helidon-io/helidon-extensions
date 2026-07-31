@@ -23,6 +23,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Compatibility reservation for independently implemented connector contexts.
@@ -31,6 +32,7 @@ final class IndependentConnectorDeliveryReservation implements ConnectorDelivery
     private final ConnectorSourceContext context;
     private final int maxMessages;
     private final long maxAdmissionBytes;
+    private final ReentrantLock stateLock = new ReentrantLock();
     private State state = State.OPEN;
 
     IndependentConnectorDeliveryReservation(ConnectorSourceContext context,
@@ -42,47 +44,62 @@ final class IndependentConnectorDeliveryReservation implements ConnectorDelivery
     }
 
     @Override
-    public synchronized <T> ConnectorDelivery start(List<? extends Message<T>> messages,
+    public <T> ConnectorDelivery start(List<? extends Message<T>> messages,
+                                       long admissionBytes,
+                                       Runnable delivery) {
+        stateLock.lock();
+        try {
+            requireOpen();
+            try {
+                validateActual(messages, admissionBytes, delivery);
+                ConnectorDelivery result = Objects.requireNonNull(
+                        context.submitDelivery(messages, admissionBytes, delivery),
+                        "Connector delivery");
+                state = State.STARTED;
+                return result;
+            } catch (RuntimeException | Error e) {
+                state = State.CLOSED;
+                throw e;
+            }
+        } finally {
+            stateLock.unlock();
+        }
+    }
+
+    @Override
+    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
                                                     long admissionBytes,
                                                     Runnable delivery) {
-        requireOpen();
+        stateLock.lock();
         try {
-            validateActual(messages, admissionBytes, delivery);
-            ConnectorDelivery result = Objects.requireNonNull(
-                    context.submitDelivery(messages, admissionBytes, delivery),
-                    "Connector delivery");
-            state = State.STARTED;
-            return result;
-        } catch (RuntimeException | Error e) {
-            state = State.CLOSED;
-            throw e;
-        }
-    }
-
-    @Override
-    public synchronized <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                                 long admissionBytes,
-                                                                 Runnable delivery) {
-        requireOpen();
-        try {
-            validateActual(messages, admissionBytes, delivery);
-            Optional<ConnectorDelivery> result = Objects.requireNonNull(
-                    context.trySubmitDelivery(messages, admissionBytes, delivery),
-                    "Connector delivery result");
-            if (result.isPresent()) {
-                state = State.STARTED;
+            requireOpen();
+            try {
+                validateActual(messages, admissionBytes, delivery);
+                Optional<ConnectorDelivery> result = Objects.requireNonNull(
+                        context.trySubmitDelivery(messages, admissionBytes, delivery),
+                        "Connector delivery result");
+                if (result.isPresent()) {
+                    state = State.STARTED;
+                }
+                return result;
+            } catch (RuntimeException | Error e) {
+                state = State.CLOSED;
+                throw e;
             }
-            return result;
-        } catch (RuntimeException | Error e) {
-            state = State.CLOSED;
-            throw e;
+        } finally {
+            stateLock.unlock();
         }
     }
 
     @Override
-    public synchronized void close() {
-        if (state == State.OPEN) {
-            state = State.CLOSED;
+    public void close() {
+        stateLock.lock();
+        try {
+            if (state == State.OPEN) {
+                state = State.CLOSED;
+            }
+        } finally {
+            stateLock.unlock();
         }
     }
 

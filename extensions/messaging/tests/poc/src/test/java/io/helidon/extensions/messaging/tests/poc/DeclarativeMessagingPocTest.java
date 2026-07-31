@@ -49,6 +49,7 @@ import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.MultiHopM
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.MultiHopMessageConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.Producer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.SecondChannelOneConsumer;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ShutdownConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.TestIncomingConnector;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryConfig;
@@ -523,6 +524,34 @@ class DeclarativeMessagingPocTest {
     }
 
     @Test
+    void testMessagingStopsBeforeConsumerServiceIsDestroyed() {
+        ShutdownConsumer.events().clear();
+        useConfig(Map.of("helidon.messaging.incoming." + ChannelMessagingTypes.SHUTDOWN_CHANNEL + ".connector",
+                         ChannelMessagingTypes.SHUTDOWN_CONNECTOR));
+        registry.get(MessagingRuntime.class);
+        registry.get(ShutdownConsumer.class);
+
+        registryManager.shutdown();
+
+        assertThat(ShutdownConsumer.events(), is(List.of("source-start", "source-stop", "consumer-close")));
+    }
+
+    @Test
+    void testMessagingStartsEagerlyAtItsRunLevel() {
+        ShutdownConsumer.events().clear();
+
+        startWithConfig(Map.of("helidon.messaging.incoming." + ChannelMessagingTypes.SHUTDOWN_CHANNEL + ".connector",
+                               ChannelMessagingTypes.SHUTDOWN_CONNECTOR));
+
+        assertThat(registry.get(Config.class)
+                           .get("helidon.messaging.incoming." + ChannelMessagingTypes.SHUTDOWN_CHANNEL + ".connector")
+                           .asString()
+                           .orElse(""),
+                   is(ChannelMessagingTypes.SHUTDOWN_CONNECTOR));
+        assertThat(ShutdownConsumer.events(), is(List.of("source-start")));
+    }
+
+    @Test
     void testNamedChannelsAreIsolated() {
         var producer = registry.get(Producer.class);
 
@@ -557,6 +586,16 @@ class DeclarativeMessagingPocTest {
                 .putContractInstance(Config.class, config)
                 .build();
         registryManager = ServiceRegistryManager.create(registryConfig);
+        registry = registryManager.registry();
+    }
+
+    private void startWithConfig(Map<String, String> values) {
+        registryManager.shutdown();
+        Config config = Config.just(ConfigSources.create(values));
+        ServiceRegistryConfig registryConfig = ServiceRegistryConfig.builder()
+                .putContractInstance(Config.class, config)
+                .build();
+        registryManager = ServiceRegistryManager.start(registryConfig);
         registry = registryManager.registry();
     }
 

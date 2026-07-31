@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 
 /**
  * Runtime-owned delivery and source task engine.
@@ -52,11 +53,14 @@ final class DeliveryEngine implements AutoCloseable {
     private final Map<String, ChannelDispatcher> dispatchers = new ConcurrentHashMap<>();
     private final Set<Thread> sourceThreads = ConcurrentHashMap.newKeySet();
     private final Set<Thread> dispatchThreads = ConcurrentHashMap.newKeySet();
+    private final ReentrantLock sourceThreadsLock = new ReentrantLock();
+    private final ReentrantLock dispatchThreadsLock = new ReentrantLock();
     private final List<MessageSizeEstimator> sizeEstimators;
     private final ThreadFactory dispatchThreadFactory;
     private final ThreadFactory cleanupThreadFactory;
     private final ThreadFactory sourceThreadFactory;
     private final Duration shutdownTimeout;
+    private final AtomicBoolean accepting = new AtomicBoolean(true);
     private final AtomicBoolean closed = new AtomicBoolean();
 
     DeliveryEngine(MessagingExecutionConfig defaultConfig, List<MessageSizeEstimator> sizeEstimators) {
@@ -71,7 +75,7 @@ final class DeliveryEngine implements AutoCloseable {
     void registerChannel(String channel, MessagingExecutionConfig config) {
         Objects.requireNonNull(channel);
         Objects.requireNonNull(config);
-        if (closed.get()) {
+        if (!accepting.get() || closed.get()) {
             throw rejected(channel,
                            MessagingRejectedException.Reason.SHUTDOWN,
                            "Messaging runtime is shutting down");
@@ -195,49 +199,99 @@ final class DeliveryEngine implements AutoCloseable {
     }
 
     void runWithDispatchThreadRegistryLock(Runnable action) {
-        synchronized (dispatchThreads) {
+        dispatchThreadsLock.lock();
+        try {
             action.run();
+        } finally {
+            dispatchThreadsLock.unlock();
         }
     }
 
-    void startSource(String name, Runnable source) {
+    SourceTask startSource(String name, Runnable source) {
         Objects.requireNonNull(name);
         Objects.requireNonNull(source);
-        synchronized (sourceThreads) {
-            if (closed.get()) {
+        sourceThreadsLock.lock();
+        try {
+            if (!accepting.get() || closed.get()) {
                 throw rejected(name,
                                MessagingRejectedException.Reason.SHUTDOWN,
                                "Messaging runtime is shutting down");
             }
 
+            SourceTask sourceTask = new SourceTask(name, source);
             Thread thread = sourceThreadFactory.newThread(() -> {
+                Throwable failure = null;
                 try {
                     source.run();
+                } catch (RuntimeException | Error t) {
+                    failure = t;
+                    throw t;
                 } finally {
                     sourceThreads.remove(Thread.currentThread());
+                    sourceTask.complete(failure);
                 }
             });
+            sourceTask.thread(thread);
             sourceThreads.add(thread);
             try {
                 thread.start();
             } catch (RuntimeException | Error e) {
                 sourceThreads.remove(thread);
+                sourceTask.complete(e);
                 throw e;
             }
+            return sourceTask;
+        } finally {
+            sourceThreadsLock.unlock();
         }
     }
 
-    @Override
-    public void close() {
+    Duration shutdownTimeout() {
+        return shutdownTimeout;
+    }
+
+    void beginDrain() {
+        if (!accepting.compareAndSet(true, false)) {
+            return;
+        }
+        dispatchers.values().forEach(ChannelDispatcher::beginDrain);
+    }
+
+    boolean awaitDrained(Duration timeout) {
+        Objects.requireNonNull(timeout);
+        long deadline = saturatedAdd(System.nanoTime(), timeout.toNanos());
+        for (ChannelDispatcher dispatcher : dispatchers.values()) {
+            if (!dispatcher.awaitDrained(deadline)) {
+                return false;
+            }
+        }
+        return awaitSourceTermination(deadline);
+    }
+
+    void forceShutdown() {
+        accepting.set(false);
         if (!closed.compareAndSet(false, true)) {
             return;
         }
 
         dispatchers.values().forEach(ChannelDispatcher::close);
-        synchronized (sourceThreads) {
+        sourceThreadsLock.lock();
+        try {
             sourceThreads.forEach(Thread::interrupt);
+        } finally {
+            sourceThreadsLock.unlock();
         }
-        awaitTermination();
+    }
+
+    @Override
+    public void close() {
+        forceShutdown();
+        if (!awaitTermination(shutdownTimeout)) {
+            int remaining = sourceThreads.size() + dispatchThreads.size();
+            LOGGER.log(System.Logger.Level.ERROR,
+                       "Messaging shutdown timed out after " + shutdownTimeout
+                               + "; " + remaining + " task(s) remain active");
+        }
     }
 
     private ChannelDispatcher dispatcher(String channel) {
@@ -427,7 +481,8 @@ final class DeliveryEngine implements AutoCloseable {
     }
 
     boolean startCleanup(Runnable cleanup) {
-        synchronized (dispatchThreads) {
+        dispatchThreadsLock.lock();
+        try {
             if (closed.get()) {
                 return false;
             }
@@ -446,16 +501,26 @@ final class DeliveryEngine implements AutoCloseable {
                 dispatchThreads.remove(thread);
                 throw e;
             }
+        } finally {
+            dispatchThreadsLock.unlock();
         }
     }
 
-    private void awaitTermination() {
-        long timeoutNanos = shutdownTimeout.toNanos();
-        long deadline = saturatedAdd(System.nanoTime(), timeoutNanos);
+    boolean awaitTermination(Duration timeout) {
+        Objects.requireNonNull(timeout);
+        long deadline = saturatedAdd(System.nanoTime(), timeout.toNanos());
         List<Thread> tasks = new ArrayList<>(sourceThreads.size() + dispatchThreads.size());
-        tasks.addAll(sourceThreads);
-        synchronized (dispatchThreads) {
+        sourceThreadsLock.lock();
+        try {
+            tasks.addAll(sourceThreads);
+        } finally {
+            sourceThreadsLock.unlock();
+        }
+        dispatchThreadsLock.lock();
+        try {
             tasks.addAll(dispatchThreads);
+        } finally {
+            dispatchThreadsLock.unlock();
         }
         for (Thread task : tasks) {
             if (task == Thread.currentThread()) {
@@ -472,15 +537,31 @@ final class DeliveryEngine implements AutoCloseable {
                 LOGGER.log(System.Logger.Level.WARNING,
                            "Interrupted while waiting for messaging tasks to stop",
                            e);
-                break;
+                return false;
             }
         }
-        int remaining = sourceThreads.size() + dispatchThreads.size();
-        if (remaining > 0) {
-            LOGGER.log(System.Logger.Level.ERROR,
-                       "Messaging shutdown timed out after " + shutdownTimeout
-                               + "; " + remaining + " task(s) remain active");
+        return sourceThreads.isEmpty() && dispatchThreads.isEmpty();
+    }
+
+    private boolean awaitSourceTermination(long deadline) {
+        List<Thread> tasks = List.copyOf(sourceThreads);
+        for (Thread task : tasks) {
+            if (task == Thread.currentThread()) {
+                continue;
+            }
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                return false;
+            }
+            try {
+                task.join(Duration.ofNanos(remaining));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
         }
+        return sourceThreads.isEmpty()
+                || sourceThreads.size() == 1 && sourceThreads.contains(Thread.currentThread());
     }
 
     private static ThreadFactory virtualThreadFactory(String prefix, String failureMessage) {
@@ -553,7 +634,11 @@ final class DeliveryEngine implements AutoCloseable {
                     return null;
                 }
                 try {
-                    rejectIfClosed();
+                    if (admissionMode == AdmissionMode.NESTED) {
+                        rejectIfForced();
+                    } else {
+                        rejectIfNotAccepting();
+                    }
                     boolean admissible = admissionOrder.isEmpty()
                             && (admissionMode == AdmissionMode.NESTED
                                     ? canStartImmediately(cost)
@@ -588,7 +673,7 @@ final class DeliveryEngine implements AutoCloseable {
                     throw pendingSaturated("Messaging dispatcher is busy");
                 }
                 try {
-                    rejectIfClosed();
+                    rejectIfNotAccepting();
                     if (admissionOrder.isEmpty() && canAdmit(cost)) {
                         admit(task);
                         return task;
@@ -604,7 +689,7 @@ final class DeliveryEngine implements AutoCloseable {
                             .map(Duration::toNanos)
                             .orElse(Long.MAX_VALUE);
                     while (true) {
-                        rejectIfClosed();
+                        rejectIfNotAccepting();
                         if (admissionOrder.peekFirst() == admissionToken && canAdmit(cost)) {
                             admissionOrder.removeFirst();
                             releasePending(cost);
@@ -651,7 +736,7 @@ final class DeliveryEngine implements AutoCloseable {
                 return null;
             }
             try {
-                rejectIfClosed();
+                rejectIfNotAccepting();
                 if (!admissionOrder.isEmpty() || !canAdmit(task.cost())) {
                     return null;
                 }
@@ -685,7 +770,7 @@ final class DeliveryEngine implements AutoCloseable {
                     }
                 }
                 try {
-                    rejectIfClosed();
+                    rejectIfNotAccepting();
                     if (admissionMode == AdmissionMode.TRY) {
                         if (!pendingReservationOrder.isEmpty() || !canReservePending(cost)) {
                             return null;
@@ -699,7 +784,7 @@ final class DeliveryEngine implements AutoCloseable {
                     pendingReservationOrder.addLast(reservationToken);
                     long remaining = timeoutNanos();
                     while (true) {
-                        rejectIfClosed();
+                        rejectIfNotAccepting();
                         if (pendingReservationOrder.peekFirst() == reservationToken
                                 && canReservePending(cost)) {
                             pendingReservationOrder.removeFirst();
@@ -764,7 +849,7 @@ final class DeliveryEngine implements AutoCloseable {
                 }
                 try {
                     reservation.requireOpen();
-                    rejectIfClosed();
+                    rejectIfForced();
                     if (admissionMode == AdmissionMode.TRY) {
                         if (!admissionOrder.isEmpty() || !canAdmit(actualCost)) {
                             return null;
@@ -777,7 +862,7 @@ final class DeliveryEngine implements AutoCloseable {
                         admissionOrder.addLast(admissionToken);
                         while (true) {
                             reservation.requireStarting();
-                            rejectIfClosed();
+                            rejectIfForced();
                             if (admissionOrder.peekFirst() == admissionToken && canAdmit(actualCost)) {
                                 admissionOrder.removeFirst();
                                 reservation.waitingToken = null;
@@ -1145,6 +1230,45 @@ final class DeliveryEngine implements AutoCloseable {
             }
         }
 
+        private void beginDrain() {
+            lock.lock();
+            try {
+                changed.signalAll();
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        private boolean awaitDrained(long deadline) {
+            try {
+                lock.lockInterruptibly();
+                try {
+                    while (!isDrained()) {
+                        long remaining = deadline - System.nanoTime();
+                        if (remaining <= 0) {
+                            return false;
+                        }
+                        changed.awaitNanos(remaining);
+                    }
+                    return true;
+                } finally {
+                    lock.unlock();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+
+        private boolean isDrained() {
+            return admissionOrder.isEmpty()
+                    && pendingReservationOrder.isEmpty()
+                    && queue.isEmpty()
+                    && active.isEmpty()
+                    && retained.isEmpty()
+                    && reservations.isEmpty();
+        }
+
         private void close() {
             List<DeliveryTask> queued;
             List<Thread> running;
@@ -1193,11 +1317,80 @@ final class DeliveryEngine implements AutoCloseable {
             running.forEach(Thread::interrupt);
         }
 
-        private void rejectIfClosed() {
+        private void rejectIfNotAccepting() {
+            if (!accepting.get()) {
+                throw rejected(channel,
+                               MessagingRejectedException.Reason.SHUTDOWN,
+                               "Messaging runtime is draining");
+            }
+            rejectIfForced();
+        }
+
+        private void rejectIfForced() {
             if (dispatcherClosed || closed.get()) {
                 throw rejected(channel,
                                MessagingRejectedException.Reason.SHUTDOWN,
                                "Messaging runtime is shutting down");
+            }
+        }
+    }
+
+    final class SourceTask {
+        private final String name;
+        private final Runnable source;
+        private final CompletableFuture<Void> completion = new CompletableFuture<>();
+        private final AtomicReference<Throwable> failure = new AtomicReference<>();
+        private volatile Thread thread;
+
+        private SourceTask(String name, Runnable source) {
+            this.name = name;
+            this.source = source;
+        }
+
+        String name() {
+            return name;
+        }
+
+        Runnable source() {
+            return source;
+        }
+
+        Optional<Throwable> failure() {
+            return Optional.ofNullable(failure.get());
+        }
+
+        void onCompletion(Consumer<Optional<Throwable>> listener) {
+            completion.whenComplete((ignored, throwable) -> listener.accept(failure()));
+        }
+
+        boolean await(Duration timeout) throws InterruptedException {
+            try {
+                completion.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
+                return true;
+            } catch (ExecutionException e) {
+                return true;
+            } catch (TimeoutException e) {
+                return false;
+            }
+        }
+
+        void interrupt() {
+            Thread current = thread;
+            if (current != null) {
+                current.interrupt();
+            }
+        }
+
+        private void thread(Thread thread) {
+            this.thread = thread;
+        }
+
+        private void complete(Throwable failure) {
+            if (failure == null) {
+                completion.complete(null);
+            } else {
+                this.failure.compareAndSet(null, failure);
+                completion.completeExceptionally(failure);
             }
         }
     }

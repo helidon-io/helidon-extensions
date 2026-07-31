@@ -32,6 +32,11 @@ import io.helidon.service.registry.Service;
 @Service.Contract
 public interface MessagingRuntime {
     /**
+     * Declarative messaging graph run level, aligned with Helidon declarative {@code RunLevels.MESSAGING}.
+     */
+    double RUN_LEVEL = 30D;
+
+    /**
      * Emit a message to a named channel.
      * <p>
      * A successful return means all required outputs completed. Handler and connector failures are propagated to the

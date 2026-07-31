@@ -24,14 +24,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.extensions.messaging.ConnectorConfig;
+import io.helidon.extensions.messaging.ConnectorSink;
 import io.helidon.extensions.messaging.DeadLetterMessage;
+import io.helidon.extensions.messaging.ManagedConnectorBinding;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingException;
 
@@ -396,6 +400,120 @@ class KafkaOutgoingConnectorTest {
         assertThat(created.stream().allMatch(MockProducer::closed), is(true));
     }
 
+    @Test
+    void testGraphClosesOnlyOwnedSinkAndLeavesSiblingUsable() {
+        List<MockProducer<Object, Object>> created = new ArrayList<>();
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> {
+            MockProducer<Object, Object> producer = mockProducer(true);
+            created.add(producer);
+            return producer;
+        });
+        ConnectorSink first = connector.createSink(config());
+        ConnectorSink second = connector.createSink(config());
+
+        ((ManagedConnectorBinding) first).close();
+        ((ManagedConnectorBinding) first).close();
+
+        assertThat(created.get(0).closed(), is(true));
+        assertThat(created.get(1).closed(), is(false));
+        second.send(Message.create("still available"));
+        assertThat(created.get(1).history().size(), is(1));
+
+        connector.close();
+
+        assertThat(created.get(1).closed(), is(true));
+    }
+
+    @Test
+    void testForcedSinkCloseDoesNotUseGracefulTimeout() {
+        CloseTrackingProducer producer = new CloseTrackingProducer();
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        ConnectorSink sink = connector.createSink(config());
+
+        ((ManagedConnectorBinding) sink).forceClose();
+        ((ManagedConnectorBinding) sink).close();
+
+        assertThat(producer.closeTimeout(), is(Duration.ZERO));
+    }
+
+    @Test
+    void testSinkRetainsProducerOwnershipAfterCloseFailure() {
+        RetryingCloseProducer producer = new RetryingCloseProducer();
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        ManagedConnectorBinding sink = (ManagedConnectorBinding) connector.createSink(config());
+
+        assertThrows(IllegalStateException.class, sink::close);
+
+        assertThat(producer.closeAttempts(), is(1));
+        assertThat(producer.closed(), is(false));
+
+        sink.close();
+
+        assertThat(producer.closeAttempts(), is(2));
+        assertThat(producer.closed(), is(true));
+    }
+
+    @Test
+    void testConcurrentCreationRetainsProducerWhenConnectorCloseFails() throws InterruptedException {
+        CountDownLatch factoryEntered = new CountDownLatch(1);
+        CountDownLatch releaseFactory = new CountDownLatch(1);
+        RetryingCloseProducer producer = new RetryingCloseProducer();
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> {
+            factoryEntered.countDown();
+            try {
+                if (!releaseFactory.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Timed out waiting to create producer");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Producer creation was interrupted", e);
+            }
+            return producer;
+        });
+        AtomicReference<Throwable> creationFailure = new AtomicReference<>();
+        Thread creator = Thread.ofVirtual().start(() -> {
+            try {
+                connector.createSink(config());
+            } catch (Throwable t) {
+                creationFailure.set(t);
+            }
+        });
+
+        assertThat(factoryEntered.await(5, TimeUnit.SECONDS), is(true));
+        connector.close();
+        releaseFactory.countDown();
+        creator.join(TimeUnit.SECONDS.toMillis(5));
+
+        assertThat(creator.isAlive(), is(false));
+        assertThat(creationFailure.get(), instanceOf(IllegalStateException.class));
+        assertThat(creationFailure.get().getMessage(), is("close failed"));
+        assertThat(producer.closeAttempts(), is(1));
+        assertThat(producer.closed(), is(false));
+
+        connector.close();
+
+        assertThat(producer.closeAttempts(), is(2));
+        assertThat(producer.closed(), is(true));
+    }
+
+    @Test
+    void testConnectorRetainsProducerAndReportsCloseFailure() {
+        RetryingCloseProducer producer = new RetryingCloseProducer();
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        connector.createSink(config());
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class, connector::close);
+
+        assertThat(failure.getMessage(), is("close failed"));
+        assertThat(producer.closeAttempts(), is(1));
+        assertThat(producer.closed(), is(false));
+
+        connector.close();
+
+        assertThat(producer.closeAttempts(), is(2));
+        assertThat(producer.closed(), is(true));
+    }
+
     private static KafkaConnectorConfig config() {
         return config(Duration.ofSeconds(2));
     }
@@ -479,5 +597,49 @@ class KafkaOutgoingConnectorTest {
             Thread.sleep(10);
         }
         assertThat(producer.history().size(), is(expectedSize));
+    }
+
+    private static final class CloseTrackingProducer extends MockProducer<Object, Object> {
+        private final AtomicReference<Duration> closeTimeout = new AtomicReference<>();
+
+        private CloseTrackingProducer() {
+            super(true, null, serializer(), serializer());
+        }
+
+        @Override
+        public void close(Duration timeout) {
+            closeTimeout.compareAndSet(null, timeout);
+            super.close(timeout);
+        }
+
+        private Duration closeTimeout() {
+            return closeTimeout.get();
+        }
+
+        private static Serializer<Object> serializer() {
+            return (topic, data) -> data == null
+                    ? null
+                    : String.valueOf(data).getBytes(StandardCharsets.UTF_8);
+        }
+    }
+
+    private static final class RetryingCloseProducer extends MockProducer<Object, Object> {
+        private final AtomicInteger closeAttempts = new AtomicInteger();
+
+        private RetryingCloseProducer() {
+            super(true, null, CloseTrackingProducer.serializer(), CloseTrackingProducer.serializer());
+        }
+
+        @Override
+        public void close(Duration timeout) {
+            if (closeAttempts.incrementAndGet() == 1) {
+                throw new IllegalStateException("close failed");
+            }
+            super.close(timeout);
+        }
+
+        private int closeAttempts() {
+            return closeAttempts.get();
+        }
     }
 }
