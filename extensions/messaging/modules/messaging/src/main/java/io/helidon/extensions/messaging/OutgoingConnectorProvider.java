@@ -16,28 +16,20 @@
 
 package io.helidon.extensions.messaging;
 
-import io.helidon.common.resumable.Resumable;
-
 /**
- * Base connector contract.
+ * Outgoing capability of a connector provider.
+ *
+ * @param <C> connector configuration type
  */
-public interface Connector extends Resumable, AutoCloseable {
+public interface OutgoingConnectorProvider<C extends ConnectorConfig> extends ConnectorProvider<C> {
     /**
-     * Connector name used in configuration.
+     * Create one unstarted outgoing binding endpoint.
+     * <p>
+     * The endpoint factory may validate and snapshot configuration, but must not acquire transport resources or
+     * create threads. The messaging graph owns the returned endpoint and invokes its lifecycle.
      *
-     * @return connector name
+     * @param config typed binding configuration
+     * @return outgoing endpoint
      */
-    String connectorName();
-
-    @Override
-    default void close() {
-    }
-
-    @Override
-    default void suspend() {
-    }
-
-    @Override
-    default void resume() {
-    }
+    OutgoingEndpoint createOutgoingEndpoint(C config);
 }

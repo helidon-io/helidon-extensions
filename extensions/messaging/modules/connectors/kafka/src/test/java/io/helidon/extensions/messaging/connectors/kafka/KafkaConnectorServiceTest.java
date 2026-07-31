@@ -16,14 +16,17 @@
 
 package io.helidon.extensions.messaging.connectors.kafka;
 
-import io.helidon.extensions.messaging.IncomingConnector;
-import io.helidon.extensions.messaging.OutgoingConnector;
+import io.helidon.extensions.messaging.ConnectorProvider;
+import io.helidon.extensions.messaging.IncomingConnectorProvider;
+import io.helidon.extensions.messaging.OutgoingConnectorProvider;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.instanceOf;
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 class KafkaConnectorServiceTest {
@@ -33,8 +36,14 @@ class KafkaConnectorServiceTest {
         try {
             ServiceRegistry registry = registryManager.registry();
 
-            assertThat(registry.get(IncomingConnector.class), instanceOf(KafkaIncomingConnector.class));
-            assertThat(registry.get(OutgoingConnector.class), instanceOf(KafkaOutgoingConnector.class));
+            ConnectorProvider<?> provider = registry.get(ConnectorProvider.class);
+
+            assertThat(provider, instanceOf(KafkaConnectorProvider.class));
+            assertThat(provider, instanceOf(IncomingConnectorProvider.class));
+            assertThat(provider, instanceOf(OutgoingConnectorProvider.class));
+            assertThat(registry.get(IncomingConnectorProvider.class), sameInstance(provider));
+            assertThat(registry.get(OutgoingConnectorProvider.class), sameInstance(provider));
+            assertThat(provider instanceof AutoCloseable, is(false));
         } finally {
             registryManager.shutdown();
         }

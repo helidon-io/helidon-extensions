@@ -17,16 +17,23 @@
 package io.helidon.extensions.messaging;
 
 /**
- * Outgoing connector for a configured channel.
- *
- * @param <C> connector config type
+ * Outgoing endpoint for one configured binding.
  */
-public interface OutgoingConnector<C extends ConnectorConfig> extends Connector {
+public interface OutgoingEndpoint extends ConnectorSink, ConnectorEndpoint {
     /**
-     * Create a sink for one configured outgoing channel.
+     * Establish transport resources for this binding.
+     * <p>
+     * A successful return means the endpoint is ready to send. Implementations must not create their own runtime
+     * delivery threads and must remain interruptible while starting.
      *
-     * @param config connector configuration
-     * @return connector sink
+     * @throws RuntimeException if startup or readiness verification fails
      */
-    ConnectorSink createSink(C config);
+    void start();
+
+    /**
+     * Flush transport work after runtime deliveries have drained.
+     *
+     * @throws RuntimeException if flushing fails
+     */
+    void flush();
 }

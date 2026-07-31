@@ -48,8 +48,9 @@ final class MessagingGraph implements AutoCloseable {
     private final Map<String, SourceBinding> sources = new LinkedHashMap<>();
     private final Set<ConnectorSource> sourceIdentities =
             Collections.newSetFromMap(new IdentityHashMap<>());
-    private final List<ManagedConnectorBinding> managedBindings = new ArrayList<>();
-    private final Set<ManagedConnectorBinding> managedBindingIdentities =
+    private final List<ConnectorEndpoint> connectorBindings = new ArrayList<>();
+    private final List<OutgoingEndpoint> outgoingEndpoints = new ArrayList<>();
+    private final Set<ConnectorEndpoint> connectorEndpointIdentities =
             Collections.newSetFromMap(new IdentityHashMap<>());
     private final AtomicBoolean shutdownOwner = new AtomicBoolean();
     private final CompletableFuture<Void> preparationCompletion = new CompletableFuture<>();
@@ -192,11 +193,8 @@ final class MessagingGraph implements AutoCloseable {
     }
 
     private void prepareIfNeeded(boolean rejectIfNotNeeded) {
-        RuntimeException runtimeFailure = null;
-        Error errorFailure = null;
         boolean preparationOwner = false;
         boolean preparationWaiter = false;
-        boolean cleanup = false;
         lifecycleLock.lock();
         try {
             if (preparationInProgress) {
@@ -204,15 +202,6 @@ final class MessagingGraph implements AutoCloseable {
             } else if (state == State.NEW) {
                 preparationInProgress = true;
                 preparationOwner = true;
-                try {
-                    prepareGraph();
-                } catch (RuntimeException e) {
-                    runtimeFailure = e;
-                    cleanup = transitionToFailed(e);
-                } catch (Error e) {
-                    errorFailure = e;
-                    cleanup = transitionToFailed(e);
-                }
             } else if (state != State.PREPARED && rejectIfNotNeeded) {
                 throw illegalTransition("prepare");
             }
@@ -227,16 +216,36 @@ final class MessagingGraph implements AutoCloseable {
             return;
         }
 
-        Throwable preparationFailure = runtimeFailure == null ? errorFailure : runtimeFailure;
+        Throwable preparationFailure = null;
+        try {
+            prepareGraph(deadline(deliveryEngine.shutdownTimeout()));
+        } catch (RuntimeException | Error e) {
+            preparationFailure = e;
+        }
+
+        boolean cleanup = false;
+        lifecycleLock.lock();
+        try {
+            if (preparationFailure == null) {
+                if (state == State.NEW) {
+                    state = State.PREPARED;
+                } else {
+                    preparationFailure = new MessagingException("Messaging graph preparation was cancelled in state "
+                                                                        + state);
+                }
+            }
+            if (preparationFailure != null && state == State.NEW) {
+                cleanup = transitionToFailed(preparationFailure);
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
         if (cleanup) {
             rollback(preparationFailure);
         }
         finishPreparation(preparationFailure);
-        if (runtimeFailure != null) {
-            throw runtimeFailure;
-        }
-        if (errorFailure != null) {
-            throw errorFailure;
+        if (preparationFailure != null) {
+            rethrow(preparationFailure);
         }
     }
 
@@ -268,6 +277,7 @@ final class MessagingGraph implements AutoCloseable {
 
         long deadline = deadline(deliveryEngine.shutdownTimeout());
         try {
+            startOutgoingEndpoints(deadline);
             for (SourceBinding source : sources.values()) {
                 requireStarting();
                 source.start(deliveryEngine);
@@ -276,17 +286,16 @@ final class MessagingGraph implements AutoCloseable {
                 requireStarting();
                 source.awaitReady(remaining(deadline));
             }
+            startSourceAdmission(deadline);
             lifecycleLock.lock();
             try {
                 requireStarting();
-                for (SourceBinding source : sources.values()) {
-                    source.startAdmission();
-                }
                 state = State.RUNNING;
                 startupCompletion.complete(null);
             } finally {
                 lifecycleLock.unlock();
             }
+            reportNormalSourceTerminations();
         } catch (RuntimeException | Error e) {
             boolean cleanup;
             lifecycleLock.lock();
@@ -302,6 +311,34 @@ final class MessagingGraph implements AutoCloseable {
                 awaitShutdown();
             }
             throw e;
+        }
+    }
+
+    private void startOutgoingEndpoints(long deadline) {
+        for (OutgoingEndpoint outgoing : outgoingEndpoints) {
+            requireStarting();
+            OperationResult result = invokeBounded("start outgoing connector endpoint "
+                                                           + outgoing.getClass().getName(),
+                                                   deadline,
+                                                   outgoing::start);
+            if (result.failure() != null) {
+                throw result.failure();
+            }
+        }
+    }
+
+    private void startSourceAdmission(long deadline) {
+        for (SourceBinding source : sources.values()) {
+            requireStarting();
+            OperationResult result = invokeBounded("start admission for source " + source.name(),
+                                                   deadline,
+                                                   () -> {
+                                                       requireStarting();
+                                                       source.startAdmission();
+                                                   });
+            if (result.failure() != null) {
+                throw result.failure();
+            }
         }
     }
 
@@ -397,7 +434,7 @@ final class MessagingGraph implements AutoCloseable {
     private CleanupResult stopSourceAdmission(RuntimeException current, long deadline) {
         boolean failed = false;
         for (SourceBinding source : sources.values()) {
-            if (!(source.source() instanceof ManagedConnectorSource)) {
+            if (source.incomingEndpoint() == null) {
                 continue;
             }
             OperationResult result = invokeBounded("stop admission for source " + source.name(),
@@ -409,12 +446,37 @@ final class MessagingGraph implements AutoCloseable {
         return new CleanupResult(current, failed);
     }
 
-    private RuntimeException forceBindings(RuntimeException current, long deadline) {
-        for (int i = managedBindings.size() - 1; i >= 0; i--) {
-            ManagedConnectorBinding binding = managedBindings.get(i);
-            if (binding instanceof ManagedConnectorSource) {
+    private RuntimeException flushOutgoingEndpoints(RuntimeException current, long deadline) {
+        for (int i = outgoingEndpoints.size() - 1; i >= 0; i--) {
+            OutgoingEndpoint outgoing = outgoingEndpoints.get(i);
+            OperationResult result = invokeBounded("flush outgoing connector endpoint "
+                                                           + outgoing.getClass().getName(),
+                                                   deadline,
+                                                   outgoing::flush);
+            current = append(current, result.failure());
+        }
+        return current;
+    }
+
+    private RuntimeException checkpointIncomingEndpoints(RuntimeException current, long deadline) {
+        List<SourceBinding> sourceBindings = new ArrayList<>(sources.values());
+        for (int i = sourceBindings.size() - 1; i >= 0; i--) {
+            IncomingEndpoint incoming = sourceBindings.get(i).incomingEndpoint();
+            if (incoming == null) {
                 continue;
             }
+            OperationResult result = invokeBounded("checkpoint incoming connector endpoint "
+                                                           + incoming.getClass().getName(),
+                                                   deadline,
+                                                   incoming::checkpoint);
+            current = append(current, result.failure());
+        }
+        return current;
+    }
+
+    private RuntimeException forceBindings(RuntimeException current, long deadline) {
+        for (int i = connectorBindings.size() - 1; i >= 0; i--) {
+            ConnectorEndpoint binding = connectorBindings.get(i);
             OperationResult result = invokeBounded("force close connector binding " + binding.getClass().getName(),
                                                    deadline,
                                                    binding::forceClose);
@@ -424,19 +486,8 @@ final class MessagingGraph implements AutoCloseable {
     }
 
     private RuntimeException closeBindings(RuntimeException current, long deadline) {
-        return closeBindings(current, deadline, true);
-    }
-
-    private RuntimeException closeNonSourceBindings(RuntimeException current, long deadline) {
-        return closeBindings(current, deadline, false);
-    }
-
-    private RuntimeException closeBindings(RuntimeException current, long deadline, boolean includeSources) {
-        for (int i = managedBindings.size() - 1; i >= 0; i--) {
-            ManagedConnectorBinding binding = managedBindings.get(i);
-            if (!includeSources && binding instanceof ManagedConnectorSource) {
-                continue;
-            }
+        for (int i = connectorBindings.size() - 1; i >= 0; i--) {
+            ConnectorEndpoint binding = connectorBindings.get(i);
             OperationResult result = invokeBounded("close connector binding " + binding.getClass().getName(),
                                                    deadline,
                                                    binding::close);
@@ -448,13 +499,13 @@ final class MessagingGraph implements AutoCloseable {
     private RuntimeException forceSources(RuntimeException current, long deadline) {
         List<SourceBinding> sourceBindings = new ArrayList<>(sources.values());
         for (int i = sourceBindings.size() - 1; i >= 0; i--) {
-            ConnectorSource source = sourceBindings.get(i).source();
-            if (!(source instanceof ManagedConnectorSource managed)) {
+            ConnectorEndpoint endpoint = sourceBindings.get(i).connectorEndpoint();
+            if (endpoint == null) {
                 continue;
             }
-            OperationResult result = invokeBounded("force close connector source " + managed.getClass().getName(),
+            OperationResult result = invokeBounded("force close connector source " + endpoint.getClass().getName(),
                                                    deadline,
-                                                   managed::forceClose);
+                                                   endpoint::forceClose);
             current = append(current, result.failure());
         }
         return current;
@@ -463,13 +514,13 @@ final class MessagingGraph implements AutoCloseable {
     private RuntimeException closeSources(RuntimeException current, long deadline) {
         List<SourceBinding> sourceBindings = new ArrayList<>(sources.values());
         for (int i = sourceBindings.size() - 1; i >= 0; i--) {
-            ConnectorSource source = sourceBindings.get(i).source();
-            if (!(source instanceof ManagedConnectorSource managed)) {
+            ConnectorEndpoint endpoint = sourceBindings.get(i).connectorEndpoint();
+            if (endpoint == null) {
                 continue;
             }
-            OperationResult result = invokeBounded("close connector source " + managed.getClass().getName(),
+            OperationResult result = invokeBounded("close connector source " + endpoint.getClass().getName(),
                                                    deadline,
-                                                   managed::close);
+                                                   endpoint::close);
             current = append(current, result.failure());
         }
         return current;
@@ -483,14 +534,13 @@ final class MessagingGraph implements AutoCloseable {
         RuntimeException cleanupFailure = forceSources(null, cleanupDeadline);
         deliveryEngine.forceShutdown();
         cleanupFailure = forceBindings(cleanupFailure, cleanupDeadline);
+        cleanupFailure = closeSources(cleanupFailure, cleanupDeadline);
         cleanupFailure = closeBindings(cleanupFailure, cleanupDeadline);
         boolean terminated = awaitTermination(cleanupDeadline);
         if (!terminated) {
             cleanupFailure = append(cleanupFailure,
                                     new MessagingException("Messaging startup rollback timed out after "
                                                                    + deliveryEngine.shutdownTimeout()));
-        } else {
-            cleanupFailure = closeSources(cleanupFailure, deadline(deliveryEngine.shutdownTimeout()));
         }
         if (cleanupFailure != null && cleanupFailure != primary) {
             primary.addSuppressed(cleanupFailure);
@@ -535,41 +585,56 @@ final class MessagingGraph implements AutoCloseable {
 
     private void validateContributionBindings(List<?> bindings,
                                               Iterable<? extends ConnectorSource> contributionSources) {
-        Set<ManagedConnectorBinding> newIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<ConnectorEndpoint> newIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
         for (ConnectorSource source : contributionSources) {
-            if (source instanceof ManagedConnectorBinding managed
-                    && (managedBindingIdentities.contains(managed) || !newIdentities.add(managed))) {
-                throw new IllegalArgumentException("Managed connector binding is already owned by this messaging graph");
+            if (source instanceof ConnectorEndpoint endpoint
+                    && (connectorEndpointIdentities.contains(endpoint) || !newIdentities.add(endpoint))) {
+                throw new IllegalArgumentException("Connector endpoint is already owned by this messaging graph");
             }
         }
         for (Object binding : bindings) {
             Objects.requireNonNull(binding);
-            if (binding instanceof ManagedConnectorBinding managed
-                    && (managedBindingIdentities.contains(managed) || !newIdentities.add(managed))) {
-                throw new IllegalArgumentException("Managed connector binding is already owned by this messaging graph");
+            if (binding instanceof ConnectorEndpoint endpoint
+                    && (connectorEndpointIdentities.contains(endpoint) || !newIdentities.add(endpoint))) {
+                throw new IllegalArgumentException("Connector endpoint is already owned by this messaging graph");
             }
         }
     }
 
     private void addSourceLocked(String name, ConnectorSource source) {
-        sources.put(name, new SourceBinding(name, source));
+        ConnectorEndpoint connectorEndpoint = source instanceof ConnectorEndpoint endpoint ? endpoint : null;
+        IncomingEndpoint incomingEndpoint = source instanceof IncomingEndpoint endpoint ? endpoint : null;
+        sources.put(name, new SourceBinding(name, source, connectorEndpoint, incomingEndpoint));
         sourceIdentities.add(source);
-        addBindingLocked(source);
+        if (connectorEndpoint != null) {
+            connectorEndpointIdentities.add(connectorEndpoint);
+        }
     }
 
     private void addBindingLocked(Object binding) {
-        if (binding instanceof ManagedConnectorBinding managed) {
-            managedBindingIdentities.add(managed);
-            managedBindings.add(managed);
+        if (binding instanceof ConnectorEndpoint endpoint) {
+            connectorEndpointIdentities.add(endpoint);
+            connectorBindings.add(endpoint);
+            if (endpoint instanceof OutgoingEndpoint outgoingEndpoint) {
+                outgoingEndpoints.add(outgoingEndpoint);
+            }
         }
     }
 
-    private void prepareGraph() {
+    private void prepareGraph(long deadline) {
         validateTopology();
         for (SourceBinding source : sources.values()) {
-            source.prepare();
+            requirePreparing();
+            OperationResult result = invokeBounded("prepare connector source " + source.name(),
+                                                   deadline,
+                                                   () -> {
+                                                       requirePreparing();
+                                                       source.prepare();
+                                                   });
+            if (result.failure() != null) {
+                throw result.failure();
+            }
         }
-        state = State.PREPARED;
     }
 
     private void visit(String channel,
@@ -627,6 +692,10 @@ final class MessagingGraph implements AutoCloseable {
         }
     }
 
+    private void reportNormalSourceTerminations() {
+        sources.values().forEach(SourceBinding::reportNormalCompletion);
+    }
+
     private static RuntimeException append(RuntimeException current, RuntimeException additional) {
         if (additional == null) {
             return current;
@@ -661,13 +730,23 @@ final class MessagingGraph implements AutoCloseable {
         }
 
         long cleanupDeadline = deadline(deliveryEngine.shutdownTimeout());
+        closeFailure = flushOutgoingEndpoints(closeFailure, cleanupDeadline);
+        if (closeFailure != null) {
+            transitionToForcing();
+            return closeForced(closeFailure, "Messaging graph endpoint flush failed");
+        }
+        closeFailure = checkpointIncomingEndpoints(closeFailure, cleanupDeadline);
+        if (closeFailure != null) {
+            transitionToForcing();
+            return closeForced(closeFailure, "Messaging graph endpoint checkpoint failed");
+        }
         closeFailure = closeSources(closeFailure, cleanupDeadline);
         if (closeFailure != null) {
             transitionToForcing();
             return closeForced(closeFailure, "Messaging graph endpoint forced shutdown");
         }
         deliveryEngine.forceShutdown();
-        closeFailure = closeNonSourceBindings(closeFailure, cleanupDeadline);
+        closeFailure = closeBindings(closeFailure, cleanupDeadline);
         if (closeFailure != null) {
             transitionToForcing();
             return closeForced(closeFailure, "Messaging graph endpoint forced shutdown");
@@ -690,14 +769,13 @@ final class MessagingGraph implements AutoCloseable {
         RuntimeException closeFailure = forceSources(current, cleanupDeadline);
         deliveryEngine.forceShutdown();
         closeFailure = forceBindings(closeFailure, cleanupDeadline);
+        closeFailure = closeSources(closeFailure, cleanupDeadline);
         closeFailure = closeBindings(closeFailure, cleanupDeadline);
         boolean terminated = awaitTermination(cleanupDeadline);
         if (!terminated) {
             closeFailure = append(closeFailure,
                                   new MessagingException(operation + " timed out after "
                                                                  + deliveryEngine.shutdownTimeout()));
-        } else {
-            closeFailure = closeSources(closeFailure, deadline(deliveryEngine.shutdownTimeout()));
         }
         return closeFailure;
     }
@@ -802,6 +880,12 @@ final class MessagingGraph implements AutoCloseable {
     private void requireStarting() {
         if (state != State.STARTING) {
             throw new MessagingException("Messaging graph startup was cancelled in state " + state);
+        }
+    }
+
+    private void requirePreparing() {
+        if (state != State.NEW) {
+            throw new MessagingException("Messaging graph preparation was cancelled in state " + state);
         }
     }
 
@@ -912,22 +996,34 @@ final class MessagingGraph implements AutoCloseable {
     private final class SourceBinding {
         private final String name;
         private final ConnectorSource source;
+        private final ConnectorEndpoint connectorEndpoint;
+        private final IncomingEndpoint incomingEndpoint;
         private final CountDownLatch admissionSignal = new CountDownLatch(1);
         private final AtomicBoolean admissionCancelled = new AtomicBoolean();
         private final AtomicBoolean failureReported = new AtomicBoolean();
+        private final AtomicBoolean normalCompletionPending = new AtomicBoolean();
         private DeliveryEngine.SourceTask sourceTask;
 
-        private SourceBinding(String name, ConnectorSource source) {
+        private SourceBinding(String name,
+                              ConnectorSource source,
+                              ConnectorEndpoint connectorEndpoint,
+                              IncomingEndpoint incomingEndpoint) {
             this.name = name;
             this.source = source;
-        }
-
-        private ConnectorSource source() {
-            return source;
+            this.connectorEndpoint = connectorEndpoint;
+            this.incomingEndpoint = incomingEndpoint;
         }
 
         private String name() {
             return name;
+        }
+
+        private ConnectorEndpoint connectorEndpoint() {
+            return connectorEndpoint;
+        }
+
+        private IncomingEndpoint incomingEndpoint() {
+            return incomingEndpoint;
         }
 
         private void start(DeliveryEngine deliveryEngine) {
@@ -935,36 +1031,50 @@ final class MessagingGraph implements AutoCloseable {
             sourceTask.onCompletion(completionFailure -> {
                 if (completionFailure.isPresent()) {
                     sourceFailed(name, completionFailure.get());
-                } else if (source instanceof ManagedConnectorSource) {
-                    sourceFailed(name, new MessagingException("Managed messaging source stopped unexpectedly"));
+                } else if (incomingEndpoint != null) {
+                    normalCompletionPending.set(true);
+                    reportNormalCompletion();
                 }
             });
         }
 
+        private void reportNormalCompletion() {
+            boolean report;
+            lifecycleLock.lock();
+            try {
+                report = state == State.RUNNING && normalCompletionPending.compareAndSet(true, false);
+            } finally {
+                lifecycleLock.unlock();
+            }
+            if (report) {
+                sourceFailed(name, new MessagingException("Managed messaging source stopped unexpectedly"));
+            }
+        }
+
         private void prepare() {
-            if (source instanceof ManagedConnectorSource managed) {
-                managed.prepareForGraph();
+            if (incomingEndpoint != null) {
+                incomingEndpoint.prepareForGraph();
             }
         }
 
         private void awaitReady(Duration timeout) {
-            if (source instanceof ManagedConnectorSource managed) {
-                managed.awaitReady(timeout);
+            if (incomingEndpoint != null) {
+                incomingEndpoint.awaitReady(timeout);
             }
             sourceTask.failure().ifPresent(SourceBinding::rethrow);
         }
 
         private void startAdmission() {
-            if (source instanceof ManagedConnectorSource managed) {
-                managed.startAdmission();
+            if (incomingEndpoint != null) {
+                incomingEndpoint.startAdmission();
             } else {
                 admissionSignal.countDown();
             }
         }
 
         private void stopAdmission() {
-            if (source instanceof ManagedConnectorSource managed) {
-                managed.stopAdmission();
+            if (incomingEndpoint != null) {
+                incomingEndpoint.stopAdmission();
             }
         }
 
@@ -974,7 +1084,7 @@ final class MessagingGraph implements AutoCloseable {
         }
 
         private void run() {
-            if (!(source instanceof ManagedConnectorSource) && !awaitAdmission()) {
+            if (incomingEndpoint == null && !awaitAdmission()) {
                 return;
             }
             source.run();

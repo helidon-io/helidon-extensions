@@ -33,7 +33,7 @@ final class KafkaConnectorConfigSupport {
      * Kafka connector name.
      */
     @Prototype.Constant
-    static final String CONNECTOR_NAME = "kafka";
+    static final String CONNECTOR_NAME = KafkaConnectorProvider.CONNECTOR_TYPE;
 
     /**
      * Config property for Kafka bootstrap servers.

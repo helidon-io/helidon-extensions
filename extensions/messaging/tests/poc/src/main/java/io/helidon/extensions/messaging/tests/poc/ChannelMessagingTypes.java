@@ -27,16 +27,17 @@ import java.util.OptionalLong;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import io.helidon.config.Config;
 import io.helidon.extensions.messaging.ConnectorConfig;
-import io.helidon.extensions.messaging.ConnectorSource;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.Emitter;
-import io.helidon.extensions.messaging.IncomingConnector;
+import io.helidon.extensions.messaging.IncomingConnectorProvider;
+import io.helidon.extensions.messaging.IncomingEndpoint;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageSizeEstimator;
-import io.helidon.extensions.messaging.ManagedConnectorSource;
 import io.helidon.extensions.messaging.Messaging;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.service.registry.Service;
@@ -261,28 +262,13 @@ class ChannelMessagingTypes {
     }
 
     @Service.Singleton
-    static class TestIncomingConnector implements IncomingConnector<ConnectorConfig> {
+    static class TestConnectorObserver {
         private final CountDownLatch deliveryCompleted = new CountDownLatch(1);
         private final AtomicReference<RuntimeException> deliveryFailure = new AtomicReference<>();
 
-        @Override
-        public String connectorName() {
-            return TEST_CONNECTOR;
-        }
-
-        @Override
-        public ConnectorSource createSource(ConnectorConfig config, ConnectorSourceContext context) {
-            return () -> {
-                try {
-                    context.emit(Message.builder("connector message")
-                                         .header("key", "connector")
-                                         .build());
-                } catch (RuntimeException e) {
-                    deliveryFailure.set(e);
-                } finally {
-                    deliveryCompleted.countDown();
-                }
-            };
+        void deliveryCompleted(RuntimeException failure) {
+            deliveryFailure.set(failure);
+            deliveryCompleted.countDown();
         }
 
         boolean awaitDelivery() throws InterruptedException {
@@ -291,6 +277,100 @@ class ChannelMessagingTypes {
 
         Optional<RuntimeException> deliveryFailure() {
             return Optional.ofNullable(deliveryFailure.get());
+        }
+    }
+
+    @Service.Singleton
+    static class TestIncomingConnector implements IncomingConnectorProvider<ConnectorConfig> {
+        private final TestConnectorObserver observer;
+
+        @Service.Inject
+        TestIncomingConnector(TestConnectorObserver observer) {
+            this.observer = observer;
+        }
+
+        @Override
+        public String connectorType() {
+            return TEST_CONNECTOR;
+        }
+
+        @Override
+        public ConnectorConfig createConfig(Config config) {
+            return ConnectorConfig.create(config);
+        }
+
+        @Override
+        public IncomingEndpoint createIncomingEndpoint(ConnectorConfig config, ConnectorSourceContext context) {
+            return new TestIncomingEndpoint(context, observer);
+        }
+
+        private static final class TestIncomingEndpoint implements IncomingEndpoint {
+            private final ConnectorSourceContext context;
+            private final TestConnectorObserver observer;
+            private final CountDownLatch ready = new CountDownLatch(1);
+            private final CountDownLatch admission = new CountDownLatch(1);
+            private final CountDownLatch stop = new CountDownLatch(1);
+            private final AtomicBoolean stopped = new AtomicBoolean();
+
+            private TestIncomingEndpoint(ConnectorSourceContext context, TestConnectorObserver observer) {
+                this.context = context;
+                this.observer = observer;
+            }
+
+            @Override
+            public void prepareForGraph() {
+            }
+
+            @Override
+            public void run() {
+                ready.countDown();
+                await(admission);
+                if (stopped.get()) {
+                    return;
+                }
+                RuntimeException failure = null;
+                try {
+                    context.emit(Message.builder("connector message")
+                                         .header("key", "connector")
+                                         .build());
+                } catch (RuntimeException e) {
+                    failure = e;
+                } finally {
+                    observer.deliveryCompleted(failure);
+                }
+                await(stop);
+            }
+
+            @Override
+            public void awaitReady(Duration timeout) {
+                await(ready, timeout, "Test connector source readiness");
+            }
+
+            @Override
+            public void startAdmission() {
+                admission.countDown();
+            }
+
+            @Override
+            public void stopAdmission() {
+                stopped.set(true);
+                admission.countDown();
+                stop.countDown();
+            }
+
+            @Override
+            public void checkpoint() {
+            }
+
+            @Override
+            public void forceClose() {
+                stopAdmission();
+            }
+
+            @Override
+            public void close() {
+                forceClose();
+            }
         }
     }
 
@@ -313,33 +393,23 @@ class ChannelMessagingTypes {
     }
 
     @Service.Singleton
-    static class ShutdownIncomingConnector implements IncomingConnector<ConnectorConfig> {
-        private final AtomicReference<ShutdownSource> source = new AtomicReference<>();
-
+    static class ShutdownIncomingConnector implements IncomingConnectorProvider<ConnectorConfig> {
         @Override
-        public String connectorName() {
+        public String connectorType() {
             return SHUTDOWN_CONNECTOR;
         }
 
         @Override
-        public ConnectorSource createSource(ConnectorConfig config, ConnectorSourceContext context) {
-            ShutdownSource newSource = new ShutdownSource();
-            if (!source.compareAndSet(null, newSource)) {
-                throw new IllegalStateException("Shutdown test source already exists");
-            }
-            return newSource;
+        public ConnectorConfig createConfig(Config config) {
+            return ConnectorConfig.create(config);
         }
 
         @Override
-        @Service.PreDestroy
-        public void close() {
-            ShutdownSource current = source.get();
-            if (current != null) {
-                current.forceClose();
-            }
+        public IncomingEndpoint createIncomingEndpoint(ConnectorConfig config, ConnectorSourceContext context) {
+            return new ShutdownSource();
         }
 
-        private static final class ShutdownSource implements ManagedConnectorSource {
+        private static final class ShutdownSource implements IncomingEndpoint {
             private final CountDownLatch ready = new CountDownLatch(1);
             private final CountDownLatch admission = new CountDownLatch(1);
             private final CountDownLatch stop = new CountDownLatch(1);
@@ -381,6 +451,10 @@ class ChannelMessagingTypes {
             }
 
             @Override
+            public void checkpoint() {
+            }
+
+            @Override
             public void forceClose() {
                 admission.countDown();
                 stop.countDown();
@@ -390,14 +464,25 @@ class ChannelMessagingTypes {
             public void close() {
                 forceClose();
             }
+        }
+    }
 
-            private static void await(CountDownLatch latch) {
-                try {
-                    latch.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
+    private static void await(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void await(CountDownLatch latch, Duration timeout, String operation) {
+        try {
+            if (!latch.await(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
+                throw new MessagingException(operation + " timed out");
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new MessagingException(operation + " was interrupted", e);
         }
     }
 

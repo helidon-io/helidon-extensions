@@ -20,23 +20,22 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
-import io.helidon.extensions.messaging.ConnectorSink;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingException;
-import io.helidon.extensions.messaging.OutgoingConnector;
-import io.helidon.service.registry.Service;
+import io.helidon.extensions.messaging.OutgoingEndpoint;
 
 /**
- * File outgoing connector.
+ * File outgoing endpoint implementation.
  * <p>
  * A delivery completes successfully when the connector's {@code Files.writeString(...)} call returns without
  * throwing.
  */
-@Service.Singleton
-public class FileOutgoingConnector implements OutgoingConnector<FileConnectorConfig> {
+final class FileOutgoingConnector {
     private static final ReentrantLock[] WRITE_LOCKS = new ReentrantLock[64];
 
     static {
@@ -45,60 +44,179 @@ public class FileOutgoingConnector implements OutgoingConnector<FileConnectorCon
         }
     }
 
-    /**
-     * Connector name used in messaging configuration.
-     */
-    public static final String CONNECTOR = "file";
-
-    @Override
-    public String connectorName() {
-        return CONNECTOR;
+    private FileOutgoingConnector() {
     }
 
-    @Override
-    public ConnectorSink createSink(FileConnectorConfig config) {
+    static OutgoingEndpoint createEndpoint(FileConnectorConfig config) {
+        return createEndpoint(config, FileOutgoingConnector::write);
+    }
+
+    static OutgoingEndpoint createEndpoint(FileConnectorConfig config, FileWriter fileWriter) {
         Path path = config.path().toAbsolutePath().normalize();
         ReentrantLock writeLock = WRITE_LOCKS[Math.floorMod(path.hashCode(), WRITE_LOCKS.length)];
-        return new FileSink(config, path, writeLock);
+        return new FileEndpoint(config, path, writeLock, fileWriter);
     }
 
-    private record FileSink(FileConnectorConfig config, Path path, ReentrantLock writeLock) implements ConnectorSink {
+    private static void write(Path path, String content) {
+        Path parent = path.getParent();
+        try {
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            Files.writeString(path,
+                              content,
+                              StandardOpenOption.CREATE,
+                              StandardOpenOption.APPEND);
+        } catch (IOException e) {
+            throw new MessagingException("File outgoing connector failed", e);
+        }
+    }
+
+    private static final class FileEndpoint implements OutgoingEndpoint {
+        private final FileConnectorConfig config;
+        private final Path path;
+        private final ReentrantLock writeLock;
+        private final FileWriter fileWriter;
+        private final ReentrantLock lifecycleLock = new ReentrantLock();
+        private final Set<Thread> activeSendThreads = new HashSet<>();
+        private State state = State.NEW;
+
+        private FileEndpoint(FileConnectorConfig config,
+                             Path path,
+                             ReentrantLock writeLock,
+                             FileWriter fileWriter) {
+            this.config = config;
+            this.path = path;
+            this.writeLock = writeLock;
+            this.fileWriter = fileWriter;
+        }
+
+        @Override
+        public void start() {
+            lifecycleLock.lock();
+            try {
+                if (state == State.CLOSED) {
+                    throw new IllegalStateException("File outgoing endpoint is closed");
+                }
+                state = State.STARTED;
+            } finally {
+                lifecycleLock.unlock();
+            }
+        }
+
+        @Override
+        public void flush() {
+            lifecycleLock.lock();
+            try {
+                requireStarted();
+                // Files.writeString completes synchronously, so there is no connector buffer to flush.
+            } finally {
+                lifecycleLock.unlock();
+            }
+        }
+
         @Override
         public <T> void send(Message<T> message) {
-            write(String.valueOf(message.entity()) + config.lineSeparator());
+            Thread sendThread = beginSend();
+            try {
+                write(String.valueOf(message.entity()) + config.lineSeparator());
+            } finally {
+                endSend(sendThread);
+            }
         }
 
         @Override
         public <T> void sendBatch(List<? extends Message<T>> messages) {
-            if (messages.isEmpty()) {
-                return;
+            Thread sendThread = beginSend();
+            try {
+                if (messages.isEmpty()) {
+                    return;
+                }
+                StringBuilder content = new StringBuilder();
+                for (Message<T> message : messages) {
+                    content.append(message.entity())
+                            .append(config.lineSeparator());
+                }
+                write(content.toString());
+            } finally {
+                endSend(sendThread);
             }
-            StringBuilder content = new StringBuilder();
-            for (Message<T> message : messages) {
-                content.append(message.entity())
-                        .append(config.lineSeparator());
+        }
+
+        @Override
+        public void forceClose() {
+            lifecycleLock.lock();
+            try {
+                state = State.CLOSED;
+                activeSendThreads.forEach(Thread::interrupt);
+            } finally {
+                lifecycleLock.unlock();
             }
-            write(content.toString());
+        }
+
+        @Override
+        public void close() {
+            lifecycleLock.lock();
+            try {
+                state = State.CLOSED;
+            } finally {
+                lifecycleLock.unlock();
+            }
         }
 
         private void write(String content) {
-            writeLock.lock();
             try {
-                Path parent = path.getParent();
-                try {
-                    if (parent != null) {
-                        Files.createDirectories(parent);
-                    }
-                    Files.writeString(path,
-                                      content,
-                                      StandardOpenOption.CREATE,
-                                      StandardOpenOption.APPEND);
-                } catch (IOException e) {
-                    throw new MessagingException("File outgoing connector failed", e);
-                }
+                writeLock.lockInterruptibly();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new MessagingException("File outgoing connector write was interrupted", e);
+            }
+            try {
+                fileWriter.write(path, content);
             } finally {
                 writeLock.unlock();
             }
         }
+
+        private Thread beginSend() {
+            lifecycleLock.lock();
+            try {
+                requireStarted();
+                Thread sendThread = Thread.currentThread();
+                activeSendThreads.add(sendThread);
+                return sendThread;
+            } finally {
+                lifecycleLock.unlock();
+            }
+        }
+
+        private void endSend(Thread sendThread) {
+            lifecycleLock.lock();
+            try {
+                activeSendThreads.remove(sendThread);
+            } finally {
+                lifecycleLock.unlock();
+            }
+        }
+
+        private void requireStarted() {
+            if (state == State.NEW) {
+                throw new IllegalStateException("File outgoing endpoint has not been started");
+            }
+            if (state == State.CLOSED) {
+                throw new IllegalStateException("File outgoing endpoint is closed");
+            }
+        }
+
+        private enum State {
+            NEW,
+            STARTED,
+            CLOSED
+        }
+    }
+
+    @FunctionalInterface
+    interface FileWriter {
+        void write(Path path, String content);
     }
 }

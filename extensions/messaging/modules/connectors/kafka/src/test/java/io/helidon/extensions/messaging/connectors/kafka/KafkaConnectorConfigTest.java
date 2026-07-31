@@ -47,10 +47,11 @@ class KafkaConnectorConfigTest {
 
     @Test
     void testCreateFromConfigReadsNestedKafkaProperties() {
-        KafkaConnectorConfig config = KafkaConnectorConfig.create(Config.just(ConfigSources.create(Map.ofEntries(
+        KafkaConnectorProvider provider = new KafkaConnectorProvider();
+        KafkaConnectorConfig config = provider.createConfig(Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("direction", "OUTGOING"),
                 Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, CHANNEL),
-                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, KafkaConnectorConfig.CONNECTOR_NAME),
+                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, KafkaConnectorProvider.CONNECTOR_TYPE),
                 Map.entry(KafkaConnectorConfig.BOOTSTRAP_SERVERS_PROPERTY, "broker-a:9092,broker-b:9092"),
                 Map.entry(KafkaConnectorConfig.TOPIC_PROPERTY, TOPIC),
                 Map.entry("properties.compression.type", "zstd"),
@@ -60,6 +61,23 @@ class KafkaConnectorConfigTest {
         assertThat(config.topic(), is(TOPIC));
         assertThat(config.properties(), is(Map.of("compression.type", "zstd",
                                                   "client.rack", "rack-a")));
+    }
+
+    @Test
+    void testEndpointFactoriesRejectMismatchedDirection() {
+        KafkaConnectorProvider provider = new KafkaConnectorProvider();
+        KafkaConnectorConfig outgoing = builder()
+                .bootstrapServers("broker:9092")
+                .topic(TOPIC)
+                .build();
+        KafkaConnectorConfig incoming = builder()
+                .direction(ConnectorConfig.Direction.INCOMING)
+                .bootstrapServers("broker:9092")
+                .topic(TOPIC)
+                .build();
+
+        assertThrows(IllegalArgumentException.class, () -> provider.createIncomingEndpoint(outgoing, null));
+        assertThrows(IllegalArgumentException.class, () -> provider.createOutgoingEndpoint(incoming));
     }
 
     @Test
@@ -126,6 +144,6 @@ class KafkaConnectorConfigTest {
         return KafkaConnectorConfig.builder()
                 .direction(ConnectorConfig.Direction.OUTGOING)
                 .channel(CHANNEL)
-                .connector(KafkaConnectorConfig.CONNECTOR_NAME);
+                .connector(KafkaConnectorProvider.CONNECTOR_TYPE);
     }
 }

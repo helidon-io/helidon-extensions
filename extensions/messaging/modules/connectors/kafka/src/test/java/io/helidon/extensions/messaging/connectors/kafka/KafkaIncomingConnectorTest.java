@@ -43,7 +43,7 @@ import io.helidon.extensions.messaging.ConnectorSource;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.DeadLetterMessage;
 import io.helidon.extensions.messaging.FailurePolicy;
-import io.helidon.extensions.messaging.ManagedConnectorSource;
+import io.helidon.extensions.messaging.IncomingEndpoint;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.MessagingRejectedException;
@@ -80,10 +80,201 @@ class KafkaIncomingConnectorTest {
     private static final TopicPartition SECOND_TOPIC_PARTITION = new TopicPartition(TOPIC, 1);
 
     @Test
-    void testConnectorName() {
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> trackingConsumer());
+    void testConnectorType() {
+        KafkaConnectorProvider provider = new KafkaConnectorProvider();
 
-        assertThat(connector.connectorName(), is(KafkaOutgoingConnector.CONNECTOR));
+        assertThat(provider.connectorType(), is(KafkaConnectorProvider.CONNECTOR_TYPE));
+    }
+
+    @Test
+    void testEndpointCreationIsResourceFreeAndCheckpointRequiresStoppedAdmission() {
+        AtomicInteger consumerCreations = new AtomicInteger();
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> {
+            consumerCreations.incrementAndGet();
+            return trackingConsumer();
+        });
+
+        IncomingEndpoint endpoint = connector.createIncomingEndpoint(config(),
+                                                                      new RecordingContext(new ArrayList<>()));
+
+        assertThat(consumerCreations.get(), is(0));
+        assertThrows(IllegalStateException.class, endpoint::checkpoint);
+        endpoint.stopAdmission();
+        endpoint.checkpoint();
+        endpoint.close();
+        assertThat(consumerCreations.get(), is(0));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testForceCloseInterruptsBlockedConsumerCreation() throws Exception {
+        CountDownLatch consumerCreationStarted = new CountDownLatch(1);
+        CountDownLatch releaseConsumerCreation = new CountDownLatch(1);
+        CountDownLatch consumerCreationInterrupted = new CountDownLatch(1);
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> {
+            consumerCreationStarted.countDown();
+            try {
+                releaseConsumerCreation.await();
+            } catch (InterruptedException e) {
+                consumerCreationInterrupted.countDown();
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Consumer creation was interrupted", e);
+            }
+            return trackingConsumer();
+        });
+        IncomingEndpoint endpoint = connector.createIncomingEndpoint(config(),
+                                                                      new RecordingContext(new ArrayList<>()));
+        AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+        Thread sourceThread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
+                .start(endpoint);
+        assertThat(consumerCreationStarted.await(1, TimeUnit.SECONDS), is(true));
+
+        AtomicReference<Throwable> forceFailure = new AtomicReference<>();
+        CountDownLatch forceReturned = new CountDownLatch(1);
+        Thread forceThread = Thread.ofVirtual().start(() -> {
+            try {
+                endpoint.forceClose();
+            } catch (Throwable throwable) {
+                forceFailure.set(throwable);
+            } finally {
+                forceReturned.countDown();
+            }
+        });
+
+        try {
+            assertThat("force close must return without waiting for consumer creation",
+                       forceReturned.await(1, TimeUnit.SECONDS),
+                       is(true));
+            assertThat(consumerCreationInterrupted.await(1, TimeUnit.SECONDS), is(true));
+            assertThat(releaseConsumerCreation.getCount(), is(1L));
+        } finally {
+            releaseConsumerCreation.countDown();
+        }
+        forceThread.join(TimeUnit.SECONDS.toMillis(1));
+        sourceThread.join(TimeUnit.SECONDS.toMillis(1));
+
+        assertThat(forceThread.isAlive(), is(false));
+        assertThat(forceFailure.get(), nullValue());
+        assertThat(sourceThread.isAlive(), is(false));
+        assertThat(sourceFailure.get(), nullValue());
+        endpoint.close();
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testCheckpointWaitsForOffsetCommitAndSourceCompletion() throws Exception {
+        CountDownLatch commitStarted = new CountDownLatch(1);
+        CountDownLatch releaseCommit = new CountDownLatch(1);
+        TrackingMockConsumer consumer = new TrackingMockConsumer() {
+            @Override
+            public void commitAsync(Map<TopicPartition, OffsetAndMetadata> offsets,
+                                    OffsetCommitCallback callback) {
+                commitStarted.countDown();
+                try {
+                    releaseCommit.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Commit wait was interrupted", e);
+                }
+                super.commitAsync(offsets, callback);
+            }
+        };
+        scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpoint endpoint = connector.createIncomingEndpoint(config(),
+                                                                      new RecordingContext(new ArrayList<>()));
+        AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+        Thread sourceThread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
+                .start(endpoint);
+
+        assertThat(commitStarted.await(5, TimeUnit.SECONDS), is(true));
+        endpoint.stopAdmission();
+        AtomicReference<Throwable> checkpointFailure = new AtomicReference<>();
+        Thread checkpointThread = Thread.ofVirtual()
+                .start(() -> captureFailure(endpoint::checkpoint, checkpointFailure));
+        try {
+            awaitWaiting(checkpointThread);
+            assertThat(checkpointThread.isAlive(), is(true));
+            assertThat(consumer.commitCount(), is(0));
+        } finally {
+            releaseCommit.countDown();
+        }
+        checkpointThread.join(TimeUnit.SECONDS.toMillis(5));
+        sourceThread.join(TimeUnit.SECONDS.toMillis(5));
+
+        assertThat(checkpointThread.isAlive(), is(false));
+        assertThat(checkpointFailure.get(), nullValue());
+        assertThat(sourceThread.isAlive(), is(false));
+        assertThat(sourceFailure.get(), nullValue());
+        assertThat(consumer.commitCount(), is(1));
+        assertThat(consumer.closed(), is(true));
+        endpoint.close();
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testForceCloseDoesNotWaitForBlockedCommitInitiation() throws Exception {
+        CountDownLatch commitStarted = new CountDownLatch(1);
+        CountDownLatch releaseCommit = new CountDownLatch(1);
+        CountDownLatch commitInterrupted = new CountDownLatch(1);
+        TrackingMockConsumer consumer = new TrackingMockConsumer() {
+            @Override
+            public void commitAsync(Map<TopicPartition, OffsetAndMetadata> offsets,
+                                    OffsetCommitCallback callback) {
+                commitStarted.countDown();
+                try {
+                    releaseCommit.await();
+                } catch (InterruptedException e) {
+                    commitInterrupted.countDown();
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Commit initiation was interrupted", e);
+                }
+                super.commitAsync(offsets, callback);
+            }
+        };
+        scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
+        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpoint endpoint = connector.createIncomingEndpoint(config(),
+                                                                      new RecordingContext(new ArrayList<>()));
+        AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+        Thread sourceThread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
+                .start(endpoint);
+        assertThat(commitStarted.await(1, TimeUnit.SECONDS), is(true));
+
+        AtomicReference<Throwable> forceFailure = new AtomicReference<>();
+        CountDownLatch forceReturned = new CountDownLatch(1);
+        Thread forceThread = Thread.ofVirtual().start(() -> {
+            try {
+                endpoint.forceClose();
+            } catch (Throwable throwable) {
+                forceFailure.set(throwable);
+            } finally {
+                forceReturned.countDown();
+            }
+        });
+
+        try {
+            assertThat("force close must return without waiting for commit initiation",
+                       forceReturned.await(1, TimeUnit.SECONDS),
+                       is(true));
+            assertThat(commitInterrupted.await(1, TimeUnit.SECONDS), is(true));
+            assertThat(releaseCommit.getCount(), is(1L));
+        } finally {
+            releaseCommit.countDown();
+        }
+        forceThread.join(TimeUnit.SECONDS.toMillis(1));
+        sourceThread.join(TimeUnit.SECONDS.toMillis(1));
+
+        assertThat(forceThread.isAlive(), is(false));
+        assertThat(forceFailure.get(), nullValue());
+        assertThat(sourceThread.isAlive(), is(false));
+        assertThat(sourceFailure.get(), nullValue());
+        assertThat(consumer.commitCount(), is(0));
+        assertThat(consumer.closed(), is(true));
+        endpoint.close();
     }
 
     @Test
@@ -92,11 +283,11 @@ class KafkaIncomingConnectorTest {
         TrackingMockConsumer consumer = trackingConsumer();
         scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
         RecordingContext context = new RecordingContext(new ArrayList<>());
-        AtomicReference<KafkaIncomingConnector> connectorRef = new AtomicReference<>();
+        AtomicReference<IncomingEndpointHarness> connectorRef = new AtomicReference<>();
         consumer.afterCommit(() -> connectorRef.get().close());
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         connectorRef.set(connector);
-        ManagedConnectorSource source = (ManagedConnectorSource) connector.createSource(config(), context);
+        IncomingEndpoint source = connector.createIncomingEndpoint(config(), context);
         source.prepareForGraph();
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
@@ -121,8 +312,8 @@ class KafkaIncomingConnectorTest {
     @Timeout(value = 5)
     void testGraphManagedSourceCanStopBeforeAdmission() throws InterruptedException {
         TrackingMockConsumer consumer = trackingConsumer();
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
-        ManagedConnectorSource source = (ManagedConnectorSource) connector.createSource(
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+        IncomingEndpoint source = connector.createIncomingEndpoint(
                 config(),
                 new RecordingContext(new ArrayList<>()));
         source.prepareForGraph();
@@ -146,8 +337,8 @@ class KafkaIncomingConnectorTest {
     @Timeout(value = 5)
     void testGraphStopWakesIdlePollWithoutForcing() throws InterruptedException {
         BlockingMockConsumer consumer = new BlockingMockConsumer();
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
-        ManagedConnectorSource source = (ManagedConnectorSource) connector.createSource(
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+        IncomingEndpoint source = connector.createIncomingEndpoint(
                 config(Map.of("max.poll.interval.ms", "60000")),
                 new RecordingContext(new ArrayList<>()));
         source.prepareForGraph();
@@ -180,8 +371,8 @@ class KafkaIncomingConnectorTest {
                 throw metadataFailure;
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
-        ManagedConnectorSource source = (ManagedConnectorSource) connector.createSource(
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+        IncomingEndpoint source = connector.createIncomingEndpoint(
                 config(),
                 new RecordingContext(new ArrayList<>()));
         source.prepareForGraph();
@@ -225,15 +416,15 @@ class KafkaIncomingConnectorTest {
                                 .add("source", "kafka".getBytes(StandardCharsets.UTF_8))));
         List<String> events = new ArrayList<>();
         RecordingContext context = new RecordingContext(events);
-        AtomicReference<KafkaIncomingConnector> connectorRef = new AtomicReference<>();
+        AtomicReference<IncomingEndpointHarness> connectorRef = new AtomicReference<>();
         consumer.afterCommit(() -> {
             events.add("commit");
             connectorRef.get().close();
         });
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         connectorRef.set(connector);
 
-        connector.createSource(config(), context).run();
+        connector.createIncomingEndpoint(config(), context).run();
 
         assertThat(events, is(List.of("dispatch", "commit")));
         assertThat(context.messages().stream().map(Message::entity).toList(), is(List.of("first", "second")));
@@ -300,12 +491,12 @@ class KafkaIncomingConnectorTest {
                 }
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         consumer.afterCommit(connector::close);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(connector.createSource(config(), context));
+                .start(connector.createIncomingEndpoint(config(), context));
 
         try {
             assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
@@ -358,11 +549,11 @@ class KafkaIncomingConnectorTest {
                 }
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(connector.createSource(config(), context));
+                .start(connector.createIncomingEndpoint(config(), context));
 
         try {
             assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
@@ -438,11 +629,11 @@ class KafkaIncomingConnectorTest {
                 return FailureResult.RETRY;
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(connector.createSource(config(), context));
+                .start(connector.createIncomingEndpoint(config(), context));
 
         try {
             assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
@@ -527,11 +718,11 @@ class KafkaIncomingConnectorTest {
                 });
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
-                .start(connector.createSource(config(Duration.ofMillis(25)), context));
+                .start(connector.createIncomingEndpoint(config(Duration.ofMillis(25)), context));
 
         try {
             assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
@@ -598,12 +789,12 @@ class KafkaIncomingConnectorTest {
                 return FailureResult.RETRY;
             }
         };
-        AtomicReference<KafkaIncomingConnector> connectorRef = new AtomicReference<>();
+        AtomicReference<IncomingEndpointHarness> connectorRef = new AtomicReference<>();
         consumer.afterCommit(() -> connectorRef.get().close());
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         connectorRef.set(connector);
 
-        connector.createSource(config(), context).run();
+        connector.createIncomingEndpoint(config(), context).run();
 
         List<String> expectedAttempt = List.of("first", "fourth", "second", "third");
         assertThat(attempts.stream()
@@ -640,11 +831,11 @@ class KafkaIncomingConnectorTest {
                                                                     "retry attempts exhausted after 3 attempt(s)",
                                                                     failure);
                                                         });
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
 
         MessagingException failure = assertThrows(
                 MessagingException.class,
-                () -> connector.createSource(config(), context)
+                () -> connector.createIncomingEndpoint(config(), context)
                         .run());
 
         assertThat(failure.getMessage().contains("retry attempts exhausted"), is(true));
@@ -665,11 +856,11 @@ class KafkaIncomingConnectorTest {
                                                                     "delivery failed after 1 attempt(s)",
                                                                     failure);
                                                         });
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
 
         MessagingException failure = assertThrows(
                 MessagingException.class,
-                () -> connector.createSource(config(), context)
+                () -> connector.createIncomingEndpoint(config(), context)
                         .run());
 
         assertThat(failure.getMessage().contains("delivery failed"), is(true));
@@ -683,10 +874,10 @@ class KafkaIncomingConnectorTest {
         TrackingMockConsumer consumer = trackingConsumer();
         scheduleRecords(consumer, record(0, "poison", new RecordHeaders()));
         AtomicInteger attempts = new AtomicInteger();
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         consumer.afterCommit(connector::close);
 
-        connector.createSource(config(),
+        connector.createIncomingEndpoint(config(),
                                failingContext(FailurePolicy.create(),
                                               attempts::incrementAndGet,
                                               (messages, failedAttempt, failure) ->
@@ -734,12 +925,12 @@ class KafkaIncomingConnectorTest {
                     }
                     return ConnectorSourceContext.FailureResult.SETTLED;
                 });
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         consumer.afterCommit(connector::close);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(connector.createSource(config(), context));
+                .start(connector.createIncomingEndpoint(config(), context));
 
         assertThat(settlementStarted.await(5, TimeUnit.SECONDS), is(true));
         assertThat("offsets must not commit before dead-letter settlement", consumer.commitCount(), is(0));
@@ -771,11 +962,11 @@ class KafkaIncomingConnectorTest {
                     handlingAttempts.incrementAndGet();
                     throw sendFailure;
                 });
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
 
         MessagingException failure = assertThrows(
                 MessagingException.class,
-                () -> connector.createSource(config(), context).run());
+                () -> connector.createIncomingEndpoint(config(), context).run());
 
         assertThat(failure.getCause(), sameInstance(sendFailure));
         assertThat(handlingAttempts.get(), is(1));
@@ -791,11 +982,11 @@ class KafkaIncomingConnectorTest {
         ConnectorSourceContext context = failingContext(FailurePolicy.create(),
                                                         () -> { },
                                                         (messages, failedAttempt, failure) -> null);
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
 
         MessagingException failure = assertThrows(
                 MessagingException.class,
-                () -> connector.createSource(config(), context).run());
+                () -> connector.createIncomingEndpoint(config(), context).run());
 
         assertThat(failure.getCause(), instanceOf(NullPointerException.class));
         assertThat(consumer.commitCount(), is(0));
@@ -809,10 +1000,10 @@ class KafkaIncomingConnectorTest {
         scheduleRecords(consumer, record(7, "first", new RecordHeaders()));
         consumer.failNextCommit(new RetriableCommitFailedException("coordinator temporarily unavailable"));
         AtomicInteger dispatches = new AtomicInteger();
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         consumer.afterCommit(connector::close);
 
-        connector.createSource(config(),
+        connector.createIncomingEndpoint(config(),
                                new RecordingContext(new ArrayList<>()) {
                                    @Override
                                    public <T> void emitBatch(List<? extends Message<T>> messages) {
@@ -844,11 +1035,11 @@ class KafkaIncomingConnectorTest {
         scheduleRecords(consumer, record(7, "first", new RecordHeaders()));
         consumer.suppressNextCommitCallback();
         AtomicInteger dispatches = new AtomicInteger();
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
 
         MessagingException failure = assertThrows(
                 MessagingException.class,
-                () -> connector.createSource(
+                () -> connector.createIncomingEndpoint(
                                 config(Map.of(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "25")),
                                 new RecordingContext(new ArrayList<>()) {
                                     @Override
@@ -878,11 +1069,11 @@ class KafkaIncomingConnectorTest {
         IllegalStateException commitFailure = new IllegalStateException("commit unavailable");
         consumer.failCommit(commitFailure);
         AtomicInteger dispatches = new AtomicInteger();
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
 
         MessagingException failure = assertThrows(
                 MessagingException.class,
-                () -> connector.createSource(config(),
+                () -> connector.createIncomingEndpoint(config(),
                                              new RecordingContext(new ArrayList<>()) {
                                                  @Override
                                                  public <T> void emitBatch(List<? extends Message<T>> messages) {
@@ -905,7 +1096,7 @@ class KafkaIncomingConnectorTest {
         IllegalStateException processingFailure = new IllegalStateException("handler failed");
         IllegalStateException closeFailure = new IllegalStateException("consumer close failed");
         consumer.failClose(closeFailure);
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         ConnectorSourceContext context = new ConnectorSourceContext() {
             @Override
             public String channelName() {
@@ -925,7 +1116,7 @@ class KafkaIncomingConnectorTest {
 
         MessagingException failure = assertThrows(
                 MessagingException.class,
-                () -> connector.createSource(config(), context)
+                () -> connector.createIncomingEndpoint(config(), context)
                         .run());
 
         assertThat(failure.getCause(), sameInstance(processingFailure));
@@ -962,10 +1153,10 @@ class KafkaIncomingConnectorTest {
                 });
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         consumer.afterCommit(connector::close);
 
-        connector.createSource(config(), context).run();
+        connector.createIncomingEndpoint(config(), context).run();
 
         assertThat(admissionAttempts.get(), is(3));
         assertThat("the owner must maintenance-poll after every unavailable admission attempt",
@@ -1000,11 +1191,11 @@ class KafkaIncomingConnectorTest {
                 });
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
 
         MessagingRejectedException failure = assertThrows(
                 MessagingRejectedException.class,
-                () -> connector.createSource(config(), context).run());
+                () -> connector.createIncomingEndpoint(config(), context).run());
 
         assertThat(failure.reason(), is(MessagingRejectedException.Reason.TIMEOUT));
         assertThat(failure.channel(), is("audit"));
@@ -1026,11 +1217,11 @@ class KafkaIncomingConnectorTest {
                 return Optional.empty();
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
-                .start(connector.createSource(config(), context));
+                .start(connector.createIncomingEndpoint(config(), context));
 
         assertThat(reservationAttempted.await(5, TimeUnit.SECONDS), is(true));
         assertThat("a source without assignment must not poll or join before reserving capacity",
@@ -1060,11 +1251,11 @@ class KafkaIncomingConnectorTest {
                 return Optional.empty();
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
 
         MessagingRejectedException failure = assertThrows(
                 MessagingRejectedException.class,
-                () -> connector.createSource(config(), context).run());
+                () -> connector.createIncomingEndpoint(config(), context).run());
 
         assertThat(failure.reason(), is(MessagingRejectedException.Reason.TIMEOUT));
         assertThat(consumer.pollCount(), is(0));
@@ -1077,7 +1268,7 @@ class KafkaIncomingConnectorTest {
         TrackingMockConsumer consumer = trackingConsumer();
         AtomicInteger reservationAttempts = new AtomicInteger();
         AtomicInteger reservationCloses = new AtomicInteger();
-        AtomicReference<KafkaIncomingConnector> connectorRef = new AtomicReference<>();
+        AtomicReference<IncomingEndpointHarness> connectorRef = new AtomicReference<>();
         ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
             @Override
             public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
@@ -1092,10 +1283,10 @@ class KafkaIncomingConnectorTest {
                 };
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         connectorRef.set(connector);
 
-        connector.createSource(config(), context).run();
+        connector.createIncomingEndpoint(config(), context).run();
 
         assertThat(reservationAttempts.get(), is(3));
         assertThat(reservationCloses.get(), is(1));
@@ -1111,7 +1302,7 @@ class KafkaIncomingConnectorTest {
         TrackingMockConsumer consumer = trackingConsumer();
         AtomicInteger reservationAttempts = new AtomicInteger();
         AtomicInteger reservationCloses = new AtomicInteger();
-        AtomicReference<KafkaIncomingConnector> connectorRef = new AtomicReference<>();
+        AtomicReference<IncomingEndpointHarness> connectorRef = new AtomicReference<>();
         ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
             @Override
             public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
@@ -1123,10 +1314,10 @@ class KafkaIncomingConnectorTest {
                 return Optional.of(unusedReservation(reservationCloses));
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         connectorRef.set(connector);
 
-        connector.createSource(config(), context).run();
+        connector.createIncomingEndpoint(config(), context).run();
 
         assertThat(reservationAttempts.get(), is(2));
         assertThat(reservationCloses.get(), is(1));
@@ -1148,7 +1339,7 @@ class KafkaIncomingConnectorTest {
         AtomicInteger reservationAttempts = new AtomicInteger();
         AtomicBoolean existingAssignmentPausedBeforeAttempt = new AtomicBoolean();
         AtomicReference<Set<TopicPartition>> pausedAfterAssignment = new AtomicReference<>();
-        AtomicReference<KafkaIncomingConnector> connectorRef = new AtomicReference<>();
+        AtomicReference<IncomingEndpointHarness> connectorRef = new AtomicReference<>();
         ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
             @Override
             public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
@@ -1167,10 +1358,10 @@ class KafkaIncomingConnectorTest {
                 };
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         connectorRef.set(connector);
 
-        connector.createSource(config(), context).run();
+        connector.createIncomingEndpoint(config(), context).run();
 
         assertThat(reservationAttempts.get(), is(3));
         assertThat(consumer.pollCount(), is(2));
@@ -1253,7 +1444,7 @@ class KafkaIncomingConnectorTest {
                 });
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         consumer.afterCommit(() -> {
             assertThat("commit callback must run before the retained-delivery lease is released",
                        leaseCloses.get(),
@@ -1261,7 +1452,7 @@ class KafkaIncomingConnectorTest {
             connector.close();
         });
 
-        connector.createSource(config(), context).run();
+        connector.createIncomingEndpoint(config(), context).run();
 
         assertThat(trackedLease.get().isDone(), is(true));
         assertThat(reservedMessages.get(), is(2));
@@ -1285,14 +1476,14 @@ class KafkaIncomingConnectorTest {
             }
         };
         AtomicReference<Map<String, Object>> messageAcquisitionProperties = new AtomicReference<>();
-        KafkaIncomingConnector messageLimitedConnector = new KafkaIncomingConnector(properties -> {
+        IncomingEndpointHarness messageLimitedConnector = new IncomingEndpointHarness(properties -> {
             messageAcquisitionProperties.set(properties);
             return messageLimitedConsumer;
         });
 
         MessagingRejectedException messageFailure = assertThrows(
                 MessagingRejectedException.class,
-                () -> messageLimitedConnector.createSource(config(), messageLimitedContext).run());
+                () -> messageLimitedConnector.createIncomingEndpoint(config(), messageLimitedContext).run());
 
         assertThat(messageFailure.reason(), is(MessagingRejectedException.Reason.OVERSIZED));
         assertThat(messageAcquisitionProperties.get().get(ConsumerConfig.MAX_POLL_RECORDS_CONFIG), is(1));
@@ -1307,14 +1498,14 @@ class KafkaIncomingConnectorTest {
             }
         };
         AtomicReference<Map<String, Object>> byteAcquisitionProperties = new AtomicReference<>();
-        KafkaIncomingConnector byteLimitedConnector = new KafkaIncomingConnector(properties -> {
+        IncomingEndpointHarness byteLimitedConnector = new IncomingEndpointHarness(properties -> {
             byteAcquisitionProperties.set(properties);
             return byteLimitedConsumer;
         });
 
         MessagingRejectedException byteFailure = assertThrows(
                 MessagingRejectedException.class,
-                () -> byteLimitedConnector.createSource(config(), byteLimitedContext).run());
+                () -> byteLimitedConnector.createIncomingEndpoint(config(), byteLimitedContext).run());
 
         assertThat(byteFailure.reason(), is(MessagingRejectedException.Reason.OVERSIZED));
         assertThat(byteAcquisitionProperties.get().get(ConsumerConfig.FETCH_MAX_BYTES_CONFIG), is(1));
@@ -1345,10 +1536,10 @@ class KafkaIncomingConnectorTest {
                 });
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         consumer.afterCommit(connector::close);
 
-        connector.createSource(config(), context).run();
+        connector.createIncomingEndpoint(config(), context).run();
 
         assertThat(admissionBytes.get(), is(76L));
         assertThat(consumer.commitCount(), is(1));
@@ -1399,10 +1590,10 @@ class KafkaIncomingConnectorTest {
                 });
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         consumer.afterCommit(connector::close);
 
-        connector.createSource(config(), context).run();
+        connector.createIncomingEndpoint(config(), context).run();
 
         assertThat(estimateCalls.get(), is(1));
         assertThat(context.messages().getFirst(), sameInstance(estimatedMessage.get()));
@@ -1444,8 +1635,8 @@ class KafkaIncomingConnectorTest {
                 return FailureResult.RETRY;
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
-        ConnectorSource source = connector.createSource(config(), context);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+        ConnectorSource source = connector.createIncomingEndpoint(config(), context);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
@@ -1495,11 +1686,11 @@ class KafkaIncomingConnectorTest {
                 }
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(connector.createSource(config(), context));
+                .start(connector.createIncomingEndpoint(config(), context));
 
         try {
             assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
@@ -1607,11 +1798,11 @@ class KafkaIncomingConnectorTest {
                 });
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
-                .start(connector.createSource(config(Duration.ofSeconds(1)), context));
+                .start(connector.createIncomingEndpoint(config(Duration.ofSeconds(1)), context));
 
         try {
             assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
@@ -1631,7 +1822,7 @@ class KafkaIncomingConnectorTest {
             assertThat(firstClose.getMessage().contains("active delivery"), is(true));
             sourceThread.join(TimeUnit.SECONDS.toMillis(5));
             assertThat(sourceThread.isAlive(), is(false));
-            assertThat("a timed-out delivery must remain tracked by the closed connector",
+            assertThat("a timed-out delivery must remain tracked by the closed endpoint",
                        assertThrows(MessagingException.class, connector::close)
                                .getMessage()
                                .contains("close timed out"),
@@ -1670,11 +1861,11 @@ class KafkaIncomingConnectorTest {
 
     @Test
     @Timeout(value = 5)
-    void testDeliveryCanCloseConnectorWithoutWaitingForItself() throws InterruptedException {
+    void testDeliveryCanCloseEndpointWithoutWaitingForItself() throws InterruptedException {
         TrackingMockConsumer consumer = trackingConsumer();
         scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
         CountDownLatch closeReturned = new CountDownLatch(1);
-        AtomicReference<KafkaIncomingConnector> connectorRef = new AtomicReference<>();
+        AtomicReference<IncomingEndpointHarness> connectorRef = new AtomicReference<>();
         ConnectorSourceContext context = new ConnectorSourceContext() {
             @Override
             public String channelName() {
@@ -1692,12 +1883,12 @@ class KafkaIncomingConnectorTest {
                 closeReturned.countDown();
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
         connectorRef.set(connector);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
-                .start(connector.createSource(config(), context));
+                .start(connector.createIncomingEndpoint(config(), context));
 
         assertThat(closeReturned.await(5, TimeUnit.SECONDS), is(true));
         sourceThread.join(TimeUnit.SECONDS.toMillis(5));
@@ -1712,8 +1903,8 @@ class KafkaIncomingConnectorTest {
     @Test
     void testCloseWakesPollingConsumerAndClosesIt() throws InterruptedException {
         BlockingMockConsumer consumer = new BlockingMockConsumer();
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
-        ConnectorSource source = connector.createSource(config(), new RecordingContext(new ArrayList<>()));
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+        ConnectorSource source = connector.createIncomingEndpoint(config(), new RecordingContext(new ArrayList<>()));
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
@@ -1730,13 +1921,13 @@ class KafkaIncomingConnectorTest {
     }
 
     @Test
-    void testFailedSourceCannotBeRunAgainAfterConnectorClose() {
+    void testFailedSourceCannotBeRunAgainAfterEndpointClose() {
         AtomicInteger consumerCreations = new AtomicInteger();
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> {
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> {
             consumerCreations.incrementAndGet();
             throw new IllegalStateException("consumer creation failed");
         });
-        ConnectorSource source = connector.createSource(config(), new RecordingContext(new ArrayList<>()));
+        ConnectorSource source = connector.createIncomingEndpoint(config(), new RecordingContext(new ArrayList<>()));
 
         assertThrows(MessagingException.class, source::run);
         connector.close();
@@ -1780,8 +1971,8 @@ class KafkaIncomingConnectorTest {
                 super.close(timeout);
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
-        ManagedConnectorSource source = (ManagedConnectorSource) connector.createSource(
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+        IncomingEndpoint source = connector.createIncomingEndpoint(
                 config(Duration.ofMillis(100)),
                 new RecordingContext(new ArrayList<>()));
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
@@ -1817,9 +2008,12 @@ class KafkaIncomingConnectorTest {
         assertThat(closeAttempts.get(), is(2));
         assertThat(consumer.closed(), is(true));
         assertThat(sourceFailure.get(), instanceOf(MessagingException.class));
-        assertThat(firstCloseFailure.get(), instanceOf(MessagingException.class));
-        assertThat(firstCloseFailure.get().getCause(), sameInstance(closeFailure));
-        assertThat(secondCloseFailure.get(), sameInstance(firstCloseFailure.get()));
+        assertThat(sourceFailure.get().getCause(), sameInstance(closeFailure));
+        assertThat(firstCloseFailure.get(), nullValue());
+        assertThat(secondCloseFailure.get(), sameInstance(sourceFailure.get()));
+
+        source.close();
+        assertThat(closeAttempts.get(), is(2));
     }
 
     private static void captureFailure(Runnable action, AtomicReference<Throwable> failure) {
@@ -1866,7 +2060,7 @@ class KafkaIncomingConnectorTest {
         return KafkaConnectorConfig.builder()
                 .direction(ConnectorConfig.Direction.INCOMING)
                 .channel("audit")
-                .connector(KafkaOutgoingConnector.CONNECTOR)
+                .connector(KafkaConnectorProvider.CONNECTOR_TYPE)
                 .bootstrapServers("localhost:9092")
                 .topic(TOPIC)
                 .groupId("audit-test")
@@ -2497,6 +2691,30 @@ class KafkaIncomingConnectorTest {
         @Override
         public void close() {
             delegate.close();
+        }
+    }
+
+    private static final class IncomingEndpointHarness {
+        private final KafkaIncomingConnector connector;
+        private final AtomicReference<IncomingEndpoint> endpoint = new AtomicReference<>();
+
+        private IncomingEndpointHarness(KafkaIncomingConnector.ConsumerFactory consumerFactory) {
+            connector = new KafkaIncomingConnector(consumerFactory);
+        }
+
+        private IncomingEndpoint createIncomingEndpoint(KafkaConnectorConfig config, ConnectorSourceContext context) {
+            IncomingEndpoint created = connector.createIncomingEndpoint(config, context);
+            if (!endpoint.compareAndSet(null, created)) {
+                throw new IllegalStateException("Incoming endpoint harness supports one endpoint");
+            }
+            return created;
+        }
+
+        private void close() {
+            IncomingEndpoint current = endpoint.get();
+            if (current != null) {
+                current.close();
+            }
         }
     }
 
