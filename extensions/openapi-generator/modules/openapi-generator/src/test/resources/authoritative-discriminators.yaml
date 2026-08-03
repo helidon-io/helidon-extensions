@@ -1,0 +1,117 @@
+#
+# Copyright (c) 2026 Oracle and/or its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+---
+openapi: 3.0.3
+info:
+  title: Authoritative discriminators
+  version: 1.0.0
+paths: {}
+components:
+  schemas:
+    DeclaredBase:
+      type: object
+      discriminator:
+        propertyName: kind
+        mapping:
+          weird.alias: '#/components/schemas/DeclaredCat'
+          MixedCase-2: '#/components/schemas/DeclaredDog'
+      required: [kind]
+      properties:
+        kind:
+          type: string
+        common:
+          type: string
+    DeclaredCat:
+      allOf:
+        - $ref: '#/components/schemas/DeclaredBase'
+        - type: object
+          properties:
+            whiskers:
+              type: integer
+              format: int32
+    DeclaredDog:
+      allOf:
+        - $ref: '#/components/schemas/DeclaredBase'
+        - type: object
+          properties:
+            bark:
+              type: boolean
+    DeclaredBird:
+      allOf:
+        - $ref: '#/components/schemas/DeclaredBase'
+        - type: object
+          properties:
+            wingspan:
+              type: integer
+              format: int32
+    MetadataAlpha:
+      type: object
+      properties:
+        alpha:
+          type: string
+    MetadataBeta:
+      type: object
+      properties:
+        beta:
+          type: string
+    MetadataChoice:
+      oneOf:
+        - $ref: '#/components/schemas/MetadataAlpha'
+        - $ref: '#/components/schemas/MetadataBeta'
+      discriminator:
+        propertyName: category
+        mapping:
+          alpha.v1: '#/components/schemas/MetadataAlpha'
+    ForcedMetadataCat:
+      type: object
+      properties:
+        type:
+          type: string
+        value:
+          type: string
+    ForcedMetadataDog:
+      type: object
+      properties:
+        type:
+          type: string
+        count:
+          type: integer
+          format: int32
+    ForcedMetadata:
+      x-helidon-discriminator-representation: metadata
+      oneOf:
+        - $ref: '#/components/schemas/ForcedMetadataCat'
+        - $ref: '#/components/schemas/ForcedMetadataDog'
+      discriminator:
+        propertyName: type
+    ForcedReadOnlyAlpha:
+      type: object
+      properties:
+        value:
+          type: string
+    ForcedReadOnlyBeta:
+      type: object
+      properties:
+        count:
+          type: integer
+          format: int32
+    ForcedReadOnly:
+      x-helidon-discriminator-representation: readOnlyProperty
+      oneOf:
+        - $ref: '#/components/schemas/ForcedReadOnlyAlpha'
+        - $ref: '#/components/schemas/ForcedReadOnlyBeta'
+      discriminator:
+        propertyName: type

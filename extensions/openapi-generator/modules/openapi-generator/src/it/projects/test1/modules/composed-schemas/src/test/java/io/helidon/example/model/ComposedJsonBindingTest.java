@@ -23,6 +23,7 @@ import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ComposedJsonBindingTest {
 
@@ -31,16 +32,24 @@ class ComposedJsonBindingTest {
     @Test
     void oneOfDiscriminatorRoundTrip() {
         Cat cat = new Cat();
-        cat.kind("cat&special");
         cat.whiskers(7);
 
         String json = jsonBinding.serialize((Pet) cat, Pet.class);
-        assertThat(json, containsString("\"kind\":\"cat&special\""));
+        assertThat(occurrences(json, "\"kind\""), is(1));
+        assertThat(json, containsString("\"kind\":\"cat$special\""));
         assertThat(json, containsString("\"whiskers\":7"));
+        assertThat(cat.kind(), is("cat$special"));
 
-        Pet pet = jsonBinding.deserialize("{\"kind\":\"cat&special\",\"whiskers\":7}", Pet.class);
+        Pet pet = jsonBinding.deserialize("{\"kind\":\"cat$special\",\"whiskers\":7}", Pet.class);
         assertThat(pet, instanceOf(Cat.class));
         assertThat(((Cat) pet).whiskers(), is(7));
+    }
+
+    @Test
+    void oneOfRejectsMissingAndUnknownDiscriminators() {
+        assertThrows(RuntimeException.class, () -> jsonBinding.deserialize("{\"whiskers\":7}", Pet.class));
+        assertThrows(RuntimeException.class,
+                     () -> jsonBinding.deserialize("{\"kind\":\"unknown\",\"whiskers\":7}", Pet.class));
     }
 
     @Test
@@ -78,5 +87,9 @@ class ComposedJsonBindingTest {
 
         PatternChoice numericCode = jsonBinding.deserialize("{\"code\":\"123\"}", PatternChoice.class);
         assertThat(numericCode, instanceOf(NumericCode.class));
+    }
+
+    private int occurrences(String value, String token) {
+        return (value.length() - value.replace(token, "").length()) / token.length();
     }
 }

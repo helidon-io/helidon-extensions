@@ -25,7 +25,7 @@ import io.helidon.json.binding.JsonConverter;
 import io.helidon.service.registry.Service;
 {{#vendorExtensions.x-has-http-enum-mappers}}import io.helidon.common.mapper.Mapper;
 {{/vendorExtensions.x-has-http-enum-mappers}}{{/vendorExtensions.x-has-string-enums}}{{/model}}
-{{#model}}{{#vendorExtensions.x-is-union-interface}}import java.io.ByteArrayOutputStream;
+{{#model}}{{#vendorExtensions.x-use-union-converter}}import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,7 +43,7 @@ import io.helidon.json.binding.JsonConverter;
 import io.helidon.json.binding.JsonDeserializer;
 import io.helidon.json.binding.JsonSerializer;
 import io.helidon.service.registry.Service;
-{{/vendorExtensions.x-is-union-interface}}{{/model}}
+{{/vendorExtensions.x-use-union-converter}}{{/model}}
 {{#imports}}
 import {{import}};
 {{/imports}}
@@ -55,7 +55,7 @@ import {{import}};
 {{#vendorExtensions.x-top-level-string-enum}}{{>stringEnum}}
 
 {{>stringEnumConverter}}
-{{/vendorExtensions.x-top-level-string-enum}}{{^vendorExtensions.x-top-level-string-enum}}{{#vendorExtensions.x-is-union-interface}}@Json.Converter({{classname}}.{{classname}}JsonConverter.class)
+{{/vendorExtensions.x-top-level-string-enum}}{{^vendorExtensions.x-top-level-string-enum}}{{#vendorExtensions.x-is-union-interface}}{{#vendorExtensions.x-use-union-converter}}@Json.Converter({{classname}}.{{classname}}JsonConverter.class)
 {{#isDeprecated}}@Deprecated
 {{/isDeprecated}}public interface {{classname}} {
 
@@ -370,14 +370,29 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
         return Set.of({{classname}}.class);
     }
 }
-{{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}@Json.Entity
+{{/vendorExtensions.x-use-union-converter}}{{#vendorExtensions.x-use-polymorphic-union}}@Json.Entity
+@Json.Polymorphic(key = {{{vendorExtensions.x-polymorphic-key-literal}}})
+{{#vendorExtensions.x-polymorphic-subtypes}}@Json.Subtype(alias = {{{aliasLiteral}}}, value = {{name}}.class)
+{{/vendorExtensions.x-polymorphic-subtypes}}{{#isDeprecated}}@Deprecated
+{{/isDeprecated}}public interface {{classname}} {
+
+{{#vendorExtensions.x-abstract-discriminator-accessors}}    /**
+     * Canonical OpenAPI discriminator value for the runtime subtype.
+     *
+     * @return exact declared discriminator alias
+     */
+    @Json.Ignore
+    {{{type}}} {{name}}();
+
+{{/vendorExtensions.x-abstract-discriminator-accessors}}}
+{{/vendorExtensions.x-use-polymorphic-union}}{{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}@Json.Entity
 {{#vendorExtensions.x-has-polymorphic-subtypes}}@Json.Polymorphic(key = {{{vendorExtensions.x-polymorphic-key-literal}}})
 {{#vendorExtensions.x-polymorphic-subtypes}}@Json.Subtype(alias = {{{aliasLiteral}}}, value = {{name}}.class)
 {{/vendorExtensions.x-polymorphic-subtypes}}{{/vendorExtensions.x-has-polymorphic-subtypes}}
 {{#isDeprecated}}@Deprecated
 {{/isDeprecated}}{{#vendorExtensions.x-has-validations}}@Validation.Validated
-{{/vendorExtensions.x-has-validations}}@Json.BuilderInfo({{classname}}.Builder.class)
-public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendorExtensions.x-extends-model}}{{/vendorExtensions.x-extends-model}}{{#vendorExtensions.x-has-implements-models}} implements {{#vendorExtensions.x-implements-models}}{{name}}{{^last}}, {{/last}}{{/vendorExtensions.x-implements-models}}{{/vendorExtensions.x-has-implements-models}} {
+{{/vendorExtensions.x-has-validations}}{{^vendorExtensions.x-abstract-polymorphic-base}}@Json.BuilderInfo({{classname}}.Builder.class)
+{{/vendorExtensions.x-abstract-polymorphic-base}}public {{#vendorExtensions.x-abstract-polymorphic-base}}abstract {{/vendorExtensions.x-abstract-polymorphic-base}}class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendorExtensions.x-extends-model}}{{/vendorExtensions.x-extends-model}}{{#vendorExtensions.x-has-implements-models}} implements {{#vendorExtensions.x-implements-models}}{{name}}{{^last}}, {{/last}}{{/vendorExtensions.x-implements-models}}{{/vendorExtensions.x-has-implements-models}} {
 
 {{#vendorExtensions.x-render-vars}}
     {{#description}}/** {{description}} */
@@ -386,10 +401,29 @@ public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendor
 
 {{/vendorExtensions.x-render-vars}}
     /** No-arg constructor. */
-    public {{classname}}() {
-{{#vendorExtensions.x-has-allof-discriminator-setter}}        {{vendorExtensions.x-allof-discriminator-setter}}({{{vendorExtensions.x-allof-discriminator-value-expression}}});
-{{/vendorExtensions.x-has-allof-discriminator-setter}}
+    {{#vendorExtensions.x-abstract-polymorphic-base}}protected{{/vendorExtensions.x-abstract-polymorphic-base}}{{^vendorExtensions.x-abstract-polymorphic-base}}public{{/vendorExtensions.x-abstract-polymorphic-base}} {{classname}}() {
     }
+
+{{#vendorExtensions.x-abstract-discriminator-accessors}}    /**
+     * Canonical OpenAPI discriminator value for the runtime subtype.
+     *
+     * @return exact declared discriminator alias
+     */
+    @Json.Ignore
+    public abstract {{{type}}} {{name}}();
+
+{{/vendorExtensions.x-abstract-discriminator-accessors}}{{#vendorExtensions.x-concrete-discriminator-accessors}}    /**
+     * Canonical OpenAPI discriminator value for this subtype.
+     *
+     * @return exact declared discriminator alias
+     */
+    @Override
+    @Json.Ignore
+    public {{{type}}} {{name}}() {
+        return {{{valueExpression}}};
+    }
+
+{{/vendorExtensions.x-concrete-discriminator-accessors}}
 
 {{#vendorExtensions.x-render-vars}}
 {{#vendorExtensions.x-validation-annotations}}    {{{annotation}}}
@@ -403,6 +437,7 @@ public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendor
 
 {{/vendorExtensions.x-render-vars}}
 {{^vendorExtensions.x-extends-model}}
+{{^vendorExtensions.x-abstract-polymorphic-base}}
     /**
      * Create a builder for {@link {{classname}}}.
      *
@@ -413,6 +448,8 @@ public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendor
         return new Builder();
     }
 
+{{/vendorExtensions.x-abstract-polymorphic-base}}
+{{^vendorExtensions.x-abstract-polymorphic-base}}
     /**
      * Builder for {@link {{classname}}}.
      */
@@ -448,6 +485,7 @@ public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendor
         }
     }
 
+{{/vendorExtensions.x-abstract-polymorphic-base}}
     /**
      * Base builder for {@link {{classname}}}.
      *
@@ -581,6 +619,13 @@ public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendor
 {{>nestedStringEnum}}
 
 {{/vendorExtensions.x-inline-string-enums}}
+{{#vendorExtensions.x-discriminator-enum-properties}}{{#isEnum}}
+    public enum {{datatypeWithEnum}} {
+        {{#allowableValues}}{{#enumVars}}{{name}}{{^-last}},
+        {{/-last}}{{/enumVars}};{{/allowableValues}}
+    }
+
+{{/isEnum}}{{/vendorExtensions.x-discriminator-enum-properties}}
 {{#vendorExtensions.x-render-vars}}{{#isEnum}}{{^vendorExtensions.x-enum-wire-constraints-validated}}
     public enum {{vendorExtensions.x-enum-name}} {
         {{#allowableValues}}{{#enumVars}}{{name}}{{^-last}},

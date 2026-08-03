@@ -39,6 +39,8 @@ components:
       type: object
       discriminator:
         propertyName: conditionShape
+        mapping:
+          CHANGE_FREEZE: '#/components/schemas/CreateChangeFreezeConditionShape'
       properties:
         conditionShape:
           type: string

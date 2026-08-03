@@ -85,22 +85,26 @@ class ComposedSchemasGenerationIT {
     void oneOfSchemaGeneratesInterface() throws IOException {
         String content = read(modelFile("Pet.java"));
         assertThat(content, containsString("public interface Pet"));
-        assertThat(content, not(containsString("@Json.Entity")));
-        assertThat(content, containsString("@Json.Converter(Pet.PetJsonConverter.class)"));
-        assertThat(content, containsString("final class PetJsonConverter implements JsonConverter<Pet>"));
-        assertThat(content, containsString("final class PetJsonBindingFactory implements JsonBindingFactory<Pet>"));
-        assertThat(content, containsString("String discriminatorValue = jsonObject.stringValue(\"kind\").orElse(null);"));
-        assertThat(content, containsString("case \"cat&special\" -> deserializeCat(jsonObject);"));
-        assertThat(content, containsString(".set(\"kind\", \"cat&special\")"));
-        assertThat(content, not(containsString("cat&amp;special")));
+        assertThat(content, containsString("@Json.Entity"));
+        assertThat(content, containsString("@Json.Polymorphic(key = \"kind\")"));
+        assertThat(content, containsString("@Json.Subtype(alias = \"cat$special\", value = Cat.class)"));
+        assertThat(content, containsString("String kind();"));
+        assertThat(content, not(containsString("PetJsonConverter")));
     }
 
     @Test
     void oneOfMembersImplementGeneratedInterface() throws IOException {
-        assertThat(read(modelFile("Cat.java")), containsString("implements"));
-        assertThat(read(modelFile("Cat.java")), containsString("Pet"));
-        assertThat(read(modelFile("Dog.java")), containsString("implements"));
-        assertThat(read(modelFile("Dog.java")), containsString("Pet"));
+        String cat = read(modelFile("Cat.java"));
+        assertThat(cat, containsString("implements"));
+        assertThat(cat, containsString("Pet"));
+        assertThat(cat, containsString("return \"cat$special\";"));
+        assertThat(cat, not(containsString("private String kind;")));
+        assertThat(cat, not(containsString("void kind(")));
+
+        String dog = read(modelFile("Dog.java"));
+        assertThat(dog, containsString("implements"));
+        assertThat(dog, containsString("Pet"));
+        assertThat(dog, containsString("return \"dog\";"));
     }
 
     @Test
@@ -144,9 +148,8 @@ class ComposedSchemasGenerationIT {
     @Test
     void unmappedDiscriminatorDefaultsToSchemaName() throws IOException {
         String content = read(modelFile("Problem.java"));
-        assertThat(content, containsString("case \"Error\" -> deserializeApiError(jsonObject);"));
-        assertThat(content, containsString(".set(\"kind\", \"Error\")"));
-        assertThat(content, not(containsString(".set(\"kind\", \"ApiError\")")));
+        assertThat(content, containsString("@Json.Subtype(alias = \"Error\", value = ApiError.class)"));
+        assertThat(content, not(containsString("alias = \"ApiError\"")));
     }
 
     @Test
@@ -241,10 +244,10 @@ class ComposedSchemasGenerationIT {
                         cat.whiskers(7);
 
                         String json = jsonBinding.serialize((Pet) cat, Pet.class);
-                        assertThat(json, containsString("\\\"kind\\\":\\\"cat&special\\\""));
+                        assertThat(json, containsString("\\\"kind\\\":\\\"cat$special\\\""));
                         assertThat(json, containsString("\\\"whiskers\\\":7"));
 
-                        Pet pet = jsonBinding.deserialize("{\\\"kind\\\":\\\"cat&special\\\",\\\"whiskers\\\":7}", Pet.class);
+                        Pet pet = jsonBinding.deserialize("{\\\"kind\\\":\\\"cat$special\\\",\\\"whiskers\\\":7}", Pet.class);
                         assertThat(pet, instanceOf(Cat.class));
                         assertThat(((Cat) pet).whiskers(), is(7));
                     }

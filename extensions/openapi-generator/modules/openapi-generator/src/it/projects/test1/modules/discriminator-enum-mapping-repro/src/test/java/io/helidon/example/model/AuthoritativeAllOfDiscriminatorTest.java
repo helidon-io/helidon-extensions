@@ -1,0 +1,59 @@
+/*
+ * Copyright (c) 2026 Oracle and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.helidon.example.model;
+
+import io.helidon.json.binding.JsonBinding;
+import org.junit.jupiter.api.Test;
+
+import static org.hamcrest.CoreMatchers.instanceOf;
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+class AuthoritativeAllOfDiscriminatorTest {
+
+    private final JsonBinding jsonBinding = JsonBinding.create();
+
+    @Test
+    void exactAliasIsTheOnlySerializedDiscriminator() {
+        ChangeFreezeConditionShape changeFreeze = new ChangeFreezeConditionShape();
+        changeFreeze.changeFreezeDetails("scheduled");
+
+        String json = jsonBinding.serialize((ConditionShapeDetails) changeFreeze, ConditionShapeDetails.class);
+        assertThat(occurrences(json, "\"conditionShape\""), is(1));
+        assertThat(json.contains("\"conditionShape\":\"CHANGE_FREEZE\""), is(true));
+        assertThat(changeFreeze.conditionShape(), is(ConditionShapeDetails.ConditionShapeEnum.CHANGE_FREEZE));
+
+        ConditionShapeDetails restored = jsonBinding.deserialize(json, ConditionShapeDetails.class);
+        assertThat(restored, instanceOf(ChangeFreezeConditionShape.class));
+        assertThat(restored.conditionShape(), is(ConditionShapeDetails.ConditionShapeEnum.CHANGE_FREEZE));
+    }
+
+    @Test
+    void missingAndUnknownAliasesAreRejected() {
+        assertThrows(RuntimeException.class,
+                     () -> jsonBinding.deserialize("{\"changeFreezeDetails\":\"scheduled\"}",
+                                                   ConditionShapeDetails.class));
+        assertThrows(RuntimeException.class,
+                     () -> jsonBinding.deserialize("{\"conditionShape\":\"UNKNOWN\"}",
+                                                   ConditionShapeDetails.class));
+    }
+
+    private int occurrences(String value, String token) {
+        return (value.length() - value.replace(token, "").length()) / token.length();
+    }
+}

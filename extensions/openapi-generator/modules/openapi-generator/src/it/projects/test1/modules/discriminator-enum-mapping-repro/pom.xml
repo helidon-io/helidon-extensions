@@ -31,5 +31,6 @@
 
     <properties>
         <inputSpec>${project.basedir}/../../specs/discriminator-enum-mapping-repro.yaml</inputSpec>
+        <skipGeneratedTests>false</skipGeneratedTests>
     </properties>
 </project>

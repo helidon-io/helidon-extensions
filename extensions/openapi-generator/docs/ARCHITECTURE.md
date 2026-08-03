@@ -89,6 +89,7 @@ Important option constants currently supported:
 - `tracingEnabled`
 - `metricsEnabled`
 - `avoidOptionalListParams`
+- `discriminatorRepresentation`
 
 Compatibility aliases:
 
@@ -158,12 +159,18 @@ Notable behavior:
   parent model builder base so inherited and local properties can be set in one
   fluent chain
 - composed schemas are normalized into template-friendly flags:
+  - discriminated bases use Helidon `@Json.Polymorphic` and `@Json.Subtype` as the
+    sole JSON discriminator owner
+  - declared discriminator properties become derived read-only accessors by default;
+    metadata-only discriminators do not add a Java accessor
+  - `x-helidon-discriminator-representation` overrides the global
+    `discriminatorRepresentation` option for one schema
   - `allOf` prefers Java inheritance when there is a single referenced parent
-  - `oneOf` and `anyOf` generate model interfaces annotated with a generated
-    `@Json.Converter`
+  - non-discriminated `oneOf` and `anyOf` generate model interfaces annotated
+    with a generated `@Json.Converter`
   - union member models implement the generated interface(s)
-  - generated converters deserialize using discriminator aliases when present,
-    then fall back to structural matching by declared properties
+  - generated converters for non-discriminated unions use structural matching
+    by declared properties
   - union interface generation is limited to referenced object model members;
     primitive, array, map, and inline members fail generation with a clear
     unsupported-shape message

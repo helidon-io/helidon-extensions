@@ -62,6 +62,11 @@ class DiscriminatorAllOfGenerationIT {
         String content = read(modelFile("CreateConditionShapeDetails.java"));
         assertThat(content, containsString("@Json.Polymorphic(key = \"conditionShape\")"));
         assertThat(content, containsString("@Json.Subtype(alias = \"CHANGE_FREEZE\", value = CreateChangeFreezeConditionShape.class)"));
+        assertThat(content, containsString("public abstract class CreateConditionShapeDetails"));
+        assertThat(content, containsString("public abstract String conditionShape();"));
+        assertThat(content, not(containsString("private String conditionShape;")));
+        assertThat(content, not(containsString("static BuilderBase<?, ? extends CreateConditionShapeDetails> builder()")));
+        assertThat(content, not(containsString("class Builder extends BuilderBase<Builder, CreateConditionShapeDetails>")));
     }
 
     @Test
@@ -74,10 +79,12 @@ class DiscriminatorAllOfGenerationIT {
     }
 
     @Test
-    void discriminatorAllOfSubtypeInitializesInheritedDiscriminator() throws IOException {
+    void discriminatorAllOfSubtypeDerivesCanonicalDiscriminator() throws IOException {
         String content = read(modelFile("CreateChangeFreezeConditionShape.java"));
-        assertThat(content, containsString("public CreateChangeFreezeConditionShape()"));
-        assertThat(content, containsString("conditionShape(\"CHANGE_FREEZE\");"));
+        assertThat(content, containsString("public String conditionShape()"));
+        assertThat(content, containsString("return \"CHANGE_FREEZE\";"));
+        assertThat(content, not(containsString("void conditionShape(")));
+        assertThat(content, not(containsString("Builder conditionShape(")));
     }
 
     private static File modelFile(String fileName) {

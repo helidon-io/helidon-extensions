@@ -28,8 +28,8 @@ components:
       discriminator:
         propertyName: type
         mapping:
-          UserConfigStringValue: '#/components/schemas/UserConfigStringValue'
-          UserConfigInstantValue: '#/components/schemas/UserConfigInstantValue'
+          STRING: '#/components/schemas/UserConfigStringValue'
+          INSTANT: '#/components/schemas/UserConfigInstantValue'
       properties:
         type:
           type: string

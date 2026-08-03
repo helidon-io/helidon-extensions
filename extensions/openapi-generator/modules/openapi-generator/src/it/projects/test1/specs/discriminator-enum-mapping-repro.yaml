@@ -28,8 +28,8 @@ components:
       discriminator:
         propertyName: conditionShape
         mapping:
-          ChangeFreezeConditionShape: '#/components/schemas/ChangeFreezeConditionShape'
-          TimeWindowConstraintsConditionShape: '#/components/schemas/TimeWindowConstraintsConditionShape'
+          CHANGE_FREEZE: '#/components/schemas/ChangeFreezeConditionShape'
+          TIME_WINDOW_CONSTRAINTS: '#/components/schemas/TimeWindowConstraintsConditionShape'
       properties:
         conditionShape:
           type: string

@@ -171,8 +171,14 @@ Set these under Maven `<configOptions>` or CLI `--additional-properties`.
 | `tracingEnabled` | `false` | Add `@Tracing.Traced` to generated endpoint classes |
 | `metricsEnabled` | `false` | Add `@Metrics.Timed` to generated endpoint methods |
 | `avoidOptionalListParams` | `false` | Generate `List<T>` instead of `Optional<List<T>>` for optional query list params |
+| `discriminatorRepresentation` | schema-driven | Use `metadata` or `readOnlyProperty` for every discriminator unless a schema overrides it |
 
 Legacy aliases `serveOpenApi` and `serveBasePath` are still accepted for compatibility.
+
+The schema extension `x-helidon-discriminator-representation` accepts `metadata` or
+`readOnlyProperty` and takes precedence over the global option. Without either setting,
+an explicitly declared discriminator property becomes a derived read-only accessor;
+a discriminator used only for polymorphic routing remains metadata-only.
 
 ## What Gets Generated
 

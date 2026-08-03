@@ -163,7 +163,7 @@ components:
       discriminator:
         propertyName: kind
         mapping:
-          cat&special: '#/components/schemas/Cat'
+          cat$special: '#/components/schemas/Cat'
           dog: '#/components/schemas/Dog'
     NullablePet:
       nullable: true
@@ -173,7 +173,7 @@ components:
       discriminator:
         propertyName: kind
         mapping:
-          cat&special: '#/components/schemas/Cat'
+          cat$special: '#/components/schemas/Cat'
           dog: '#/components/schemas/Dog'
     EmailContact:
       type: object
