@@ -1,0 +1,87 @@
+#
+# Copyright (c) 2026 Oracle and/or its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+openapi: 3.0.3
+info:
+  title: JSON String Enum Test
+  version: 1.0.0
+paths:
+  /enum/{routeMode}:
+    post:
+      tags: [enums]
+      operationId: inspectMode
+      parameters:
+        - name: routeMode
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [fast-mode, authZ]
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Mode'
+        - name: modes
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/Mode'
+        - name: X-Trace-Mode
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: [trace.on, trace-OFF]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: string
+              enum: [request-quick, requestAuthZ]
+      responses:
+        '200':
+          description: Exact enum response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Mode'
+components:
+  schemas:
+    Mode:
+      type: string
+      nullable: true
+      enum: [fast-mode, authZ, legacy.value]
+    EnumEnvelope:
+      type: object
+      properties:
+        inlineMode:
+          type: string
+          nullable: true
+          enum: [on-hold, authZ]
+        mode:
+          $ref: '#/components/schemas/Mode'
+        modes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Mode'
+        inlineModes:
+          type: array
+          items:
+            type: string
+            enum: [batch-fast, batchAuthZ]

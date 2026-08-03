@@ -1,0 +1,45 @@
+    @Json.Converter({{converterName}}.class)
+    public enum {{enumName}} {
+{{#values}}
+        {{name}}({{{value}}}){{^-last}},{{/-last}}{{#-last}};{{/-last}}
+{{/values}}
+
+        private final String value;
+
+        {{enumName}}(String value) {
+            this.value = value;
+        }
+
+        /**
+         * OpenAPI wire value.
+         *
+         * @return exact value declared in the OpenAPI document
+         */
+        public String value() {
+            return value;
+        }
+
+        /**
+         * Resolve an exact OpenAPI wire value.
+         *
+         * @param value wire value
+         * @return matching enum constant, or {@code null} when the value is {@code null}
+         * @throws IllegalArgumentException when the value is not declared by the OpenAPI enum
+         */
+        public static {{enumName}} fromValue(String value) {
+            if (value == null) {
+                return null;
+            }
+            return switch (value) {
+{{#values}}
+                case {{{value}}} -> {{name}};
+{{/values}}
+                default -> throw new IllegalArgumentException("Unexpected {{enumName}} value '" + value + "'");
+            };
+        }
+
+        @Override
+        public String toString() {
+            return value;
+        }
+    }

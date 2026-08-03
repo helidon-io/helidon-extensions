@@ -1,0 +1,40 @@
+@Service.Singleton
+final class {{converterName}} implements JsonConverter<{{qualifiedType}}>{{#httpMapper}}, Mapper<String, {{qualifiedType}}>{{/httpMapper}} {
+
+    private static final GenericType<{{qualifiedType}}> TYPE = GenericType.create({{qualifiedType}}.class);
+{{#httpMapper}}
+    private static final GenericType<String> SOURCE_TYPE = GenericType.create(String.class);
+{{/httpMapper}}
+
+    @Override
+    public GenericType<{{qualifiedType}}> type() {
+        return TYPE;
+    }
+
+    @Override
+    public {{qualifiedType}} deserialize(JsonParser parser) {
+        return {{qualifiedType}}.fromValue(parser.readString());
+    }
+
+    @Override
+    public void serialize(JsonGenerator generator, {{qualifiedType}} instance, boolean writeNulls) {
+        generator.write(instance.value());
+    }
+{{#httpMapper}}
+
+    @Override
+    public {{qualifiedType}} map(String source) {
+        return {{qualifiedType}}.fromValue(source);
+    }
+
+    @Override
+    public GenericType<String> sourceType() {
+        return SOURCE_TYPE;
+    }
+
+    @Override
+    public GenericType<{{qualifiedType}}> targetType() {
+        return TYPE;
+    }
+{{/httpMapper}}
+}

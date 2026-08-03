@@ -18,6 +18,13 @@ limitations under the License.
 package {{modelPackage}};
 
 import io.helidon.json.binding.Json;
+{{#model}}{{#vendorExtensions.x-has-string-enums}}import io.helidon.common.GenericType;
+import io.helidon.json.JsonGenerator;
+import io.helidon.json.JsonParser;
+import io.helidon.json.binding.JsonConverter;
+import io.helidon.service.registry.Service;
+{{#vendorExtensions.x-has-http-enum-mappers}}import io.helidon.common.mapper.Mapper;
+{{/vendorExtensions.x-has-http-enum-mappers}}{{/vendorExtensions.x-has-string-enums}}{{/model}}
 {{#model}}{{#vendorExtensions.x-is-union-interface}}import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -45,7 +52,10 @@ import {{import}};
 /**
  * {{description}}{{^description}}{{classname}} model.{{/description}}
  */
-{{#vendorExtensions.x-is-union-interface}}@Json.Converter({{classname}}.{{classname}}JsonConverter.class)
+{{#vendorExtensions.x-top-level-string-enum}}{{>stringEnum}}
+
+{{>stringEnumConverter}}
+{{/vendorExtensions.x-top-level-string-enum}}{{^vendorExtensions.x-top-level-string-enum}}{{#vendorExtensions.x-is-union-interface}}@Json.Converter({{classname}}.{{classname}}JsonConverter.class)
 {{#isDeprecated}}@Deprecated
 {{/isDeprecated}}public interface {{classname}} {
 
@@ -567,14 +577,16 @@ public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendor
     }
 
 {{/vendorExtensions.x-extends-model}}
-{{#vendorExtensions.x-render-vars}}{{#isEnum}}
-    public enum {{vendorExtensions.x-enum-name}} {
-        {{#allowableValues}}{{#enumVars}}{{name}}{{^-last}},
-        {{/-last}}{{/enumVars}};{{/allowableValues}}
-    }
+{{#vendorExtensions.x-inline-string-enums}}
+{{>nestedStringEnum}}
 
-{{/isEnum}}{{/vendorExtensions.x-render-vars}}
+{{/vendorExtensions.x-inline-string-enums}}
 }
+{{#vendorExtensions.x-inline-string-enums}}
+
+{{>stringEnumConverter}}
+{{/vendorExtensions.x-inline-string-enums}}
 {{/vendorExtensions.x-is-union-interface}}
+{{/vendorExtensions.x-top-level-string-enum}}
 {{/model}}
 {{/models}}
