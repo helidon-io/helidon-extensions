@@ -51,7 +51,6 @@ class CascadingValidationGenerationIT {
         assertValidated("ConstrainedLeaf.java");
         assertValidated("ValidationIntermediate.java");
         assertValidated("ValidationRoot.java");
-        assertValidated("RecursiveNode.java");
     }
 
     @Test
@@ -65,9 +64,6 @@ class CascadingValidationGenerationIT {
         assertThat(root, containsString("public Set<@Validation.Valid ConstrainedLeaf> uniqueLeaves()"));
         assertThat(root, containsString("public Map<String, @Validation.Valid ConstrainedLeaf> leavesByName()"));
         assertThat(root, containsString("public List<List<@Validation.Valid ConstrainedLeaf>> nestedLeaves()"));
-
-        String recursive = read(modelFile(outputDir, "RecursiveNode.java"));
-        assertThat(recursive, containsString("public List<@Validation.Valid RecursiveNode> children()"));
     }
 
     @Test
@@ -103,13 +99,66 @@ class CascadingValidationGenerationIT {
         Path iterableOutput = outputDir.resolve("iterable");
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
                                                        () -> generate(iterableOutput, "Iterable"));
-        assertThat(error.getMessage(), containsString("schema 'RecursiveNode', property 'children'"));
-        assertThat(error.getMessage(), containsString("mapped Java type 'Iterable<RecursiveNode>'"));
-        assertThat(error.getMessage(), containsString("participating generated model type(s) [RecursiveNode]"));
+        assertThat(error.getMessage(), containsString("schema 'ValidationRoot', property 'leaves'"));
+        assertThat(error.getMessage(), containsString("mapped Java type 'Iterable<ConstrainedLeaf>'"));
+        assertThat(error.getMessage(), containsString("participating generated model type(s) [ConstrainedLeaf]"));
         assertThat(error.getMessage(), containsString("Cascading cannot be guaranteed"));
         assertThat(error.getMessage(), containsString("List, Set, Collection, Optional, Map values, or an array"));
-        assertThat(Files.exists(modelFile(iterableOutput, "RecursiveNode.java")),
+        assertThat(Files.exists(modelFile(iterableOutput, "ValidationRoot.java")),
                    org.hamcrest.CoreMatchers.is(false));
+    }
+
+    @Test
+    void rejectsSelfRecursiveParticipatingSchemaBeforeRendering() {
+        Path recursiveOutput = outputDir.resolve("recursive");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                                                       () -> generate(recursiveOutput,
+                                                                      "recursive-cascading-validation.yaml",
+                                                                      null));
+
+        assertThat(error.getMessage(), containsString("schema 'RecursiveNode', property 'children'"));
+        assertThat(error.getMessage(), containsString("mapped Java type 'List<RecursiveNode>'"));
+        assertThat(error.getMessage(), containsString("participating generated model 'RecursiveNode'"));
+        assertThat(error.getMessage(), containsString(
+                "Validation cycle: RecursiveNode.children (List<RecursiveNode>) -> RecursiveNode"));
+        assertThat(error.getMessage(), containsString("eager TypeValidator dependencies"));
+        assertThat(error.getMessage(), containsString("non-validating DTO"));
+        assertThat(error.getMessage(), containsString("application logic"));
+        assertThat(Files.exists(modelFile(recursiveOutput, "RecursiveNode.java")),
+                   org.hamcrest.CoreMatchers.is(false));
+    }
+
+    @Test
+    void rejectsMutuallyRecursiveParticipatingSchemasDeterministically() {
+        Path recursiveOutput = outputDir.resolve("mutual-recursive");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                                                       () -> generate(recursiveOutput,
+                                                                      "mutual-recursive-cascading-validation.yaml",
+                                                                      null));
+
+        assertThat(error.getMessage(), containsString("schema 'MutualA', property 'b'"));
+        assertThat(error.getMessage(), containsString(
+                "Validation cycle: MutualA.b (MutualB) -> MutualB.a (MutualA) -> MutualA"));
+        assertThat(Files.exists(modelFile(recursiveOutput, "MutualA.java")),
+                   org.hamcrest.CoreMatchers.is(false));
+
+        Path repeatedOutput = outputDir.resolve("mutual-recursive-repeated");
+        IllegalArgumentException repeated = assertThrows(IllegalArgumentException.class,
+                                                          () -> generate(repeatedOutput,
+                                                                         "mutual-recursive-cascading-validation.yaml",
+                                                                         null));
+        assertThat(repeated.getMessage(), org.hamcrest.CoreMatchers.is(error.getMessage()));
+    }
+
+    @Test
+    void allowsNonParticipatingRecursiveSchemas() throws Exception {
+        Path recursiveOutput = outputDir.resolve("plain-recursive");
+        generate(recursiveOutput, "nonparticipating-recursive-model.yaml", null);
+
+        String model = read(modelFile(recursiveOutput, "PlainRecursiveNode.java"));
+        assertThat(model, containsString("public List<PlainRecursiveNode> children()"));
+        assertThat(model, not(containsString("@Validation.Validated")));
+        assertThat(model, not(containsString("@Validation.Valid")));
     }
 
     @Test
@@ -127,8 +176,12 @@ class CascadingValidationGenerationIT {
     }
 
     private static void generate(Path target, String arrayMapping) throws Exception {
+        generate(target, "cascading-validation.yaml", arrayMapping);
+    }
+
+    private static void generate(Path target, String resourceName, String arrayMapping) throws Exception {
         URL resource = CascadingValidationGenerationIT.class.getClassLoader()
-                .getResource("cascading-validation.yaml");
+                .getResource(resourceName);
         CodegenConfigurator configurator = new CodegenConfigurator()
                 .setGeneratorName("helidon-declarative")
                 .setInputSpec(Paths.get(resource.toURI()).toAbsolutePath().toString())

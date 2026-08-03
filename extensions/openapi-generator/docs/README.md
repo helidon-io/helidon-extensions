@@ -328,6 +328,22 @@ For model classes, validation annotations are emitted on prefixless accessor
 methods rather than private fields so generated projects compile cleanly with the
 current validation API.
 
+Validation participation is computed transitively across generated model references.
+Participating models receive `@Validation.Validated`, and their direct model,
+`Optional`, collection, map-value, and array boundaries receive `@Validation.Valid`.
+Map keys are not cascade targets. Request entities use the same boundary rules and
+add `helidon-webserver-validation` so invalid entities follow Helidon's standard HTTP
+rejection behavior.
+
+Arbitrary `Iterable` or custom container mappings cannot guarantee Helidon cascade
+semantics and are rejected before source rendering with an actionable diagnostic.
+Recursive references are allowed when they do not participate in generated validation.
+A cycle between participating models is also rejected before rendering because Helidon
+4.5 creates eager `TypeValidator` dependencies for `@Validation.Valid` boundaries and
+cannot activate a recursive validator graph. Break the validation cycle, map the
+recursive boundary to a non-validating DTO, or validate that boundary in application
+logic.
+
 ## Testing
 
 The module test suite lives under

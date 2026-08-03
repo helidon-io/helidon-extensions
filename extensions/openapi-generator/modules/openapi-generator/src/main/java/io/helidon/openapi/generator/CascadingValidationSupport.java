@@ -16,6 +16,8 @@
 
 package io.helidon.openapi.generator;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -50,6 +52,7 @@ final class CascadingValidationSupport {
         Set<String> participating = participatingModels(models, propertiesByModel,
                                                         modelNames, directlyConstrainedModels);
         validateShapes(models, propertiesByModel, modelNames, participating);
+        validateAcyclicGraph(propertiesByModel, modelNames, participating);
         return new Analysis(modelNames, Map.copyOf(propertiesByModel), participating);
     }
 
@@ -102,6 +105,86 @@ final class CascadingValidationSupport {
                         });
             }
         }
+    }
+
+    static void validateAcyclicGraph(Map<String, List<CodegenProperty>> propertiesByModel,
+                                     Set<String> modelNames,
+                                     Set<String> participating) {
+        Map<String, List<ValidationEdge>> graph = validationGraph(propertiesByModel, modelNames, participating);
+        Map<String, VisitState> states = new HashMap<>();
+        List<String> nodes = new ArrayList<>(participating);
+        nodes.sort(Comparator.naturalOrder());
+        for (String node : nodes) {
+            if (states.getOrDefault(node, VisitState.NEW) == VisitState.NEW) {
+                findValidationCycle(node, graph, states, new ArrayList<>(), new ArrayList<>());
+            }
+        }
+    }
+
+    private static Map<String, List<ValidationEdge>> validationGraph(
+            Map<String, List<CodegenProperty>> propertiesByModel,
+            Set<String> modelNames,
+            Set<String> participating) {
+        Map<String, List<ValidationEdge>> graph = new HashMap<>();
+        for (String model : participating) {
+            List<ValidationEdge> edges = new ArrayList<>();
+            for (CodegenProperty property : propertiesByModel.getOrDefault(model, List.of())) {
+                String javaType = propertyType(property);
+                ValidationTypeSupport.referencedModels(javaType, modelNames).stream()
+                        .filter(participating::contains)
+                        .sorted()
+                        .map(target -> new ValidationEdge(model, property.baseName, javaType, target))
+                        .forEach(edges::add);
+            }
+            graph.put(model, List.copyOf(edges));
+        }
+        return graph;
+    }
+
+    private static void findValidationCycle(String node,
+                                            Map<String, List<ValidationEdge>> graph,
+                                            Map<String, VisitState> states,
+                                            List<String> nodeStack,
+                                            List<ValidationEdge> edgeStack) {
+        states.put(node, VisitState.VISITING);
+        nodeStack.add(node);
+        for (ValidationEdge edge : graph.getOrDefault(node, List.of())) {
+            VisitState targetState = states.getOrDefault(edge.target, VisitState.NEW);
+            if (targetState == VisitState.VISITING) {
+                throw recursiveValidationError(edge, nodeStack, edgeStack);
+            }
+            if (targetState == VisitState.NEW) {
+                edgeStack.add(edge);
+                findValidationCycle(edge.target, graph, states, nodeStack, edgeStack);
+                edgeStack.remove(edgeStack.size() - 1);
+            }
+        }
+        nodeStack.remove(nodeStack.size() - 1);
+        states.put(node, VisitState.VISITED);
+    }
+
+    private static IllegalArgumentException recursiveValidationError(ValidationEdge closingEdge,
+                                                                     List<String> nodeStack,
+                                                                     List<ValidationEdge> edgeStack) {
+        int cycleStart = nodeStack.indexOf(closingEdge.target);
+        List<ValidationEdge> cycle = new ArrayList<>(edgeStack.subList(cycleStart, edgeStack.size()));
+        cycle.add(closingEdge);
+        StringBuilder path = new StringBuilder();
+        for (ValidationEdge edge : cycle) {
+            if (!path.isEmpty()) {
+                path.append(" -> ");
+            }
+            path.append(edge.source).append('.').append(edge.property)
+                    .append(" (").append(edge.javaType).append(')');
+        }
+        path.append(" -> ").append(cycle.get(0).source);
+        ValidationEdge first = cycle.get(0);
+        return new IllegalArgumentException("Unsupported recursive cascading validation graph: schema '"
+                + first.source + "', property '" + first.property + "', mapped Java type '" + first.javaType
+                + "' references participating generated model '" + first.target + "'. Validation cycle: " + path
+                + ". Helidon validation creates eager TypeValidator dependencies for @Validation.Valid boundaries, "
+                + "so recursive participating schemas cannot be activated. Remove the validation cycle, map the "
+                + "recursive boundary to a non-validating DTO, or validate that boundary in application logic.");
     }
 
     static void apply(CodegenProperty property, Set<String> modelNames, Set<String> participating) {
@@ -157,5 +240,14 @@ final class CascadingValidationSupport {
     record Analysis(Set<String> modelNames,
                     Map<String, List<CodegenProperty>> propertiesByModel,
                     Set<String> participatingModels) {
+    }
+
+    private record ValidationEdge(String source, String property, String javaType, String target) {
+    }
+
+    private enum VisitState {
+        NEW,
+        VISITING,
+        VISITED
     }
 }

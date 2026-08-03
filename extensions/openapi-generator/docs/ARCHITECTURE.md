@@ -313,6 +313,12 @@ The current implementation supports Helidon validation generation for:
 
 Validation is handled for both model properties and eligible parameters.
 
+The model pass computes a fixed point of models that directly declare constraints or
+transitively reach such a model. It then marks cascade boundaries at the nested model
+type for supported wrappers, collections, map values, and arrays. Map keys are ignored.
+Unsupported custom containers and cycles in the participating validation graph fail
+before templates render. Non-participating recursive models remain supported.
+
 ## Testing Strategy
 
 The implementation is primarily covered by integration-style generator tests. These run

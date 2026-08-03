@@ -48,16 +48,6 @@ components:
       properties:
         leaf:
           $ref: '#/components/schemas/ConstrainedLeaf'
-    RecursiveNode:
-      type: object
-      properties:
-        name:
-          type: string
-          minLength: 2
-        children:
-          type: array
-          items:
-            $ref: '#/components/schemas/RecursiveNode'
     ValidationRoot:
       type: object
       properties:
