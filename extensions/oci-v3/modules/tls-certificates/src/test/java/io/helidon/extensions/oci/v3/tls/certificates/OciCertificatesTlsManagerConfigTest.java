@@ -28,6 +28,7 @@ import java.util.regex.Pattern;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
+import io.helidon.config.MissingValueException;
 
 import org.junit.jupiter.api.Test;
 
@@ -124,17 +125,19 @@ class OciCertificatesTlsManagerConfigTest {
     }
 
     @Test
-    void mutatingManagedLegacyPasswordDoesNotBreakCopying() {
+    void managedLegacyPasswordIsMissingAndConfigRemainsCopyable() {
         OciCertificatesTlsManagerConfig managed = baseBuilder()
                 .privateKeySource(OciPrivateKeySource.CERTIFICATE_BUNDLE)
                 .buildPrototype();
-        char[] exposedPassword = managed.keyPassword().get();
-        exposedPassword[0] = 'x';
+
+        MissingValueException missing = assertThrows(MissingValueException.class,
+                                                      () -> managed.keyPassword().get());
+        assertThat(missing.getMessage(), containsString("key-password"));
 
         OciCertificatesTlsManagerConfig copied = OciCertificatesTlsManagerConfig.builder(managed).buildPrototype();
 
         assertThat(copied.privateKeySource(), is(OciPrivateKeySource.CERTIFICATE_BUNDLE));
-        assertThat(copied.keyPassword().get()[0], not(is('x')));
+        assertThrows(MissingValueException.class, () -> copied.keyPassword().get());
     }
 
     @Test

@@ -30,10 +30,4 @@
         <Bug pattern="CIPHER_INTEGRITY"/>
     </Match>
 
-    <Match>
-        <!-- Non-secret sentinel for unused legacy Vault configuration in certificate-bundle mode. -->
-        <Class name="io.helidon.extensions.oci.v3.tls.certificates.OciCertificatesTlsManagerConfigSupport" />
-        <Bug pattern="HARD_CODE_PASSWORD" />
-    </Match>
-
 </FindBugsFilter>

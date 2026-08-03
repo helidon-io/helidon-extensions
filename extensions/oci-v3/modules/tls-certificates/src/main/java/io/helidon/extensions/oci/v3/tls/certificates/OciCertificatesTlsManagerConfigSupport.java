@@ -18,11 +18,11 @@ package io.helidon.extensions.oci.v3.tls.certificates;
 
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.function.Supplier;
 
 import io.helidon.builder.api.Prototype;
+import io.helidon.config.Config;
 import io.helidon.config.MissingValueException;
 
 /**
@@ -32,8 +32,10 @@ final class OciCertificatesTlsManagerConfigSupport {
     private static final URI UNUSED_VAULT_CRYPTO_ENDPOINT =
             URI.create("urn:helidon:oci-certificates:unused-vault-crypto-endpoint");
     private static final String UNUSED_KEY_OCID = "helidon:oci-certificates:unused-key-ocid";
-    private static final char[] UNUSED_KEY_PASSWORD_VALUE = {'\u0000', '\uffff', '\u0000', '\uffff'};
-    private static final Supplier<char[]> UNUSED_KEY_PASSWORD = () -> UNUSED_KEY_PASSWORD_VALUE.clone();
+    private static final Supplier<char[]> MISSING_KEY_PASSWORD =
+            () -> {
+                throw MissingValueException.create(Config.Key.create("key-password"));
+            };
 
     private OciCertificatesTlsManagerConfigSupport() {
     }
@@ -82,7 +84,7 @@ final class OciCertificatesTlsManagerConfigSupport {
         private static void populateUnusedVaultOptions(OciCertificatesTlsManagerConfig.BuilderBase<?, ?> builder) {
             builder.vaultCryptoEndpoint(UNUSED_VAULT_CRYPTO_ENDPOINT);
             builder.keyOcid(UNUSED_KEY_OCID);
-            builder.keyPassword(UNUSED_KEY_PASSWORD);
+            builder.keyPassword(MISSING_KEY_PASSWORD);
         }
 
         private static void validateVaultOptions(OciCertificatesTlsManagerConfig.BuilderBase<?, ?> builder) {
@@ -120,7 +122,8 @@ final class OciCertificatesTlsManagerConfigSupport {
 
         private static boolean isConfiguredKeyPassword(Supplier<char[]> supplier) {
             try {
-                return !Arrays.equals(UNUSED_KEY_PASSWORD_VALUE, supplier.get());
+                supplier.get();
+                return true;
             } catch (MissingValueException e) {
                 return false;
             }
