@@ -47,6 +47,10 @@ dependencies {
     implementation 'io.helidon.validation:helidon-validation'
     {{/hasValidation}}
 
+    {{#hasRequestValidation}}
+    implementation 'io.helidon.webserver:helidon-webserver-validation'
+    {{/hasRequestValidation}}
+
     {{#corsEnabled}}
     implementation 'io.helidon.webserver:helidon-webserver-cors'
     {{/corsEnabled}}

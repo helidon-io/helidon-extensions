@@ -65,6 +65,14 @@ limitations under the License.
         </dependency>
         {{/hasValidation}}
 
+        {{#hasRequestValidation}}
+        <!-- Standard HTTP 400 handling for request-entity validation failures -->
+        <dependency>
+            <groupId>io.helidon.webserver</groupId>
+            <artifactId>helidon-webserver-validation</artifactId>
+        </dependency>
+        {{/hasRequestValidation}}
+
         {{#corsEnabled}}
         <!-- CORS — declarative cross-origin resource sharing (@Cors.Defaults on endpoint classes) -->
         <dependency>

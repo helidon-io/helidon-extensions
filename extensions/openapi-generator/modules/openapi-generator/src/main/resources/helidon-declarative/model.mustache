@@ -451,7 +451,8 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
 
 {{#vendorExtensions.x-render-vars}}
 {{#vendorExtensions.x-validation-annotations}}    {{{annotation}}}
-{{/vendorExtensions.x-validation-annotations}}    public {{{datatypeWithEnum}}} {{name}}() {
+{{/vendorExtensions.x-validation-annotations}}{{#vendorExtensions.x-cascade-validation}}    @Validation.Valid
+{{/vendorExtensions.x-cascade-validation}}    public {{#vendorExtensions.x-validation-datatype}}{{{vendorExtensions.x-validation-datatype}}}{{/vendorExtensions.x-validation-datatype}}{{^vendorExtensions.x-validation-datatype}}{{{datatypeWithEnum}}}{{/vendorExtensions.x-validation-datatype}} {{name}}() {
         return {{name}};
     }
 
