@@ -125,15 +125,14 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private boolean avoidOptionalListParams = false;
     private List<SecurityRequirement> globalSecurityRequirements = List.of();
     private Map<String, String> rawAllOfDiscriminatorValuesBySchema = Map.of();
-    private Set<String> httpParameterEnumSchemas = Set.of();
-    private Map<String, List<String>> inlineRequestEntityEnumValues = Map.of();
-    private Set<String> inlineRequestEntityEnumCollections = Set.of();
+    private final JsonStringEnumSupport jsonStringEnums;
 
     /**
      * Creates a new generator with default options and template mappings.
      */
     public HelidonDeclarativeCodegen() {
         super();
+        jsonStringEnums = new JsonStringEnumSupport(this::toEnumVarName);
 
         outputFolder = "generated-code/helidon-declarative";
         // Setting the fields directly configures where templates are resolved from
@@ -376,13 +375,12 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
     @Override
     public void preprocessOpenAPI(io.swagger.v3.oas.models.OpenAPI openAPI) {
-        captureInlineRequestEntityEnums(openAPI);
+        jsonStringEnums.preprocess(openAPI, inputSpec);
         super.preprocessOpenAPI(openAPI);
         globalSecurityRequirements = openAPI.getSecurity() == null
                 ? List.of()
                 : new ArrayList<>(openAPI.getSecurity());
         rawAllOfDiscriminatorValuesBySchema = loadRawAllOfDiscriminatorValues();
-        httpParameterEnumSchemas = findHttpParameterEnumSchemas(openAPI);
 
         if (openAPI.getServers() != null && !openAPI.getServers().isEmpty()) {
             String serverUrl = openAPI.getServers().get(0).getUrl();
@@ -413,57 +411,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         }
     }
 
-    private Set<String> findHttpParameterEnumSchemas(io.swagger.v3.oas.models.OpenAPI openAPI) {
-        if (openAPI.getPaths() == null) {
-            return Set.of();
-        }
-
-        Set<String> result = new LinkedHashSet<>();
-        openAPI.getPaths().values().forEach(pathItem -> {
-            collectHttpParameterEnumSchemas(openAPI, pathItem.getParameters(), result);
-            pathItem.readOperations().forEach(operation ->
-                    collectHttpParameterEnumSchemas(openAPI, operation.getParameters(), result));
-        });
-        return Set.copyOf(result);
-    }
-
-    private void collectHttpParameterEnumSchemas(io.swagger.v3.oas.models.OpenAPI openAPI,
-                                                 List<io.swagger.v3.oas.models.parameters.Parameter> parameters,
-                                                 Set<String> result) {
-        if (parameters == null) {
-            return;
-        }
-        for (io.swagger.v3.oas.models.parameters.Parameter parameter : parameters) {
-            io.swagger.v3.oas.models.parameters.Parameter resolved = parameter;
-            if (parameter.get$ref() != null && parameter.get$ref().startsWith("#/components/parameters/")
-                    && openAPI.getComponents() != null && openAPI.getComponents().getParameters() != null) {
-                String parameterName = refName(parameter.get$ref());
-                resolved = openAPI.getComponents().getParameters().getOrDefault(parameterName, parameter);
-            }
-            collectEnumSchemaRefs(resolved.getSchema(), result);
-            if (resolved.getContent() != null) {
-                resolved.getContent().values().forEach(mediaType -> collectEnumSchemaRefs(mediaType.getSchema(), result));
-            }
-        }
-    }
-
-    private void collectEnumSchemaRefs(Schema<?> schema, Set<String> result) {
-        if (schema == null) {
-            return;
-        }
-        if (schema.get$ref() != null && schema.get$ref().startsWith("#/components/schemas/")) {
-            result.add(refName(schema.get$ref()));
-        }
-        collectEnumSchemaRefs(schema.getItems(), result);
-        if (schema.getAdditionalProperties() instanceof Schema<?> additionalProperties) {
-            collectEnumSchemaRefs(additionalProperties, result);
-        }
-    }
-
-    private String refName(String ref) {
-        return ref.substring(ref.lastIndexOf('/') + 1);
-    }
-
     // -------------------------------------------------------------------------
     // Per-model: strip swagger 1.x annotation imports (not on Helidon SE classpath)
     // -------------------------------------------------------------------------
@@ -491,9 +438,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         if (allOfDiscriminatorValue != null) {
             model.vendorExtensions.put("x-allof-discriminator-value", allOfDiscriminatorValue);
         }
-        if (httpParameterEnumSchemas.contains(name)) {
-            model.vendorExtensions.put("x-http-parameter-enum", Boolean.TRUE);
-        }
+        jsonStringEnums.markHttpParameterEnum(name, model);
         return model;
     }
 
@@ -507,13 +452,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                                           Operation operation,
                                           List<Server> servers) {
         String operationId = operation.getOperationId();
-        List<?> requestEntityEnumValues = operationId == null
-                ? List.of()
-                : inlineRequestEntityEnumValues.getOrDefault(operationId, List.of());
-        boolean requestEntityEnumCollection = operationId != null
-                && inlineRequestEntityEnumCollections.contains(operationId);
         CodegenOperation op = super.fromOperation(path, httpMethod, operation, servers);
-        restoreInlineRequestEntityEnum(op, requestEntityEnumValues, requestEntityEnumCollection);
+        jsonStringEnums.restoreInlineRequestEntityEnum(operationId, op);
 
         // HTTP method annotation string (e.g. "@Http.GET")
         op.vendorExtensions.put("x-http-annotation", "@Http." + httpMethod.toUpperCase());
@@ -653,113 +593,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return op;
     }
 
-    private void captureInlineRequestEntityEnums(io.swagger.v3.oas.models.OpenAPI openAPI) {
-        if (openAPI.getPaths() == null) {
-            inlineRequestEntityEnumValues = Map.of();
-            inlineRequestEntityEnumCollections = Set.of();
-            return;
-        }
-        Map<String, List<String>> valuesByOperation = new LinkedHashMap<>();
-        Set<String> collections = new LinkedHashSet<>();
-        openAPI.getPaths().values().forEach(pathItem -> pathItem.readOperations().forEach(operation -> {
-            if (operation.getOperationId() == null || operation.getRequestBody() == null
-                    || operation.getRequestBody().getContent() == null
-                    || operation.getRequestBody().getContent().isEmpty()) {
-                return;
-            }
-            Schema<?> schema = operation.getRequestBody().getContent().values().iterator().next().getSchema();
-            if (schema == null || schema.get$ref() != null) {
-                return;
-            }
-            Schema<?> enumSchema = schema.getItems() == null ? schema : schema.getItems();
-            if (enumSchema.get$ref() == null && enumSchema.getEnum() != null && !enumSchema.getEnum().isEmpty()) {
-                valuesByOperation.put(operation.getOperationId(), enumSchema.getEnum().stream()
-                        .map(Object::toString)
-                        .toList());
-                if (schema.getItems() != null) {
-                    collections.add(operation.getOperationId());
-                }
-            }
-        }));
-        captureRawInlineRequestEntityEnums(valuesByOperation, collections);
-        inlineRequestEntityEnumValues = Map.copyOf(valuesByOperation);
-        inlineRequestEntityEnumCollections = Set.copyOf(collections);
-    }
-
-    private void captureRawInlineRequestEntityEnums(Map<String, List<String>> valuesByOperation,
-                                                     Set<String> collections) {
-        if (inputSpec == null || inputSpec.isBlank()) {
-            return;
-        }
-        try {
-            String specContent = InputSpecContentReader.read(inputSpec);
-            ObjectMapper mapper = looksLikeJson(inputSpec, specContent) ? Json.mapper() : Yaml.mapper();
-            JsonNode paths = mapper.readTree(specContent).path("paths");
-            paths.fields().forEachRemaining(pathEntry -> pathEntry.getValue().fields().forEachRemaining(methodEntry -> {
-                JsonNode operation = methodEntry.getValue();
-                String operationId = operation.path("operationId").asText(null);
-                JsonNode content = operation.path("requestBody").path("content");
-                if (operationId == null || !content.isObject() || content.isEmpty()) {
-                    return;
-                }
-                JsonNode schema = content.elements().next().path("schema");
-                JsonNode enumSchema = schema.has("items") ? schema.path("items") : schema;
-                JsonNode enumNode = enumSchema.path("enum");
-                if (!enumNode.isArray() || enumNode.isEmpty()) {
-                    return;
-                }
-                List<String> values = new ArrayList<>();
-                enumNode.forEach(value -> values.add(value.asText()));
-                valuesByOperation.put(operationId, List.copyOf(values));
-                if (schema.has("items")) {
-                    collections.add(operationId);
-                }
-            }));
-        } catch (IOException | RuntimeException ignored) {
-            // The parsed OpenAPI model remains the source of truth when raw input cannot be read.
-        }
-    }
-
-    private void restoreInlineRequestEntityEnum(CodegenOperation codegenOperation,
-                                                List<?> enumValues,
-                                                boolean collection) {
-        if (enumValues.isEmpty()) {
-            return;
-        }
-
-        Map<String, Object> allowableValues = stringAllowableValues(enumValues);
-        List<CodegenParameter> bodyParameters = new ArrayList<>();
-        if (codegenOperation.bodyParam != null) {
-            bodyParameters.add(codegenOperation.bodyParam);
-        }
-        if (codegenOperation.allParams != null) {
-            codegenOperation.allParams.stream()
-                    .filter(parameter -> parameter.isBodyParam && parameter != codegenOperation.bodyParam)
-                    .forEach(bodyParameters::add);
-        }
-        for (CodegenParameter bodyParameter : bodyParameters) {
-            if (!collection) {
-                bodyParameter.isEnum = true;
-                bodyParameter.isString = true;
-                bodyParameter.allowableValues = allowableValues;
-            } else if (bodyParameter.items != null) {
-                bodyParameter.items.isEnum = true;
-                bodyParameter.items.isString = true;
-                bodyParameter.items.allowableValues = allowableValues;
-            }
-        }
-    }
-
-    private Map<String, Object> stringAllowableValues(List<?> values) {
-        List<Map<String, String>> enumVars = new ArrayList<>();
-        for (Object value : values) {
-            String wireValue = value.toString();
-            enumVars.add(Map.of("name", toEnumVarName(wireValue, "String"),
-                                "value", JavaStringLiterals.toJavaStringLiteral(wireValue)));
-        }
-        return Map.of("enumVars", enumVars);
-    }
-
     // -------------------------------------------------------------------------
     // Per-tag post-processing: compute paths, error model, optional-param flags
     // -------------------------------------------------------------------------
@@ -818,11 +651,12 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             }
             // Parameter-level validation annotations
             for (CodegenParameter param : op.allParams) {
-                prepareInlineRequestEntityEnum(op, param);
-                Map<String, Object> operationEnum = promoteInlineOperationEnum(ops.getClassname(), op, param);
-                if (operationEnum != null) {
-                    operationEnums.putIfAbsent(operationEnum.get("enumName").toString(), operationEnum);
-                }
+                jsonStringEnums.prepareInlineRequestEntityEnum(op, param);
+                jsonStringEnums.promoteInlineOperationEnum(operationEnums,
+                                                           ops.getClassname(),
+                                                           op,
+                                                           param,
+                                                           value -> camelize(sanitizeName(value)));
                 List<Map<String, Object>> paramValidations = buildParamValidationAnnotations(param);
                 if (!paramValidations.isEmpty()) {
                     param.vendorExtensions.put("x-validation-annotations", paramValidations);
@@ -853,13 +687,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         result.put("hasParamValidation", anyParamValidation);
         result.put("hasFormOperations", anyFormOperations);
         result.put("hasMultipartOperations", anyMultipartOperations);
-        if (!operationEnums.isEmpty()) {
-            result.put("x-operation-string-enums", new ArrayList<>(operationEnums.values()));
-            result.put("x-has-operation-string-enums", Boolean.TRUE);
-            if (operationEnums.values().stream().anyMatch(enumDefinition -> enumDefinition.containsKey("httpMapper"))) {
-                result.put("x-has-http-enum-mappers", Boolean.TRUE);
-            }
-        }
+        jsonStringEnums.applyOperationEnums(result, operationEnums);
         if (anyParamValidation) {
             // Needed by pom.xml.mustache when only parameters (not models) use @Validation.*
             additionalProperties.put("hasValidation", Boolean.TRUE);
@@ -903,67 +731,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         }
 
         return result;
-    }
-
-    private void prepareInlineRequestEntityEnum(CodegenOperation operation, CodegenParameter parameter) {
-        if (!parameter.isBodyParam) {
-            return;
-        }
-        List<String> values = inlineRequestEntityEnumValues.get(operation.operationId);
-        if (values == null || values.isEmpty()) {
-            return;
-        }
-        Map<String, Object> allowableValues = stringAllowableValues(values);
-        if (inlineRequestEntityEnumCollections.contains(operation.operationId) && parameter.items != null) {
-            parameter.items.isEnum = true;
-            parameter.items.isString = true;
-            parameter.items.allowableValues = allowableValues;
-        } else {
-            parameter.isEnum = true;
-            parameter.isString = true;
-            parameter.allowableValues = allowableValues;
-        }
-    }
-
-    private Map<String, Object> promoteInlineOperationEnum(String apiClassname,
-                                                           CodegenOperation operation,
-                                                           CodegenParameter parameter) {
-        CodegenProperty item = parameter.isArray ? parameter.items : null;
-        boolean itemEnum = item != null && item.isEnum && !item.isEnumRef && item.isString;
-        boolean directEnum = !parameter.isArray && parameter.isEnum && !parameter.isEnumRef && parameter.isString;
-        Map<String, Object> allowableValues = itemEnum ? item.allowableValues : parameter.allowableValues;
-        if ((!itemEnum && !directEnum) || enumValues(allowableValues).isEmpty()) {
-            return null;
-        }
-
-        String enumName = camelize(sanitizeName(operation.operationId))
-                + camelize(sanitizeName(parameter.paramName))
-                + "Enum";
-        String bareType = parameter.vendorExtensions.containsKey("x-bare-type")
-                ? parameter.vendorExtensions.get("x-bare-type").toString()
-                : parameter.dataType;
-        String promotedBareType;
-        if (parameter.isArray) {
-            String itemType = item.dataType == null ? "String" : item.dataType;
-            promotedBareType = bareType.replace(itemType, enumName);
-        } else {
-            promotedBareType = enumName;
-        }
-        if (parameter.vendorExtensions.containsKey("x-optional")) {
-            parameter.vendorExtensions.put("x-bare-type", promotedBareType);
-            parameter.dataType = "Optional<" + promotedBareType + ">";
-        } else {
-            parameter.dataType = promotedBareType;
-        }
-        parameter.datatypeWithEnum = parameter.dataType;
-
-        boolean httpMapper = parameter.isPathParam || parameter.isQueryParam
-                || parameter.isHeaderParam || parameter.isCookieParam;
-        return enumDefinition(enumName,
-                              apiClassname + "Api." + enumName,
-                              apiClassname + "Api" + enumName + "JsonConverter",
-                              allowableValues,
-                              httpMapper);
     }
 
     private void generateComputedHeaderFunctionFiles(String apiClassName, List<Map<String, String>> headerFunctions) {
@@ -1074,20 +841,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             ModelsMap modelsMap = entry.getValue();
             for (ModelMap modelContainer : modelsMap.getModels()) {
                 var model = modelContainer.getModel();
-                if (model.isEnum && model.isString) {
-                    Map<String, Object> enumDefinition = enumDefinition(model.classname,
-                                                                        model.classname,
-                                                                        model.classname + "JsonConverter",
-                                                                        model.allowableValues,
-                                                                        Boolean.TRUE.equals(model.vendorExtensions
-                                                                                                    .get("x-http-parameter-enum")));
-                    if (enumDefinition != null) {
-                        model.vendorExtensions.put("x-top-level-string-enum", enumDefinition);
-                        model.vendorExtensions.put("x-has-string-enums", Boolean.TRUE);
-                        if (enumDefinition.containsKey("httpMapper")) {
-                            model.vendorExtensions.put("x-has-http-enum-mappers", Boolean.TRUE);
-                        }
-                    }
+                if (jsonStringEnums.prepareTopLevelModel(model)) {
                     continue;
                 }
                 if (Boolean.TRUE.equals(model.vendorExtensions.get("x-is-union-interface"))) {
@@ -1096,27 +850,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 }
 
                 boolean modelHasValidation = false;
-                List<CodegenProperty> renderVars = renderVars(model);
-                List<Map<String, Object>> inlineEnums = new ArrayList<>();
+                List<CodegenProperty> renderVars = jsonStringEnums.prepareInlineModelEnums(model);
 
                 for (CodegenProperty prop : renderVars) {
-                    CodegenProperty enumProperty = inlineStringEnumProperty(prop);
-                    if (enumProperty != null) {
-                        String enumName = enumProperty.datatypeWithEnum;
-                        if (enumName != null && !enumName.isBlank()) {
-                            prop.vendorExtensions.put("x-enum-name", enumName);
-                            Map<String, Object> enumDefinition = enumDefinition(
-                                    enumName,
-                                    model.classname + "." + enumName,
-                                    model.classname + enumName + "JsonConverter",
-                                    enumProperty.allowableValues,
-                                    false);
-                            if (enumDefinition != null) {
-                                inlineEnums.add(enumDefinition);
-                            }
-                        }
-                    }
-
                     // Mark required properties for @Json.Required
                     if (prop.required) {
                         prop.vendorExtensions.put("x-json-required", Boolean.TRUE);
@@ -1148,60 +884,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     }
                     anyValidation = true;
                 }
-                if (!inlineEnums.isEmpty()) {
-                    model.vendorExtensions.put("x-inline-string-enums", inlineEnums);
-                    model.vendorExtensions.put("x-has-string-enums", Boolean.TRUE);
-                }
             }
         }
         if (anyValidation) {
             additionalProperties.put("hasValidation", Boolean.TRUE);
-        }
-        return result;
-    }
-
-    private CodegenProperty inlineStringEnumProperty(CodegenProperty property) {
-        CodegenProperty candidate = property.isArray ? property.items : property;
-        if (candidate == null || !candidate.isEnum || candidate.isEnumRef || !candidate.isString) {
-            return null;
-        }
-        return enumValues(candidate.allowableValues).isEmpty() ? null : candidate;
-    }
-
-    private Map<String, Object> enumDefinition(String enumName,
-                                               String qualifiedType,
-                                               String converterName,
-                                               Map<String, Object> allowableValues,
-                                               boolean httpMapper) {
-        List<Map<String, String>> values = enumValues(allowableValues);
-        if (values.isEmpty()) {
-            return null;
-        }
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("enumName", enumName);
-        result.put("qualifiedType", qualifiedType);
-        result.put("converterName", converterName);
-        result.put("values", values);
-        if (httpMapper) {
-            result.put("httpMapper", Boolean.TRUE);
-        }
-        return result;
-    }
-
-    private List<Map<String, String>> enumValues(Map<String, Object> allowableValues) {
-        if (allowableValues == null || !(allowableValues.get("enumVars") instanceof List<?> enumVars)) {
-            return List.of();
-        }
-        List<Map<String, String>> result = new ArrayList<>();
-        for (Object enumVar : enumVars) {
-            if (!(enumVar instanceof Map<?, ?> values)) {
-                continue;
-            }
-            Object name = values.get("name");
-            Object value = values.get("value");
-            if (name != null && value != null) {
-                result.add(Map.of("name", name.toString(), "value", value.toString()));
-            }
         }
         return result;
     }
@@ -1459,15 +1145,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return properties.stream()
                 .filter(prop -> !inheritedNames.contains(prop.name))
                 .toList();
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<CodegenProperty> renderVars(CodegenModel model) {
-        Object renderVars = model.vendorExtensions.get("x-render-vars");
-        if (renderVars instanceof List<?> vars) {
-            return (List<CodegenProperty>) vars;
-        }
-        return model.vars;
     }
 
     private List<Map<String, Object>> toNamedList(List<String> names) {
