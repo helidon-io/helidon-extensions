@@ -583,10 +583,17 @@ final class DeliveryEngine implements AutoCloseable {
         return result;
     }
 
-    private static MessagingRejectedException rejected(String channel,
-                                                        MessagingRejectedException.Reason reason,
-                                                        String message) {
+    private MessagingRejectedException rejected(String channel,
+                                                 MessagingRejectedException.Reason reason,
+                                                 String message) {
+        if (reason == MessagingRejectedException.Reason.SHUTDOWN) {
+            return new RuntimeShutdownException(this, channel, message);
+        }
         return new MessagingRejectedException(channel, reason, message);
+    }
+
+    boolean ownsShutdownRejection(Throwable failure) {
+        return failure instanceof RuntimeShutdownException shutdown && shutdown.owner == this;
     }
 
     private final class ChannelDispatcher {
@@ -1395,6 +1402,15 @@ final class DeliveryEngine implements AutoCloseable {
         }
     }
 
+    private static final class RuntimeShutdownException extends MessagingRejectedException {
+        private final DeliveryEngine owner;
+
+        private RuntimeShutdownException(DeliveryEngine owner, String channel, String message) {
+            super(channel, Reason.SHUTDOWN, message);
+            this.owner = owner;
+        }
+    }
+
     private final class DeliveryReservation implements ConnectorDeliveryReservation {
         private final ChannelDispatcher dispatcher;
         private final DeliveryCost reservedCost;
@@ -1684,9 +1700,10 @@ final class DeliveryEngine implements AutoCloseable {
                                                      + String.join(" -> ", pathNames()) + " -> " + channel);
             }
             if (!retains(messages)) {
-                throw rejected(channel,
-                               MessagingRejectedException.Reason.OVERSIZED,
-                               "Connector emission is not part of its retained delivery lease on channel " + channel);
+                throw owner.rejected(
+                        channel,
+                        MessagingRejectedException.Reason.OVERSIZED,
+                        "Connector emission is not part of its retained delivery lease on channel " + channel);
             }
             dispatchDepth++;
             try {

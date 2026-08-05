@@ -18,36 +18,33 @@ package io.helidon.extensions.messaging;
 
 import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
+import io.helidon.common.GenericType;
+
 /**
- * Imperative in-memory messaging channel used by the declarative POC runtime.
+ * Internal in-memory messaging channel runtime.
  *
  * @param <T> payload type
  */
-final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
-    private static final AtomicLong CHANNEL_SEQUENCE = new AtomicLong();
-
-    private final Class<T> payloadType;
+final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T> {
+    private final GenericType<T> payloadType;
     private final List<Consumer<List<Message<?>>>> outputs;
     private final DeliveryEngine deliveryEngine;
     private final String channelName;
-    private final MessagingGraph graph;
+    private final DefaultMessagingGraph graph;
 
-    private DefaultMessagingChannel(Class<T> payloadType,
+    private DefaultMessagingChannel(GenericType<T> payloadType,
                                     List<Consumer<List<Message<?>>>> outputs,
                                     DeliveryEngine deliveryEngine,
                                     String channelName,
-                                    MessagingGraph graph) {
+                                    DefaultMessagingGraph graph) {
         this.payloadType = payloadType;
         this.outputs = new CopyOnWriteArrayList<>(outputs);
         this.deliveryEngine = deliveryEngine;
@@ -56,32 +53,28 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
     }
 
     @Override
-    public void emit(T entity) {
-        emit(Message.create(entity));
+    public String name() {
+        return channelName;
     }
 
     @Override
-    public void emit(Message<T> message) {
+    public GenericType<T> payloadType() {
+        return payloadType;
+    }
+
+    @Override
+    public void emit(T entity) {
+        emitMessage(Message.create(entity));
+    }
+
+    @Override
+    public void emitMessage(Message<? extends T> message) {
         emitBatch(List.of(message));
     }
 
     @Override
-    public void emitBatch(List<? extends Message<T>> messages) {
+    public void emitBatch(List<? extends Message<? extends T>> messages) {
         emitBatchObject(messages);
-    }
-
-    @Override
-    public void start() {
-        if (graph != null) {
-            graph.start();
-        }
-    }
-
-    @Override
-    public void close() {
-        if (graph != null) {
-            graph.close();
-        }
     }
 
     void addOutput(Consumer<Message<?>> output) {
@@ -96,9 +89,16 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
         outputs.add(messages -> send(output, messages));
     }
 
-    void emitObject(Object value) {
-        Message<T> message = toMessage(value);
-        emitBatch(List.of(message));
+    DefaultMessagingGraph graph() {
+        return graph;
+    }
+
+    void emitPayloadObject(Object entity) {
+        emitBatchObject(List.of(Message.create(entity)));
+    }
+
+    void emitMessageObject(Message<?> message) {
+        emitBatchObject(List.of(Objects.requireNonNull(message)));
     }
 
     void emitBatchObject(List<? extends Message<?>> messages) {
@@ -106,9 +106,7 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
         if (messages.isEmpty()) {
             return;
         }
-        if (graph != null) {
-            graph.ensureRunning();
-        }
+        graph.ensureRunning();
         List<Message<?>> batch = toBatch(messages);
         deliveryEngine.dispatch(channelName, batch, () -> dispatchBatch(batch));
     }
@@ -121,164 +119,74 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
 
     @SuppressWarnings({"unchecked", "rawtypes"})
     private Message<T> toMessage(Object value) {
-        Message<?> message = value instanceof Message<?> typed ? typed : Message.create(value);
+        Message<?> message = (Message<?>) value;
         if (isExpectedPayload(message)) {
             return (Message<T>) message;
         }
         throw new IllegalArgumentException("Channel expected payload type "
-                                                   + payloadType.getName()
+                                                   + payloadType.getTypeName()
                                                    + " but received " + message.entity().getClass().getName());
     }
 
     private boolean isExpectedPayload(Message<?> message) {
         Object entity = message.entity();
-        return payloadType == null || entity == null || payloadType.isInstance(entity);
+        return entity == null || payloadType.rawType().isInstance(entity);
     }
 
-    static final class Builder<T> implements MessagingChannel.Builder<T> {
-        private final List<Stream<?>> inputs = new ArrayList<>();
-        private final List<MessagingChannel<?>> inputChannels = new ArrayList<>();
+    static final class Builder<T> {
         private final List<Consumer<List<Message<?>>>> outputs = new ArrayList<>();
         private final List<ConnectorSink> connectorOutputs = new ArrayList<>();
-        private final List<MessageSizeEstimator> messageSizeEstimators = new ArrayList<>();
-        private Class<T> payloadType;
-        private MessagingExecutionConfig executionConfig = MessagingExecutionConfig.builder().build();
-        private MessagingGraph messagingGraph;
+        private GenericType<T> payloadType;
+        private MessagingExecutionConfig executionConfig;
+        private DefaultMessagingGraph messagingGraph;
         private String channelName;
 
-        @Override
-        public MessagingChannel.Builder<T> payloadType(Class<T> payloadType) {
+        Builder<T> payloadType(Class<T> payloadType) {
+            return payloadType(GenericType.create(payloadType));
+        }
+
+        Builder<T> payloadType(GenericType<T> payloadType) {
             this.payloadType = Objects.requireNonNull(payloadType);
             return this;
         }
 
-        @Override
-        public MessagingChannel.Builder<T> executionConfig(MessagingExecutionConfig executionConfig) {
-            this.executionConfig = Objects.requireNonNull(executionConfig);
-            return this;
-        }
-
-        @Override
-        public MessagingChannel.Builder<T> addMessageSizeEstimator(MessageSizeEstimator estimator) {
-            messageSizeEstimators.add(Objects.requireNonNull(estimator));
-            return this;
-        }
-
-        @Override
-        public MessagingChannel.Builder<T> addInput(Stream<?> input) {
-            inputs.add(Objects.requireNonNull(input));
-            return this;
-        }
-
-        @Override
-        public MessagingChannel.Builder<T> addInput(MessagingChannel<?> input) {
-            inputChannels.add(Objects.requireNonNull(input));
-            return this;
-        }
-
-        @Override
-        public MessagingChannel.Builder<T> addOutput(Consumer<Message<T>> output) {
+        Builder<T> addOutput(Consumer<Message<T>> output) {
             outputs.add(messages -> messages.forEach(message -> output.accept(cast(message))));
             return this;
         }
 
-        @Override
-        public MessagingChannel.Builder<T> addBatchOutput(Consumer<List<Message<T>>> output) {
+        Builder<T> addBatchOutput(Consumer<List<Message<T>>> output) {
             outputs.add(messages -> output.accept(castBatch(messages)));
             return this;
         }
 
-        @Override
-        public MessagingChannel.Builder<T> addOutgoingConnector(ConnectorSink output) {
+        Builder<T> addOutgoingConnector(ConnectorSink output) {
             ConnectorSink connector = Objects.requireNonNull(output);
             connectorOutputs.add(connector);
             outputs.add(messages -> DefaultMessagingChannel.send(connector, messages));
             return this;
         }
 
-        @Override
-        public MessagingChannel<T> build() {
-            String actualChannelName = channelName == null
-                    ? "imperative-" + CHANNEL_SEQUENCE.incrementAndGet()
-                    : channelName;
-            MessagingGraph actualGraph = messagingGraph == null ? imperativeGraph() : messagingGraph;
-            DeliveryEngine actualDeliveryEngine = actualGraph.deliveryEngine();
-            DefaultMessagingChannel<T> channel = new DefaultMessagingChannel<>(payloadType,
+        DefaultMessagingChannel<T> build() {
+            GenericType<T> actualPayloadType = Objects.requireNonNull(payloadType, "payloadType");
+            String actualChannelName = Objects.requireNonNull(channelName, "channelName");
+            DefaultMessagingGraph actualGraph = Objects.requireNonNull(messagingGraph, "messagingGraph");
+            MessagingExecutionConfig actualExecutionConfig = Objects.requireNonNull(executionConfig, "executionConfig");
+            DefaultMessagingChannel<T> channel = new DefaultMessagingChannel<>(actualPayloadType,
                                                                                outputs,
-                                                                               actualDeliveryEngine,
+                                                                               actualGraph.deliveryEngine(),
                                                                                actualChannelName,
                                                                                actualGraph);
-
-            Map<String, ConnectorSource> channelSources = new LinkedHashMap<>();
-            int inputIndex = 0;
-            for (Stream<?> input : inputs) {
-                channelSources.put(actualChannelName + "-input-" + ++inputIndex,
-                                   new StreamSource(input, channel::emitObject));
-            }
-            List<String> inputChannelNames = new ArrayList<>(inputChannels.size());
-            for (MessagingChannel<?> inputChannel : inputChannels) {
-                DefaultMessagingChannel<?> defaultInputChannel = (DefaultMessagingChannel<?>) inputChannel;
-                if (defaultInputChannel.graph == actualGraph) {
-                    inputChannelNames.add(defaultInputChannel.channelName);
-                }
-            }
             actualGraph.addChannelContribution(actualChannelName,
                                                channel,
-                                               executionConfig,
-                                               channelSources,
+                                               actualExecutionConfig,
+                                               java.util.Map.of(),
                                                connectorOutputs,
-                                               inputChannelNames,
-                                               () -> {
-                                                   for (MessagingChannel<?> inputChannel : inputChannels) {
-                                                       DefaultMessagingChannel<?> defaultInputChannel =
-                                                               (DefaultMessagingChannel<?>) inputChannel;
-                                                       defaultInputChannel.addBatchOutput(channel::emitBatchObject);
-                                                   }
-                                               });
+                                               List.of());
             return channel;
         }
 
-        private MessagingGraph imperativeGraph() {
-            if (inputChannels.isEmpty()) {
-                return newImperativeGraph();
-            }
-
-            MessagingGraph graph = null;
-            boolean sharedGraph = true;
-            for (MessagingChannel<?> inputChannel : inputChannels) {
-                if (!(inputChannel instanceof DefaultMessagingChannel<?> defaultInputChannel)) {
-                    throw new IllegalArgumentException("Unsupported channel implementation "
-                                                               + inputChannel.getClass().getName());
-                }
-                if (defaultInputChannel.graph == null) {
-                    throw new IllegalArgumentException("Declarative channels cannot be imperative graph inputs");
-                }
-                if (graph == null) {
-                    graph = defaultInputChannel.graph;
-                } else if (graph != defaultInputChannel.graph) {
-                    sharedGraph = false;
-                }
-            }
-            if (!sharedGraph) {
-                return newImperativeGraph();
-            }
-            if (!messageSizeEstimators.isEmpty()) {
-                throw new IllegalArgumentException("Message size estimators must be configured on the first channel "
-                                                           + "of an imperative messaging graph");
-            }
-            if (!graph.deliveryEngine().shutdownTimeout().equals(executionConfig.shutdownTimeout())) {
-                throw new IllegalArgumentException("Every channel in an imperative messaging graph must use the same "
-                                                           + "shutdown-timeout");
-            }
-            return graph;
-        }
-
-        private MessagingGraph newImperativeGraph() {
-            DeliveryEngine engine = new DeliveryEngine(executionConfig, messageSizeEstimators);
-            return new MessagingGraph(engine);
-        }
-
-        Builder<T> messagingGraph(MessagingGraph messagingGraph,
+        Builder<T> messagingGraph(DefaultMessagingGraph messagingGraph,
                                   String channelName,
                                   MessagingExecutionConfig executionConfig) {
             this.messagingGraph = Objects.requireNonNull(messagingGraph);
@@ -299,6 +207,10 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
 
     }
 
+    static ConnectorSource streamSource(Stream<?> stream, Consumer<Object> consumer) {
+        return new StreamSource(stream, consumer);
+    }
+
     private List<Message<?>> toBatch(List<? extends Message<?>> messages) {
         List<Message<?>> batch = new ArrayList<>(messages.size());
         for (Message<?> message : messages) {
@@ -317,6 +229,7 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
         private final Consumer<Object> consumer;
         private final AtomicBoolean runStarted = new AtomicBoolean();
         private final AtomicBoolean closed = new AtomicBoolean();
+        private final AtomicBoolean forceCloseRequested = new AtomicBoolean();
         private final AtomicBoolean streamClosed = new AtomicBoolean();
         private final AtomicReference<Thread> owner = new AtomicReference<>();
 
@@ -340,26 +253,29 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T> {
                 while (!closed.get() && iterator.hasNext()) {
                     consumer.accept(iterator.next());
                 }
-            } catch (MessagingRejectedException e) {
-                if (e.reason() != MessagingRejectedException.Reason.SHUTDOWN) {
-                    throw e;
-                }
             } finally {
                 closed.set(true);
                 owner.compareAndSet(current, null);
-                closeStream();
+                if (!forceCloseRequested.get()) {
+                    closeStream();
+                }
             }
         }
 
         @Override
         public void forceClose() {
-            close();
+            forceCloseRequested.set(true);
+            stop();
         }
 
         @Override
         public void close() {
-            closed.set(true);
+            stop();
             closeStream();
+        }
+
+        private void stop() {
+            closed.set(true);
             Thread current = owner.get();
             if (current != null && current != Thread.currentThread()) {
                 current.interrupt();

@@ -19,6 +19,8 @@ package io.helidon.extensions.messaging.codegen;
 import java.util.Set;
 
 import io.helidon.common.Api;
+import io.helidon.common.Weight;
+import io.helidon.common.Weighted;
 import io.helidon.common.types.TypeName;
 import io.helidon.service.codegen.RegistryCodegenContext;
 import io.helidon.service.codegen.spi.RegistryCodegenExtension;
@@ -27,6 +29,7 @@ import io.helidon.service.codegen.spi.RegistryCodegenExtensionProvider;
 /**
  * POC provider for declarative messaging consumer code generation.
  */
+@Weight(Weighted.DEFAULT_WEIGHT - 1)
 public class MessagingExtensionProvider implements RegistryCodegenExtensionProvider {
     /**
      * Required public constructor for {@link java.util.ServiceLoader}.
@@ -37,7 +40,7 @@ public class MessagingExtensionProvider implements RegistryCodegenExtensionProvi
 
     @Override
     public Set<TypeName> supportedAnnotations() {
-        return Set.of(MessagingTypes.ON_MESSAGE);
+        return Set.of(MessagingTypes.ON_MESSAGE, MessagingTypes.OUTGOING);
     }
 
     @Override

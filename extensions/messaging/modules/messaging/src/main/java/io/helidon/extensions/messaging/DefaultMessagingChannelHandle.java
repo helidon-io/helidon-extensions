@@ -16,28 +16,26 @@
 
 package io.helidon.extensions.messaging;
 
+import java.util.Objects;
+
 import io.helidon.common.GenericType;
 
-/**
- * Immutable typed handle to a channel owned by a {@link MessagingGraph}.
- * <p>
- * A channel does not own topology or lifecycle. Use {@link MessagingGraph#emitter(MessagingChannel)} for imperative
- * emission and close the graph to release all channel resources.
- *
- * @param <T> payload type
- */
-public interface MessagingChannel<T> {
-    /**
-     * Channel name.
-     *
-     * @return channel name
-     */
-    String name();
+final class DefaultMessagingChannelHandle<T> implements MessagingChannel<T> {
+    private final String name;
+    private final GenericType<T> payloadType;
 
-    /**
-     * Complete channel payload type.
-     *
-     * @return payload type
-     */
-    GenericType<T> payloadType();
+    DefaultMessagingChannelHandle(String name, GenericType<T> payloadType) {
+        this.name = Objects.requireNonNull(name);
+        this.payloadType = Objects.requireNonNull(payloadType);
+    }
+
+    @Override
+    public String name() {
+        return name;
+    }
+
+    @Override
+    public GenericType<T> payloadType() {
+        return payloadType;
+    }
 }

@@ -18,7 +18,7 @@ module io.helidon.extensions.messaging {
     requires transitive io.helidon.common;
     requires transitive io.helidon.builder.api;
     requires transitive io.helidon.config;
-    requires io.helidon.service.registry;
+    requires transitive io.helidon.service.registry;
     requires static io.helidon.config.metadata;
 
     exports io.helidon.extensions.messaging;

@@ -16,13 +16,16 @@
 
 package io.helidon.extensions.messaging;
 
+import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
+import io.helidon.service.registry.Service;
+
 /**
- * Test-scoped POC facade for declarative messaging.
+ * Declarative messaging annotations and message factory.
  */
 public final class Messaging {
     private Messaging() {
@@ -42,9 +45,26 @@ public final class Messaging {
     /**
      * Message consumer method.
      */
+    @Documented
     @Retention(RetentionPolicy.CLASS)
     @Target(ElementType.METHOD)
+    @Service.EntryPoint
     public @interface OnMessage {
+        /**
+         * Channel name.
+         *
+         * @return channel name
+         */
+        String value();
+    }
+
+    /**
+     * Outgoing channel of a one-to-one message processor method.
+     */
+    @Documented
+    @Retention(RetentionPolicy.CLASS)
+    @Target(ElementType.METHOD)
+    public @interface Outgoing {
         /**
          * Channel name.
          *

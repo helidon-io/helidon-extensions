@@ -24,6 +24,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -40,6 +42,8 @@ import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageSizeEstimator;
 import io.helidon.extensions.messaging.Messaging;
 import io.helidon.extensions.messaging.MessagingException;
+import io.helidon.service.registry.Interception;
+import io.helidon.service.registry.InterceptionContext;
 import io.helidon.service.registry.Service;
 
 class ChannelMessagingTypes {
@@ -50,11 +54,17 @@ class ChannelMessagingTypes {
     static final String MULTI_HOP_MESSAGE_CHANNEL = "multi-hop-message-channel";
     static final String FORWARDING_INPUT_CHANNEL = "forwarding-input-channel";
     static final String FORWARDING_OUTPUT_CHANNEL = "forwarding-output-channel";
+    static final String PAYLOAD_PROCESSOR_INPUT_CHANNEL = "payload-processor-input-channel";
+    static final String PAYLOAD_PROCESSOR_OUTPUT_CHANNEL = "payload-processor-output-channel";
+    static final String ARRAY_PROCESSOR_INPUT_CHANNEL = "array-processor-input-channel";
+    static final String ARRAY_PROCESSOR_OUTPUT_CHANNEL = "array-processor-output-channel";
+    static final String REQUIRED_HEADER_CHANNEL = "required-header-channel";
+    static final String OPTIONAL_HEADER_CHANNEL = "optional-header-channel";
+    static final String PER_LOOKUP_INTERCEPTED_CHANNEL = "per-lookup-intercepted-channel";
     static final String FAILING_CHANNEL = "failing-channel";
     static final String TEST_CONNECTOR = "test";
     static final String SHUTDOWN_CHANNEL = "shutdown-channel";
     static final String SHUTDOWN_CONNECTOR = "shutdown-test";
-    static final String UNKNOWN_CHANNEL = "unknown-channel";
 
     private ChannelMessagingTypes() {
     }
@@ -73,14 +83,10 @@ class ChannelMessagingTypes {
         @Service.Inject
         Emitter<String> failingChannel;
 
-        @Service.Named(UNKNOWN_CHANNEL)
-        @Service.Inject
-        Emitter<String> unknownChannel;
-
         void emitChannelOne(String entity) {
-            channelOne.emit(Messaging.message(entity)
-                                    .header("key", "value")
-                                    .build());
+            channelOne.emitMessage(Messaging.message(entity)
+                                           .header("key", "value")
+                                           .build());
         }
 
         void emitChannelOneBatch(String first, String second) {
@@ -100,12 +106,8 @@ class ChannelMessagingTypes {
             failingChannel.emit(entity);
         }
 
-        void emitUnknownChannel(String entity) {
-            unknownChannel.emit(entity);
-        }
-
         boolean emittersInjected() {
-            return channelOne != null && channelTwo != null && failingChannel != null && unknownChannel != null;
+            return channelOne != null && channelTwo != null && failingChannel != null;
         }
     }
 
@@ -115,12 +117,9 @@ class ChannelMessagingTypes {
 
         @Messaging.OnMessage(CHANNEL_ONE)
         void consume(@Messaging.HeaderParam("key") String key,
-                     @Messaging.Entity String payload,
                      Message<String> message) {
             keys.add(key);
-            messages().add(Message.builder(payload)
-                                   .header("key", message.header("key").orElseThrow())
-                                   .build());
+            messages().add(message);
         }
 
         List<String> keys() {
@@ -216,15 +215,95 @@ class ChannelMessagingTypes {
 
     @Service.Singleton
     static class ForwardingProcessor {
-        @Service.Named(FORWARDING_OUTPUT_CHANNEL)
-        @Service.Inject
-        Emitter<String> output;
+        private final MessagingException failure = new MessagingException("processor failed",
+                                                                          new IOException("processor I/O failed"));
 
         @Messaging.OnMessage(FORWARDING_INPUT_CHANNEL)
-        void forward(String payload) {
-            output.emit(Messaging.message("forwarded: " + payload)
-                                .header("processor", "forwarding")
-                                .build());
+        @Messaging.Outgoing(FORWARDING_OUTPUT_CHANNEL)
+        Message<String> forward(String payload) {
+            if ("processor-fail".equals(payload)) {
+                throw failure;
+            }
+            return Messaging.message("forwarded: " + payload)
+                    .header("processor", "forwarding")
+                    .build();
+        }
+
+        MessagingException failure() {
+            return failure;
+        }
+    }
+
+    @Service.Singleton
+    static class PayloadProcessor {
+        @Messaging.OnMessage(PAYLOAD_PROCESSOR_INPUT_CHANNEL)
+        @Messaging.Outgoing(PAYLOAD_PROCESSOR_OUTPUT_CHANNEL)
+        String process(String payload) {
+            return "processed: " + payload;
+        }
+    }
+
+    @Service.Singleton
+    static class PayloadProcessorConsumer extends MessageConsumer {
+        @Messaging.OnMessage(PAYLOAD_PROCESSOR_OUTPUT_CHANNEL)
+        void consume(Message<String> message) {
+            messages().add(message);
+        }
+    }
+
+    @Service.Singleton
+    static class ArrayEnvelopeProcessor {
+        @Messaging.OnMessage(ARRAY_PROCESSOR_INPUT_CHANNEL)
+        @Messaging.Outgoing(ARRAY_PROCESSOR_OUTPUT_CHANNEL)
+        ArrayMessage<String> process(String payload) {
+            String processed = "processed: " + payload;
+            long admissionBytes = payload.getBytes(StandardCharsets.UTF_8).length
+                    + processed.getBytes(StandardCharsets.UTF_8).length;
+            return new ImmutableArrayMessage<>(new String[][] {{payload}, {processed}}, Map.of(), admissionBytes);
+        }
+    }
+
+    @Service.Singleton
+    static class ArrayPayloadConsumer {
+        private final List<String[][]> payloads = new CopyOnWriteArrayList<>();
+
+        @Messaging.OnMessage(ARRAY_PROCESSOR_OUTPUT_CHANNEL)
+        void consume(String[][] payload) {
+            payloads.add(payload);
+        }
+
+        List<String[][]> payloads() {
+            return payloads;
+        }
+    }
+
+    @Service.Singleton
+    static class RequiredHeaderConsumer {
+        private final List<HeaderDelivery> deliveries = new CopyOnWriteArrayList<>();
+
+        @Messaging.OnMessage(REQUIRED_HEADER_CHANNEL)
+        void consume(@Messaging.Entity String payload,
+                     @Messaging.HeaderParam("required") String required) {
+            deliveries.add(new HeaderDelivery(payload, required));
+        }
+
+        List<HeaderDelivery> deliveries() {
+            return deliveries;
+        }
+    }
+
+    @Service.Singleton
+    static class OptionalHeaderConsumer {
+        private final List<OptionalHeaderDelivery> deliveries = new CopyOnWriteArrayList<>();
+
+        @Messaging.OnMessage(OPTIONAL_HEADER_CHANNEL)
+        void consume(@Messaging.Entity String payload,
+                     @Messaging.HeaderParam("trace-id") Optional<String> traceId) {
+            deliveries.add(new OptionalHeaderDelivery(payload, traceId));
+        }
+
+        List<OptionalHeaderDelivery> deliveries() {
+            return deliveries;
         }
     }
 
@@ -258,6 +337,61 @@ class ChannelMessagingTypes {
 
         MessagingException failure() {
             return failure;
+        }
+    }
+
+    @Service.PerLookup
+    static class PerLookupInterceptedConsumer {
+        private static final Queue<PerLookupInterceptedConsumer> INSTANCES = new ConcurrentLinkedQueue<>();
+
+        @Messaging.OnMessage(PER_LOOKUP_INTERCEPTED_CHANNEL)
+        void consume(String payload) {
+            INSTANCES.add(this);
+        }
+
+        static void reset() {
+            INSTANCES.clear();
+        }
+
+        static List<PerLookupInterceptedConsumer> instances() {
+            return List.copyOf(INSTANCES);
+        }
+    }
+
+    @SuppressWarnings({"deprecation", "helidon:api:incubating"})
+    @Service.Singleton
+    static class TestEntryPointInterceptor implements Interception.EntryPointInterceptor {
+        private static final Queue<String> EXECUTIONS = new ConcurrentLinkedQueue<>();
+        private static final Queue<InterceptedInstance> INTERCEPTED_INSTANCES = new ConcurrentLinkedQueue<>();
+
+        @Override
+        public <T> T proceed(InterceptionContext invocationContext,
+                             Interception.Interceptor.Chain<T> chain,
+                             Object... args) throws Exception {
+            String serviceType = invocationContext.serviceInfo().serviceType().fqName();
+            EXECUTIONS.add(serviceType + "." + invocationContext.elementInfo().signature().text());
+            INTERCEPTED_INSTANCES.add(new InterceptedInstance(serviceType,
+                                                              invocationContext.serviceInstance().orElseThrow()));
+            return chain.proceed(args);
+        }
+
+        static void reset() {
+            EXECUTIONS.clear();
+            INTERCEPTED_INSTANCES.clear();
+        }
+
+        static List<String> executions() {
+            return List.copyOf(EXECUTIONS);
+        }
+
+        static List<Object> serviceInstances(Class<?> serviceType) {
+            return INTERCEPTED_INSTANCES.stream()
+                    .filter(instance -> instance.serviceType().equals(serviceType.getCanonicalName()))
+                    .map(InterceptedInstance::serviceInstance)
+                    .toList();
+        }
+
+        private record InterceptedInstance(String serviceType, Object serviceInstance) {
         }
     }
 
@@ -571,8 +705,30 @@ class ChannelMessagingTypes {
         }
     }
 
+    record HeaderDelivery(String payload, String header) {
+    }
+
+    record OptionalHeaderDelivery(String payload, Optional<String> header) {
+    }
+
     interface CustomMessage<K, V> extends Message<V> {
         K key();
+    }
+
+    interface ArrayMessage<T> extends Message<T[][]> {
+    }
+
+    record ImmutableArrayMessage<T>(T[][] entity,
+                                    Map<String, String> headers,
+                                    long declaredAdmissionBytes) implements ArrayMessage<T> {
+        ImmutableArrayMessage {
+            headers = Map.copyOf(headers);
+        }
+
+        @Override
+        public OptionalLong admissionBytes() {
+            return OptionalLong.of(declaredAdmissionBytes);
+        }
     }
 
     record ImmutableCustomMessage<K, V>(K key, V entity, Map<String, String> headers) implements CustomMessage<K, V> {

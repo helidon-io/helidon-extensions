@@ -16,9 +16,16 @@
 
 package io.helidon.extensions.messaging.codegen;
 
+import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Proxy;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.function.Supplier;
 
 import io.helidon.codegen.testing.TestCompiler;
 import io.helidon.common.Generated;
@@ -29,6 +36,7 @@ import io.helidon.service.registry.Service;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MessagingExtensionTest {
@@ -81,7 +89,7 @@ class MessagingExtensionTest {
                 }
                 """);
 
-        assertDiagnostic(result, "Conflicting messaging envelope types");
+        assertDiagnostic(result, "exactly one primary message view; found 2");
     }
 
     @Test
@@ -104,11 +112,11 @@ class MessagingExtensionTest {
                 }
                 """);
 
-        assertDiagnostic(result, "uses an unresolved type variable in its messaging envelope type");
+        assertDiagnostic(result, "must not use wildcards or unresolved type variables");
     }
 
     @Test
-    void supportsWildcardInNonPayloadEnvelopeArgument() throws IOException {
+    void rejectsWildcardInNonPayloadEnvelopeArgument() {
         TestCompiler.Result result = compile("""
                 package com.example;
 
@@ -127,13 +135,7 @@ class MessagingExtensionTest {
                 }
                 """);
 
-        assertCompilationSucceeded(result);
-        try (var generatedSources = Files.walk(result.sourceOutput())) {
-            assertTrue(generatedSources.anyMatch(path -> path.getFileName()
-                    .toString()
-                    .startsWith("WildcardEnvelopeConsumer__MessagingConsumer_")),
-                       "Messaging consumer registration was not generated");
-        }
+        assertDiagnostic(result, "must not use wildcards or unresolved type variables");
     }
 
     @Test
@@ -156,7 +158,7 @@ class MessagingExtensionTest {
                 }
                 """);
 
-        assertDiagnostic(result, "uses an unresolved type variable in its messaging envelope type");
+        assertDiagnostic(result, "must not use wildcards or unresolved type variables");
     }
 
     @Test
@@ -184,10 +186,17 @@ class MessagingExtensionTest {
         assertCompilationSucceeded(result);
         String generatedSource = generatedSource(result, "GenericMetadataConsumer__MessagingConsumer_");
         assertTrue(generatedSource.contains("payloadGenericType()"), generatedSource);
+        assertTrue(generatedSource.contains("private static final GenericType<List<Integer>> PAYLOAD_GENERIC_TYPE"),
+                   generatedSource);
         assertTrue(generatedSource.contains("new GenericType<List<Integer>>()"), generatedSource);
+        assertTrue(generatedSource.contains("return PAYLOAD_GENERIC_TYPE;"), generatedSource);
         assertTrue(generatedSource.contains("envelopeGenericType()"), generatedSource);
+        assertTrue(generatedSource.contains("private static final GenericType<KeyedMessage<String, List<Integer>>> "
+                                                    + "ENVELOPE_GENERIC_TYPE"),
+                   generatedSource);
         assertTrue(generatedSource.contains("new GenericType<KeyedMessage<String, List<Integer>>>()"),
                    generatedSource);
+        assertTrue(generatedSource.contains("return ENVELOPE_GENERIC_TYPE;"), generatedSource);
     }
 
     @Test
@@ -208,7 +217,7 @@ class MessagingExtensionTest {
 
         assertCompilationSucceeded(result);
         String generatedSource = generatedSource(result, "PrimitiveConsumer__MessagingConsumer_");
-        assertTrue(generatedSource.contains("return Integer.class;"), generatedSource);
+        assertTrue(generatedSource.contains("return PAYLOAD_GENERIC_TYPE.rawType();"), generatedSource);
         assertTrue(generatedSource.contains("new GenericType<Integer>()"), generatedSource);
     }
 
@@ -294,6 +303,857 @@ class MessagingExtensionTest {
         assertDiagnostic(result, "Messaging emitter payload type must be concrete");
     }
 
+    @Test
+    void generatedConsumerUsesEntryPointAndMethodMetadata() throws IOException {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import java.io.IOException;
+                import java.util.Optional;
+
+                import io.helidon.extensions.messaging.Message;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class InterceptedConsumer {
+                    @Messaging.OnMessage("orders")
+                    void consume(Message<String> message,
+                                 @Messaging.HeaderParam("required") String required,
+                                 @Messaging.HeaderParam("optional") Optional<String> optional) throws IOException {
+                    }
+                }
+                """);
+
+        assertCompilationSucceeded(result);
+        String source = generatedSource(result, "InterceptedConsumer__MessagingConsumer_");
+        assertTrue(source.contains("Supplier<InterceptedConsumer> consumer"), source);
+        assertTrue(source.contains("EntryPoints entryPoints"), source);
+        assertTrue(source.contains("entryPoints.handler("), source);
+        assertTrue(source.contains("descriptor.qualifiers()"), source);
+        assertTrue(source.contains("InterceptedConsumer__ServiceDescriptor.ANNOTATIONS"), source);
+        assertTrue(source.contains("InterceptedConsumer__ServiceDescriptor.METHOD_"), source);
+        assertTrue(source.contains("this::invoke"), source);
+        assertTrue(source.contains("Handler<InterceptedConsumer> handler"), source);
+        assertTrue(source.contains("handler.handle(consumer.get(), message)"), source);
+        assertTrue(source.contains("invoke(InterceptedConsumer consumerInstance,"), source);
+        assertTrue(source.contains("consumerInstance.consume("), source);
+        assertFalse(source.contains("consumer.get().consume("), source);
+        assertSingleOccurrence(source, "consumer.get()");
+        assertTrue(source.contains("typedMessage.header(\"required\").orElseThrow"), source);
+        assertTrue(source.contains("typedMessage.header(\"optional\")"), source);
+        assertTrue(source.contains("catch (RuntimeException | Error e)"), source);
+        assertTrue(source.contains("catch (Exception e)"), source);
+    }
+
+    @Test
+    void generatesPayloadReturningProcessor() throws IOException {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class PayloadProcessor {
+                    @Messaging.OnMessage("orders")
+                    @Messaging.Outgoing("audit")
+                    Integer process(String value) {
+                        return value.length();
+                    }
+                }
+                """);
+
+        assertCompilationSucceeded(result);
+        String source = generatedSource(result, "PayloadProcessor__MessagingConsumer_");
+        assertTrue(source.contains("implements ProcessorRegistration"), source);
+        assertTrue(source.contains("String outgoingChannel()"), source);
+        assertTrue(source.contains("return \"audit\";"), source);
+        assertTrue(source.contains("new GenericType<Integer>()"), source);
+        assertTrue(source.contains("new GenericType<Message<Integer>>()"), source);
+        assertTrue(source.contains("Message<?> process(Message<?> message)"), source);
+        assertTrue(source.contains("Handler<PayloadProcessor> handler"), source);
+        assertTrue(source.contains("handler.handle(consumer.get(), message)"), source);
+        assertTrue(source.contains("invoke(PayloadProcessor consumerInstance,"), source);
+        assertTrue(source.contains("consumerInstance.process("), source);
+        assertFalse(source.contains("consumer.get().process("), source);
+        assertSingleOccurrence(source, "consumer.get()");
+        assertTrue(source.contains("Objects.requireNonNull("), source);
+        assertTrue(source.contains("Message.create(result)"), source);
+    }
+
+    @Test
+    void generatesEnvelopeReturningProcessor() throws IOException {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Message;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class EnvelopeProcessor {
+                    @Messaging.OnMessage("orders")
+                    @Messaging.Outgoing("audit")
+                    Message<Integer> process(Message<String> message) {
+                        return Message.create(message.entity().length());
+                    }
+                }
+                """);
+
+        assertCompilationSucceeded(result);
+        String source = generatedSource(result, "EnvelopeProcessor__MessagingConsumer_");
+        assertTrue(source.contains("new GenericType<Message<Integer>>()"), source);
+        assertTrue(source.contains("return Optional.of(result);"), source);
+        assertFalse(source.contains("Message.create(result)"), source);
+    }
+
+    @Test
+    void preservesGenericArrayPayloadForEnvelopeReturningProcessor() throws IOException {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Message;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                interface ArrayMessage<T> extends Message<T[][]> {
+                }
+
+                @Service.Singleton
+                class ArrayEnvelopeProcessor {
+                    @Messaging.OnMessage("orders")
+                    @Messaging.Outgoing("audit")
+                    ArrayMessage<String> process(String value) {
+                        return null;
+                    }
+                }
+
+                @Service.Singleton
+                class ArrayPayloadConsumer {
+                    @Messaging.OnMessage("audit")
+                    void consume(String[][] value) {
+                    }
+                }
+                """);
+
+        assertCompilationSucceeded(result);
+        String source = generatedSource(result, "ArrayEnvelopeProcessor__MessagingConsumer_");
+        assertTrue(source.contains("new GenericType<String[][]>()"), source);
+        assertTrue(source.contains("new GenericType<ArrayMessage<String>>()"), source);
+
+        String consumerSource = generatedSource(result, "ArrayPayloadConsumer__MessagingConsumer_");
+        assertTrue(consumerSource.contains("return PAYLOAD_GENERIC_TYPE.rawType();"), consumerSource);
+        assertTrue(consumerSource.contains("new GenericType<String[][]>()"), consumerSource);
+        assertTrue(consumerSource.contains("return ENVELOPE_GENERIC_TYPE.rawType();"), consumerSource);
+        assertTrue(consumerSource.contains("new GenericType<Message<String[][]>>()"), consumerSource);
+    }
+
+    @Test
+    void generatesArrayEmitterMetadata() throws IOException {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Emitter;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class ArrayEmitterProducer {
+                    @Service.Inject
+                    @Service.Named("arrays")
+                    Emitter<String[][]> emitter;
+                }
+                """);
+
+        assertCompilationSucceeded(result);
+        String source = generatedSource(result, "ArrayEmitterProducer__MessagingEmitter_");
+        assertTrue(source.contains("new GenericType<String[][]>()"), source);
+        assertTrue(source.contains("new GenericType<Message<String[][]>>()"), source);
+    }
+
+    @Test
+    void generatesSingleInvocationBatchBridge() throws IOException {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import java.io.IOException;
+                import java.util.List;
+
+                import io.helidon.extensions.messaging.Message;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class BatchConsumer {
+                    @Messaging.OnMessage("orders")
+                    void consume(List<Message<String>> messages) throws IOException {
+                    }
+                }
+                """);
+
+        assertCompilationSucceeded(result);
+        String source = generatedSource(result, "BatchConsumer__MessagingConsumer_");
+        assertTrue(source.contains("BatchHandler<BatchConsumer> batchHandler"), source);
+        assertTrue(source.contains("entryPoints.batchHandler("), source);
+        assertTrue(source.contains("this::invokeBatch"), source);
+        assertTrue(source.contains("batchHandler.handle(consumer.get(), List.copyOf(messages));"), source);
+        assertTrue(source.contains("invokeBatch(BatchConsumer consumerInstance,"), source);
+        assertTrue(source.contains("consumerInstance.consume(typedMessages);"), source);
+        assertFalse(source.contains("consumer.get().consume("), source);
+        assertSingleOccurrence(source, "consumer.get()");
+    }
+
+    @Test
+    void generatedEmitterPublishesTopologyMetadata() throws IOException {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import java.util.List;
+
+                import io.helidon.extensions.messaging.Emitter;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class MetadataEmitterProducer {
+                    @Service.Inject
+                    @Service.Named("orders")
+                    Emitter<List<String>> emitter;
+                }
+                """);
+
+        assertCompilationSucceeded(result);
+        String source = generatedSource(result, "MetadataEmitterProducer__MessagingEmitter_");
+        assertTrue(source.contains("Emitter<List<String>>, EmitterRegistration"), source);
+        assertTrue(source.contains("String channel()"), source);
+        assertTrue(source.contains("return \"orders\";"), source);
+        assertTrue(source.contains("String producerId()"), source);
+        assertTrue(source.contains("com.example.MetadataEmitterProducer#emitter:orders"), source);
+        assertTrue(source.contains("new GenericType<List<String>>()"), source);
+        assertTrue(source.contains("new GenericType<Message<List<String>>>()"), source);
+        assertTrue(source.contains("void emitMessage(Message<? extends List<String>> message)"), source);
+        assertTrue(source.contains("void emitBatch(List<? extends Message<? extends List<String>>> messages)"), source);
+    }
+
+    @Test
+    void generatedRegistrationsReuseCachedTypeMetadata() throws Exception {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import java.util.List;
+
+                import io.helidon.extensions.messaging.Emitter;
+                import io.helidon.extensions.messaging.Message;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class CachedMetadataService {
+                    @Service.Inject
+                    @Service.Named("audit")
+                    Emitter<List<String>> emitter;
+
+                    @Messaging.OnMessage("orders")
+                    @Messaging.Outgoing("audit")
+                    Message<List<String>> process(Message<List<String>> message) {
+                        return message;
+                    }
+                }
+                """);
+
+        assertCompilationSucceeded(result);
+        try (URLClassLoader classLoader = new URLClassLoader(new URL[] {
+                result.classOutput().toUri().toURL()
+        }, getClass().getClassLoader())) {
+            Class<?> processorType = generatedClass(classLoader,
+                                                     result,
+                                                     "CachedMetadataService__MessagingConsumer_");
+            Object processor = newRegistration(
+                    processorType,
+                    (Supplier<Object>) () -> null,
+                    passthroughEntryPoints());
+            assertCachedTypeMetadata(processor, "payloadGenericType", "payloadType");
+            assertCachedTypeMetadata(processor, "envelopeGenericType", "envelopeType");
+            assertCachedTypeMetadata(processor, "outgoingPayloadGenericType", "outgoingPayloadType");
+            assertCachedTypeMetadata(processor, "outgoingEnvelopeGenericType", "outgoingEnvelopeType");
+
+            Class<?> emitterType = generatedClass(classLoader,
+                                                   result,
+                                                   "CachedMetadataService__MessagingEmitter_");
+            Object emitter = newRegistration(
+                    emitterType,
+                    (Supplier<Object>) () -> null);
+            assertCachedTypeMetadata(emitter, "payloadGenericType", "payloadType");
+            assertCachedTypeMetadata(emitter, "envelopeGenericType", "envelopeType");
+        }
+    }
+
+    @Test
+    void rejectsNonServiceAndInvalidHandlerModifiers() {
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+
+                @Deprecated
+                class NotAService {
+                    @Messaging.OnMessage("orders")
+                    void consume(String value) {
+                    }
+                }
+                """),
+                         "must be a Service Registry service");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class InvalidHandler {
+                    @Messaging.OnMessage("orders")
+                    private void consume(String value) {
+                    }
+                }
+                """),
+                         "only allowed on non-private methods");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class StaticHandler {
+                    @Messaging.OnMessage("orders")
+                    static void consume(String value) {
+                    }
+                }
+                """),
+                         "only allowed on instance methods");
+    }
+
+    @Test
+    void rejectsInvalidChannelNamesAndDuplicateRoutes() {
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class BlankChannel {
+                    @Messaging.OnMessage(" ")
+                    void consume(String value) {
+                    }
+                }
+                """),
+                         "channel must not be blank");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class DuplicateRoute {
+                    @Messaging.OnMessage("orders")
+                    void first(String value) {
+                    }
+
+                    @Messaging.OnMessage("orders")
+                    void second(Integer value) {
+                    }
+                }
+                """),
+                         "declares multiple @Messaging.OnMessage handlers for channel orders");
+    }
+
+    @Test
+    void rejectsAmbiguousPrimaryViewsAndInvalidHeaders() {
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Message;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class AmbiguousConsumer {
+                    @Messaging.OnMessage("orders")
+                    void consume(@Messaging.Entity String entity, Message<String> message) {
+                    }
+                }
+                """),
+                         "exactly one primary message view; found 2");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class InvalidHeaderConsumer {
+                    @Messaging.OnMessage("orders")
+                    void consume(@Messaging.Entity String entity,
+                                 @Messaging.HeaderParam("attempt") Integer attempt) {
+                    }
+                }
+                """),
+                         "must be String or Optional<String>");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class DuplicateHeaderConsumer {
+                    @Messaging.OnMessage("orders")
+                    void consume(@Messaging.Entity String entity,
+                                 @Messaging.HeaderParam("id") String first,
+                                 @Messaging.HeaderParam("id") String second) {
+                    }
+                }
+                """),
+                         "Duplicate @Messaging.HeaderParam name id");
+    }
+
+    @Test
+    void rejectsInvalidTerminalAndProcessorReturns() {
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class ReturningTerminal {
+                    @Messaging.OnMessage("orders")
+                    String consume(String value) {
+                        return value;
+                    }
+                }
+                """),
+                         "Terminal @Messaging.OnMessage methods must return void");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class VoidProcessor {
+                    @Messaging.OnMessage("orders")
+                    @Messaging.Outgoing("audit")
+                    void consume(String value) {
+                    }
+                }
+                """),
+                         "processors must return a payload or Message<T>");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import java.util.concurrent.CompletableFuture;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class AsyncProcessor {
+                    @Messaging.OnMessage("orders")
+                    @Messaging.Outgoing("audit")
+                    CompletableFuture<String> consume(String value) {
+                        return CompletableFuture.completedFuture(value);
+                    }
+                }
+                """),
+                         "Asynchronous or publisher @Messaging.OnMessage return types are not supported");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class OrphanOutgoing {
+                    @Messaging.Outgoing("audit")
+                    String consume(String value) {
+                        return value;
+                    }
+                }
+                """),
+                         "@Messaging.Outgoing is only allowed on @Messaging.OnMessage methods");
+    }
+
+    @Test
+    void rejectsRawGenericHandlerAndEmitterTypes() {
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import java.util.List;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class RawPayloadConsumer {
+                    @Messaging.OnMessage("orders")
+                    void consume(List value) {
+                    }
+                }
+                """),
+                         "must not use a raw generic type");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import java.util.List;
+
+                import io.helidon.extensions.messaging.Emitter;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class RawEmitterProducer {
+                    @Service.Inject
+                    @Service.Named("orders")
+                    Emitter<List> emitter;
+                }
+                """),
+                         "Messaging emitter payload type must be concrete");
+    }
+
+    @Test
+    void rejectsConflictingEmitterPayloadsAcrossServices() {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Emitter;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class StringProducer {
+                    @Service.Inject
+                    @Service.Named("orders")
+                    Emitter<String> emitter;
+                }
+
+                @Service.Singleton
+                class IntegerProducer {
+                    @Service.Inject
+                    @Service.Named("orders")
+                    Emitter<Integer> emitter;
+                }
+                """);
+
+        assertDiagnostic(result, "Conflicting messaging emitter payload types for channel orders");
+    }
+
+    @Test
+    void rejectsReservedEmitterWildcardChannel() {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Emitter;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class WildcardChannelProducer {
+                    @Service.Inject
+                    @Service.Named("*")
+                    Emitter<String> emitter;
+                }
+                """);
+
+        assertDiagnostic(result, "must not use the reserved Service.Named wildcard *");
+    }
+
+    @Test
+    void rejectsAdditionalEmitterQualifier() {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import java.lang.annotation.Retention;
+                import java.lang.annotation.RetentionPolicy;
+
+                import io.helidon.extensions.messaging.Emitter;
+                import io.helidon.service.registry.Service;
+
+                @Service.Qualifier
+                @Retention(RetentionPolicy.RUNTIME)
+                @interface Blue {
+                }
+
+                @Service.Singleton
+                class QualifiedEmitterProducer {
+                    @Service.Inject
+                    @Service.Named("orders")
+                    @Blue
+                    Emitter<String> emitter;
+                }
+                """);
+
+        assertDiagnostic(result, "Messaging emitters support only a single @Service.Named qualifier");
+    }
+
+    @Test
+    void generatesDistinctEmittersForChannelsWithCollidingNamesAndHashes() throws IOException {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Emitter;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class CollidingChannelProducer {
+                    @Service.Inject
+                    @Service.Named("!!{")
+                    Emitter<String> first;
+
+                    @Service.Inject
+                    @Service.Named("!#=")
+                    Emitter<String> second;
+                }
+                """);
+
+        assertCompilationSucceeded(result);
+        try (var generatedSources = Files.walk(result.sourceOutput())) {
+            List<String> generatedFiles = generatedSources
+                    .map(path -> path.getFileName().toString())
+                    .filter(name -> name.startsWith("CollidingChannelProducer__MessagingEmitter_"))
+                    .filter(name -> name.endsWith(".java"))
+                    .toList();
+            long registrations = generatedFiles.stream()
+                    .filter(name -> !name.contains("__ServiceDescriptor"))
+                    .count();
+            long descriptors = generatedFiles.stream()
+                    .filter(name -> name.contains("__ServiceDescriptor"))
+                    .count();
+            assertTrue(registrations == 2,
+                       "Expected two distinct generated emitter registrations, found " + registrations);
+            assertTrue(descriptors == 2,
+                       "Expected two generated emitter service descriptors, found " + descriptors);
+        }
+    }
+
+    @Test
+    void boundsGeneratedEmitterNameForLongChannel() {
+        String channel = "a".repeat(300);
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Emitter;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class LongChannelProducer {
+                    @Service.Inject
+                    @Service.Named("%s")
+                    Emitter<String> emitter;
+                }
+                """.formatted(channel));
+
+        assertCompilationSucceeded(result);
+    }
+
+    @Test
+    void boundsGeneratedConsumerNameForLongDeclaringType() throws IOException {
+        String typeName = "C".repeat(176);
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class %s {
+                    @Messaging.OnMessage("orders")
+                    void consume(String value) {
+                    }
+                }
+                """.formatted(typeName));
+
+        assertCompilationSucceeded(result);
+        assertGeneratedTypeNamesBounded(result, "__MessagingConsumer_");
+    }
+
+    @Test
+    void boundsGeneratedEmitterNameForLongDeclaringType() throws IOException {
+        String typeName = "E".repeat(176);
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Emitter;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class %s {
+                    @Service.Inject
+                    @Service.Named("orders")
+                    Emitter<String> emitter;
+                }
+                """.formatted(typeName));
+
+        assertCompilationSucceeded(result);
+        assertGeneratedTypeNamesBounded(result, "__MessagingEmitter_");
+    }
+
+    @Test
+    void distinguishesLongDeclaringTypesWithSharedGeneratedPrefix() throws IOException {
+        String sharedPrefix = "LongServiceOwner" + "X".repeat(150);
+        String firstType = sharedPrefix + "First";
+        String secondType = sharedPrefix + "Second";
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Emitter;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class %s {
+                    @Service.Inject
+                    @Service.Named("audit")
+                    Emitter<String> emitter;
+
+                    @Messaging.OnMessage("orders")
+                    void consume(String value) {
+                    }
+                }
+
+                @Service.Singleton
+                class %s {
+                    @Service.Inject
+                    @Service.Named("audit")
+                    Emitter<String> emitter;
+
+                    @Messaging.OnMessage("orders")
+                    void consume(String value) {
+                    }
+                }
+                """.formatted(firstType, secondType));
+
+        assertCompilationSucceeded(result);
+        assertGeneratedTypeCount(result, "__MessagingConsumer_", 2, 2);
+        assertGeneratedTypeCount(result, "__MessagingEmitter_", 2, 2);
+        assertGeneratedTypeNamesBounded(result, "__MessagingConsumer_");
+        assertGeneratedTypeNamesBounded(result, "__MessagingEmitter_");
+    }
+
+    @Test
+    void generatesDistinctConsumersForCollidingMethodDeclarations() throws IOException {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                class Aa {
+                }
+
+                class BB {
+                }
+
+                @Service.Singleton
+                class CollidingConsumer {
+                    @Messaging.OnMessage("first")
+                    void consume(Aa value) {
+                    }
+
+                    @Messaging.OnMessage("second")
+                    void consume(BB value) {
+                    }
+                }
+                """);
+
+        assertCompilationSucceeded(result);
+        try (var generatedSources = Files.walk(result.sourceOutput())) {
+            List<String> generatedFiles = generatedSources
+                    .map(path -> path.getFileName().toString())
+                    .filter(name -> name.startsWith("CollidingConsumer__MessagingConsumer_"))
+                    .filter(name -> name.endsWith(".java"))
+                    .toList();
+            long registrations = generatedFiles.stream()
+                    .filter(name -> !name.contains("__ServiceDescriptor"))
+                    .count();
+            long descriptors = generatedFiles.stream()
+                    .filter(name -> name.contains("__ServiceDescriptor"))
+                    .count();
+            assertTrue(registrations == 2,
+                       "Expected two distinct generated consumer registrations, found " + registrations);
+            assertTrue(descriptors == 2,
+                       "Expected two generated consumer service descriptors, found " + descriptors);
+        }
+    }
+
+    @Test
+    void rejectsTypesInaccessibleToGeneratedRegistrations() {
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class PrivatePayloadConsumer {
+                    private static class Payload {
+                    }
+
+                    @Messaging.OnMessage("orders")
+                    void consume(Payload payload) {
+                    }
+                }
+                """),
+                         "not accessible from generated messaging code");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Emitter;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class PrivateEmitterProducer {
+                    private static class Payload {
+                    }
+
+                    @Service.Inject
+                    @Service.Named("orders")
+                    Emitter<Payload> emitter;
+                }
+                """),
+                         "not accessible from generated messaging code");
+    }
+
+    @Test
+    void supportsHandlerDeclaringThrowableOutsideException() throws IOException {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class ThrowableConsumer {
+                    @Messaging.OnMessage("orders")
+                    void consume(String value) throws Throwable {
+                    }
+                }
+                """);
+
+        assertCompilationSucceeded(result);
+        String source = generatedSource(result, "ThrowableConsumer__MessagingConsumer_");
+        assertTrue(source.contains("catch (Throwable t)"), source);
+        assertTrue(source.contains("threw a checked Throwable outside Exception"), source);
+    }
+
     private TestCompiler.Result compile(String source) {
         return TestCompiler.builder()
                 .currentRelease()
@@ -322,15 +1182,113 @@ class MessagingExtensionTest {
     }
 
     private String generatedSource(TestCompiler.Result result, String filePrefix) throws IOException {
+        return Files.readString(generatedSourcePath(result, filePrefix));
+    }
+
+    private void assertSingleOccurrence(String source, String expected) {
+        int first = source.indexOf(expected);
+        assertTrue(first >= 0, "Generated source does not contain " + expected + ":\n" + source);
+        assertTrue(source.indexOf(expected, first + expected.length()) < 0,
+                   "Generated source contains more than one " + expected + ":\n" + source);
+    }
+
+    private Path generatedSourcePath(TestCompiler.Result result, String filePrefix) throws IOException {
         try (var generatedSources = Files.walk(result.sourceOutput())) {
-            var generatedSource = generatedSources
+            return generatedSources
                     .filter(path -> path.getFileName().toString().startsWith(filePrefix))
                     .filter(path -> path.getFileName().toString().endsWith(".java"))
                     .filter(path -> !path.getFileName().toString().contains("__ServiceDescriptor"))
                     .findFirst()
                     .orElseThrow(() -> new AssertionError("Generated source not found for " + filePrefix));
-            return Files.readString(generatedSource);
         }
+    }
+
+    private void assertGeneratedTypeNamesBounded(TestCompiler.Result result,
+                                                 String generatedTypeMarker) throws IOException {
+        try (var generatedSources = Files.walk(result.sourceOutput())) {
+            List<Path> generatedTypes = generatedSources
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().contains(generatedTypeMarker))
+                    .filter(path -> path.getFileName().toString().endsWith(".java"))
+                    .toList();
+            assertFalse(generatedTypes.isEmpty(), "No generated types found for " + generatedTypeMarker);
+            for (Path generatedType : generatedTypes) {
+                String fileName = generatedType.getFileName().toString();
+                String typeName = fileName.substring(0, fileName.length() - ".java".length());
+                int typeNameBytes = typeName.getBytes(StandardCharsets.UTF_8).length;
+                assertTrue(typeNameBytes <= 255 - ".class".length(),
+                           "Generated type name cannot be represented by a portable class filename: " + fileName
+                                   + " (" + typeNameBytes + " bytes)");
+            }
+        }
+    }
+
+    private void assertGeneratedTypeCount(TestCompiler.Result result,
+                                          String generatedTypeMarker,
+                                          int expectedRegistrations,
+                                          int expectedDescriptors) throws IOException {
+        try (var generatedSources = Files.walk(result.sourceOutput())) {
+            List<String> generatedFiles = generatedSources
+                    .filter(Files::isRegularFile)
+                    .map(path -> path.getFileName().toString())
+                    .filter(name -> name.contains(generatedTypeMarker))
+                    .filter(name -> name.endsWith(".java"))
+                    .toList();
+            long registrations = generatedFiles.stream()
+                    .filter(name -> !name.contains("__ServiceDescriptor"))
+                    .count();
+            long descriptors = generatedFiles.stream()
+                    .filter(name -> name.contains("__ServiceDescriptor"))
+                    .count();
+            assertTrue(registrations == expectedRegistrations,
+                       "Expected " + expectedRegistrations + " generated registrations for " + generatedTypeMarker
+                               + ", found " + registrations + ": " + generatedFiles);
+            assertTrue(descriptors == expectedDescriptors,
+                       "Expected " + expectedDescriptors + " generated descriptors for " + generatedTypeMarker
+                               + ", found " + descriptors + ": " + generatedFiles);
+        }
+    }
+
+    private Class<?> generatedClass(URLClassLoader classLoader,
+                                    TestCompiler.Result result,
+                                    String filePrefix) throws IOException, ClassNotFoundException {
+        Path relativePath = result.sourceOutput().relativize(generatedSourcePath(result, filePrefix));
+        String sourceName = relativePath.toString();
+        String className = sourceName.substring(0, sourceName.length() - ".java".length())
+                .replace(File.separatorChar, '.');
+        return classLoader.loadClass(className);
+    }
+
+    private Object newRegistration(Class<?> registrationType,
+                                   Object... arguments) throws ReflectiveOperationException {
+        var constructors = registrationType.getDeclaredConstructors();
+        assertTrue(constructors.length == 1,
+                   "Expected one generated registration constructor for " + registrationType.getName());
+        var constructor = constructors[0];
+        constructor.setAccessible(true);
+        return constructor.newInstance(arguments);
+    }
+
+    private Object passthroughEntryPoints() {
+        Class<?> entryPointsType = loadClass("io.helidon.extensions.messaging.MessagingEntryPoint$EntryPoints");
+        return Proxy.newProxyInstance(
+                entryPointsType.getClassLoader(),
+                new Class<?>[] {entryPointsType},
+                (proxy, method, arguments) -> arguments[arguments.length - 1]);
+    }
+
+    private void assertCachedTypeMetadata(Object registration,
+                                          String genericMethod,
+                                          String rawMethod) throws ReflectiveOperationException {
+        Object genericType = invoke(registration, genericMethod);
+        assertSame(genericType, invoke(registration, genericMethod));
+        assertSame(invoke(genericType, "rawType"), invoke(registration, rawMethod));
+    }
+
+    private Object invoke(Object target, String methodName) throws ReflectiveOperationException {
+        var method = target.getClass().getMethod(methodName);
+        method.setAccessible(true);
+        return method.invoke(target);
     }
 
     private Class<?> loadClass(String className) {

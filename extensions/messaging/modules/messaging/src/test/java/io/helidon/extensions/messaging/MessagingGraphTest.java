@@ -30,6 +30,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
 
+import io.helidon.common.GenericType;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -54,13 +56,13 @@ class MessagingGraphTest {
         BooleanSupplier allReady = () -> firstReady.get() && secondReady.get();
         ManagedSource first = ManagedSource.running("first", events, firstReady, allReady);
         ManagedSource second = ManagedSource.running("second", events, secondReady, allReady);
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graph.addSource("first", first);
         graph.addSource("second", second);
 
         graph.start();
 
-        assertEquals(MessagingGraph.State.RUNNING, graph.state());
+        assertEquals(DefaultMessagingGraph.State.RUNNING, graph.state());
         assertTrue(first.prepared());
         assertTrue(second.prepared());
         int lastReady = Math.max(events.indexOf("ready-first"), events.indexOf("ready-second"));
@@ -69,7 +71,7 @@ class MessagingGraphTest {
 
         graph.close();
         graph.close();
-        assertEquals(MessagingGraph.State.CLOSED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.CLOSED, graph.state());
         assertEquals(List.of("close-second", "close-first"), lifecycleEvents(events));
     }
 
@@ -161,7 +163,7 @@ class MessagingGraphTest {
         };
         MessagingExecutionConfig config = config(SHUTDOWN_TIMEOUT);
         DeliveryEngine engine = engine(config, "orders");
-        MessagingGraph graph = new MessagingGraph(engine);
+        DefaultMessagingGraph graph = new DefaultMessagingGraph(engine);
         graph.addBinding(outgoing);
         graph.addSource("incoming", incoming);
 
@@ -204,28 +206,28 @@ class MessagingGraphTest {
                              "close-incoming",
                              "close-outgoing"),
                      events);
-        assertEquals(MessagingGraph.State.CLOSED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.CLOSED, graph.state());
     }
 
     @Test
     void dualEndpointRegisteredAsOutgoingUsesOnlyOutgoingLifecycle() {
         List<String> events = new CopyOnWriteArrayList<>();
         DualEndpoint endpoint = new DualEndpoint(events);
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graph.addBinding(endpoint);
 
         graph.start();
         graph.close();
 
         assertEquals(List.of("outgoing-start", "outgoing-flush", "close"), events);
-        assertEquals(MessagingGraph.State.CLOSED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.CLOSED, graph.state());
     }
 
     @Test
     void dualEndpointRegisteredAsIncomingUsesOnlyIncomingLifecycle() {
         List<String> events = new CopyOnWriteArrayList<>();
         DualEndpoint endpoint = new DualEndpoint(events);
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graph.addSource("dual", endpoint);
 
         graph.start();
@@ -239,14 +241,14 @@ class MessagingGraphTest {
                              "incoming-checkpoint",
                              "close"),
                      events);
-        assertEquals(MessagingGraph.State.CLOSED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.CLOSED, graph.state());
     }
 
     @Test
     void forcedCleanupOfDualEndpointUsesItsRegistrationRole() {
         List<String> outgoingEvents = new CopyOnWriteArrayList<>();
         DualEndpoint outgoing = new DualEndpoint(outgoingEvents);
-        MessagingGraph outgoingGraph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph outgoingGraph = graph(config(SHUTDOWN_TIMEOUT));
         outgoingGraph.addBinding(outgoing);
 
         outgoingGraph.close();
@@ -255,7 +257,7 @@ class MessagingGraphTest {
 
         List<String> incomingEvents = new CopyOnWriteArrayList<>();
         DualEndpoint incoming = new DualEndpoint(incomingEvents);
-        MessagingGraph incomingGraph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph incomingGraph = graph(config(SHUTDOWN_TIMEOUT));
         incomingGraph.addSource("dual", incoming);
 
         incomingGraph.close();
@@ -265,13 +267,13 @@ class MessagingGraphTest {
 
     @Test
     void concurrentStartCallersShareOneSuccessfulStartup() throws Exception {
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         StartupBlockingSource source = new StartupBlockingSource();
         graph.addSource("source", source);
 
         AsyncTask owner = async(graph::start);
         await(source.running());
-        awaitState(graph, MessagingGraph.State.STARTING);
+        awaitState(graph, DefaultMessagingGraph.State.STARTING);
         AsyncTask waiter = async(graph::start);
         awaitWaiting(waiter);
 
@@ -279,7 +281,7 @@ class MessagingGraphTest {
         awaitSuccess(owner);
         awaitSuccess(waiter);
 
-        assertEquals(MessagingGraph.State.RUNNING, graph.state());
+        assertEquals(DefaultMessagingGraph.State.RUNNING, graph.state());
         assertEquals(1, source.runCalls());
         graph.close();
     }
@@ -316,7 +318,7 @@ class MessagingGraphTest {
             }
         };
         StartupBlockingSource incoming = new StartupBlockingSource();
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graph.addBinding(outgoing);
         graph.addSource("incoming", incoming);
 
@@ -327,7 +329,7 @@ class MessagingGraphTest {
         assertEquals(1, forceCalls.get());
         assertEquals(1, closeCalls.get());
         assertEquals(0, flushCalls.get());
-        assertEquals(MessagingGraph.State.FAILED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.FAILED, graph.state());
         graph.close();
     }
 
@@ -340,7 +342,7 @@ class MessagingGraphTest {
         CountDownLatch forceStarted = new CountDownLatch(1);
         CountDownLatch releaseForce = new CountDownLatch(1);
         AtomicInteger forceCalls = new AtomicInteger();
-        AtomicReference<MessagingGraph> graphReference = new AtomicReference<>();
+        AtomicReference<DefaultMessagingGraph> graphReference = new AtomicReference<>();
         IncomingEndpoint source = new IncomingEndpoint() {
             @Override
             public void prepareForGraph() {
@@ -383,7 +385,7 @@ class MessagingGraphTest {
             public void close() {
             }
         };
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graphReference.set(graph);
         graph.addSource("source", source);
 
@@ -476,7 +478,7 @@ class MessagingGraphTest {
                 stop.countDown();
             }
         };
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graph.addSource("source", source);
 
         AsyncTask owner = async(graph::start);
@@ -515,7 +517,7 @@ class MessagingGraphTest {
                 await(releaseClose);
             }
         };
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graph.addBinding(binding);
         graph.start();
 
@@ -530,7 +532,7 @@ class MessagingGraphTest {
         awaitSuccess(waiter);
 
         assertEquals(1, closeCalls.get());
-        assertEquals(MessagingGraph.State.CLOSED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.CLOSED, graph.state());
     }
 
     @Test
@@ -539,14 +541,14 @@ class MessagingGraphTest {
         IllegalStateException startupFailure = new IllegalStateException("second source is not ready");
         ManagedSource first = ManagedSource.running("first", events, new AtomicBoolean(), () -> true);
         ManagedSource second = ManagedSource.readinessFailure("second", events, startupFailure);
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graph.addSource("first", first);
         graph.addSource("second", second);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class, graph::start);
 
         assertSame(startupFailure, thrown);
-        assertEquals(MessagingGraph.State.FAILED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.FAILED, graph.state());
         assertSame(startupFailure, graph.failure().orElseThrow());
         assertEquals(List.of("force-second", "force-first", "close-second", "close-first"),
                      lifecycleEvents(events));
@@ -564,14 +566,14 @@ class MessagingGraphTest {
         IllegalStateException startupFailure = new IllegalStateException("second source cannot start admission");
         ManagedSource first = ManagedSource.running("first", events, new AtomicBoolean(), () -> true);
         ManagedSource second = ManagedSource.admissionFailure("second", events, startupFailure);
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graph.addSource("first", first);
         graph.addSource("second", second);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class, graph::start);
 
         assertSame(startupFailure, thrown);
-        assertEquals(MessagingGraph.State.FAILED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.FAILED, graph.state());
         assertSame(startupFailure, graph.failure().orElseThrow());
         assertTrue(events.indexOf("admit-first") < events.indexOf("admission-fail-second"), events.toString());
         assertEquals(List.of("force-second", "force-first", "close-second", "close-first"),
@@ -584,7 +586,7 @@ class MessagingGraphTest {
     void gracefulDrainAllowsAdmittedNestedDispatchAndRejectsNewTopLevelWork() throws Exception {
         MessagingExecutionConfig config = config(SHUTDOWN_TIMEOUT);
         DeliveryEngine engine = engine(config, "upstream", "downstream");
-        MessagingGraph graph = new MessagingGraph(engine);
+        DefaultMessagingGraph graph = new DefaultMessagingGraph(engine);
         graph.start();
         CountDownLatch rootStarted = new CountDownLatch(1);
         CountDownLatch allowNested = new CountDownLatch(1);
@@ -605,7 +607,7 @@ class MessagingGraphTest {
         await(nestedCompleted);
         awaitSuccess(admitted);
         awaitSuccess(closing);
-        assertEquals(MessagingGraph.State.CLOSED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.CLOSED, graph.state());
     }
 
     @Test
@@ -613,7 +615,7 @@ class MessagingGraphTest {
         Duration timeout = Duration.ofMillis(100);
         MessagingExecutionConfig config = config(timeout);
         DeliveryEngine engine = engine(config, "orders");
-        MessagingGraph graph = new MessagingGraph(engine);
+        DefaultMessagingGraph graph = new DefaultMessagingGraph(engine);
         List<String> events = new CopyOnWriteArrayList<>();
         TrackingBinding first = new TrackingBinding("first", events);
         TrackingBinding second = new TrackingBinding("second", events);
@@ -640,7 +642,7 @@ class MessagingGraphTest {
             assertThat(failure.getMessage(), containsString("drain timed out"));
             await(interrupted);
             assertEquals(List.of("force-second", "force-first", "close-second", "close-first"), events);
-            assertEquals(MessagingGraph.State.FAILED, graph.state());
+            assertEquals(DefaultMessagingGraph.State.FAILED, graph.state());
             assertThrows(MessagingException.class, graph::close);
         } finally {
             releaseDelivery.countDown();
@@ -654,14 +656,14 @@ class MessagingGraphTest {
         IllegalStateException runtimeFailure = new IllegalStateException("poll failed");
         TrackingBinding resource = new TrackingBinding("resource", events);
         ManagedSource source = ManagedSource.runtimeFailure("source", events, runtimeFailure);
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graph.addBinding(resource);
         graph.addSource("source", source);
         graph.start();
 
         source.fail();
         await(resource.closedSignal());
-        awaitState(graph, MessagingGraph.State.FAILED);
+        awaitState(graph, DefaultMessagingGraph.State.FAILED);
 
         Throwable graphFailure = graph.failure().orElseThrow();
         assertThat(graphFailure.getMessage(), containsString("source failed"));
@@ -669,21 +671,21 @@ class MessagingGraphTest {
         assertEquals(List.of("force-source", "force-resource", "close-source", "close-resource"),
                      lifecycleEvents(events));
         assertThrows(IllegalStateException.class, graph::ensureRunning);
-        graph.close();
-        assertEquals(MessagingGraph.State.FAILED, graph.state());
+        assertSame(graphFailure, assertThrows(MessagingException.class, graph::close));
+        assertEquals(DefaultMessagingGraph.State.FAILED, graph.state());
     }
 
     @Test
     void sourceFailureDuringDrainIsReported() {
         IllegalStateException sourceFailure = new IllegalStateException("source stop failed");
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graph.addSource("source", new StopFailingSource(sourceFailure));
         graph.start();
 
         IllegalStateException failure = assertThrows(IllegalStateException.class, graph::close);
 
         assertSame(sourceFailure, failure);
-        assertEquals(MessagingGraph.State.FAILED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.FAILED, graph.state());
         assertSame(sourceFailure, graph.failure().orElseThrow());
         assertSame(failure, assertThrows(IllegalStateException.class, graph::close));
     }
@@ -735,14 +737,14 @@ class MessagingGraphTest {
                 throw sharedFailure;
             }
         };
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graph.addSource("shared-failure", source);
 
         assertSame(sharedFailure, assertThrows(IllegalStateException.class, graph::start));
         assertEquals(0, sharedFailure.getSuppressed().length);
 
         graph.close();
-        assertEquals(MessagingGraph.State.FAILED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.FAILED, graph.state());
     }
 
     @Test
@@ -750,48 +752,42 @@ class MessagingGraphTest {
         List<String> delivered = new CopyOnWriteArrayList<>();
         CountDownLatch streamDelivered = new CountDownLatch(1);
         Message<String> streamMessage = message("from-stream");
-        MessagingChannel<String> upstream = MessagingChannel.<String>builder()
-                .payloadType(String.class)
-                .build();
-        MessagingChannel<String> downstream = MessagingChannel.<String>builder()
-                .payloadType(String.class)
-                .addInput(upstream)
-                .addInput(Stream.of(streamMessage))
-                .addOutput(message -> {
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> upstream = builder.channel("upstream", String.class);
+        MessagingChannel<String> downstream = builder.channel("downstream", String.class);
+        builder.route(upstream, downstream)
+                .messageSource(downstream, Stream.of(streamMessage))
+                .messageSink(downstream, message -> {
                     delivered.add(message.entity());
                     if (message == streamMessage) {
                         streamDelivered.countDown();
                     }
-                })
-                .build();
+                });
 
-        try {
-            upstream.start();
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
             await(streamDelivered);
-            upstream.emit(message("from-upstream"));
+            graph.emitter(upstream).emitMessage(message("from-upstream"));
 
             assertEquals(List.of("from-stream", "from-upstream"), delivered);
-        } finally {
-            upstream.close();
-            downstream.close();
         }
     }
 
     @Test
     void closeCancelsSourceStartupWithoutWaitingForTheStartupDeadline() throws Exception {
-        MessagingGraph graph = graph(config(Duration.ofSeconds(2)));
+        DefaultMessagingGraph graph = graph(config(Duration.ofSeconds(2)));
         StartupBlockingSource source = new StartupBlockingSource();
         graph.addSource("blocked", source);
         AsyncTask startup = async(graph::start);
         await(source.running());
-        awaitState(graph, MessagingGraph.State.STARTING);
+        awaitState(graph, DefaultMessagingGraph.State.STARTING);
 
         long started = System.nanoTime();
         graph.close();
         long elapsed = System.nanoTime() - started;
 
         assertTrue(elapsed < TimeUnit.SECONDS.toNanos(1), "Close did not cancel startup promptly");
-        assertEquals(MessagingGraph.State.CLOSED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.CLOSED, graph.state());
         assertTrue(source.forced());
         assertThrows(ExecutionException.class,
                      () -> startup.completion().get(WAIT.toNanos(), TimeUnit.NANOSECONDS));
@@ -847,7 +843,7 @@ class MessagingGraphTest {
                 releasePreparation.countDown();
             }
         };
-        MessagingGraph graph = graph(config(Duration.ofSeconds(2)));
+        DefaultMessagingGraph graph = graph(config(Duration.ofSeconds(2)));
         graph.addSource("blocked-prepare", source);
         graph.addSource("later-source",
                         ManagedSource.running("later-source",
@@ -867,7 +863,7 @@ class MessagingGraphTest {
         assertTrue(forced.get());
         assertEquals(0, runCalls.get());
         assertFalse(laterSourceEvents.contains("prepare-later-source"));
-        assertEquals(MessagingGraph.State.CLOSED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.CLOSED, graph.state());
     }
 
     @Test
@@ -924,7 +920,7 @@ class MessagingGraphTest {
                 stopped.countDown();
             }
         };
-        MessagingGraph graph = graph(config(Duration.ofSeconds(2)));
+        DefaultMessagingGraph graph = graph(config(Duration.ofSeconds(2)));
         graph.addSource("blocked-admission", source);
         graph.addSource("later-source",
                         ManagedSource.running("later-source",
@@ -933,7 +929,7 @@ class MessagingGraphTest {
                                               () -> true));
         AsyncTask startup = async(graph::start);
         await(admissionStarted);
-        awaitState(graph, MessagingGraph.State.STARTING);
+        awaitState(graph, DefaultMessagingGraph.State.STARTING);
 
         long started = System.nanoTime();
         graph.close();
@@ -944,40 +940,136 @@ class MessagingGraphTest {
         assertThat(failure(startup).getMessage(), containsString("startup was cancelled"));
         assertTrue(forced.get());
         assertFalse(laterSourceEvents.contains("admit-later-source"));
-        assertEquals(MessagingGraph.State.CLOSED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.CLOSED, graph.state());
     }
 
     @Test
     void normalManagedSourceTerminationFailsRunningGraph() {
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         NormalEndingSource source = new NormalEndingSource();
         graph.addSource("ending", source);
 
         graph.start();
-        awaitState(graph, MessagingGraph.State.FAILED);
+        awaitState(graph, DefaultMessagingGraph.State.FAILED);
 
-        assertThat(graph.failure().orElseThrow().getMessage(), containsString("ending failed"));
+        Throwable graphFailure = graph.failure().orElseThrow();
+        assertThat(graphFailure.getMessage(), containsString("ending failed"));
         assertThrows(IllegalStateException.class, graph::ensureRunning);
-        graph.close();
+        assertSame(graphFailure, assertThrows(MessagingException.class, graph::close));
+    }
+
+    @Test
+    void forcedCleanupDefersCloseUntilTimedOutForceReturns() throws Exception {
+        Duration timeout = Duration.ofMillis(50);
+        DefaultMessagingGraph graph = graph(config(timeout));
+        CountDownLatch forceStarted = new CountDownLatch(1);
+        CountDownLatch releaseForce = new CountDownLatch(1);
+        CountDownLatch forceFinished = new CountDownLatch(1);
+        CountDownLatch closeStarted = new CountDownLatch(1);
+        AtomicBoolean forced = new AtomicBoolean();
+        AtomicBoolean closeBeforeForce = new AtomicBoolean();
+        AtomicBoolean closeInterrupted = new AtomicBoolean();
+        List<String> events = new CopyOnWriteArrayList<>();
+        graph.addBinding(new ConnectorEndpoint() {
+            @Override
+            public void forceClose() {
+                events.add("force-start");
+                forceStarted.countDown();
+                awaitUninterruptibly(releaseForce);
+                forced.set(true);
+                events.add("force-end");
+                forceFinished.countDown();
+            }
+
+            @Override
+            public void close() {
+                closeBeforeForce.set(!forced.get());
+                closeInterrupted.set(Thread.currentThread().isInterrupted());
+                events.add("close");
+                closeStarted.countDown();
+            }
+        });
+
+        long started = System.nanoTime();
+        AsyncTask closing = async(graph::close);
+        try {
+            await(forceStarted);
+            Throwable closeFailure = failure(closing);
+            long elapsed = System.nanoTime() - started;
+
+            assertTrue(closeFailure instanceof MessagingException, closeFailure.toString());
+            assertThat(closeFailure.getMessage(), containsString("Timed out while attempting to force close"));
+            assertTrue(elapsed < TimeUnit.SECONDS.toNanos(1), "Forced cleanup exceeded its absolute deadline");
+            assertFalse(forced.get());
+            assertEquals(1L, closeStarted.getCount(), "Normal close entered before force close returned");
+        } finally {
+            releaseForce.countDown();
+        }
+
+        await(forceFinished);
+        await(closeStarted);
+        assertFalse(closeBeforeForce.get());
+        assertFalse(closeInterrupted.get(), "Deferred close inherited the force timeout interruption");
+        assertEquals(List.of("force-start", "force-end", "close"), events);
+    }
+
+    @Test
+    void forcedCleanupDoesNotInterruptCloseWhenDeadlineExpires() throws Exception {
+        Duration timeout = Duration.ofMillis(50);
+        DefaultMessagingGraph graph = graph(config(timeout));
+        CountDownLatch closeStarted = new CountDownLatch(1);
+        CountDownLatch releaseClose = new CountDownLatch(1);
+        CountDownLatch closeFinished = new CountDownLatch(1);
+        AtomicBoolean closeInterrupted = new AtomicBoolean();
+        graph.addBinding(new ConnectorEndpoint() {
+            @Override
+            public void forceClose() {
+            }
+
+            @Override
+            public void close() {
+                closeStarted.countDown();
+                awaitUninterruptibly(releaseClose);
+                closeInterrupted.set(Thread.currentThread().isInterrupted());
+                closeFinished.countDown();
+            }
+        });
+
+        AsyncTask closing = async(graph::close);
+        try {
+            await(closeStarted);
+
+            Throwable closeFailure = failure(closing);
+
+            assertTrue(closeFailure instanceof MessagingException, closeFailure.toString());
+            assertThat(closeFailure.getMessage(), containsString("Timed out while attempting to close"));
+        } finally {
+            releaseClose.countDown();
+        }
+
+        await(closeFinished);
+        assertFalse(closeInterrupted.get(), "Post-force close inherited the lifecycle timeout interruption");
     }
 
     @Test
     void endpointCloseIsBoundedByOneCleanupDeadline() {
         Duration timeout = Duration.ofMillis(50);
-        MessagingGraph graph = graph(config(timeout));
+        DefaultMessagingGraph graph = graph(config(timeout));
         CountDownLatch closeStarted = new CountDownLatch(1);
+        CountDownLatch releaseClose = new CountDownLatch(1);
         AtomicBoolean forceRequested = new AtomicBoolean();
         graph.addBinding(new ConnectorEndpoint() {
             @Override
             public void forceClose() {
                 forceRequested.set(true);
+                releaseClose.countDown();
             }
 
             @Override
             public void close() {
                 closeStarted.countDown();
                 try {
-                    new CountDownLatch(1).await();
+                    releaseClose.await();
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
@@ -993,13 +1085,13 @@ class MessagingGraphTest {
         assertThat(failure.getMessage(), containsString("Timed out while attempting to close connector binding"));
         assertTrue(elapsed < TimeUnit.SECONDS.toNanos(1), "Endpoint close exceeded the bounded cleanup phase");
         assertTrue(forceRequested.get());
-        assertEquals(MessagingGraph.State.FAILED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.FAILED, graph.state());
         assertThrows(MessagingException.class, graph::close);
     }
 
     @Test
     void graphRejectsReusedSourceAndManagedBindingIdentities() {
-        MessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
+        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         ManagedSource source = ManagedSource.running("source", new CopyOnWriteArrayList<>(),
                                                      new AtomicBoolean(), () -> true);
         TrackingBinding binding = new TrackingBinding("sink", new CopyOnWriteArrayList<>());
@@ -1017,7 +1109,7 @@ class MessagingGraphTest {
         List<String> events = new CopyOnWriteArrayList<>();
         ManagedSource source = ManagedSource.running("source", events, new AtomicBoolean(), () -> true);
         MessagingExecutionConfig config = config(SHUTDOWN_TIMEOUT);
-        MessagingGraph graph = graph(config);
+        DefaultMessagingGraph graph = graph(config);
         graph.addChannel("known", new NoOpChannel(), config);
         graph.addSource("source", source);
         graph.addRoute("known", "missing");
@@ -1026,7 +1118,7 @@ class MessagingGraphTest {
 
         assertThat(failure.getMessage(), containsString("Unknown messaging route target missing"));
         assertFalse(source.prepared());
-        assertEquals(MessagingGraph.State.FAILED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.FAILED, graph.state());
         assertEquals(List.of("force-source", "close-source"), lifecycleEvents(events));
     }
 
@@ -1035,7 +1127,7 @@ class MessagingGraphTest {
         List<String> events = new CopyOnWriteArrayList<>();
         ManagedSource source = ManagedSource.running("source", events, new AtomicBoolean(), () -> true);
         MessagingExecutionConfig config = config(SHUTDOWN_TIMEOUT);
-        MessagingGraph graph = graph(config);
+        DefaultMessagingGraph graph = graph(config);
         graph.addChannel("first", new NoOpChannel(), config);
         graph.addChannel("second", new NoOpChannel(), config);
         graph.addSource("source", source);
@@ -1046,12 +1138,12 @@ class MessagingGraphTest {
 
         assertThat(failure.getMessage(), containsString("first -> second -> first"));
         assertFalse(source.prepared());
-        assertEquals(MessagingGraph.State.FAILED, graph.state());
+        assertEquals(DefaultMessagingGraph.State.FAILED, graph.state());
         assertEquals(List.of("force-source", "close-source"), lifecycleEvents(events));
     }
 
-    private static MessagingGraph graph(MessagingExecutionConfig config) {
-        return new MessagingGraph(new DeliveryEngine(config, List.of()));
+    private static DefaultMessagingGraph graph(MessagingExecutionConfig config) {
+        return new DefaultMessagingGraph(new DeliveryEngine(config, List.of()));
     }
 
     private static DeliveryEngine engine(MessagingExecutionConfig config, String... channels) {
@@ -1093,7 +1185,22 @@ class MessagingGraphTest {
         }
     }
 
-    private static void awaitState(MessagingGraph graph, MessagingGraph.State expected) {
+    private static void awaitUninterruptibly(CountDownLatch latch) {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                latch.await();
+                break;
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void awaitState(DefaultMessagingGraph graph, DefaultMessagingGraph.State expected) {
         long deadline = System.nanoTime() + WAIT.toNanos();
         while (graph.state() != expected && System.nanoTime() < deadline) {
             Thread.onSpinWait();
@@ -1169,19 +1276,13 @@ class MessagingGraphTest {
 
     private static final class NoOpChannel implements MessagingChannel<Object> {
         @Override
-        public void emit(Object entity) {
+        public String name() {
+            return "no-op";
         }
 
         @Override
-        public void emit(Message<Object> message) {
-        }
-
-        @Override
-        public void emitBatch(List<? extends Message<Object>> messages) {
-        }
-
-        @Override
-        public void start() {
+        public GenericType<Object> payloadType() {
+            return GenericType.OBJECT;
         }
     }
 

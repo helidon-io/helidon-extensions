@@ -53,7 +53,7 @@ public interface Emitter<T> {
      * @throws MessagingException if the target channel does not exist
      * @throws RuntimeException if a handler or outgoing connector fails
      */
-    void emit(Message<T> message);
+    void emitMessage(Message<? extends T> message);
 
     /**
      * Emit a batch of messages.
@@ -65,9 +65,9 @@ public interface Emitter<T> {
      * @throws MessagingException if the target channel does not exist
      * @throws RuntimeException if a handler or outgoing connector fails
      */
-    default void emitBatch(List<? extends Message<T>> messages) {
-        for (Message<T> message : messages) {
-            emit(message);
+    default void emitBatch(List<? extends Message<? extends T>> messages) {
+        for (Message<? extends T> message : messages) {
+            emitMessage(message);
         }
     }
 }

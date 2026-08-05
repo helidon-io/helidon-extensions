@@ -68,7 +68,7 @@ final class KafkaMessagingTypes {
         }
 
         void send(Message<String> message) {
-            emitter.emit(message);
+            emitter.emitMessage(message);
         }
 
         void sendBatch(List<? extends Message<String>> messages) {
@@ -80,16 +80,13 @@ final class KafkaMessagingTypes {
     static class ForwardingReceiver {
         private final BlockingQueue<Message<String>> deliveries = new LinkedBlockingQueue<>();
 
-        @Service.Named(FORWARDING_OUTGOING_CHANNEL)
-        @Service.Inject
-        Emitter<String> output;
-
         @Messaging.OnMessage(FORWARDING_INCOMING_CHANNEL)
-        void forward(Message<String> message) {
+        @Messaging.Outgoing(FORWARDING_OUTGOING_CHANNEL)
+        Message<String> forward(Message<String> message) {
             deliveries.add(message);
-            output.emit(Message.builder("forwarded: " + message.entity())
-                                .header("processor", "kafka-forwarder")
-                                .build());
+            return Message.builder("forwarded: " + message.entity())
+                    .header("processor", "kafka-forwarder")
+                    .build();
         }
 
         Message<String> awaitDelivery(Duration timeout) throws InterruptedException {
@@ -102,15 +99,12 @@ final class KafkaMessagingTypes {
         private final BlockingQueue<Message<String>> deliveries = new LinkedBlockingQueue<>();
         private final AtomicInteger attempts = new AtomicInteger();
 
-        @Service.Named(FAILING_FORWARDING_OUTGOING_CHANNEL)
-        @Service.Inject
-        Emitter<String> output;
-
         @Messaging.OnMessage(FAILING_FORWARDING_INCOMING_CHANNEL)
-        void forward(Message<String> message) {
+        @Messaging.Outgoing(FAILING_FORWARDING_OUTGOING_CHANNEL)
+        String forward(Message<String> message) {
             attempts.incrementAndGet();
             deliveries.add(message);
-            output.emit("will not be serialized: " + message.entity());
+            return "will not be serialized: " + message.entity();
         }
 
         Message<String> awaitDelivery(Duration timeout) throws InterruptedException {
@@ -265,7 +259,7 @@ final class KafkaMessagingTypes {
         Emitter<Integer> emitter;
 
         void send(KafkaMessage<Long, Integer> message) {
-            emitter.emit(message);
+            emitter.emitMessage(message);
         }
     }
 
@@ -290,25 +284,19 @@ final class KafkaMessagingTypes {
         private final BlockingQueue<ReceivedMessage> annotated = new LinkedBlockingQueue<>();
         private final BlockingQueue<List<Message<String>>> batches = new LinkedBlockingQueue<>();
 
-        @Messaging.OnMessage(INCOMING_CHANNEL)
-        void receivePayload(String payload) {
+        void recordPayload(String payload) {
             payloads.add(payload);
         }
 
-        @Messaging.OnMessage(INCOMING_CHANNEL)
-        void receiveMessage(Message<String> message) {
+        void recordMessage(Message<String> message) {
             messages.add(message);
         }
 
-        @Messaging.OnMessage(INCOMING_CHANNEL)
-        void receiveAnnotated(@Messaging.HeaderParam("trace-id") String traceId,
-                              @Messaging.Entity String entity,
-                              Message<String> message) {
-            annotated.add(new ReceivedMessage(traceId, entity, message));
+        void recordAnnotated(String traceId, Message<String> message) {
+            annotated.add(new ReceivedMessage(traceId, message.entity(), message));
         }
 
-        @Messaging.OnMessage(INCOMING_CHANNEL)
-        void receiveBatch(List<Message<String>> messages) {
+        void recordBatch(List<Message<String>> messages) {
             batches.add(List.copyOf(messages));
         }
 
@@ -330,17 +318,76 @@ final class KafkaMessagingTypes {
     }
 
     @Service.Singleton
+    static class IncomingPayloadReceiver {
+        private final IncomingReceiver receiver;
+
+        @Service.Inject
+        IncomingPayloadReceiver(IncomingReceiver receiver) {
+            this.receiver = receiver;
+        }
+
+        @Messaging.OnMessage(INCOMING_CHANNEL)
+        void receivePayload(String payload) {
+            receiver.recordPayload(payload);
+        }
+    }
+
+    @Service.Singleton
+    static class IncomingMessageReceiver {
+        private final IncomingReceiver receiver;
+
+        @Service.Inject
+        IncomingMessageReceiver(IncomingReceiver receiver) {
+            this.receiver = receiver;
+        }
+
+        @Messaging.OnMessage(INCOMING_CHANNEL)
+        void receiveMessage(Message<String> message) {
+            receiver.recordMessage(message);
+        }
+    }
+
+    @Service.Singleton
+    static class IncomingAnnotatedReceiver {
+        private final IncomingReceiver receiver;
+
+        @Service.Inject
+        IncomingAnnotatedReceiver(IncomingReceiver receiver) {
+            this.receiver = receiver;
+        }
+
+        @Messaging.OnMessage(INCOMING_CHANNEL)
+        void receiveAnnotated(@Messaging.HeaderParam("trace-id") String traceId,
+                              Message<String> message) {
+            receiver.recordAnnotated(traceId, message);
+        }
+    }
+
+    @Service.Singleton
+    static class IncomingBatchReceiver {
+        private final IncomingReceiver receiver;
+
+        @Service.Inject
+        IncomingBatchReceiver(IncomingReceiver receiver) {
+            this.receiver = receiver;
+        }
+
+        @Messaging.OnMessage(INCOMING_CHANNEL)
+        void receiveBatch(List<Message<String>> messages) {
+            receiver.recordBatch(messages);
+        }
+    }
+
+    @Service.Singleton
     static class KafkaMetadataReceiver {
         private final BlockingQueue<KafkaMessage<String, String>> messages = new LinkedBlockingQueue<>();
         private final BlockingQueue<List<KafkaMessage<String, String>>> batches = new LinkedBlockingQueue<>();
 
-        @Messaging.OnMessage(METADATA_INCOMING_CHANNEL)
-        void receive(KafkaMessage<String, String> message) {
+        void recordMessage(KafkaMessage<String, String> message) {
             messages.add(message);
         }
 
-        @Messaging.OnMessage(METADATA_INCOMING_CHANNEL)
-        void receiveBatch(List<KafkaMessage<String, String>> messages) {
+        void recordBatch(List<KafkaMessage<String, String>> messages) {
             batches.add(List.copyOf(messages));
         }
 
@@ -364,6 +411,36 @@ final class KafkaMessagingTypes {
                 result.addAll(batch);
             }
             return List.copyOf(result);
+        }
+    }
+
+    @Service.Singleton
+    static class KafkaMetadataMessageReceiver {
+        private final KafkaMetadataReceiver receiver;
+
+        @Service.Inject
+        KafkaMetadataMessageReceiver(KafkaMetadataReceiver receiver) {
+            this.receiver = receiver;
+        }
+
+        @Messaging.OnMessage(METADATA_INCOMING_CHANNEL)
+        void receive(KafkaMessage<String, String> message) {
+            receiver.recordMessage(message);
+        }
+    }
+
+    @Service.Singleton
+    static class KafkaMetadataBatchReceiver {
+        private final KafkaMetadataReceiver receiver;
+
+        @Service.Inject
+        KafkaMetadataBatchReceiver(KafkaMetadataReceiver receiver) {
+            this.receiver = receiver;
+        }
+
+        @Messaging.OnMessage(METADATA_INCOMING_CHANNEL)
+        void receiveBatch(List<KafkaMessage<String, String>> messages) {
+            receiver.recordBatch(messages);
         }
     }
 
