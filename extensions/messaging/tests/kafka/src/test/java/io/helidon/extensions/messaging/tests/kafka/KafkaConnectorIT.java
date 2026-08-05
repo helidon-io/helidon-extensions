@@ -36,6 +36,7 @@ import io.helidon.config.Config;
 import io.helidon.extensions.messaging.DeadLetterMessage;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingChannel;
+import io.helidon.extensions.messaging.MessagingGraph;
 import io.helidon.extensions.messaging.MessagingRuntime;
 import io.helidon.extensions.messaging.OutgoingEndpoint;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorConfig;
@@ -47,7 +48,13 @@ import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.DropRecei
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.FailingForwardingReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.FailOnceIncomingReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.ForwardingReceiver;
+import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.IncomingAnnotatedReceiver;
+import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.IncomingBatchReceiver;
+import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.IncomingMessageReceiver;
+import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.IncomingPayloadReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.IncomingReceiver;
+import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.KafkaMetadataBatchReceiver;
+import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.KafkaMetadataMessageReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.KafkaMetadataReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.NumericReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.NumericSender;
@@ -59,7 +66,6 @@ import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.RestartRe
 import io.helidon.extensions.messaging.tests.kafka.KafkaTestSerializers.BlockingStringSerializer;
 import io.helidon.extensions.messaging.tests.kafka.KafkaTestSerializers.FailingStringSerializer;
 import io.helidon.service.registry.ServiceRegistry;
-import io.helidon.service.registry.ServiceRegistryConfig;
 import io.helidon.service.registry.ServiceRegistryManager;
 
 import org.apache.kafka.clients.admin.Admin;
@@ -194,36 +200,28 @@ class KafkaConnectorIT {
         createTopic(topic);
         KafkaConnectorProvider provider = new KafkaConnectorProvider();
         OutgoingEndpoint endpoint = provider.createOutgoingEndpoint(outgoingConnectorConfig(topic));
-        MessagingChannel<String> channel = null;
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> channel = builder.channel("kafka-output", String.class);
+        builder.outgoingConnector(channel, endpoint);
 
-        try {
-            channel = MessagingChannel.<String>builder()
-                    .payloadType(String.class)
-                    .addOutgoingConnector(endpoint)
-                    .build();
-
-            channel.emit("channel payload");
-            channel.emit(Message.builder("channel message")
-                                 .header("trace-id", "channel-single")
-                                 .build());
-            channel.emitBatch(List.of(Message.builder("channel batch first")
-                                              .header("trace-id", "channel-batch-1")
-                                              .build(),
-                                      Message.builder("channel batch second")
-                                              .header("trace-id", "channel-batch-2")
-                                              .build()));
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+            graph.emitter(channel).emit("channel payload");
+            graph.emitter(channel).emitMessage(Message.builder("channel message")
+                                                       .header("trace-id", "channel-single")
+                                                       .build());
+            graph.emitter(channel).emitBatch(List.of(Message.builder("channel batch first")
+                                                             .header("trace-id", "channel-batch-1")
+                                                             .build(),
+                                                     Message.builder("channel batch second")
+                                                             .header("trace-id", "channel-batch-2")
+                                                             .build()));
 
             assertRecords(awaitRecords(topic, 4),
                           List.of(ExpectedRecord.create("channel payload"),
                                   ExpectedRecord.create("channel message", "channel-single"),
                                   ExpectedRecord.create("channel batch first", "channel-batch-1"),
                                   ExpectedRecord.create("channel batch second", "channel-batch-2")));
-        } finally {
-            if (channel == null) {
-                endpoint.close();
-            } else {
-                channel.close();
-            }
         }
     }
 
@@ -289,7 +287,7 @@ class KafkaConnectorIT {
 
     @Test
     @Timeout(value = 60)
-    void testConfiguredIncomingHandlerCommitsOnlyAfterForwardedKafkaSendCompletes() throws Exception {
+    void testConfiguredProcessorCommitsOnlyAfterForwardedKafkaSendCompletes() throws Exception {
         String incomingTopic = uniqueName("forward-in");
         String outgoingTopic = uniqueName("forward-out");
         String group = uniqueName("group");
@@ -328,7 +326,7 @@ class KafkaConnectorIT {
 
     @Test
     @Timeout(value = 60)
-    void testConfiguredIncomingHandlerSerializationFailureLeavesInputUncommitted() throws Exception {
+    void testConfiguredProcessorSerializationFailureLeavesInputUncommitted() throws Exception {
         String incomingTopic = uniqueName("failing-forward-in");
         String outgoingTopic = uniqueName("failing-forward-out");
         String group = uniqueName("group");
@@ -833,7 +831,8 @@ class KafkaConnectorIT {
                         topic: "%s"
                 """.formatted(KafkaMessagingTypes.OUTGOING_CHANNEL,
                                KAFKA.getBootstrapServers(),
-                               topic));
+                               topic),
+                               OutgoingSender.class);
     }
 
     private static ServiceRegistryManager forwardingRegistryManager(String incomingTopic,
@@ -868,7 +867,8 @@ class KafkaConnectorIT {
                                KafkaMessagingTypes.FORWARDING_OUTGOING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                outgoingTopic,
-                               BlockingStringSerializer.class.getName()));
+                               BlockingStringSerializer.class.getName()),
+                               ForwardingReceiver.class);
     }
 
     private static ServiceRegistryManager failingForwardingRegistryManager(String incomingTopic,
@@ -905,7 +905,8 @@ class KafkaConnectorIT {
                                KafkaMessagingTypes.FAILING_FORWARDING_OUTGOING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                outgoingTopic,
-                               FailingStringSerializer.class.getName()));
+                               FailingStringSerializer.class.getName()),
+                               FailingForwardingReceiver.class);
     }
 
     private static ServiceRegistryManager restartRegistryManager(String topic, String group) {
@@ -930,7 +931,8 @@ class KafkaConnectorIT {
                 """.formatted(KafkaMessagingTypes.RESTART_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
-                               group));
+                               group),
+                               RestartReceiver.class);
     }
 
     private static ServiceRegistryManager dropRegistryManager(String topic, String group) {
@@ -955,7 +957,8 @@ class KafkaConnectorIT {
                 """.formatted(KafkaMessagingTypes.DROP_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
-                               group));
+                               group),
+                               DropReceiver.class);
     }
 
     private static ServiceRegistryManager partitionRetryRegistryManager(String topic, String group) {
@@ -978,7 +981,8 @@ class KafkaConnectorIT {
                 """.formatted(KafkaMessagingTypes.PARTITION_RETRY_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
-                               group));
+                               group),
+                               PartitionRetryReceiver.class);
     }
 
     private static ServiceRegistryManager numericRegistryManager(String topic, String group) {
@@ -1014,7 +1018,9 @@ class KafkaConnectorIT {
                                KAFKA.getBootstrapServers(),
                                topic,
                                LongSerializer.class.getName(),
-                               IntegerSerializer.class.getName()));
+                               IntegerSerializer.class.getName()),
+                               NumericSender.class,
+                               NumericReceiver.class);
     }
 
     private static ServiceRegistryManager incomingRegistryManager(String topic, String group) {
@@ -1034,7 +1040,12 @@ class KafkaConnectorIT {
                 """.formatted(KafkaMessagingTypes.INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
-                               group));
+                               group),
+                               IncomingReceiver.class,
+                               IncomingPayloadReceiver.class,
+                               IncomingMessageReceiver.class,
+                               IncomingAnnotatedReceiver.class,
+                               IncomingBatchReceiver.class);
     }
 
     private static ServiceRegistryManager metadataRegistryManager(String topic, String group) {
@@ -1054,7 +1065,10 @@ class KafkaConnectorIT {
                 """.formatted(KafkaMessagingTypes.METADATA_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
-                               group));
+                               group),
+                               KafkaMetadataReceiver.class,
+                               KafkaMetadataMessageReceiver.class,
+                               KafkaMetadataBatchReceiver.class);
     }
 
     private static ServiceRegistryManager redeliveryRegistryManager(String topic, String group) {
@@ -1077,7 +1091,8 @@ class KafkaConnectorIT {
                 """.formatted(KafkaMessagingTypes.REDELIVERY_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
-                               group));
+                               group),
+                               FailOnceIncomingReceiver.class);
     }
 
     private static ServiceRegistryManager ownerLoopRegistryManager(String topic,
@@ -1106,7 +1121,8 @@ class KafkaConnectorIT {
                                topic,
                                group,
                                retryDelay,
-                               maxPollInterval.toMillis()));
+                               maxPollInterval.toMillis()),
+                               FailOnceIncomingReceiver.class);
     }
 
     private static ServiceRegistryManager deadLetterRegistryManager(String topic,
@@ -1144,15 +1160,12 @@ class KafkaConnectorIT {
                                KafkaMessagingTypes.DEAD_LETTER_OUTGOING_CHANNEL,
                                KafkaMessagingTypes.DEAD_LETTER_OUTGOING_CHANNEL,
                                KAFKA.getBootstrapServers(),
-                               deadLetterTopic));
+                               deadLetterTopic),
+                               AlwaysFailIncomingReceiver.class);
     }
 
-    private static ServiceRegistryManager registryManager(String yaml) {
-        Config config = Config.just(yaml, MediaTypes.APPLICATION_YAML);
-        ServiceRegistryConfig registryConfig = ServiceRegistryConfig.builder()
-                .putContractInstance(Config.class, config)
-                .build();
-        return ServiceRegistryManager.create(registryConfig);
+    private static ServiceRegistryManager registryManager(String yaml, Class<?>... fixtureTypes) {
+        return KafkaScenarioRegistry.create(yaml, fixtureTypes);
     }
 
     private static void createTopic(String topic) throws Exception {

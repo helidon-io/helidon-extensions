@@ -62,5 +62,5 @@ public interface MessagingRuntime {
      * @throws MessagingException if the named channel does not exist
      * @throws RuntimeException if a handler or outgoing connector fails
      */
-    <T> void emitBatch(String channel, List<? extends Message<T>> messages);
+    <T> void emitBatch(String channel, List<? extends Message<? extends T>> messages);
 }

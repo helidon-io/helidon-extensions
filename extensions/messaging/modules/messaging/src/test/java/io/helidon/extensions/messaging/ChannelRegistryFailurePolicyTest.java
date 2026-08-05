@@ -686,6 +686,74 @@ class ChannelRegistryFailurePolicyTest {
         assertThat(incoming.awaitAnyStart(), is(false));
     }
 
+    @Test
+    void testDeadLetterTargetRejectsIncompatiblePayloadBeforeEndpointsAreCreated() throws InterruptedException {
+        TestIncomingConnector incoming = new TestIncomingConnector();
+        TestOutgoingConnector outgoing = new TestOutgoingConnector();
+        ConsumerRegistration source = registration("orders", ignored -> { });
+        ConsumerRegistration incompatibleTarget = registration(
+                "orders-dlq",
+                Integer.class,
+                new GenericType<Integer>() { },
+                DeadLetterMessage.class,
+                new GenericType<DeadLetterMessage<Integer>>() { });
+
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> new ChannelRegistry(
+                        List.of(source, incompatibleTarget),
+                        yaml("""
+                                helidon:
+                                  messaging:
+                                    incoming:
+                                      orders:
+                                        connector: test-in
+                                        failure:
+                                          retry:
+                                            max-attempts: 1
+                                          on-exhausted: DEAD_LETTER
+                                          dead-letter:
+                                            channel: orders-dlq
+                                    outgoing:
+                                      audit:
+                                        connector: test-out
+                                """),
+                        List.of(incoming, outgoing)));
+
+        assertThat(failure.getMessage(), containsString("Dead-letter channel orders-dlq"));
+        assertThat(failure.getMessage(), containsString("payload type java.lang.Integer"));
+        assertThat(failure.getMessage(), containsString("incoming channel orders has payload type java.lang.String"));
+        assertThat(incoming.createdCount(), is(0));
+        assertThat(outgoing.createdCount(), is(0));
+        assertThat(incoming.awaitAnyStart(), is(false));
+    }
+
+    @Test
+    void testRawProducerEnvelopeDoesNotSatisfyParameterizedConsumer() {
+        ConsumerRegistration target = registration(
+                "orders",
+                Integer.class,
+                new GenericType<Integer>() { },
+                TestKeyedMessage.class,
+                new GenericType<TestKeyedMessage<Long, Integer>>() { });
+        EmitterRegistration rawProducer = emitterRegistration(
+                "orders",
+                "publisher#orders",
+                new GenericType<Integer>() { },
+                GenericType.create(TestKeyedMessage.class));
+
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> new ChannelRegistry(List.of(target),
+                                          List.of(rawProducer),
+                                          yaml("{}"),
+                                          List.of()));
+
+        assertThat(failure.getMessage(), containsString("produces envelope type"));
+        assertThat(failure.getMessage(), containsString("cannot accept"));
+        assertThat(failure.getMessage(), containsString("TestKeyedMessage<java.lang.Long, java.lang.Integer>"));
+    }
+
     private static Config yaml(String yaml) {
         return Config.just(yaml, MediaTypes.APPLICATION_YAML);
     }
@@ -770,6 +838,33 @@ class ChannelRegistryFailurePolicyTest {
             @Override
             public void dispatch(Message<?> message) {
                 consumer.accept(message);
+            }
+        };
+    }
+
+    private static EmitterRegistration emitterRegistration(String channel,
+                                                           String producerId,
+                                                           GenericType<?> payloadType,
+                                                           GenericType<?> envelopeType) {
+        return new EmitterRegistration() {
+            @Override
+            public String channel() {
+                return channel;
+            }
+
+            @Override
+            public String producerId() {
+                return producerId;
+            }
+
+            @Override
+            public GenericType<?> payloadGenericType() {
+                return payloadType;
+            }
+
+            @Override
+            public GenericType<?> envelopeGenericType() {
+                return envelopeType;
             }
         };
     }

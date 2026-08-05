@@ -34,6 +34,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 import io.helidon.common.GenericType;
 import io.helidon.config.Config;
@@ -50,19 +51,21 @@ class ChannelRegistry implements MessagingRuntime {
 
     private Map<String, MessagingChannel<?>> channels = Map.of();
     private final DeliveryEngine deliveryEngine;
-    private final MessagingGraph graph;
+    private final DefaultMessagingGraph graph;
 
     @Service.Inject
     ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
+                    List<EmitterRegistration> emitterRegistrations,
                     Config config,
                     List<ConnectorProvider<?>> connectorProviders,
                     List<MessageSizeEstimator> sizeEstimators,
                     MessagingLifecycleGuard lifecycleGuard) {
         MessagingExecutionConfig defaultExecutionConfig = executionConfig(config, null);
         this.deliveryEngine = new DeliveryEngine(defaultExecutionConfig, sizeEstimators);
-        this.graph = new MessagingGraph(deliveryEngine);
+        this.graph = new DefaultMessagingGraph(deliveryEngine);
         try {
             initialize(consumerRegistrations,
+                       emitterRegistrations,
                        config,
                        connectorProviders);
             graph.prepare();
@@ -76,8 +79,35 @@ class ChannelRegistry implements MessagingRuntime {
     ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
                     Config config,
                     List<ConnectorProvider<?>> connectorProviders,
+                    List<MessageSizeEstimator> sizeEstimators,
+                    MessagingLifecycleGuard lifecycleGuard) {
+        this(consumerRegistrations,
+             List.of(),
+             config,
+             connectorProviders,
+             sizeEstimators,
+             lifecycleGuard);
+    }
+
+    ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
+                    Config config,
+                    List<ConnectorProvider<?>> connectorProviders,
                     List<MessageSizeEstimator> sizeEstimators) {
         this(consumerRegistrations,
+             List.of(),
+             config,
+             connectorProviders,
+             sizeEstimators,
+             new MessagingLifecycleGuard());
+    }
+
+    ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
+                    List<EmitterRegistration> emitterRegistrations,
+                    Config config,
+                    List<ConnectorProvider<?>> connectorProviders,
+                    List<MessageSizeEstimator> sizeEstimators) {
+        this(consumerRegistrations,
+             emitterRegistrations,
              config,
              connectorProviders,
              sizeEstimators,
@@ -90,9 +120,21 @@ class ChannelRegistry implements MessagingRuntime {
         this(consumerRegistrations, config, connectorProviders, List.of());
     }
 
+    ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
+                    List<EmitterRegistration> emitterRegistrations,
+                    Config config,
+                    List<ConnectorProvider<?>> connectorProviders) {
+        this(consumerRegistrations, emitterRegistrations, config, connectorProviders, List.of());
+    }
+
     private void initialize(List<ConsumerRegistration> consumerRegistrations,
+                            List<EmitterRegistration> emitterRegistrations,
                             Config config,
                             List<ConnectorProvider<?>> connectorProviders) {
+        validateRegistrationIdentities(consumerRegistrations, emitterRegistrations);
+        validateRegistrationTypeMetadata(consumerRegistrations, emitterRegistrations);
+        Map<String, PayloadContribution> payloadContributions =
+                validateChannelPayloadContributions(consumerRegistrations, emitterRegistrations);
         Map<String, List<ConsumerRegistration>> grouped = new HashMap<>();
         for (ConsumerRegistration registration : consumerRegistrations) {
             grouped.computeIfAbsent(registration.channel(), ignored -> new ArrayList<>())
@@ -112,8 +154,13 @@ class ChannelRegistry implements MessagingRuntime {
         List<IncomingDescriptor> incomingDescriptors = prepareIncomingDescriptors(config, providers);
         Set<String> outputChannels = new LinkedHashSet<>(grouped.keySet());
         outgoingBindings.stream().map(OutgoingBinding::channel).forEach(outputChannels::add);
-        validateFailureRoutes(incomingDescriptors, outputChannels, grouped);
+        validateGeneratedProducerTargets(consumerRegistrations,
+                                         emitterRegistrations,
+                                         grouped,
+                                         outputChannels);
+        validateFailureRoutes(incomingDescriptors, outputChannels, grouped, payloadContributions);
         validateIncomingOutputs(incomingDescriptors, outputChannels);
+        registerProcessorRoutes(consumerRegistrations);
 
         configureOutgoingConnectors(outgoingBindings);
         configureIncomingConnectors(incomingDescriptors);
@@ -149,7 +196,7 @@ class ChannelRegistry implements MessagingRuntime {
      * @throws RuntimeException if an output fails
      */
     @Override
-    public <T> void emitBatch(String channel, List<? extends Message<T>> messages) {
+    public <T> void emitBatch(String channel, List<? extends Message<? extends T>> messages) {
         MessagingChannel<?> messagingChannel = channels.get(channel);
         if (messagingChannel == null) {
             throw new MessagingException("Unknown messaging channel " + channel);
@@ -211,17 +258,346 @@ class ChannelRegistry implements MessagingRuntime {
         return new RegistryConnectorSourceContext(channel, failurePolicy);
     }
 
+    private void validateRegistrationIdentities(List<ConsumerRegistration> consumerRegistrations,
+                                                List<EmitterRegistration> emitterRegistrations) {
+        Set<String> handlerIds = new LinkedHashSet<>();
+        for (ConsumerRegistration registration : consumerRegistrations) {
+            String handlerId = requireRegistrationIdentity("Handler", registration.handlerId());
+            if (!handlerIds.add(handlerId)) {
+                throw new IllegalArgumentException("Duplicate messaging handler registration " + handlerId);
+            }
+        }
+
+        Set<String> producerIds = new LinkedHashSet<>();
+        for (EmitterRegistration registration : emitterRegistrations) {
+            String producerId = requireRegistrationIdentity("Producer", registration.producerId());
+            if (!producerIds.add(producerId)) {
+                throw new IllegalArgumentException("Duplicate messaging producer registration " + producerId);
+            }
+        }
+    }
+
+    private String requireRegistrationIdentity(String kind, String identity) {
+        if (identity == null || identity.isBlank()) {
+            throw new IllegalArgumentException(kind + " registration identity must not be blank");
+        }
+        return identity;
+    }
+
+    private void validateRegistrationTypeMetadata(List<ConsumerRegistration> consumerRegistrations,
+                                                  List<EmitterRegistration> emitterRegistrations) {
+        for (ConsumerRegistration registration : consumerRegistrations) {
+            String handler = "Messaging handler " + registration.handlerId();
+            GenericType<?> payloadType = registration.payloadGenericType();
+            GenericType<?> envelopeType = registration.envelopeGenericType();
+            validateRawType(handler + " payload",
+                            registration.payloadType(),
+                            payloadType);
+            validateRawType(handler + " envelope",
+                            registration.envelopeType(),
+                            envelopeType);
+            validateEnvelopePayloadType(handler, payloadType, envelopeType);
+            if (registration instanceof ProcessorRegistration processor) {
+                String outgoing = "Messaging processor " + processor.handlerId() + " outgoing";
+                GenericType<?> outgoingPayloadType = processor.outgoingPayloadGenericType();
+                GenericType<?> outgoingEnvelopeType = processor.outgoingEnvelopeGenericType();
+                validateRawType(outgoing + " payload",
+                                processor.outgoingPayloadType(),
+                                outgoingPayloadType);
+                validateRawType(outgoing + " envelope",
+                                processor.outgoingEnvelopeType(),
+                                outgoingEnvelopeType);
+                validateEnvelopePayloadType(outgoing, outgoingPayloadType, outgoingEnvelopeType);
+            }
+        }
+        for (EmitterRegistration registration : emitterRegistrations) {
+            String emitter = "Messaging emitter " + registration.producerId();
+            GenericType<?> payloadType = registration.payloadGenericType();
+            GenericType<?> envelopeType = registration.envelopeGenericType();
+            validateRawType(emitter + " payload", registration.payloadType(), payloadType);
+            validateRawType(emitter + " envelope", registration.envelopeType(), envelopeType);
+            validateEnvelopePayloadType(emitter, payloadType, envelopeType);
+        }
+    }
+
+    private void validateRawType(String source, Class<?> rawType, GenericType<?> genericType) {
+        Class<?> actualRawType = Objects.requireNonNull(rawType, source + " raw type");
+        GenericType<?> actualGenericType = Objects.requireNonNull(genericType, source + " generic type");
+        Class<?> genericRawType = actualGenericType.rawType();
+        if (actualRawType.isPrimitive()) {
+            throw new IllegalArgumentException(source + " raw type must not be primitive: " + actualRawType.getName());
+        }
+        if (genericRawType.isPrimitive()) {
+            throw new IllegalArgumentException(source + " generic raw type must not be primitive: "
+                                                       + genericRawType.getName());
+        }
+        if (!actualRawType.equals(genericRawType)) {
+            throw new IllegalArgumentException(source + " raw type " + actualRawType.getName()
+                                                       + " does not match generic raw type "
+                                                       + genericRawType.getName());
+        }
+    }
+
+    private void validateEnvelopePayloadType(String source,
+                                             GenericType<?> payloadType,
+                                             GenericType<?> envelopeType) {
+        if (!Message.class.isAssignableFrom(envelopeType.rawType())) {
+            throw new IllegalArgumentException(source + " envelope type " + typeName(envelopeType)
+                                                       + " must implement " + Message.class.getName());
+        }
+        Type resolvedMessageType = resolveSupertype(envelopeType.type(), Message.class);
+        if (!(resolvedMessageType instanceof ParameterizedType messageType)) {
+            return;
+        }
+        Type[] arguments = messageType.getActualTypeArguments();
+        if (arguments.length != 1 || hasUnresolvedType(arguments[0])) {
+            return;
+        }
+        Type envelopePayloadType = arguments[0];
+        if (!equivalentType(payloadType.type(), envelopePayloadType)) {
+            throw new IllegalArgumentException(source + " payload generic type " + typeName(payloadType)
+                                                       + " does not match envelope payload type "
+                                                       + typeName(envelopePayloadType) + " declared by "
+                                                       + typeName(envelopeType));
+        }
+    }
+
+    private boolean hasUnresolvedType(Type type) {
+        if (type instanceof TypeVariable<?>) {
+            return true;
+        }
+        if (type instanceof ParameterizedType parameterizedType) {
+            Type owner = parameterizedType.getOwnerType();
+            if (owner != null && hasUnresolvedType(owner)) {
+                return true;
+            }
+            return Arrays.stream(parameterizedType.getActualTypeArguments()).anyMatch(this::hasUnresolvedType);
+        }
+        if (type instanceof GenericArrayType arrayType) {
+            return hasUnresolvedType(arrayType.getGenericComponentType());
+        }
+        if (type instanceof WildcardType wildcardType) {
+            return Arrays.stream(wildcardType.getLowerBounds()).anyMatch(this::hasUnresolvedType)
+                    || Arrays.stream(wildcardType.getUpperBounds()).anyMatch(this::hasUnresolvedType);
+        }
+        return false;
+    }
+
+    private boolean equivalentType(Type first, Type second) {
+        if (sameType(first, second)) {
+            return true;
+        }
+        Type firstComponent = arrayComponent(first);
+        Type secondComponent = arrayComponent(second);
+        if (firstComponent != null || secondComponent != null) {
+            return firstComponent != null
+                    && secondComponent != null
+                    && equivalentType(firstComponent, secondComponent);
+        }
+        if (first instanceof ParameterizedType firstParameterized
+                && second instanceof ParameterizedType secondParameterized) {
+            if (!sameType(firstParameterized.getRawType(), secondParameterized.getRawType())
+                    || !equivalentNullableType(firstParameterized.getOwnerType(), secondParameterized.getOwnerType())) {
+                return false;
+            }
+            return equivalentTypes(firstParameterized.getActualTypeArguments(),
+                                   secondParameterized.getActualTypeArguments());
+        }
+        if (first instanceof WildcardType firstWildcard && second instanceof WildcardType secondWildcard) {
+            return equivalentTypes(firstWildcard.getLowerBounds(), secondWildcard.getLowerBounds())
+                    && equivalentTypes(firstWildcard.getUpperBounds(), secondWildcard.getUpperBounds());
+        }
+        return false;
+    }
+
+    private boolean equivalentNullableType(Type first, Type second) {
+        return first == null ? second == null : second != null && equivalentType(first, second);
+    }
+
+    private boolean equivalentTypes(Type[] first, Type[] second) {
+        if (first.length != second.length) {
+            return false;
+        }
+        for (int i = 0; i < first.length; i++) {
+            if (!equivalentType(first[i], second[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private Map<String, PayloadContribution> validateChannelPayloadContributions(
+            List<ConsumerRegistration> consumerRegistrations,
+            List<EmitterRegistration> emitterRegistrations) {
+        Map<String, PayloadContribution> payloadTypes = new LinkedHashMap<>();
+        for (ConsumerRegistration registration : consumerRegistrations) {
+            addPayloadContribution(payloadTypes,
+                                   registration.channel(),
+                                   registration.payloadGenericType(),
+                                   "handler " + registration.handlerId());
+            if (registration instanceof ProcessorRegistration processor) {
+                addPayloadContribution(payloadTypes,
+                                       processor.outgoingChannel(),
+                                       processor.outgoingPayloadGenericType(),
+                                       "processor " + processor.handlerId());
+            }
+        }
+        for (EmitterRegistration emitter : emitterRegistrations) {
+            addPayloadContribution(payloadTypes,
+                                   emitter.channel(),
+                                   emitter.payloadGenericType(),
+                                   "emitter " + emitter.producerId());
+        }
+        return Map.copyOf(payloadTypes);
+    }
+
+    private void addPayloadContribution(Map<String, PayloadContribution> payloadTypes,
+                                        String channel,
+                                        GenericType<?> payloadType,
+                                        String source) {
+        if (channel == null || channel.isBlank()) {
+            throw new IllegalArgumentException("Messaging channel contributed by " + source + " must not be blank");
+        }
+        GenericType<?> actualType = Objects.requireNonNull(payloadType, "Payload type contributed by " + source);
+        PayloadContribution contribution = new PayloadContribution(actualType, source);
+        PayloadContribution existing = payloadTypes.putIfAbsent(channel, contribution);
+        if (existing != null && !existing.payloadType().equals(actualType)) {
+            throw new IllegalArgumentException("Channel " + channel + " has conflicting payload types "
+                                                       + typeName(existing.payloadType()) + " from "
+                                                       + existing.source() + " and " + typeName(actualType)
+                                                       + " from " + source);
+        }
+    }
+
+    private String typeName(GenericType<?> type) {
+        return typeName(type.type());
+    }
+
+    private String typeName(Type type) {
+        if (type instanceof Class<?> classType) {
+            return classType.getTypeName();
+        }
+        if (type instanceof GenericArrayType arrayType) {
+            return typeName(arrayType.getGenericComponentType()) + "[]";
+        }
+        if (type instanceof ParameterizedType parameterizedType) {
+            return typeName(parameterizedType.getRawType()) + "<"
+                    + Arrays.stream(parameterizedType.getActualTypeArguments())
+                    .map(this::typeName)
+                    .collect(Collectors.joining(", "))
+                    + ">";
+        }
+        if (type instanceof WildcardType wildcardType) {
+            Type[] lowerBounds = wildcardType.getLowerBounds();
+            if (lowerBounds.length > 0) {
+                return "? super " + Arrays.stream(lowerBounds)
+                        .map(this::typeName)
+                        .collect(Collectors.joining(" & "));
+            }
+            Type[] upperBounds = wildcardType.getUpperBounds();
+            if (upperBounds.length == 0
+                    || (upperBounds.length == 1 && upperBounds[0].equals(Object.class))) {
+                return "?";
+            }
+            return "? extends " + Arrays.stream(upperBounds)
+                    .map(this::typeName)
+                    .collect(Collectors.joining(" & "));
+        }
+        return type.getTypeName();
+    }
+
+    private void validateGeneratedProducerTargets(List<ConsumerRegistration> consumerRegistrations,
+                                                  List<EmitterRegistration> emitterRegistrations,
+                                                  Map<String, List<ConsumerRegistration>> groupedConsumers,
+                                                  Set<String> outputChannels) {
+        for (ConsumerRegistration registration : consumerRegistrations) {
+            if (registration instanceof ProcessorRegistration processor) {
+                if (processor.batch()) {
+                    throw new IllegalArgumentException("Messaging processor " + processor.handlerId()
+                                                               + " cannot consume a batch");
+                }
+                validateGeneratedProducerTarget("processor",
+                                                processor.handlerId(),
+                                                processor.outgoingChannel(),
+                                                processor.outgoingPayloadGenericType(),
+                                                processor.outgoingEnvelopeGenericType(),
+                                                groupedConsumers,
+                                                outputChannels);
+            }
+        }
+        for (EmitterRegistration emitter : emitterRegistrations) {
+            validateGeneratedProducerTarget("emitter",
+                                            emitter.producerId(),
+                                            emitter.channel(),
+                                            emitter.payloadGenericType(),
+                                            emitter.envelopeGenericType(),
+                                            groupedConsumers,
+                                            outputChannels);
+        }
+    }
+
+    private void validateGeneratedProducerTarget(String kind,
+                                                 String registrationId,
+                                                 String targetChannel,
+                                                 GenericType<?> payloadType,
+                                                 GenericType<?> envelopeType,
+                                                 Map<String, List<ConsumerRegistration>> groupedConsumers,
+                                                 Set<String> outputChannels) {
+        String target = targetChannel == null ? "" : targetChannel;
+        if (target.isBlank()) {
+            throw new IllegalArgumentException("Messaging " + kind + " " + registrationId
+                                                       + " target channel must not be blank");
+        }
+        if (!channels.containsKey(target)) {
+            throw new IllegalArgumentException("Unknown messaging " + kind + " target channel " + target
+                                                       + " for " + registrationId);
+        }
+        if (!outputChannels.contains(target)) {
+            throw new IllegalArgumentException("Messaging " + kind + " target channel " + target
+                                                       + " has no outputs for " + registrationId);
+        }
+
+        GenericType<?> producedPayload = Objects.requireNonNull(payloadType,
+                                                                 kind + " payload type for " + registrationId);
+        GenericType<?> producedEnvelope = Objects.requireNonNull(envelopeType,
+                                                                  kind + " envelope type for " + registrationId);
+        for (ConsumerRegistration targetConsumer : groupedConsumers.getOrDefault(target, List.of())) {
+            if (!producedPayload.equals(targetConsumer.payloadGenericType())) {
+                throw new IllegalArgumentException("Messaging " + kind + " " + registrationId
+                                                           + " produces payload type " + producedPayload.getTypeName()
+                                                           + " but target channel " + target + " expects "
+                                                           + targetConsumer.payloadGenericType().getTypeName());
+            }
+            if (!typeAccepts(targetConsumer.envelopeGenericType().type(), producedEnvelope.type())) {
+                throw new IllegalArgumentException("Messaging " + kind + " " + registrationId
+                                                           + " produces envelope type " + producedEnvelope.getTypeName()
+                                                           + " that target channel " + target + " cannot accept as "
+                                                           + targetConsumer.envelopeGenericType().getTypeName());
+            }
+        }
+    }
+
+    private void registerProcessorRoutes(List<ConsumerRegistration> consumerRegistrations) {
+        for (ConsumerRegistration registration : consumerRegistrations) {
+            if (registration instanceof ProcessorRegistration processor) {
+                graph.addRoute(processor.channel(), processor.outgoingChannel());
+            }
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private MessagingChannel<?> createChannel(Config config,
                                               String channel,
                                               List<ConsumerRegistration> consumerRegistrations) {
-        Class<Object> payloadType = (Class<Object>) payloadType(channel, consumerRegistrations);
+        GenericType<Object> payloadType = (GenericType<Object>) payloadType(channel, consumerRegistrations);
         DefaultMessagingChannel.Builder<Object> builder = new DefaultMessagingChannel.Builder<>();
         builder.messagingGraph(graph, channel, executionConfig(config, channel))
                 .payloadType(payloadType);
         builder.addBatchOutput(messages -> validateMessageTypes(consumerRegistrations, messages));
         for (ConsumerRegistration consumer : consumerRegistrations) {
-            if (consumer.batch()) {
+            if (consumer instanceof ProcessorRegistration processor) {
+                builder.addOutput(message -> processAndRoute(processor, message));
+            } else if (consumer.batch()) {
                 builder.addBatchOutput(messages -> dispatchBatch(consumer, messages));
             } else {
                 builder.addOutput(consumer::dispatch);
@@ -230,18 +606,51 @@ class ChannelRegistry implements MessagingRuntime {
         return builder.build();
     }
 
+    private void processAndRoute(ProcessorRegistration processor, Message<?> message) {
+        Message<?> result = processor.process(message);
+        if (result == null) {
+            throw new MessagingException("Messaging processor " + processor.handlerId() + " returned a null message");
+        }
+        Class<?> outgoingEnvelopeType = processor.outgoingEnvelopeType();
+        if (!outgoingEnvelopeType.isInstance(result)) {
+            throw new MessagingException("Messaging processor " + processor.handlerId()
+                                                 + " declared outgoing envelope type "
+                                                 + outgoingEnvelopeType.getName()
+                                                 + " but returned " + result.getClass().getName());
+        }
+        Object entity = result.entity();
+        Class<?> outgoingPayloadType = processor.outgoingPayloadType();
+        if (entity != null && !outgoingPayloadType.isInstance(entity)) {
+            throw new MessagingException("Messaging processor " + processor.handlerId()
+                                                 + " declared outgoing payload type "
+                                                 + outgoingPayloadType.getName()
+                                                 + " but returned " + entity.getClass().getName());
+        }
+        MessagingChannel<?> target = channels.get(processor.outgoingChannel());
+        if (target == null) {
+            throw new MessagingException("Unknown messaging processor target channel "
+                                                 + processor.outgoingChannel());
+        }
+        emitBatch(target, List.of(result));
+    }
+
     private MessagingChannel<?> createConfiguredChannel(Config config, String channel) {
         DefaultMessagingChannel.Builder<Object> builder = new DefaultMessagingChannel.Builder<>();
-        builder.messagingGraph(graph, channel, executionConfig(config, channel));
+        builder.messagingGraph(graph, channel, executionConfig(config, channel))
+                .payloadType(Object.class);
         return builder.build();
     }
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private <T> void emitBatch(MessagingChannel<?> messagingChannel, List<? extends Message<T>> messages) {
-        ((MessagingChannel) messagingChannel).emitBatch(messages);
+    private <T> void emitBatch(MessagingChannel<?> messagingChannel,
+                               List<? extends Message<? extends T>> messages) {
+        if (!(messagingChannel instanceof DefaultMessagingChannel<?> defaultMessagingChannel)) {
+            throw new MessagingException("Unsupported messaging channel implementation "
+                                                 + messagingChannel.getClass().getName());
+        }
+        defaultMessagingChannel.emitBatchObject(messages);
     }
 
-    private Class<?> payloadType(String channel, List<ConsumerRegistration> consumerRegistrations) {
+    private GenericType<?> payloadType(String channel, List<ConsumerRegistration> consumerRegistrations) {
         GenericType<?> payloadType = null;
         for (ConsumerRegistration consumer : consumerRegistrations) {
             if (payloadType == null) {
@@ -253,7 +662,7 @@ class ChannelRegistry implements MessagingRuntime {
             }
         }
         validateEnvelopeTypes(channel, consumerRegistrations);
-        return payloadType == null ? Object.class : payloadType.rawType();
+        return payloadType == null ? GenericType.OBJECT : payloadType;
     }
 
     private void validateEnvelopeTypes(String channel, List<ConsumerRegistration> consumers) {
@@ -297,9 +706,6 @@ class ChannelRegistry implements MessagingRuntime {
         }
 
         Type resolvedCandidate = resolveSupertype(candidate, targetRawType);
-        if (resolvedCandidate instanceof Class<?>) {
-            return true;
-        }
         if (!(resolvedCandidate instanceof ParameterizedType candidateParameterized)) {
             return false;
         }
@@ -332,12 +738,22 @@ class ChannelRegistry implements MessagingRuntime {
             return typeArgumentsAccept(targetParameterized.getActualTypeArguments(),
                                        candidateParameterized.getActualTypeArguments());
         }
-        if (target instanceof GenericArrayType targetArray
-                && candidate instanceof GenericArrayType candidateArray) {
-            return typeArgumentAccepts(targetArray.getGenericComponentType(),
-                                       candidateArray.getGenericComponentType());
+        Type targetComponent = arrayComponent(target);
+        if (targetComponent != null) {
+            Type candidateComponent = arrayComponent(candidate);
+            return candidateComponent != null && typeArgumentAccepts(targetComponent, candidateComponent);
         }
         return false;
+    }
+
+    private Type arrayComponent(Type type) {
+        if (type instanceof GenericArrayType genericArray) {
+            return genericArray.getGenericComponentType();
+        }
+        if (type instanceof Class<?> arrayType && arrayType.isArray()) {
+            return arrayType.getComponentType();
+        }
+        return null;
     }
 
     private boolean wildcardAccepts(WildcardType wildcard, Type candidate) {
@@ -562,7 +978,8 @@ class ChannelRegistry implements MessagingRuntime {
 
     private void validateFailureRoutes(List<IncomingDescriptor> bindings,
                                        Set<String> outputChannels,
-                                       Map<String, List<ConsumerRegistration>> consumers) {
+                                       Map<String, List<ConsumerRegistration>> consumers,
+                                       Map<String, PayloadContribution> payloadContributions) {
         Map<String, String> routes = new LinkedHashMap<>();
         for (IncomingDescriptor binding : bindings) {
             FailurePolicy policy = binding.failurePolicy();
@@ -584,11 +1001,27 @@ class ChannelRegistry implements MessagingRuntime {
                                                            + " configured for incoming channel " + source
                                                            + " has no outputs");
             }
+            validateDeadLetterPayload(source, target, payloadContributions);
             validateDeadLetterConsumers(source, target, consumers.getOrDefault(target, List.of()));
             routes.put(source, target);
         }
         validateFailureRouteCycles(routes);
         routes.forEach(graph::addRoute);
+    }
+
+    private void validateDeadLetterPayload(String source,
+                                           String target,
+                                           Map<String, PayloadContribution> payloadContributions) {
+        PayloadContribution sourcePayload = payloadContributions.get(source);
+        PayloadContribution targetPayload = payloadContributions.get(target);
+        if (sourcePayload != null
+                && targetPayload != null
+                && !sourcePayload.payloadType().equals(targetPayload.payloadType())) {
+            throw new IllegalArgumentException("Dead-letter channel " + target
+                                                       + " has payload type " + typeName(targetPayload.payloadType())
+                                                       + " but incoming channel " + source
+                                                       + " has payload type " + typeName(sourcePayload.payloadType()));
+        }
     }
 
     private void validateDeadLetterConsumers(String source,
@@ -999,6 +1432,9 @@ class ChannelRegistry implements MessagingRuntime {
         public int hashCode() {
             return componentType.hashCode();
         }
+    }
+
+    private record PayloadContribution(GenericType<?> payloadType, String source) {
     }
 
     private record OutgoingBinding(String channel,

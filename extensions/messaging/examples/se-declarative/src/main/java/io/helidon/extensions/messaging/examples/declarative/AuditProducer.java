@@ -41,7 +41,7 @@ class AuditProducer {
     }
 
     void audit(String event, String actor) {
-        audit.emit(auditEvent(event, actor));
+        audit.emitMessage(auditEvent(event, actor));
     }
 
     private Message<String> auditEvent(String event, String actor) {

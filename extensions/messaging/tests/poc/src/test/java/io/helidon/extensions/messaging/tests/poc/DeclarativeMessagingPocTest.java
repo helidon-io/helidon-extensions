@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -27,13 +28,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
+import io.helidon.common.GenericType;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.extensions.messaging.ConnectorSink;
+import io.helidon.extensions.messaging.EmitterRegistration;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingChannel;
 import io.helidon.extensions.messaging.MessagingException;
+import io.helidon.extensions.messaging.MessagingGraph;
 import io.helidon.extensions.messaging.MessagingRuntime;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ArrayPayloadConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.BatchChannelOneConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.BroadCustomMessageConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ChannelTwoConsumer;
@@ -43,14 +48,22 @@ import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.CustomMes
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.FailingConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.FirstChannelOneConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ForwardedMessageConsumer;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ForwardingProcessor;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.HeaderDelivery;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ImmutableCustomMessage;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ImmutableMultiHopMessage;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.MultiHopMessage;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.MultiHopMessageConsumer;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.OptionalHeaderConsumer;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.OptionalHeaderDelivery;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.PayloadProcessorConsumer;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.PerLookupInterceptedConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.Producer;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.RequiredHeaderConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.SecondChannelOneConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ShutdownConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.TestConnectorObserver;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.TestEntryPointInterceptor;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryConfig;
 import io.helidon.service.registry.ServiceRegistryManager;
@@ -65,6 +78,8 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.sameInstance;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class DeclarativeMessagingPocTest {
@@ -84,64 +99,78 @@ class DeclarativeMessagingPocTest {
 
     @Test
     void testImperativeChannelInputsOutputs() throws InterruptedException {
-        List<Message<Integer>> messages = new ArrayList<>();
+        List<Message<Integer>> messages = new CopyOnWriteArrayList<>();
         CountDownLatch drained = new CountDownLatch(2);
 
-        MessagingChannel<Integer> channel = MessagingChannel.<Integer>builder()
-                .payloadType(Integer.class)
-                .addInput(Stream.of(1, Message.builder(2).header("source", "message").build()).parallel())
-                .addOutput(message -> {
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<Integer> channel = builder.channel("imperative-input-output", Integer.class);
+        builder.messageSource(channel,
+                              Stream.of(Message.create(1),
+                                        Message.builder(2)
+                                                 .header("source", "message")
+                                                 .build())
+                                      .parallel())
+                .messageSink(channel, message -> {
                     messages.add(message);
                     drained.countDown();
-                })
-                .build();
+                });
 
         assertThat(messages, empty());
 
-        channel.start();
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
 
-        assertThat(drained.await(10, TimeUnit.SECONDS), is(true));
-        assertThat(messages, hasSize(2));
-        assertThat(messages.get(0).entity(), is(1));
-        assertThat(messages.get(1).entity(), is(2));
-        assertThat(messages.get(1).header("source").orElseThrow(), is("message"));
+            boolean completed = drained.await(10, TimeUnit.SECONDS);
+            assertThat("Delivered entities: " + messages.stream().map(Message::entity).toList(), completed, is(true));
+            assertThat(messages, hasSize(2));
+            assertThat(messages.stream().map(Message::entity).sorted().toList(), is(List.of(1, 2)));
+            Message<Integer> message = messages.stream()
+                    .filter(candidate -> candidate.header("source").isPresent())
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(message.entity(), is(2));
+            assertThat(message.header("source").orElseThrow(), is("message"));
+        }
     }
 
     @Test
     void testImperativeChannelCanUseAnotherChannelAsInput() {
         List<Message<Integer>> downstreamMessages = new CopyOnWriteArrayList<>();
 
-        MessagingChannel<Integer> upstream = MessagingChannel.<Integer>builder()
-                .payloadType(Integer.class)
-                .build();
-        MessagingChannel.<Integer>builder()
-                .payloadType(Integer.class)
-                .addInput(upstream)
-                .addOutput(downstreamMessages::add)
-                .build();
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<Integer> upstream = builder.channel("imperative-upstream", Integer.class);
+        MessagingChannel<Integer> downstream = builder.channel("imperative-downstream", Integer.class);
+        builder.route(upstream, downstream)
+                .messageSink(downstream, downstreamMessages::add);
 
-        upstream.emit(42);
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+            graph.emitter(upstream).emit(42);
 
-        assertThat(downstreamMessages, hasSize(1));
-        assertThat(downstreamMessages.getFirst().entity(), is(42));
+            assertThat(downstreamMessages, hasSize(1));
+            assertThat(downstreamMessages.getFirst().entity(), is(42));
+        }
     }
 
     @Test
     void testImperativeChannelCanUseOutgoingConnector() {
         List<Message<?>> sentMessages = new CopyOnWriteArrayList<>();
 
-        MessagingChannel<String> channel = MessagingChannel.<String>builder()
-                .payloadType(String.class)
-                .addOutgoingConnector(sink(sentMessages))
-                .build();
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> channel = builder.channel("imperative-connector", String.class);
+        builder.outgoingConnector(channel, sink(sentMessages));
 
-        channel.emit(Message.builder("connector message")
-                             .header("source", "test")
-                             .build());
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+            graph.emitter(channel)
+                    .emitMessage(Message.builder("connector message")
+                                         .header("source", "test")
+                                         .build());
 
-        assertThat(sentMessages, hasSize(1));
-        assertThat(sentMessages.getFirst().entity(), is("connector message"));
-        assertThat(sentMessages.getFirst().header("source").orElseThrow(), is("test"));
+            assertThat(sentMessages, hasSize(1));
+            assertThat(sentMessages.getFirst().entity(), is("connector message"));
+            assertThat(sentMessages.getFirst().header("source").orElseThrow(), is("test"));
+        }
     }
 
     @Test
@@ -149,10 +178,10 @@ class DeclarativeMessagingPocTest {
         List<List<Message<String>>> batches = new CopyOnWriteArrayList<>();
         List<List<String>> connectorBatches = new CopyOnWriteArrayList<>();
 
-        MessagingChannel<String> channel = MessagingChannel.<String>builder()
-                .payloadType(String.class)
-                .addBatchOutput(batch -> batches.add(List.copyOf(batch)))
-                .addOutgoingConnector(new ConnectorSink() {
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> channel = builder.channel("imperative-batch", String.class);
+        builder.messageBatchSink(channel, batch -> batches.add(List.copyOf(batch)))
+                .outgoingConnector(channel, new ConnectorSink() {
                     @Override
                     public <T> void send(Message<T> message) {
                         throw new AssertionError("sendBatch should be used");
@@ -166,34 +195,40 @@ class DeclarativeMessagingPocTest {
                         }
                         connectorBatches.add(entities);
                     }
-                })
-                .build();
+                });
 
-        channel.emitBatch(List.of(Message.builder("first")
-                                          .header("source", "batch")
-                                          .build(),
-                                  Message.create("second")));
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+            graph.emitter(channel)
+                    .emitBatch(List.of(Message.builder("first")
+                                              .header("source", "batch")
+                                              .build(),
+                                       Message.create("second")));
 
-        assertThat(batches, hasSize(1));
-        assertThat(batches.getFirst(), hasSize(2));
-        assertThat(batches.getFirst().getFirst().header("source").orElseThrow(), is("batch"));
-        assertThat(connectorBatches, is(List.of(List.of("first", "second"))));
+            assertThat(batches, hasSize(1));
+            assertThat(batches.getFirst(), hasSize(2));
+            assertThat(batches.getFirst().getFirst().header("source").orElseThrow(), is("batch"));
+            assertThat(connectorBatches, is(List.of(List.of("first", "second"))));
+        }
     }
 
     @Test
     void testOutgoingConnectorFailureFailsChannelEmit() {
-        MessagingChannel<String> channel = MessagingChannel.<String>builder()
-                .payloadType(String.class)
-                .addOutgoingConnector(new ConnectorSink() {
-                    @Override
-                    public <T> void send(Message<T> message) {
-                        throw new MessagingException("connector failed", new IOException("I/O failed"));
-                    }
-                })
-                .build();
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> channel = builder.channel("imperative-connector-failure", String.class);
+        builder.outgoingConnector(channel, new ConnectorSink() {
+            @Override
+            public <T> void send(Message<T> message) {
+                throw new MessagingException("connector failed", new IOException("I/O failed"));
+            }
+        });
 
-        MessagingException thrown = assertThrows(MessagingException.class, () -> channel.emit("test message"));
-        assertThat(thrown.getCause().getMessage(), is("I/O failed"));
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+            MessagingException thrown = assertThrows(MessagingException.class,
+                                                      () -> graph.emitter(channel).emit("test message"));
+            assertThat(thrown.getCause().getMessage(), is("I/O failed"));
+        }
     }
 
     @Test
@@ -206,9 +241,9 @@ class DeclarativeMessagingPocTest {
                                                                      new IOException("output I/O failed"));
         AtomicReference<Throwable> actualFailure = new AtomicReference<>();
 
-        MessagingChannel<String> channel = MessagingChannel.<String>builder()
-                .payloadType(String.class)
-                .addOutput(message -> {
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> channel = builder.channel("imperative-required-outputs", String.class);
+        builder.messageSink(channel, message -> {
                     invokedOutputs.add("first");
                     firstOutputEntered.countDown();
                     try {
@@ -218,35 +253,38 @@ class DeclarativeMessagingPocTest {
                         throw new MessagingException("first output interrupted", e);
                     }
                 })
-                .addOutput(message -> {
+                .messageSink(channel, message -> {
                     invokedOutputs.add("second");
                     throw expectedFailure;
                 })
-                .addOutput(message -> invokedOutputs.add("third"))
-                .build();
+                .messageSink(channel, message -> invokedOutputs.add("third"));
 
-        Thread.ofVirtual().start(() -> {
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+            var emitter = graph.emitter(channel);
+            Thread.ofVirtual().start(() -> {
+                try {
+                    emitter.emit("test message");
+                } catch (Throwable throwable) {
+                    actualFailure.set(throwable);
+                } finally {
+                    emissionCompleted.countDown();
+                }
+            });
+
+            assertThat(firstOutputEntered.await(10, TimeUnit.SECONDS), is(true));
             try {
-                channel.emit("test message");
-            } catch (Throwable throwable) {
-                actualFailure.set(throwable);
+                assertThat(emissionCompleted.getCount(), is(1L));
+                assertThat(invokedOutputs, is(List.of("first")));
             } finally {
-                emissionCompleted.countDown();
+                releaseFirstOutput.countDown();
             }
-        });
 
-        assertThat(firstOutputEntered.await(10, TimeUnit.SECONDS), is(true));
-        try {
-            assertThat(emissionCompleted.getCount(), is(1L));
-            assertThat(invokedOutputs, is(List.of("first")));
-        } finally {
-            releaseFirstOutput.countDown();
+            assertThat(emissionCompleted.await(10, TimeUnit.SECONDS), is(true));
+            assertThat(actualFailure.get(), sameInstance(expectedFailure));
+            assertThat(actualFailure.get().getCause(), sameInstance(expectedFailure.getCause()));
+            assertThat(invokedOutputs, is(List.of("first", "second")));
         }
-
-        assertThat(emissionCompleted.await(10, TimeUnit.SECONDS), is(true));
-        assertThat(actualFailure.get(), sameInstance(expectedFailure));
-        assertThat(actualFailure.get().getCause(), sameInstance(expectedFailure.getCause()));
-        assertThat(invokedOutputs, is(List.of("first", "second")));
     }
 
     @Test
@@ -255,24 +293,28 @@ class DeclarativeMessagingPocTest {
         AtomicInteger secondOutputAttempts = new AtomicInteger();
         MessagingException expectedFailure = new MessagingException("temporary output failure");
 
-        MessagingChannel<String> channel = MessagingChannel.<String>builder()
-                .payloadType(String.class)
-                .addOutput(message -> deliveries.add("first"))
-                .addOutput(message -> {
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> channel = builder.channel("imperative-fan-out-retry", String.class);
+        builder.messageSink(channel, message -> deliveries.add("first"))
+                .messageSink(channel, message -> {
                     deliveries.add("second");
                     if (secondOutputAttempts.getAndIncrement() == 0) {
                         throw expectedFailure;
                     }
                 })
-                .addOutput(message -> deliveries.add("third"))
-                .build();
+                .messageSink(channel, message -> deliveries.add("third"));
 
-        MessagingException thrown = assertThrows(MessagingException.class, () -> channel.emit("test message"));
-        assertThat(thrown, sameInstance(expectedFailure));
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+            var emitter = graph.emitter(channel);
+            MessagingException thrown = assertThrows(MessagingException.class,
+                                                      () -> emitter.emit("test message"));
+            assertThat(thrown, sameInstance(expectedFailure));
 
-        channel.emit("test message");
+            emitter.emit("test message");
 
-        assertThat(deliveries, is(List.of("first", "second", "first", "second", "third")));
+            assertThat(deliveries, is(List.of("first", "second", "first", "second", "third")));
+        }
     }
 
     @Test
@@ -297,13 +339,41 @@ class DeclarativeMessagingPocTest {
     }
 
     @Test
-    void testGeneratedEmitterRejectsUnknownChannel() {
-        var producer = registry.get(Producer.class);
+    void testRuntimeRejectsEmitterWithoutTargetAtStartup() {
+        EmitterRegistration registration = new EmitterRegistration() {
+            @Override
+            public String channel() {
+                return "unknown-channel";
+            }
 
-        MessagingException thrown = assertThrows(MessagingException.class,
-                                                  () -> producer.emitUnknownChannel("test message"));
+            @Override
+            public String producerId() {
+                return "test-unknown-emitter";
+            }
 
-        assertThat(thrown.getMessage(), containsString(ChannelMessagingTypes.UNKNOWN_CHANNEL));
+            @Override
+            public GenericType<?> payloadGenericType() {
+                return GenericType.create(String.class);
+            }
+
+            @Override
+            public GenericType<?> envelopeGenericType() {
+                return new GenericType<Message<String>>() { };
+            }
+        };
+        registryManager.shutdown();
+        registryManager = ServiceRegistryManager.create(ServiceRegistryConfig.builder()
+                                                                .putContractInstance(EmitterRegistration.class,
+                                                                                     registration)
+                                                                .build());
+        registry = registryManager.registry();
+
+        RuntimeException thrown = assertThrows(RuntimeException.class,
+                                               () -> registry.get(MessagingRuntime.class));
+        Throwable cause = rootCause(thrown);
+
+        assertThat(cause.getMessage(), containsString("unknown-channel"));
+        assertThat(cause.getMessage(), containsString("test-unknown-emitter"));
     }
 
     @Test
@@ -473,7 +543,7 @@ class DeclarativeMessagingPocTest {
     }
 
     @Test
-    void testDeclarativeHandlerForwardsThroughNamedEmitterSynchronously() {
+    void testProcessorPreservesReturnedMessage() {
         MessagingRuntime runtime = registry.get(MessagingRuntime.class);
 
         runtime.emit(ChannelMessagingTypes.FORWARDING_INPUT_CHANNEL, Message.create("test message"));
@@ -485,7 +555,47 @@ class DeclarativeMessagingPocTest {
     }
 
     @Test
-    void testDeclarativeHandlerPreservesDownstreamFailure() {
+    void testProcessorWrapsReturnedPayload() {
+        MessagingRuntime runtime = registry.get(MessagingRuntime.class);
+
+        runtime.emit(ChannelMessagingTypes.PAYLOAD_PROCESSOR_INPUT_CHANNEL, Message.create("test message"));
+
+        var consumer = registry.get(PayloadProcessorConsumer.class);
+        assertThat(consumer.messages(), hasSize(1));
+        assertThat(consumer.messages().getFirst().entity(), is("processed: test message"));
+        assertThat(consumer.messages().getFirst().headers(), is(Map.of()));
+    }
+
+    @Test
+    void testProcessorRoutesGenericArrayMessagePayload() {
+        MessagingRuntime runtime = registry.get(MessagingRuntime.class);
+
+        runtime.emit(ChannelMessagingTypes.ARRAY_PROCESSOR_INPUT_CHANNEL, Message.create("array value"));
+
+        var consumer = registry.get(ArrayPayloadConsumer.class);
+        assertThat(consumer.payloads(), hasSize(1));
+        assertThat(consumer.payloads().getFirst(),
+                   is(new String[][] {{"array value"}, {"processed: array value"}}));
+    }
+
+    @Test
+    void testProcessorPreservesProcessorFailure() {
+        MessagingRuntime runtime = registry.get(MessagingRuntime.class);
+        var processor = registry.get(ForwardingProcessor.class);
+        var consumer = registry.get(ForwardedMessageConsumer.class);
+
+        MessagingException thrown =
+                assertThrows(MessagingException.class,
+                             () -> runtime.emit(ChannelMessagingTypes.FORWARDING_INPUT_CHANNEL,
+                                                Message.create("processor-fail")));
+
+        assertThat(thrown, sameInstance(processor.failure()));
+        assertThat(thrown.getCause(), sameInstance(processor.failure().getCause()));
+        assertThat(consumer.messages(), empty());
+    }
+
+    @Test
+    void testProcessorPreservesDownstreamFailure() {
         MessagingRuntime runtime = registry.get(MessagingRuntime.class);
         var consumer = registry.get(ForwardedMessageConsumer.class);
 
@@ -497,6 +607,96 @@ class DeclarativeMessagingPocTest {
         assertThat(thrown, sameInstance(consumer.failure()));
         assertThat(thrown.getCause(), sameInstance(consumer.failure().getCause()));
         assertThat(consumer.messages(), empty());
+    }
+
+    @Test
+    void testRequiredHeaderIsResolvedAndMissingHeaderFails() {
+        MessagingRuntime runtime = registry.get(MessagingRuntime.class);
+        var consumer = registry.get(RequiredHeaderConsumer.class);
+
+        MessagingException thrown =
+                assertThrows(MessagingException.class,
+                             () -> runtime.emit(ChannelMessagingTypes.REQUIRED_HEADER_CHANNEL,
+                                                Message.create("missing header")));
+
+        assertThat(thrown.getMessage(), containsString("required"));
+        assertThat(consumer.deliveries(), empty());
+
+        runtime.emit(ChannelMessagingTypes.REQUIRED_HEADER_CHANNEL,
+                     Message.builder("present header")
+                             .header("required", "header value")
+                             .build());
+
+        assertThat(consumer.deliveries(), is(List.of(new HeaderDelivery("present header", "header value"))));
+    }
+
+    @Test
+    void testOptionalHeaderIsEmptyOrPresent() {
+        MessagingRuntime runtime = registry.get(MessagingRuntime.class);
+
+        runtime.emit(ChannelMessagingTypes.OPTIONAL_HEADER_CHANNEL, Message.create("missing header"));
+        runtime.emit(ChannelMessagingTypes.OPTIONAL_HEADER_CHANNEL,
+                     Message.builder("present header")
+                             .header("trace-id", "trace-123")
+                             .build());
+
+        var consumer = registry.get(OptionalHeaderConsumer.class);
+        assertThat(consumer.deliveries(),
+                   is(List.of(new OptionalHeaderDelivery("missing header", Optional.empty()),
+                              new OptionalHeaderDelivery("present header", Optional.of("trace-123")))));
+    }
+
+    @Test
+    void testMessagingHandlerUsesGenericEntryPointInterceptors() {
+        MessagingRuntime runtime = registry.get(MessagingRuntime.class);
+        TestEntryPointInterceptor.reset();
+
+        runtime.emit(ChannelMessagingTypes.REQUIRED_HEADER_CHANNEL,
+                     Message.builder("intercepted")
+                             .header("required", "value")
+                             .build());
+
+        assertThat(TestEntryPointInterceptor.executions(), hasSize(1));
+        assertThat(TestEntryPointInterceptor.executions().getFirst(),
+                   containsString(RequiredHeaderConsumer.class.getCanonicalName() + ".consume("));
+    }
+
+    @Test
+    void testBatchMessagingHandlerUsesGenericEntryPointInterceptorsOnce() {
+        MessagingRuntime runtime = registry.get(MessagingRuntime.class);
+        TestEntryPointInterceptor.reset();
+
+        runtime.emitBatch(ChannelMessagingTypes.CHANNEL_ONE,
+                          List.of(Message.builder("first")
+                                          .header("key", "first")
+                                          .build(),
+                                  Message.builder("second")
+                                          .header("key", "second")
+                                          .build()));
+
+        long batchExecutions = TestEntryPointInterceptor.executions()
+                .stream()
+                .filter(execution -> execution.contains(BatchChannelOneConsumer.class.getCanonicalName() + ".consume("))
+                .count();
+        assertThat(batchExecutions, is(1L));
+    }
+
+    @Test
+    void testPerLookupHandlerAndInterceptorUseSameServiceInstance() {
+        MessagingRuntime runtime = registry.get(MessagingRuntime.class);
+        TestEntryPointInterceptor.reset();
+        PerLookupInterceptedConsumer.reset();
+
+        runtime.emit(ChannelMessagingTypes.PER_LOOKUP_INTERCEPTED_CHANNEL, Message.create("first"));
+        runtime.emit(ChannelMessagingTypes.PER_LOOKUP_INTERCEPTED_CHANNEL, Message.create("second"));
+
+        List<PerLookupInterceptedConsumer> targets = PerLookupInterceptedConsumer.instances();
+        List<Object> intercepted = TestEntryPointInterceptor.serviceInstances(PerLookupInterceptedConsumer.class);
+        assertThat(targets, hasSize(2));
+        assertThat(intercepted, hasSize(2));
+        assertSame(targets.get(0), intercepted.get(0));
+        assertSame(targets.get(1), intercepted.get(1));
+        assertNotSame(targets.get(0), targets.get(1));
     }
 
     @Test
@@ -606,5 +806,13 @@ class DeclarativeMessagingPocTest {
                 messages.add(message);
             }
         };
+    }
+
+    private static Throwable rootCause(Throwable throwable) {
+        Throwable result = throwable;
+        while (result.getCause() != null) {
+            result = result.getCause();
+        }
+        return result;
     }
 }

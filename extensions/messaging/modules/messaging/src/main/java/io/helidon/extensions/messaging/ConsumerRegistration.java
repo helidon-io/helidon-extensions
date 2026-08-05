@@ -27,6 +27,19 @@ import io.helidon.service.registry.Service;
 @Service.Contract
 public interface ConsumerRegistration {
     /**
+     * Stable identity of this generated handler registration.
+     * <p>
+     * Generated registrations override this with the declaring service and method signature. The default keeps manual
+     * registrations source-compatible and provides a stable, instance-derived diagnostic fallback; manual registrations
+     * that require a normative identity should override this method.
+     *
+     * @return handler identity
+     */
+    default String handlerId() {
+        return getClass().getName() + "@" + Integer.toUnsignedString(System.identityHashCode(this), Character.MAX_RADIX);
+    }
+
+    /**
      * Channel name.
      *
      * @return channel name

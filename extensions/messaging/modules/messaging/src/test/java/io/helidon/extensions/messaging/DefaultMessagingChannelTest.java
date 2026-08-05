@@ -22,6 +22,7 @@ import java.util.OptionalLong;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -29,22 +30,24 @@ import org.junit.jupiter.api.Timeout;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class DefaultMessagingChannelTest {
     @Test
     void customPayloadUsesRegisteredEstimators() {
         List<CustomPayload> delivered = new ArrayList<>();
-
-        try (MessagingChannel<CustomPayload> channel = MessagingChannel.<CustomPayload>builder()
-                .payloadType(CustomPayload.class)
+        MessagingGraph.Builder builder = MessagingGraph.builder()
                 .addMessageSizeEstimator(message -> OptionalLong.empty())
-                .addMessageSizeEstimator(message -> OptionalLong.of(message.entity().toString().length()))
-                .addOutput(message -> delivered.add(message.entity()))
-                .build()) {
+                .addMessageSizeEstimator(message -> OptionalLong.of(message.entity().toString().length()));
+        MessagingChannel<CustomPayload> channel = builder.channel("custom", CustomPayload.class);
+        builder.messageSink(channel, message -> delivered.add(message.entity()));
+
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
             CustomPayload payload = new CustomPayload("payload");
 
-            channel.emit(payload);
+            graph.emitter(channel).emit(payload);
 
             assertThat(delivered, is(List.of(payload)));
         }
@@ -52,11 +55,14 @@ class DefaultMessagingChannelTest {
 
     @Test
     void customPayloadWithoutEstimatorIsRejected() {
-        try (MessagingChannel<CustomPayload> channel = MessagingChannel.<CustomPayload>builder()
-                .payloadType(CustomPayload.class)
-                .build()) {
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<CustomPayload> channel = builder.channel("custom", CustomPayload.class);
+        builder.payloadSink(channel, ignored -> { });
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
             MessagingRejectedException thrown = assertThrows(MessagingRejectedException.class,
-                                                              () -> channel.emit(new CustomPayload("payload")));
+                                                              () -> graph.emitter(channel)
+                                                                      .emit(new CustomPayload("payload")));
 
             assertThat(thrown.reason(), is(MessagingRejectedException.Reason.UNKNOWN_SIZE));
         }
@@ -65,15 +71,18 @@ class DefaultMessagingChannelTest {
     @Test
     void independentlyBuiltInputsCanFeedOneChannel() {
         List<String> delivered = new ArrayList<>();
-        try (MessagingChannel<String> first = MessagingChannel.<String>builder().build();
-                MessagingChannel<String> second = MessagingChannel.<String>builder().build();
-                MessagingChannel<String> merged = MessagingChannel.<String>builder()
-                        .addInput(first)
-                        .addInput(second)
-                        .addOutput(message -> delivered.add(message.entity()))
-                        .build()) {
-            first.emit("first");
-            second.emit("second");
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> first = builder.channel("first", String.class);
+        MessagingChannel<String> second = builder.channel("second", String.class);
+        MessagingChannel<String> merged = builder.channel("merged", String.class);
+        builder.route(first, merged)
+                .route(second, merged)
+                .messageSink(merged, message -> delivered.add(message.entity()));
+
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+            graph.emitter(first).emit("first");
+            graph.emitter(second).emit("second");
 
             assertThat(delivered, is(List.of("first", "second")));
         }
@@ -82,11 +91,14 @@ class DefaultMessagingChannelTest {
     @Test
     void closingBeforeStartClosesStreamInput() {
         AtomicBoolean streamClosed = new AtomicBoolean();
-        MessagingChannel<Object> channel = MessagingChannel.builder()
-                .addInput(Stream.empty().onClose(() -> streamClosed.set(true)))
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<Object> channel = builder.channel("stream", Object.class);
+        MessagingGraph graph = builder.payloadSource(channel,
+                                                      Stream.empty().onClose(() -> streamClosed.set(true)))
+                .payloadSink(channel, ignored -> { })
                 .build();
 
-        channel.close();
+        graph.close();
 
         assertThat(streamClosed.get(), is(true));
     }
@@ -96,16 +108,100 @@ class DefaultMessagingChannelTest {
     void activeUnboundedStreamClosesGracefully() throws InterruptedException {
         CountDownLatch delivered = new CountDownLatch(1);
         AtomicBoolean streamClosed = new AtomicBoolean();
-        MessagingChannel<Integer> channel = MessagingChannel.<Integer>builder()
-                .addInput(Stream.generate(() -> 1).onClose(() -> streamClosed.set(true)))
-                .addOutput(ignored -> delivered.countDown())
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<Integer> channel = builder.channel("stream", Integer.class);
+        MessagingGraph graph = builder.payloadSource(channel,
+                                                      Stream.generate(() -> 1)
+                                                              .onClose(() -> streamClosed.set(true)))
+                .messageSink(channel, ignored -> delivered.countDown())
                 .build();
-        channel.start();
+        graph.start();
         assertThat(delivered.await(1, TimeUnit.SECONDS), is(true));
 
-        channel.close();
+        graph.close();
 
         assertThat(streamClosed.get(), is(true));
+    }
+
+    @Test
+    void streamSourceDoesNotHideDownstreamShutdownRejection() {
+        MessagingRejectedException rejection = new MessagingRejectedException(
+                "downstream",
+                MessagingRejectedException.Reason.SHUTDOWN);
+        ConnectorSource source = DefaultMessagingChannel.streamSource(Stream.of("first", "second"), ignored -> {
+            throw rejection;
+        });
+
+        MessagingRejectedException thrown = assertThrows(MessagingRejectedException.class, source::run);
+
+        assertSame(rejection, thrown);
+    }
+
+    @Test
+    @Timeout(5)
+    void forceCloseInterruptsStreamOwnerBeforeNormalCloseInvokesBlockingStreamClose() throws InterruptedException {
+        CountDownLatch ownerStarted = new CountDownLatch(1);
+        CountDownLatch ownerInterrupted = new CountDownLatch(1);
+        CountDownLatch closeStarted = new CountDownLatch(1);
+        CountDownLatch releaseClose = new CountDownLatch(1);
+        CountDownLatch neverReleased = new CountDownLatch(1);
+        AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+        Stream<String> stream = Stream.generate(() -> {
+            ownerStarted.countDown();
+            try {
+                neverReleased.await();
+                return "unexpected";
+            } catch (InterruptedException e) {
+                ownerInterrupted.countDown();
+                Thread.currentThread().interrupt();
+                throw new MessagingRejectedException("stream",
+                                                     MessagingRejectedException.Reason.CANCELLED,
+                                                     "Stream owner interrupted",
+                                                     e);
+            }
+        }).onClose(() -> {
+            closeStarted.countDown();
+            awaitUninterruptibly(releaseClose);
+        });
+        ConnectorSource source = DefaultMessagingChannel.streamSource(stream, ignored -> { });
+        Thread sourceThread = Thread.ofVirtual().start(() -> {
+            try {
+                source.run();
+            } catch (Throwable t) {
+                sourceFailure.set(t);
+            }
+        });
+        assertThat(ownerStarted.await(1, TimeUnit.SECONDS), is(true));
+
+        ConnectorEndpoint endpoint = (ConnectorEndpoint) source;
+        endpoint.forceClose();
+        assertThat(closeStarted.getCount(), is(1L));
+        assertThat(ownerInterrupted.await(1, TimeUnit.SECONDS), is(true));
+
+        Thread closeThread = Thread.ofVirtual().start(endpoint::close);
+        assertThat(closeStarted.await(1, TimeUnit.SECONDS), is(true));
+        releaseClose.countDown();
+        sourceThread.join(TimeUnit.SECONDS.toMillis(1));
+        closeThread.join(TimeUnit.SECONDS.toMillis(1));
+
+        assertThat(sourceThread.isAlive(), is(false));
+        assertThat(closeThread.isAlive(), is(false));
+        assertThat(sourceFailure.get() instanceof MessagingRejectedException, is(true));
+    }
+
+    private static void awaitUninterruptibly(CountDownLatch latch) {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                latch.await();
+                break;
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private record CustomPayload(String value) {

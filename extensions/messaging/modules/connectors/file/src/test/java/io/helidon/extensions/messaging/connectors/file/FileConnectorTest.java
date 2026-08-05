@@ -58,6 +58,7 @@ import io.helidon.extensions.messaging.IncomingEndpoint;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessagingChannel;
 import io.helidon.extensions.messaging.MessagingException;
+import io.helidon.extensions.messaging.MessagingGraph;
 import io.helidon.extensions.messaging.MessagingRejectedException;
 import io.helidon.extensions.messaging.OutgoingConnectorProvider;
 import io.helidon.extensions.messaging.OutgoingEndpoint;
@@ -410,34 +411,38 @@ class FileConnectorTest {
     void testFileConnectorCanBeUsedAsChannelOutput(@TempDir Path tempDir) throws IOException {
         Path auditLog = tempDir.resolve("audit.log");
 
-        MessagingChannel<String> channel = MessagingChannel.<String>builder()
-                .payloadType(String.class)
-                .addOutgoingConnector(outgoingEndpoint(config(auditLog, "|")))
-                .build();
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> channel = builder.channel("file-output", String.class);
+        builder.outgoingConnector(channel, outgoingEndpoint(config(auditLog, "|")));
 
-        channel.emit("first audit event");
-        channel.emit(Message.builder("second audit event")
-                             .header("key", "value")
-                             .build());
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+            graph.emitter(channel).emit("first audit event");
+            graph.emitter(channel).emitMessage(Message.builder("second audit event")
+                                                       .header("key", "value")
+                                                       .build());
 
-        assertThat(Files.readString(auditLog), is("first audit event|second audit event|"));
+            assertThat(Files.readString(auditLog), is("first audit event|second audit event|"));
+        }
     }
 
     @Test
     void testFileConnectorCanBeUsedAsChannelBatchOutput(@TempDir Path tempDir) throws IOException {
         Path auditLog = tempDir.resolve("audit.log");
 
-        MessagingChannel<String> channel = MessagingChannel.<String>builder()
-                .payloadType(String.class)
-                .addOutgoingConnector(outgoingEndpoint(config(auditLog, "|")))
-                .build();
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> channel = builder.channel("file-batch-output", String.class);
+        builder.outgoingConnector(channel, outgoingEndpoint(config(auditLog, "|")));
 
-        channel.emitBatch(List.of(Message.create("first audit event"),
-                                  Message.builder("second audit event")
-                                          .header("key", "value")
-                                          .build()));
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+            graph.emitter(channel).emitBatch(List.of(Message.create("first audit event"),
+                                                     Message.builder("second audit event")
+                                                             .header("key", "value")
+                                                             .build()));
 
-        assertThat(Files.readString(auditLog), is("first audit event|second audit event|"));
+            assertThat(Files.readString(auditLog), is("first audit event|second audit event|"));
+        }
     }
 
     @Test

@@ -17,6 +17,7 @@
 package io.helidon.extensions.messaging.codegen;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import io.helidon.codegen.CodegenException;
@@ -55,7 +56,8 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
     private static final class MessagingEmitterObserver implements InjectCodegenObserver {
         private static final TypeName GENERATOR = TypeName.create(MessagingEmitterObserver.class);
 
-        private final Map<TypeName, TypeName> emitterPayloadTypes = new HashMap<>();
+        private final Map<String, TypeName> emitterPayloadTypes = new HashMap<>();
+        private final Map<String, String> emitterTypeIdentities = new HashMap<>();
 
         @Override
         public void onInjectionPoint(RegistryRoundContext roundContext,
@@ -75,19 +77,26 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                     .flatMap(Annotation::stringValue)
                     .orElseThrow(() -> new CodegenException("Messaging emitters must be qualified with @Service.Named",
                                                             argument.originatingElementValue()));
+            validateQualifiers(argument);
+            validateChannel(channel, argument);
 
             TypeName payloadType = typeName.typeArguments().getFirst();
-            if (!MessagingExtension.isConcretePayloadType(payloadType)) {
+            if (!MessagingExtension.isConcretePayloadType(payloadType)
+                    || hasRawGenericUsage(roundContext, payloadType)) {
                 throw new CodegenException("Messaging emitter payload type must be concrete: " + payloadType,
                                            argument.originatingElementValue());
             }
-            TypeName generatedType = emitterTypeName(service.typeName(), channel);
-            TypeName registeredPayloadType = emitterPayloadTypes.putIfAbsent(generatedType, payloadType);
+            MessagingExtension.validateAccessibleType(roundContext,
+                                                      payloadType,
+                                                      service.typeName().packageName(),
+                                                      argument.originatingElementValue(),
+                                                      "Messaging emitter payload type");
+            TypeName generatedType = emitterTypeName(service.typeName(), channel, argument);
+            TypeName registeredPayloadType = emitterPayloadTypes.putIfAbsent(channel, payloadType);
             if (registeredPayloadType != null
                     && !registeredPayloadType.resolvedName().equals(payloadType.resolvedName())) {
                 throw new CodegenException("Conflicting messaging emitter payload types for channel "
-                                                   + channel + " in service " + service.typeName() + ": "
-                                                   + registeredPayloadType + " and " + payloadType,
+                                                   + channel + ": " + registeredPayloadType + " and " + payloadType,
                                            argument.originatingElementValue());
             }
             if (roundContext.generatedType(generatedType).isEmpty()) {
@@ -95,12 +104,21 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
             }
         }
 
-        private TypeName emitterTypeName(TypeName serviceType, String channel) {
+        private TypeName emitterTypeName(TypeName serviceType,
+                                         String channel,
+                                         TypedElementInfo originatingElement) {
+            String identity = producerId(serviceType, channel);
+            String candidate = MessagingExtension.generatedEmitterClassName(serviceType, identity);
+            String generatedTypeName = serviceType.packageName() + "." + candidate;
+            String existing = emitterTypeIdentities.putIfAbsent(generatedTypeName, identity);
+            if (existing != null && !existing.equals(identity)) {
+                throw new CodegenException("Generated messaging emitter name collision between "
+                                                   + existing + " and " + identity,
+                                           originatingElement.originatingElementValue());
+            }
             return TypeName.builder()
                     .packageName(serviceType.packageName())
-                    .className(serviceType.classNameWithEnclosingNames().replace('.', '_')
-                                       + "__MessagingEmitter_" + safeIdentifier(channel)
-                                       + "_" + Integer.toUnsignedString(channel.hashCode(), Character.MAX_RADIX))
+                    .className(candidate)
                     .build();
         }
 
@@ -110,6 +128,7 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                                      TypeName payloadType,
                                      String channel) {
             TypeName messageType = messageType(payloadType);
+            TypeName emittedMessageType = emittedMessageType(payloadType);
 
             ClassModel.Builder classModel = ClassModel.builder()
                     .copyright(CodegenUtil.copyright(GENERATOR, serviceInfo.typeName(), generatedType))
@@ -122,6 +141,7 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                     .accessModifier(AccessModifier.PACKAGE_PRIVATE)
                     .description("Messaging emitter service for channel {@code " + channel + "}.")
                     .addInterface(emitterInterface(payloadType))
+                    .addInterface(MessagingTypes.EMITTER_REGISTRATION)
                     .addAnnotation(Annotation.create(ServiceCodegenTypes.SERVICE_ANNOTATION_SINGLETON))
                     .addAnnotation(Annotation.create(ServiceCodegenTypes.SERVICE_ANNOTATION_NAMED, channel));
 
@@ -147,7 +167,7 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                     .addParameter(entity -> entity
                             .type(payloadType)
                             .name("entity"))
-                    .addContent("emit(")
+                    .addContent("emitMessage(")
                     .addContent(MessagingTypes.MESSAGE)
                     .addContentLine(".builder(entity).build());"));
 
@@ -155,9 +175,9 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                     .addAnnotation(Annotations.OVERRIDE)
                     .accessModifier(AccessModifier.PUBLIC)
                     .returnType(TypeName.create(void.class))
-                    .name("emit")
+                    .name("emitMessage")
                     .addParameter(message -> message
-                            .type(messageType)
+                            .type(emittedMessageType)
                             .name("message"))
                     .addContent("registry.get().emit(")
                     .addContentLiteral(channel)
@@ -175,7 +195,56 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                     .addContentLiteral(channel)
                     .addContentLine(", messages);"));
 
+            addLiteralMethod(classModel, "channel", channel);
+            addLiteralMethod(classModel,
+                             "producerId",
+                             producerId(serviceInfo.typeName(), channel));
+            addGenericTypeField(classModel, "PAYLOAD_GENERIC_TYPE", payloadType.boxed());
+            addGenericTypeMethod(classModel, "payloadGenericType", "PAYLOAD_GENERIC_TYPE");
+            addGenericTypeField(classModel, "ENVELOPE_GENERIC_TYPE", messageType);
+            addGenericTypeMethod(classModel, "envelopeGenericType", "ENVELOPE_GENERIC_TYPE");
+
             roundContext.addGeneratedType(generatedType, classModel, serviceInfo.typeName(), serviceInfo);
+        }
+
+        private void addLiteralMethod(ClassModel.Builder classModel, String name, String value) {
+            classModel.addMethod(method -> method
+                    .addAnnotation(Annotations.OVERRIDE)
+                    .accessModifier(AccessModifier.PUBLIC)
+                    .returnType(TypeNames.STRING)
+                    .name(name)
+                    .addContent("return ")
+                    .addContentLiteral(value)
+                    .addContentLine(";"));
+        }
+
+        private void addGenericTypeField(ClassModel.Builder classModel, String fieldName, TypeName type) {
+            classModel.addField(field -> field
+                    .accessModifier(AccessModifier.PRIVATE)
+                    .isStatic(true)
+                    .isFinal(true)
+                    .type(genericType(type))
+                    .name(fieldName)
+                    .addContent("new ")
+                    .addContent(genericType(type))
+                    .addContent("() { }"));
+        }
+
+        private void addGenericTypeMethod(ClassModel.Builder classModel, String name, String fieldName) {
+            classModel.addMethod(method -> method
+                    .addAnnotation(Annotations.OVERRIDE)
+                    .accessModifier(AccessModifier.PUBLIC)
+                    .returnType(genericType(TypeNames.WILDCARD))
+                    .name(name)
+                    .addContent("return ")
+                    .addContent(fieldName)
+                    .addContentLine(";"));
+        }
+
+        private TypeName genericType(TypeName type) {
+            return TypeName.builder(MessagingTypes.GENERIC_TYPE)
+                    .addTypeArgument(type)
+                    .build();
         }
 
         private TypeName emitterInterface(TypeName payloadType) {
@@ -192,13 +261,23 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                     .build();
         }
 
+        private TypeName emittedMessageType(TypeName payloadType) {
+            TypeName payloadWildcard = TypeName.builder()
+                    .generic(true)
+                    .wildcard(true)
+                    .className("?")
+                    .addUpperBound(payloadType)
+                    .build();
+            return messageType(payloadWildcard);
+        }
+
         private TypeName messageListType(TypeName payloadType) {
             return TypeName.builder(MessagingTypes.LIST)
                     .addTypeArgument(TypeName.builder()
                                              .generic(true)
                                              .wildcard(true)
                                              .className("?")
-                                             .addUpperBound(messageType(payloadType))
+                                             .addUpperBound(emittedMessageType(payloadType))
                                              .build())
                     .build();
         }
@@ -209,13 +288,53 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                     .build();
         }
 
-        private String safeIdentifier(String channel) {
-            StringBuilder result = new StringBuilder();
-            for (int i = 0; i < channel.length(); i++) {
-                char c = channel.charAt(i);
-                result.append(Character.isJavaIdentifierPart(c) ? c : '_');
+        private boolean hasRawGenericUsage(RegistryRoundContext roundContext, TypeName typeName) {
+            if (typeName.typeArguments().isEmpty()) {
+                TypeInfo typeInfo = roundContext.typeInfo(typeName.genericTypeName()).orElse(null);
+                if (typeInfo != null
+                        && (!typeInfo.declaredType().typeArguments().isEmpty()
+                        || !typeInfo.declaredType().typeParameters().isEmpty())) {
+                    return true;
+                }
             }
-            return result.toString();
+            return typeName.typeArguments()
+                    .stream()
+                    .anyMatch(it -> hasRawGenericUsage(roundContext, it));
+        }
+
+        private void validateChannel(String channel, TypedElementInfo argument) {
+            if (channel.isBlank()) {
+                throw new CodegenException("Messaging emitter channel must not be blank",
+                                           argument.originatingElementValue());
+            }
+            if (channel.equals("*")) {
+                throw new CodegenException("Messaging emitter channel must not use the reserved Service.Named wildcard *",
+                                           argument.originatingElementValue());
+            }
+            if (!channel.equals(channel.strip())) {
+                throw new CodegenException("Messaging emitter channel must not have leading or trailing whitespace",
+                                           argument.originatingElementValue());
+            }
+            if (channel.codePoints().anyMatch(Character::isISOControl)) {
+                throw new CodegenException("Messaging emitter channel must not contain control characters",
+                                           argument.originatingElementValue());
+            }
+        }
+
+        private void validateQualifiers(TypedElementInfo argument) {
+            List<Annotation> qualifiers = argument.annotations()
+                    .stream()
+                    .filter(annotation -> annotation.hasMetaAnnotation(ServiceCodegenTypes.SERVICE_ANNOTATION_QUALIFIER))
+                    .toList();
+            if (qualifiers.size() != 1
+                    || !qualifiers.getFirst().typeName().equals(ServiceCodegenTypes.SERVICE_ANNOTATION_NAMED)) {
+                throw new CodegenException("Messaging emitters support only a single @Service.Named qualifier",
+                                           argument.originatingElementValue());
+            }
+        }
+
+        private String producerId(TypeName serviceType, String channel) {
+            return serviceType.fqName() + "#emitter:" + channel;
         }
     }
 }
