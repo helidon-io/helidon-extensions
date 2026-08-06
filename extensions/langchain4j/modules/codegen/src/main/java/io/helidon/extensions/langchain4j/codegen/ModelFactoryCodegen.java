@@ -17,6 +17,8 @@
 package io.helidon.extensions.langchain4j.codegen;
 
 import java.util.Collection;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -53,6 +55,7 @@ import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.MODEL_CON
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.MODEL_CONFIG_TYPE;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.SVC_SERVICES_FACTORY;
 import static io.helidon.service.codegen.ServiceCodegenTypes.SERVICE_ANNOTATION_NAMED;
+import static io.helidon.service.codegen.ServiceCodegenTypes.SERVICE_ANNOTATION_PRE_DESTROY;
 import static io.helidon.service.codegen.ServiceCodegenTypes.SERVICE_QUALIFIED_INSTANCE;
 import static io.helidon.service.codegen.ServiceCodegenTypes.SERVICE_QUALIFIER;
 
@@ -157,6 +160,12 @@ class ModelFactoryCodegen implements CodegenExtension {
                                                   .build())
                                     .build());
 
+        classModel.addField(Field.builder()
+                                    .name("services")
+                                    .accessModifier(AccessModifier.PRIVATE)
+                                    .type(servicesType(modelType))
+                                    .build());
+
         classModel.addConstructor(Constructor.builder()
                                           .accessModifier(AccessModifier.PACKAGE_PRIVATE)
                                           .description("Creates a new " + modelClassNamePrefix + "Factory.")
@@ -173,7 +182,8 @@ class ModelFactoryCodegen implements CodegenExtension {
                                                                 .type(CONFIG)
                                                                 .build()));
 
-        classModel.addMethod(servicesMethod(modelType, constantClassTypeName));
+        classModel.addMethod(servicesMethod(modelType));
+        classModel.addMethod(preDestroyMethod(modelType));
 
         var modelNamePrefix = modelAnnotation.typeValue().map(TypeName::className)
                 .orElseThrow(() -> new CodegenException("Missing model class"));
@@ -200,17 +210,17 @@ class ModelFactoryCodegen implements CodegenExtension {
             Service.QualifiedInstance.create(theModel, OciGenAi.QUALIFIER));
     }
      */
-    private static Method servicesMethod(TypeName modelType, TypeName constantClassTypeName) {
+    private static Method servicesMethod(TypeName modelType) {
         return Method.builder()
                 .addAnnotation(Annotations.OVERRIDE)
                 .accessModifier(PUBLIC)
                 .name("services")
-                .returnType(TypeName.builder(LIST)
-                                    .addTypeArgument(TypeName.builder(SERVICE_QUALIFIED_INSTANCE)
-                                                             .addTypeArgument(modelType)
-                                                             .build())
-                                    .build())
-                .addContentLine("return modelNames.stream()")
+                .returnType(servicesType(modelType))
+                .addContentLine("synchronized (this) {")
+                .increaseContentPadding()
+                .addContentLine("if (services == null) {")
+                .increaseContentPadding()
+                .addContentLine("services = modelNames.stream()")
                 .increaseContentPadding()
                 .addContentLine(".map(name -> buildModel(name, config)")
                 .increaseContentPadding()
@@ -226,6 +236,93 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContentLine(".flatMap(Optional::stream)")
                 .decreaseContentPadding()
                 .addContentLine(".toList();")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .addContentLine("return services;")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .build();
+    }
+
+    private static Method preDestroyMethod(TypeName modelType) {
+        return Method.builder()
+                .addAnnotation(Annotation.create(SERVICE_ANNOTATION_PRE_DESTROY))
+                .accessModifier(PACKAGE_PRIVATE)
+                .name("preDestroy")
+                .addContent(servicesType(modelType))
+                .addContentLine(" servicesToClose;")
+                .addContentLine("synchronized (this) {")
+                .increaseContentPadding()
+                .addContentLine("servicesToClose = services;")
+                .addContent("services = ")
+                .addContent(LIST)
+                .addContentLine(".of();")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .addContentLine("if (servicesToClose == null) {")
+                .increaseContentPadding()
+                .addContentLine("return;")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .addContent("var closed = ")
+                .addContent(Collections.class)
+                .addContent(".newSetFromMap(new ")
+                .addContent(IdentityHashMap.class)
+                .addContent("<")
+                .addContent(AutoCloseable.class)
+                .addContent(", ")
+                .addContent(Boolean.class)
+                .addContentLine(">());")
+                .addContent(Exception.class)
+                .addContentLine(" failure = null;")
+                .addContentLine("for (var service : servicesToClose) {")
+                .increaseContentPadding()
+                .addContent(Object.class)
+                .addContentLine(" instance = service.get();")
+                .addContent("if (instance instanceof ")
+                .addContent(AutoCloseable.class)
+                .addContentLine(" closeable && closed.add(closeable)) {")
+                .increaseContentPadding()
+                .addContentLine("try {")
+                .increaseContentPadding()
+                .addContentLine("closeable.close();")
+                .decreaseContentPadding()
+                .addContent("} catch (")
+                .addContent(Exception.class)
+                .addContentLine(" e) {")
+                .increaseContentPadding()
+                .addContentLine("if (failure == null) {")
+                .increaseContentPadding()
+                .addContentLine("failure = e;")
+                .decreaseContentPadding()
+                .addContentLine("} else if (failure != e) {")
+                .increaseContentPadding()
+                .addContentLine("failure.addSuppressed(e);")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .addContentLine("if (failure != null) {")
+                .increaseContentPadding()
+                .addContent("throw new ")
+                .addContent(IllegalStateException.class)
+                .addContent("(")
+                .addContentLiteral("Failed to close LangChain4j model instances.")
+                .addContentLine(", failure);")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .build();
+    }
+
+    private static TypeName servicesType(TypeName modelType) {
+        return TypeName.builder(LIST)
+                .addTypeArgument(TypeName.builder(SERVICE_QUALIFIED_INSTANCE)
+                                         .addTypeArgument(modelType)
+                                         .build())
                 .build();
     }
 

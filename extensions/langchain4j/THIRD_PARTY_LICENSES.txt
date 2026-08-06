@@ -6,6 +6,7 @@ dev.langchain4j:langchain4j-community-oci-genai
 dev.langchain4j:langchain4j-core
 dev.langchain4j:langchain4j-google-ai-gemini
 dev.langchain4j:langchain4j-http-client
+dev.langchain4j:langchain4j-http-client-jdk
 dev.langchain4j:langchain4j-jlama
 dev.langchain4j:langchain4j
 dev.langchain4j:langchain4j-mcp
@@ -406,16 +407,6 @@ from the source code management (SCM) system project uses.
   Copyright (c) 2002, Richard Boulton
   Copyright (c) 2010, ISOCO
   Copyright (c) 2010, Israel Olalla
---------------------------------------------
-"Retrofit" (com.squareup.retrofit2:retrofit)
-  The Apache Software License, Version 2.0
-  Copyright (C) 2011,2019 Square, Inc.
-  Copyright (C) 2008 Google Inc.
---------------------------------------------
-
-"Converter: Jackson" (com.squareup.retrofit2:converter-jackson)
-  The Apache Software License, Version 2.0
-  Copyright (C) 2015 Square, Inc.
 --------------------------------------------
 "okhttp" (com.squareup.okhttp3:okhttp)
   The Apache Software License, Version 2.0

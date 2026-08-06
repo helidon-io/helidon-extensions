@@ -19,6 +19,7 @@ package io.helidon.extensions.langchain4j.providers.openai;
 import io.helidon.extensions.langchain4j.AiProvider;
 
 import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
+import dev.langchain4j.model.openai.OpenAiImageModel;
 import dev.langchain4j.model.openai.OpenAiLanguageModel;
 import dev.langchain4j.model.openai.OpenAiModerationModel;
 
@@ -26,6 +27,7 @@ import dev.langchain4j.model.openai.OpenAiModerationModel;
 @AiProvider.ModelConfig(value = OpenAiModerationModel.class)
 @AiProvider.ModelConfig(value = OpenAiEmbeddingModel.class)
 @AiProvider.ModelConfig(value = OpenAiLanguageModel.class)
+@AiProvider.ModelConfig(value = OpenAiImageModel.class)
 interface OpenAiEmbLc4jProvider {
 
 }
