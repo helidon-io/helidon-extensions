@@ -25,6 +25,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
@@ -133,7 +134,7 @@ class MessagingGraphBuilderTest {
             graph.start();
             graph.emitter(directChannel).emit(messagePayload);
             graph.emitter(directChannel).emitMessage(direct);
-            graph.emitter(directChannel).emitBatch(List.of(batched));
+            graph.emitter(directChannel).emitBatch(MessageBatch.create(List.of(batched)));
             graph.emitter(processorInput).emit("process");
         }
 
@@ -181,7 +182,7 @@ class MessagingGraphBuilderTest {
         builder.messageSink(channel, ignored -> outputs.add("first"))
                 .outgoingConnector(channel, new ConnectorSink() {
                     @Override
-                    public <T> void send(Message<T> message) {
+                    public <T> void sendBatch(MessageBatch<T> batch) {
                         outputs.add("connector");
                     }
                 })
@@ -415,7 +416,8 @@ class MessagingGraphBuilderTest {
         MessagingException failure = assertThrows(MessagingException.class, graph::close);
 
         assertTrue(failure.getMessage().contains("failing-stream-source"));
-        assertSame(sourceFailure, failure.getCause());
+        assertTrue(failure.getCause() instanceof BatchDeliveryException);
+        assertSame(sourceFailure, failure.getCause().getCause());
     }
 
     @Test
@@ -444,7 +446,8 @@ class MessagingGraphBuilderTest {
         close.join(TimeUnit.SECONDS.toMillis(5));
 
         assertFalse(close.isAlive());
-        assertSame(rejection, closeFailure.get());
+        assertTrue(closeFailure.get() instanceof BatchDeliveryException);
+        assertSame(rejection, closeFailure.get().getCause());
         assertEquals(DefaultMessagingGraph.State.FAILED, ((DefaultMessagingGraph) graph).state());
     }
 
@@ -452,22 +455,60 @@ class MessagingGraphBuilderTest {
     void batchSinksReceiveOneImmutableBatch() {
         MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<String> channel = builder.channel("events", String.class);
-        AtomicReference<List<String>> payloads = new AtomicReference<>();
-        AtomicReference<List<Message<String>>> messages = new AtomicReference<>();
-        builder.payloadBatchSink(channel, payloads::set)
-                .messageBatchSink(channel, messages::set);
+        AtomicReference<MessageBatch<String>> received = new AtomicReference<>();
+        builder.batchSink(channel, received::set);
 
         Message<String> first = Message.builder("first").header("position", "1").build();
         Message<String> second = Message.builder("second").header("position", "2").build();
+        MessageBatch<String> batch = MessageBatch.<String>builder()
+                .id("explicit-batch")
+                .messages(List.of(first, second))
+                .build();
         try (MessagingGraph graph = builder.build()) {
             graph.start();
-            graph.emitter(channel).emitBatch(List.of(first, second));
+            graph.emitter(channel).emitBatch(batch);
         }
 
-        assertEquals(List.of("first", "second"), payloads.get());
-        assertEquals(List.of(first, second), messages.get());
-        assertThrows(UnsupportedOperationException.class, () -> payloads.get().add("third"));
-        assertThrows(UnsupportedOperationException.class, () -> messages.get().add(Message.create("third")));
+        assertSame(batch, received.get());
+        assertEquals("explicit-batch", received.get().id());
+        assertEquals(List.of("first", "second"), received.get().payloads());
+        assertEquals(List.of(first, second), received.get().messages());
+        assertThrows(UnsupportedOperationException.class, () -> received.get().payloads().add("third"));
+        assertThrows(UnsupportedOperationException.class,
+                     () -> received.get().messages().add(Message.create("third")));
+    }
+
+    @Test
+    void processorFailureLeavesUntouchedBatchSuffixNotAttempted() {
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> source = builder.channel("source", String.class);
+        MessagingChannel<String> target = builder.channel("target", String.class);
+        AtomicInteger invocations = new AtomicInteger();
+        AtomicReference<MessageBatch<String>> received = new AtomicReference<>();
+        builder.payloadProcessor(source, target, value -> {
+            if (invocations.incrementAndGet() == 2) {
+                throw new IllegalStateException("processor failed");
+            }
+            return value.toUpperCase();
+        });
+        builder.batchSink(target, received::set);
+
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+            BatchDeliveryException failure = assertThrows(
+                    BatchDeliveryException.class,
+                    () -> graph.emitter(source).emitBatch(MessageBatch.create(
+                            List.of(Message.create("first"),
+                                    Message.create("second"),
+                                    Message.create("third")))));
+
+            assertEquals(List.of(BatchItemStatus.INDETERMINATE,
+                                 BatchItemStatus.INDETERMINATE,
+                                 BatchItemStatus.NOT_ATTEMPTED),
+                         failure.outcomes().stream().map(BatchItemOutcome::status).toList());
+        }
+        assertEquals(2, invocations.get());
+        assertNull(received.get());
     }
 
     @Test
@@ -608,7 +649,7 @@ class MessagingGraphBuilderTest {
         private final AtomicBoolean closed = new AtomicBoolean();
 
         @Override
-        public <T> void send(Message<T> message) {
+        public <T> void sendBatch(MessageBatch<T> batch) {
         }
 
         @Override
@@ -633,7 +674,7 @@ class MessagingGraphBuilderTest {
         }
 
         @Override
-        public <T> void send(Message<T> message) {
+        public <T> void sendBatch(MessageBatch<T> batch) {
         }
 
         @Override

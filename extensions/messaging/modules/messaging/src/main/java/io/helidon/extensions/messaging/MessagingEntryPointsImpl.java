@@ -69,7 +69,7 @@ class MessagingEntryPointsImpl implements MessagingEntryPoint.EntryPoints {
                                                                 TypedElementInfo methodInfo,
                                                                 MessagingEntryPoint.BatchHandler<T> actualHandler) {
         if (noInterceptors) {
-            return (serviceInstance, messages) -> actualHandler.handle(serviceInstance, List.copyOf(messages));
+            return actualHandler;
         }
 
         InterceptionContext baseContext = context(descriptor, typeAnnotations, methodInfo);
@@ -77,7 +77,7 @@ class MessagingEntryPointsImpl implements MessagingEntryPoint.EntryPoints {
                                                                      interceptors,
                                                                      serviceInstance,
                                                                      actualHandler)
-                .proceed(new Object[] {List.copyOf(messages)});
+                .proceed(new Object[] {messages});
     }
 
     private static InterceptionContext context(ServiceDescriptor<?> descriptor,
@@ -185,19 +185,16 @@ class MessagingEntryPointsImpl implements MessagingEntryPoint.EntryPoints {
             return null;
         }
 
-        private List<Message<?>> messages(Object[] arguments) {
-            if (arguments == null || arguments.length != 1 || !(arguments[0] instanceof List<?> messages)) {
-                throw new IllegalArgumentException("Messaging batch entry point requires exactly one List argument");
+        private MessageBatch<?> messages(Object[] arguments) {
+            if (arguments == null || arguments.length != 1 || !(arguments[0] instanceof MessageBatch<?> messages)) {
+                throw new IllegalArgumentException("Messaging batch entry point requires exactly one MessageBatch argument");
             }
-
-            List<Message<?>> result = new ArrayList<>(messages.size());
             for (Object item : messages) {
-                if (!(item instanceof Message<?> message)) {
-                    throw new IllegalArgumentException("Messaging batch entry point requires a List of Message elements");
+                if (!(item instanceof Message<?>)) {
+                    throw new IllegalArgumentException("Messaging batch entry point requires Message elements");
                 }
-                result.add(message);
             }
-            return List.copyOf(result);
+            return messages;
         }
     }
 }

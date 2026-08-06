@@ -128,7 +128,6 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                                      TypeName payloadType,
                                      String channel) {
             TypeName messageType = messageType(payloadType);
-            TypeName emittedMessageType = emittedMessageType(payloadType);
 
             ClassModel.Builder classModel = ClassModel.builder()
                     .copyright(CodegenUtil.copyright(GENERATOR, serviceInfo.typeName(), generatedType))
@@ -163,33 +162,9 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                     .addAnnotation(Annotations.OVERRIDE)
                     .accessModifier(AccessModifier.PUBLIC)
                     .returnType(TypeName.create(void.class))
-                    .name("emit")
-                    .addParameter(entity -> entity
-                            .type(payloadType)
-                            .name("entity"))
-                    .addContent("emitMessage(")
-                    .addContent(MessagingTypes.MESSAGE)
-                    .addContentLine(".builder(entity).build());"));
-
-            classModel.addMethod(method -> method
-                    .addAnnotation(Annotations.OVERRIDE)
-                    .accessModifier(AccessModifier.PUBLIC)
-                    .returnType(TypeName.create(void.class))
-                    .name("emitMessage")
-                    .addParameter(message -> message
-                            .type(emittedMessageType)
-                            .name("message"))
-                    .addContent("registry.get().emit(")
-                    .addContentLiteral(channel)
-                    .addContentLine(", message);"));
-
-            classModel.addMethod(method -> method
-                    .addAnnotation(Annotations.OVERRIDE)
-                    .accessModifier(AccessModifier.PUBLIC)
-                    .returnType(TypeName.create(void.class))
                     .name("emitBatch")
                     .addParameter(messages -> messages
-                            .type(messageListType(payloadType))
+                            .type(messageBatchType(payloadType))
                             .name("messages"))
                     .addContent("registry.get().emitBatch(")
                     .addContentLiteral(channel)
@@ -261,23 +236,13 @@ public class MessagingEmitterObserverProvider implements InjectCodegenObserverPr
                     .build();
         }
 
-        private TypeName emittedMessageType(TypeName payloadType) {
-            TypeName payloadWildcard = TypeName.builder()
-                    .generic(true)
-                    .wildcard(true)
-                    .className("?")
-                    .addUpperBound(payloadType)
-                    .build();
-            return messageType(payloadWildcard);
-        }
-
-        private TypeName messageListType(TypeName payloadType) {
-            return TypeName.builder(MessagingTypes.LIST)
+        private TypeName messageBatchType(TypeName payloadType) {
+            return TypeName.builder(MessagingTypes.MESSAGE_BATCH)
                     .addTypeArgument(TypeName.builder()
                                              .generic(true)
                                              .wildcard(true)
                                              .className("?")
-                                             .addUpperBound(emittedMessageType(payloadType))
+                                             .addUpperBound(payloadType)
                                              .build())
                     .build();
         }

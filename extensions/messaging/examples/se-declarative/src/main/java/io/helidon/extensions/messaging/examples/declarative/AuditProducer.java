@@ -20,6 +20,7 @@ import java.util.List;
 
 import io.helidon.extensions.messaging.Emitter;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.Messaging;
 import io.helidon.extensions.messaging.MessagingRuntime;
 import io.helidon.service.registry.Service;
@@ -36,8 +37,8 @@ class AuditProducer {
 
     @Service.PostConstruct
     void publishSampleEvents() {
-        audit.emitBatch(List.of(auditEvent("user-created", "example"),
-                                auditEvent("invoice-paid", "example")));
+        audit.emitBatch(MessageBatch.create(List.of(auditEvent("user-created", "example"),
+                                                    auditEvent("invoice-paid", "example"))));
     }
 
     void audit(String event, String actor) {

@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.extensions.messaging.Emitter;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.Messaging;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaMessage;
 import io.helidon.service.registry.Service;
@@ -71,8 +72,8 @@ final class KafkaMessagingTypes {
             emitter.emitMessage(message);
         }
 
-        void sendBatch(List<? extends Message<String>> messages) {
-            emitter.emitBatch(messages);
+        void sendBatch(MessageBatch<String> batch) {
+            emitter.emitBatch(batch);
         }
     }
 
@@ -206,11 +207,15 @@ final class KafkaMessagingTypes {
     static class PartitionRetryReceiver {
         private final Map<List<PartitionRecord>, AtomicInteger> attempts = new ConcurrentHashMap<>();
         private final List<List<PartitionRecord>> deliveries = new CopyOnWriteArrayList<>();
+        private final List<String> batchIds = new CopyOnWriteArrayList<>();
         private final BlockingQueue<PartitionRecord> successfulRecords = new LinkedBlockingQueue<>();
 
         @Messaging.OnMessage(PARTITION_RETRY_INCOMING_CHANNEL)
-        void receive(List<KafkaMessage<String, String>> messages) {
-            List<PartitionRecord> batch = messages.stream()
+        @SuppressWarnings("unchecked")
+        void receive(MessageBatch<String> messages) {
+            batchIds.add(messages.id());
+            List<PartitionRecord> batch = messages.messages().stream()
+                    .map(message -> (KafkaMessage<String, String>) message)
                     .map(message -> new PartitionRecord(message.partition().orElseThrow(),
                                                         message.offset().orElseThrow(),
                                                         message.entity()))
@@ -243,6 +248,10 @@ final class KafkaMessagingTypes {
 
         List<List<PartitionRecord>> deliveries() {
             return List.copyOf(deliveries);
+        }
+
+        List<String> batchIds() {
+            return List.copyOf(batchIds);
         }
 
         Map<List<PartitionRecord>, Integer> attemptCounts() {
@@ -282,7 +291,7 @@ final class KafkaMessagingTypes {
         private final BlockingQueue<String> payloads = new LinkedBlockingQueue<>();
         private final BlockingQueue<Message<String>> messages = new LinkedBlockingQueue<>();
         private final BlockingQueue<ReceivedMessage> annotated = new LinkedBlockingQueue<>();
-        private final BlockingQueue<List<Message<String>>> batches = new LinkedBlockingQueue<>();
+        private final BlockingQueue<MessageBatch<String>> batches = new LinkedBlockingQueue<>();
 
         void recordPayload(String payload) {
             payloads.add(payload);
@@ -296,8 +305,8 @@ final class KafkaMessagingTypes {
             annotated.add(new ReceivedMessage(traceId, message.entity(), message));
         }
 
-        void recordBatch(List<Message<String>> messages) {
-            batches.add(List.copyOf(messages));
+        void recordBatch(MessageBatch<String> batch) {
+            batches.add(batch);
         }
 
         String awaitPayload(Duration timeout) throws InterruptedException {
@@ -312,7 +321,7 @@ final class KafkaMessagingTypes {
             return annotated.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
         }
 
-        List<Message<String>> awaitBatch(Duration timeout) throws InterruptedException {
+        MessageBatch<String> awaitBatch(Duration timeout) throws InterruptedException {
             return batches.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
         }
     }
@@ -373,28 +382,29 @@ final class KafkaMessagingTypes {
         }
 
         @Messaging.OnMessage(INCOMING_CHANNEL)
-        void receiveBatch(List<Message<String>> messages) {
-            receiver.recordBatch(messages);
+        void receiveBatch(MessageBatch<String> batch) {
+            receiver.recordBatch(batch);
         }
     }
 
     @Service.Singleton
     static class KafkaMetadataReceiver {
         private final BlockingQueue<KafkaMessage<String, String>> messages = new LinkedBlockingQueue<>();
-        private final BlockingQueue<List<KafkaMessage<String, String>>> batches = new LinkedBlockingQueue<>();
+        private final BlockingQueue<MessageBatch<String>> batches = new LinkedBlockingQueue<>();
 
         void recordMessage(KafkaMessage<String, String> message) {
             messages.add(message);
         }
 
-        void recordBatch(List<KafkaMessage<String, String>> messages) {
-            batches.add(List.copyOf(messages));
+        void recordBatch(MessageBatch<String> batch) {
+            batches.add(batch);
         }
 
         KafkaMessage<String, String> awaitMessage(Duration timeout) throws InterruptedException {
             return messages.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
         }
 
+        @SuppressWarnings("unchecked")
         List<KafkaMessage<String, String>> awaitBatchMessages(int expectedCount,
                                                               Duration timeout) throws InterruptedException {
             List<KafkaMessage<String, String>> result = new ArrayList<>(expectedCount);
@@ -404,11 +414,13 @@ final class KafkaMessagingTypes {
                 if (remaining <= 0) {
                     break;
                 }
-                List<KafkaMessage<String, String>> batch = batches.poll(remaining, TimeUnit.NANOSECONDS);
+                MessageBatch<String> batch = batches.poll(remaining, TimeUnit.NANOSECONDS);
                 if (batch == null) {
                     break;
                 }
-                result.addAll(batch);
+                batch.messages().stream()
+                        .map(message -> (KafkaMessage<String, String>) message)
+                        .forEach(result::add);
             }
             return List.copyOf(result);
         }
@@ -439,8 +451,8 @@ final class KafkaMessagingTypes {
         }
 
         @Messaging.OnMessage(METADATA_INCOMING_CHANNEL)
-        void receiveBatch(List<KafkaMessage<String, String>> messages) {
-            receiver.recordBatch(messages);
+        void receiveBatch(MessageBatch<String> batch) {
+            receiver.recordBatch(batch);
         }
     }
 
@@ -495,8 +507,8 @@ final class KafkaMessagingTypes {
         private final AtomicBoolean allowAllFailures = new AtomicBoolean();
 
         @Messaging.OnMessage(DEAD_LETTER_INCOMING_CHANNEL)
-        void receive(List<Message<String>> messages) {
-            List<String> entities = messages.stream().map(Message::entity).toList();
+        void receive(MessageBatch<String> messages) {
+            List<String> entities = messages.payloads();
             int attempt = attempts.computeIfAbsent(entities, ignored -> new AtomicInteger()).incrementAndGet();
             if (attempt == MAX_ATTEMPTS) {
                 FailedBatch failedBatch = new FailedBatch(entities, attempt);

@@ -35,7 +35,7 @@ public interface ConnectorSourceContext {
      * Failure policy for this incoming channel.
      * <p>
      * The default is exposed for compatibility with third-party contexts. The default
-     * {@link #handleFailure(List, int, RuntimeException)} implementation still propagates
+     * {@link #handleFailure(MessageBatch, int, RuntimeException)} implementation still propagates
      * failures immediately.
      *
      * @return failure policy
@@ -106,7 +106,7 @@ public interface ConnectorSourceContext {
      * Reserve pending capacity before acquiring one connector delivery.
      * <p>
      * Runtime-provided contexts block with bounded pending accounting. The compatibility default creates a local
-     * reservation and delegates its eventual start to {@link #submitDelivery(List, long, Runnable)}.
+     * reservation and delegates its eventual start to {@link #submitDelivery(MessageBatch, Runnable)}.
      *
      * @param maxMessages maximum messages the connector may acquire
      * @param maxAdmissionBytes maximum admission bytes the connector may acquire
@@ -145,7 +145,7 @@ public interface ConnectorSourceContext {
      * @throws RuntimeException if downstream delivery fails
      */
     default <T> void emit(T entity) {
-        emit(Message.create(entity));
+        emitBatch(MessageBatch.create(Message.create(entity)));
     }
 
     /**
@@ -158,23 +158,18 @@ public interface ConnectorSourceContext {
      * @param <T> payload type
      * @throws RuntimeException if downstream delivery fails
      */
-    <T> void emit(Message<T> message);
+    default <T> void emit(Message<T> message) {
+        emitBatch(MessageBatch.create(message));
+    }
 
     /**
      * Emit a batch of messages into the channel.
      * <p>
-     * The default implementation emits messages sequentially and stops at the first failure. Messages delivered
-     * before that failure are not rolled back.
-     *
-     * @param messages messages
+     * @param batch immutable message batch
      * @param <T> payload type
-     * @throws RuntimeException if downstream delivery fails
+     * @throws BatchDeliveryException if downstream delivery completes partially or is indeterminate
      */
-    default <T> void emitBatch(List<? extends Message<T>> messages) {
-        for (Message<T> message : messages) {
-            emit(message);
-        }
-    }
+    <T> void emitBatch(MessageBatch<T> batch);
 
     /**
      * Submit one retained connector delivery to the messaging runtime.
@@ -186,31 +181,22 @@ public interface ConnectorSourceContext {
      * completes successfully, and must close the returned lease only after that transport settlement succeeds or the
      * delivery is abandoned.
      * <p>
-     * The retained lease covers the supplied message instances. Delivery logic that emits back into this same channel
-     * must emit those exact instances, or a subset of them. Replacement envelopes require separate admission.
+     * The retained lease covers the supplied batch and subsets created through {@link MessageBatch#subset(List)}.
+     * Rebuilt batches and replacement envelopes require separate admission, even when they reuse the public batch ID.
      * <p>
      * Runtime-provided contexts override this method and own the task virtual thread. The default preserves
      * compatibility for independently implemented contexts.
      *
-     * @param messages complete retained delivery
-     * @param admissionBytes declared admission weight of the complete delivery
+     * @param batch complete retained delivery with declared admission weight
      * @param delivery delivery logic, including retry and terminal failure handling
      * @param <T> payload type
      * @return delivery task
      * @throws MessagingRejectedException if the delivery cannot be admitted
-     * @throws IllegalArgumentException if the delivery is empty or {@code admissionBytes} is negative
+     * @throws IllegalArgumentException if the batch is empty or has no valid declared admission weight
      */
-    default <T> ConnectorDelivery submitDelivery(List<? extends Message<T>> messages,
-                                                 long admissionBytes,
-                                                 Runnable delivery) {
-        Objects.requireNonNull(messages);
+    default <T> ConnectorDelivery submitDelivery(MessageBatch<T> batch, Runnable delivery) {
+        validateBatch(batch);
         Objects.requireNonNull(delivery);
-        if (messages.isEmpty()) {
-            throw new IllegalArgumentException("Connector delivery must contain at least one message");
-        }
-        if (admissionBytes < 0) {
-            throw new IllegalArgumentException("admissionBytes must be zero or greater");
-        }
         return IndependentConnectorDelivery.start(channelName(), delivery);
     }
 
@@ -222,37 +208,42 @@ public interface ConnectorSourceContext {
      * an immediate bounded admission attempt. The compatibility default has no runtime admission layer and therefore
      * always starts the delivery.
      * <p>
-     * The retained lease covers the supplied message instances. Delivery logic that emits back into this same channel
-     * must emit those exact instances, or a subset of them. Replacement envelopes require separate admission.
+     * The retained lease covers the supplied batch and subsets created through {@link MessageBatch#subset(List)}.
+     * Rebuilt batches and replacement envelopes require separate admission, even when they reuse the public batch ID.
      *
-     * @param messages complete retained delivery
-     * @param admissionBytes declared admission weight of the complete delivery
+     * @param batch complete retained delivery with declared admission weight
      * @param delivery delivery logic, including retry and terminal failure handling
      * @param <T> payload type
      * @return the admitted delivery task, or empty when capacity is currently unavailable
      * @throws MessagingRejectedException if the delivery can never be admitted or the runtime is shutting down
-     * @throws IllegalArgumentException if the delivery is empty or {@code admissionBytes} is negative
+     * @throws IllegalArgumentException if the batch is empty or has no valid declared admission weight
      */
-    default <T> Optional<ConnectorDelivery> trySubmitDelivery(List<? extends Message<T>> messages,
-                                                              long admissionBytes,
-                                                              Runnable delivery) {
-        return Optional.of(submitDelivery(messages, admissionBytes, delivery));
+    default <T> Optional<ConnectorDelivery> trySubmitDelivery(MessageBatch<T> batch, Runnable delivery) {
+        return Optional.of(submitDelivery(batch, delivery));
     }
 
     /**
      * Apply this incoming channel's failure policy to one failed delivery attempt.
      * <p>
+     * {@code batch} is the exact ordered delivery subset to which the policy applies. Items that already succeeded are
+     * excluded. When an attempt also has failed or indeterminate items, items that were not attempted are deferred and
+     * handled separately by the source. An entirely not-attempted delivery may itself be the policy subset so a
+     * persistent pre-dispatch failure observes the configured retry limit. If {@code failure} is a
+     * {@link BatchDeliveryException}, its batch and locally indexed outcomes must be aligned with {@code batch}; source
+     * implementations can use {@link BatchDeliveryException#align(MessageBatch, RuntimeException)} before invoking this
+     * method.
+     * <p>
      * The default implementation propagates the original failure, preserving the behavior
      * of third-party source contexts.
      *
-     * @param messages complete retained source delivery
+     * @param batch exact failure-policy delivery subset
      * @param failedAttempt failed delivery attempt, where one is the initial delivery
      * @param failure processing failure
      * @param <T> payload type
      * @return retry or settled result
      * @throws RuntimeException if the delivery remains unsettled
      */
-    default <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+    default <T> FailureResult handleFailure(MessageBatch<T> batch,
                                             int failedAttempt,
                                             RuntimeException failure) {
         throw failure;
@@ -263,12 +254,12 @@ public interface ConnectorSourceContext {
      */
     enum FailureResult {
         /**
-         * Retain and retry the complete source delivery.
+         * Retain and retry the supplied failure-policy delivery subset.
          */
         RETRY,
 
         /**
-         * The configured terminal disposition settled the source delivery.
+         * The configured terminal disposition settled the supplied failure-policy delivery subset.
          */
         SETTLED
     }
@@ -279,6 +270,25 @@ public interface ConnectorSourceContext {
         }
         if (maxAdmissionBytes < 0) {
             throw new IllegalArgumentException("maxAdmissionBytes must be zero or greater");
+        }
+    }
+
+    private static void validateBatch(MessageBatch<?> batch) {
+        MessageBatch<?> actualBatch = Objects.requireNonNull(batch);
+        String batchId = Objects.requireNonNull(actualBatch.id(), "Message batch identity");
+        if (batchId.isBlank() || batchId.length() > MessageBatch.MAX_ID_LENGTH) {
+            throw new IllegalArgumentException("Message batch identity must be non-blank and no longer than "
+                                                       + MessageBatch.MAX_ID_LENGTH + " characters");
+        }
+        if (actualBatch.size() <= 0) {
+            throw new IllegalArgumentException("Connector delivery must contain at least one message");
+        }
+        OptionalLong admissionBytes = Objects.requireNonNull(actualBatch.admissionBytes());
+        if (admissionBytes.isEmpty()) {
+            throw new IllegalArgumentException("Connector delivery admission bytes must be declared");
+        }
+        if (admissionBytes.getAsLong() < 0) {
+            throw new IllegalArgumentException("Connector delivery admission bytes must be zero or greater");
         }
     }
 }

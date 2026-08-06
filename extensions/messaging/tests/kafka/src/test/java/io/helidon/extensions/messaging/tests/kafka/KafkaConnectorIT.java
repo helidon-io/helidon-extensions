@@ -35,6 +35,7 @@ import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
 import io.helidon.extensions.messaging.DeadLetterMessage;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingChannel;
 import io.helidon.extensions.messaging.MessagingGraph;
 import io.helidon.extensions.messaging.MessagingRuntime;
@@ -136,12 +137,12 @@ class KafkaConnectorIT {
             endpoint.send(Message.builder("sink message")
                                   .header("trace-id", "Příliš žluťoučký")
                                   .build());
-            endpoint.sendBatch(List.of(Message.builder("sink batch first")
-                                               .header("trace-id", "sink-batch-1")
-                                               .build(),
-                                       Message.builder("sink batch second")
-                                               .header("trace-id", "sink-batch-2")
-                                               .build()));
+            endpoint.sendBatch(MessageBatch.create(List.of(Message.builder("sink batch first")
+                                                                    .header("trace-id", "sink-batch-1")
+                                                                    .build(),
+                                                            Message.builder("sink batch second")
+                                                                    .header("trace-id", "sink-batch-2")
+                                                                    .build())));
 
             assertRecords(awaitRecords(topic, 4),
                           List.of(ExpectedRecord.create("sink payload"),
@@ -168,9 +169,9 @@ class KafkaConnectorIT {
                     .rawHeader("binary", new byte[] {0, (byte) 0xFF})
                     .rawHeader("null-value", null)
                     .build();
-            List<KafkaMessage<String, String>> batch = List.of(
+            MessageBatch<String> batch = MessageBatch.create(List.of(
                     KafkaMessage.create("batch-key-1", "kafka batch first"),
-                    KafkaMessage.create("batch-key-2", "kafka batch second"));
+                    KafkaMessage.create("batch-key-2", "kafka batch second")));
 
             sender.send(message);
             sender.sendBatch(batch);
@@ -210,12 +211,12 @@ class KafkaConnectorIT {
             graph.emitter(channel).emitMessage(Message.builder("channel message")
                                                        .header("trace-id", "channel-single")
                                                        .build());
-            graph.emitter(channel).emitBatch(List.of(Message.builder("channel batch first")
-                                                             .header("trace-id", "channel-batch-1")
-                                                             .build(),
-                                                     Message.builder("channel batch second")
-                                                             .header("trace-id", "channel-batch-2")
-                                                             .build()));
+            graph.emitter(channel).emitBatch(MessageBatch.create(List.of(Message.builder("channel batch first")
+                                                                                 .header("trace-id", "channel-batch-1")
+                                                                                 .build(),
+                                                                         Message.builder("channel batch second")
+                                                                                 .header("trace-id", "channel-batch-2")
+                                                                                 .build())));
 
             assertRecords(awaitRecords(topic, 4),
                           List.of(ExpectedRecord.create("channel payload"),
@@ -239,12 +240,12 @@ class KafkaConnectorIT {
                                  .header("trace-id", "runtime-single")
                                  .build());
             runtime.emitBatch(KafkaMessagingTypes.OUTGOING_CHANNEL,
-                              List.of(Message.builder("runtime batch first")
-                                              .header("trace-id", "runtime-batch-1")
-                                              .build(),
-                                      Message.builder("runtime batch second")
-                                              .header("trace-id", "runtime-batch-2")
-                                              .build()));
+                              MessageBatch.create(List.of(Message.builder("runtime batch first")
+                                                                   .header("trace-id", "runtime-batch-1")
+                                                                   .build(),
+                                                          Message.builder("runtime batch second")
+                                                                  .header("trace-id", "runtime-batch-2")
+                                                                  .build())));
 
             assertRecords(awaitRecords(topic, 3),
                           List.of(ExpectedRecord.create("runtime message", "runtime-single"),
@@ -268,12 +269,12 @@ class KafkaConnectorIT {
             sender.send(Message.builder("emitter message")
                                 .header("trace-id", "emitter-single")
                                 .build());
-            sender.sendBatch(List.of(Message.builder("emitter batch first")
-                                             .header("trace-id", "emitter-batch-1")
-                                             .build(),
-                                     Message.builder("emitter batch second")
-                                             .header("trace-id", "emitter-batch-2")
-                                             .build()));
+            sender.sendBatch(MessageBatch.create(List.of(Message.builder("emitter batch first")
+                                                                  .header("trace-id", "emitter-batch-1")
+                                                                  .build(),
+                                                          Message.builder("emitter batch second")
+                                                                  .header("trace-id", "emitter-batch-2")
+                                                                  .build())));
 
             assertRecords(awaitRecords(topic, 4),
                           List.of(ExpectedRecord.create("emitter payload"),
@@ -428,7 +429,7 @@ class KafkaConnectorIT {
                        receiver.awaitSuccessfulDelivery(WAIT_TIMEOUT),
                        is(true));
             assertThat(receiver.successfulEntities(), is(List.of("after poison")));
-            awaitCommittedOffset(group, topic, 1L);
+            assertNoCommittedOffset(group, topic);
 
             receiver.allowSuccessfulDelivery();
 
@@ -473,6 +474,11 @@ class KafkaConnectorIT {
             assertThat("delivery attempt count is paired", deliveries.size() % 2, is(0));
             for (int i = 0; i < deliveries.size(); i += 2) {
                 assertThat("retained poll batch on retry", deliveries.get(i + 1), is(deliveries.get(i)));
+            }
+            List<String> batchIds = receiver.batchIds();
+            assertThat("batch identity count", batchIds.size(), is(deliveries.size()));
+            for (int i = 0; i < batchIds.size(); i += 2) {
+                assertThat("retained poll batch identity on retry", batchIds.get(i + 1), is(batchIds.get(i)));
             }
             assertThat("every retained poll succeeds on its second attempt",
                        receiver.attemptCounts().values().stream().allMatch(attempts -> attempts == 2),
@@ -537,7 +543,7 @@ class KafkaConnectorIT {
             Message<String> secondMessage = receiver.awaitMessage(WAIT_TIMEOUT);
             ReceivedMessage firstAnnotated = receiver.awaitAnnotated(WAIT_TIMEOUT);
             ReceivedMessage secondAnnotated = receiver.awaitAnnotated(WAIT_TIMEOUT);
-            List<Message<String>> batch = receiver.awaitBatch(WAIT_TIMEOUT);
+            MessageBatch<String> batch = receiver.awaitBatch(WAIT_TIMEOUT);
 
             assertThat("first payload", firstPayload, notNullValue());
             assertThat("second payload", secondPayload, notNullValue());
@@ -558,7 +564,8 @@ class KafkaConnectorIT {
                        is(List.of("Příliš žluťoučký", "incoming-2")));
             assertMessages(annotated.stream().map(ReceivedMessage::message).toList(),
                            List.of("incoming first", "incoming second"));
-            assertMessages(batch, List.of("incoming first", "incoming second"));
+            assertThat("batch id", batch.id().isBlank(), is(false));
+            assertMessages(batch.messages(), List.of("incoming first", "incoming second"));
             assertThat(batch.get(0).header("trace-id").orElseThrow(), is("Příliš žluťoučký"));
             assertThat(batch.get(1).header("trace-id").orElseThrow(), is("incoming-2"));
             awaitCommittedOffset(group, topic, 2L);
@@ -953,7 +960,7 @@ class KafkaConnectorIT {
                             max-attempts: 2
                           on-exhausted: DROP
                         properties:
-                          max.poll.records: "1"
+                          max.poll.records: "2"
                 """.formatted(KafkaMessagingTypes.DROP_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,

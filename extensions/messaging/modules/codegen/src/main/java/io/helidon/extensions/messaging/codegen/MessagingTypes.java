@@ -22,6 +22,7 @@ import io.helidon.common.types.TypeName;
 import io.helidon.common.types.TypeNames;
 
 final class MessagingTypes {
+    static final TypeName ARRAY_LIST = TypeName.create("java.util.ArrayList");
     static final Set<String> ASYNC_RETURN_TYPES = Set.of(
             "java.util.concurrent.CompletableFuture",
             "java.util.concurrent.CompletionStage",
@@ -32,6 +33,8 @@ final class MessagingTypes {
             "org.reactivestreams.Publisher");
     static final TypeName CONSUMER_REGISTRATION =
             TypeName.create("io.helidon.extensions.messaging.ConsumerRegistration");
+    static final TypeName BATCH_DELIVERY_EXCEPTION =
+            TypeName.create("io.helidon.extensions.messaging.BatchDeliveryException");
     static final TypeName EMITTER = TypeName.create("io.helidon.extensions.messaging.Emitter");
     static final TypeName EMITTER_REGISTRATION =
             TypeName.create("io.helidon.extensions.messaging.EmitterRegistration");
@@ -41,6 +44,7 @@ final class MessagingTypes {
             TypeName.create("io.helidon.extensions.messaging.Messaging.HeaderParam");
     static final TypeName LIST = TypeNames.LIST;
     static final TypeName MESSAGE = TypeName.create("io.helidon.extensions.messaging.Message");
+    static final TypeName MESSAGE_BATCH = TypeName.create("io.helidon.extensions.messaging.MessageBatch");
     static final TypeName MESSAGING_ENTRY_POINT_BATCH_HANDLER =
             TypeName.create("io.helidon.extensions.messaging.MessagingEntryPoint.BatchHandler");
     static final TypeName MESSAGING_ENTRY_POINT_HANDLER =

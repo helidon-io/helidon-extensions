@@ -18,7 +18,6 @@ package io.helidon.extensions.messaging;
 
 import java.util.Collections;
 import java.util.IdentityHashMap;
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -44,16 +43,14 @@ final class IndependentConnectorDeliveryReservation implements ConnectorDelivery
     }
 
     @Override
-    public <T> ConnectorDelivery start(List<? extends Message<T>> messages,
-                                       long admissionBytes,
-                                       Runnable delivery) {
+    public <T> ConnectorDelivery start(MessageBatch<T> batch, Runnable delivery) {
         stateLock.lock();
         try {
             requireOpen();
             try {
-                validateActual(messages, admissionBytes, delivery);
+                validateActual(batch, delivery);
                 ConnectorDelivery result = Objects.requireNonNull(
-                        context.submitDelivery(messages, admissionBytes, delivery),
+                        context.submitDelivery(batch, delivery),
                         "Connector delivery");
                 state = State.STARTED;
                 return result;
@@ -67,16 +64,14 @@ final class IndependentConnectorDeliveryReservation implements ConnectorDelivery
     }
 
     @Override
-    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                    long admissionBytes,
-                                                    Runnable delivery) {
+    public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch, Runnable delivery) {
         stateLock.lock();
         try {
             requireOpen();
             try {
-                validateActual(messages, admissionBytes, delivery);
+                validateActual(batch, delivery);
                 Optional<ConnectorDelivery> result = Objects.requireNonNull(
-                        context.trySubmitDelivery(messages, admissionBytes, delivery),
+                        context.trySubmitDelivery(batch, delivery),
                         "Connector delivery result");
                 if (result.isPresent()) {
                     state = State.STARTED;
@@ -109,22 +104,25 @@ final class IndependentConnectorDeliveryReservation implements ConnectorDelivery
         }
     }
 
-    private void validateActual(List<? extends Message<?>> messages,
-                                long admissionBytes,
-                                Runnable delivery) {
-        Objects.requireNonNull(messages);
+    private void validateActual(MessageBatch<?> batch, Runnable delivery) {
+        Objects.requireNonNull(batch);
         Objects.requireNonNull(delivery);
-        if (messages.isEmpty()) {
+        if (batch.size() <= 0) {
             state = State.CLOSED;
             throw new IllegalArgumentException("Connector delivery must contain at least one message");
         }
-        if (admissionBytes < 0) {
+        OptionalLong declaredBatchBytes = Objects.requireNonNull(batch.admissionBytes());
+        if (declaredBatchBytes.isEmpty()) {
             state = State.CLOSED;
-            throw new IllegalArgumentException("admissionBytes must be zero or greater");
+            throw new IllegalArgumentException("Connector delivery admission bytes must be declared");
+        }
+        if (declaredBatchBytes.getAsLong() < 0) {
+            state = State.CLOSED;
+            throw new IllegalArgumentException("Connector delivery admission bytes must be zero or greater");
         }
         long knownBytes = 0;
         try {
-            for (Message<?> message : messages) {
+            for (Message<?> message : batch.messages()) {
                 OptionalLong declared = declaredAdmissionBytes(
                         Objects.requireNonNull(message),
                         Collections.newSetFromMap(new IdentityHashMap<>()));
@@ -135,8 +133,8 @@ final class IndependentConnectorDeliveryReservation implements ConnectorDelivery
         } catch (ArithmeticException e) {
             rejectOversized("Connector delivery admission size exceeds the supported range", e);
         }
-        long actualBytes = Math.max(admissionBytes, knownBytes);
-        if (messages.size() > maxMessages || actualBytes > maxAdmissionBytes) {
+        long actualBytes = Math.max(declaredBatchBytes.getAsLong(), knownBytes);
+        if (batch.size() > maxMessages || actualBytes > maxAdmissionBytes) {
             rejectOversized("Connector delivery exceeds its pending reservation", null);
         }
     }

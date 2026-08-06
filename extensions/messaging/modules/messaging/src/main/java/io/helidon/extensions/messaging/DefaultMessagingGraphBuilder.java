@@ -121,7 +121,7 @@ final class DefaultMessagingGraphBuilder implements MessagingGraph.Builder {
             throw new IllegalArgumentException("Duplicate messaging route " + source.name() + " -> " + target.name());
         }
         routes.add(route);
-        actualSource.addBatchOutput(actualTarget::emitBatchObject);
+        actualSource.addBatchOutput(actualTarget::emitRoutedBatchObject);
         outputChannels.add(source);
         return this;
     }
@@ -133,8 +133,18 @@ final class DefaultMessagingGraphBuilder implements MessagingGraph.Builder {
         DefaultMessagingChannel<I> actualSource = channel(source);
         DefaultMessagingChannel<O> actualTarget = channel(target);
         Function<? super I, ? extends O> actualProcessor = Objects.requireNonNull(processor);
-        actualSource.addOutput(message -> actualTarget.emitPayloadObject(
-                actualProcessor.apply(source.payloadType().cast(message.entity()))));
+        actualSource.addBatchOutput(batch -> {
+            List<Message<O>> results = new ArrayList<>(batch.size());
+            for (int i = 0; i < batch.size(); i++) {
+                try {
+                    Message<I> message = batch.get(i);
+                    results.add(Message.create(actualProcessor.apply(source.payloadType().cast(message.entity()))));
+                } catch (RuntimeException e) {
+                    throw BatchDeliveryException.attemptedPrefix("Messaging payload processor", batch, i, e);
+                }
+            }
+            actualTarget.emitBatchObject(batch.derive(results));
+        });
         routes.add(new Route(source.name(), target.name()));
         outputChannels.add(source);
         return this;
@@ -148,8 +158,17 @@ final class DefaultMessagingGraphBuilder implements MessagingGraph.Builder {
         DefaultMessagingChannel<I> actualSource = channel(source);
         DefaultMessagingChannel<O> actualTarget = channel(target);
         Function<? super Message<I>, ? extends Message<? extends O>> actualProcessor = Objects.requireNonNull(processor);
-        actualSource.addOutput(message -> actualTarget.emitMessageObject(
-                Objects.requireNonNull(actualProcessor.apply(castMessage(message)), "Message processor result")));
+        actualSource.addBatchOutput(batch -> {
+            List<Message<? extends O>> results = new ArrayList<>(batch.size());
+            for (int i = 0; i < batch.size(); i++) {
+                try {
+                    results.add(Objects.requireNonNull(actualProcessor.apply(batch.get(i)), "Message processor result"));
+                } catch (RuntimeException e) {
+                    throw BatchDeliveryException.attemptedPrefix("Messaging message processor", batch, i, e);
+                }
+            }
+            actualTarget.emitBatchObject(batch.derive(results));
+        });
         routes.add(new Route(source.name(), target.name()));
         outputChannels.add(source);
         return this;
@@ -175,24 +194,11 @@ final class DefaultMessagingGraphBuilder implements MessagingGraph.Builder {
     }
 
     @Override
-    public <T> MessagingGraph.Builder payloadBatchSink(MessagingChannel<T> source,
-                                                       Consumer<? super List<T>> sink) {
+    public <T> MessagingGraph.Builder batchSink(MessagingChannel<T> source,
+                                                Consumer<MessageBatch<T>> sink) {
         DefaultMessagingChannel<T> actualSource = channel(source);
-        Consumer<? super List<T>> actualSink = Objects.requireNonNull(sink);
-        actualSource.addBatchOutput(messages -> actualSink.accept(messages.stream()
-                                                                         .map(Message::entity)
-                                                                         .map(source.payloadType()::cast)
-                                                                         .toList()));
-        outputChannels.add(source);
-        return this;
-    }
-
-    @Override
-    public <T> MessagingGraph.Builder messageBatchSink(MessagingChannel<T> source,
-                                                       Consumer<? super List<Message<T>>> sink) {
-        DefaultMessagingChannel<T> actualSource = channel(source);
-        Consumer<? super List<Message<T>>> actualSink = Objects.requireNonNull(sink);
-        actualSource.addBatchOutput(messages -> actualSink.accept(castMessages(messages)));
+        Consumer<MessageBatch<T>> actualSink = Objects.requireNonNull(sink);
+        actualSource.addBatchOutput(actualSink);
         outputChannels.add(source);
         return this;
     }
@@ -355,11 +361,6 @@ final class DefaultMessagingGraphBuilder implements MessagingGraph.Builder {
     @SuppressWarnings("unchecked")
     private static <T> Message<T> castMessage(Message<?> message) {
         return (Message<T>) message;
-    }
-
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static <T> List<Message<T>> castMessages(List<Message<?>> messages) {
-        return (List) messages;
     }
 
     private record SourceDefinition(String name,

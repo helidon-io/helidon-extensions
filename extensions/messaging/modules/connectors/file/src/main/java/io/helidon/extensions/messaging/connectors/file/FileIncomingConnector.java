@@ -33,7 +33,9 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -47,11 +49,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
+import io.helidon.extensions.messaging.BatchDeliveryException;
+import io.helidon.extensions.messaging.BatchItemStatus;
 import io.helidon.extensions.messaging.ConnectorDelivery;
 import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.IncomingEndpoint;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.MessagingRejectedException;
 
@@ -67,8 +72,11 @@ import static java.nio.file.StandardWatchEventKinds.OVERFLOW;
  * <p>
  * Within an active source lifetime, a complete appended-line batch remains pending until delivery succeeds or the
  * portable failure policy settles it. The connector does not advance its in-memory file offset or deliver later
- * appends while a batch is pending. A retry retains the captured batch and may duplicate earlier downstream work; a
- * settled result advances past it.
+ * appends while a batch is pending. A structured partial failure retries only unresolved messages, preserving their
+ * delivery lineage and exact message envelopes. Messages not attempted because an earlier item failed are deferred
+ * until the attempted failure retries or settles. The cursor advances only after the entire captured range is
+ * settled, so replacing the source before then can redeliver messages which had already succeeded. An unstructured
+ * failure retries the complete batch.
  * Each retained batch and in-progress line scan is bounded by the source context's message-count and logical-byte
  * admission limits.
  * <p>
@@ -409,11 +417,14 @@ final class FileIncomingConnector {
                         break;
                     }
 
+                    MessageBatch<String> batch = MessageBatch.<String>builder()
+                            .messages(delivery.messages())
+                            .admissionBytes(admissionBytes(delivery.messages()))
+                            .build();
                     AtomicBoolean settled = new AtomicBoolean();
                     try (ConnectorDelivery deliveryLease =
-                                 reservation.start(delivery.messages(),
-                                                   admissionBytes(delivery.messages()),
-                                                   () -> settled.set(deliverRetained(delivery.messages())))) {
+                                 reservation.start(batch,
+                                                   () -> settled.set(deliverRetained(batch)))) {
                         awaitDelivery(deliveryLease);
                         if (!settled.get()) {
                             break;
@@ -879,19 +890,74 @@ final class FileIncomingConnector {
             }
         }
 
-        private boolean deliverRetained(List<Message<String>> messages) {
+        private boolean deliverRetained(MessageBatch<String> batch) {
+            MessageBatch<String> attemptBatch = batch;
+            Deque<DeferredBatch<String>> deferred = new ArrayDeque<>();
             int failedAttempt = 0;
+            deliveryLoop:
             while (!closed.get()) {
                 try {
-                    context.emitBatch(messages);
-                    return true;
+                    context.emitBatch(attemptBatch);
+                    DeferredBatch<String> next = deferred.pollFirst();
+                    if (next == null) {
+                        return true;
+                    }
+                    attemptBatch = next.batch();
+                    failedAttempt = next.failedAttempts();
+                    continue;
                 } catch (RuntimeException failure) {
                     if (closed.get()) {
                         return false;
                     }
+                    BatchSplit<String> split = processingFailure(attemptBatch, failure);
+                    if (split.deferred() != null) {
+                        deferred.addFirst(new DeferredBatch<>(split.deferred(), failedAttempt));
+                    }
+                    attemptBatch = split.attempted();
+                    if (attemptBatch == null) {
+                        DeferredBatch<String> next = deferred.pollFirst();
+                        if (next == null) {
+                            return true;
+                        }
+                        attemptBatch = next.batch();
+                        failedAttempt = next.failedAttempts();
+                        continue;
+                    }
                     failedAttempt++;
-                    ConnectorSourceContext.FailureResult result =
-                            context.handleFailure(messages, failedAttempt, failure);
+                    ConnectorSourceContext.FailureResult result;
+                    while (true) {
+                        if (closed.get()) {
+                            return false;
+                        }
+                        try {
+                            result = context.handleFailure(attemptBatch,
+                                                           failedAttempt,
+                                                           BatchDeliveryException.align(attemptBatch, failure));
+                            break;
+                        } catch (RuntimeException failureHandlingFailure) {
+                            if (closed.get()) {
+                                return false;
+                            }
+                            MessageBatch<String> terminalUnresolved =
+                                    terminalFailure(attemptBatch, failureHandlingFailure);
+                            if (terminalUnresolved == null) {
+                                DeferredBatch<String> next = deferred.pollFirst();
+                                if (next == null) {
+                                    return true;
+                                }
+                                attemptBatch = next.batch();
+                                failedAttempt = next.failedAttempts();
+                                continue deliveryLoop;
+                            }
+                            if (terminalUnresolved == attemptBatch) {
+                                throw failureHandlingFailure;
+                            }
+                            // A structured terminal route (for example a DLQ channel) settled part of the batch.
+                            // Retry the same failure policy only for the remaining source-message lineage. Keeping
+                            // the original processing failure also keeps dead-letter metadata stable.
+                            attemptBatch = terminalUnresolved;
+                        }
+                    }
                     if (result == ConnectorSourceContext.FailureResult.RETRY) {
                         try {
                             if (!awaitRetryDelay()) {
@@ -905,13 +971,65 @@ final class FileIncomingConnector {
                             throw new MessagingException("File incoming connector retry wait interrupted", e);
                         }
                     } else if (result == ConnectorSourceContext.FailureResult.SETTLED) {
-                        return true;
+                        DeferredBatch<String> next = deferred.pollFirst();
+                        if (next == null) {
+                            return true;
+                        }
+                        attemptBatch = next.batch();
+                        failedAttempt = next.failedAttempts();
                     } else {
                         throw new MessagingException("Unsupported file failure result: " + result);
                     }
                 }
             }
             return false;
+        }
+
+        private <T> BatchSplit<T> processingFailure(MessageBatch<T> attemptedBatch, RuntimeException failure) {
+            if (!(failure instanceof BatchDeliveryException batchFailure)
+                    || !attemptedBatch.sameDelivery(batchFailure.batch())) {
+                return new BatchSplit<>(attemptedBatch, null);
+            }
+            List<Integer> attempted = new ArrayList<>();
+            List<Integer> deferred = new ArrayList<>();
+            for (int i = 0; i < attemptedBatch.size(); i++) {
+                BatchItemStatus status = batchFailure.outcome(i).status();
+                if (status == BatchItemStatus.NOT_ATTEMPTED) {
+                    deferred.add(i);
+                } else if (status != BatchItemStatus.SUCCEEDED) {
+                    attempted.add(i);
+                }
+            }
+            MessageBatch<T> attemptedFailure = select(attemptedBatch, attempted);
+            MessageBatch<T> deferredBatch = select(attemptedBatch, deferred);
+            if (attemptedFailure == null) {
+                attemptedFailure = deferredBatch;
+                deferredBatch = null;
+            }
+            return new BatchSplit<>(attemptedFailure, deferredBatch);
+        }
+
+        private <T> MessageBatch<T> terminalFailure(MessageBatch<T> attemptedBatch, RuntimeException failure) {
+            if (!(failure instanceof BatchDeliveryException batchFailure)
+                    || !attemptedBatch.sameDelivery(batchFailure.batch())) {
+                return attemptedBatch;
+            }
+            List<Integer> unresolved = batchFailure.outcomes()
+                    .stream()
+                    .filter(outcome -> outcome.status() != BatchItemStatus.SUCCEEDED)
+                    .map(outcome -> outcome.index())
+                    .toList();
+            return select(attemptedBatch, unresolved);
+        }
+
+        private <T> MessageBatch<T> select(MessageBatch<T> batch, List<Integer> localIndexes) {
+            if (localIndexes.isEmpty()) {
+                return null;
+            }
+            if (localIndexes.size() == batch.size()) {
+                return batch;
+            }
+            return batch.subset(localIndexes);
         }
 
         private long admissionBytes(List<Message<String>> messages) {
@@ -937,6 +1055,18 @@ final class FileIncomingConnector {
                 remainingNanos -= Math.max(1, System.nanoTime() - beforeWait);
             }
             return !closed.get();
+        }
+    }
+
+    private record BatchSplit<T>(MessageBatch<T> attempted, MessageBatch<T> deferred) {
+    }
+
+    private record DeferredBatch<T>(MessageBatch<T> batch, int failedAttempts) {
+        private DeferredBatch {
+            Objects.requireNonNull(batch);
+            if (failedAttempts < 0) {
+                throw new IllegalArgumentException("Deferred batch failed attempts must be zero or greater");
+            }
         }
     }
 

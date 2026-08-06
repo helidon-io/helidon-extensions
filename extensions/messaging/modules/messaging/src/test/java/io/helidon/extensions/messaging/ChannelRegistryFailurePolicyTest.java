@@ -146,11 +146,11 @@ class ChannelRegistryFailurePolicyTest {
         Message<String> original = Message.builder("order-1").header("trace-id", "trace-1").build();
 
         assertThat(context.failurePolicy().retryDelay(), is(java.time.Duration.ofMillis(10)));
-        assertThat(context.handleFailure(List.of(original), 1, failure),
+        assertThat(context.handleFailure(MessageBatch.create(List.of(original)), 1, failure),
                    is(ConnectorSourceContext.FailureResult.RETRY));
         assertThat(outgoing.messages().isEmpty(), is(true));
 
-        assertThat(context.handleFailure(List.of(original), 2, failure),
+        assertThat(context.handleFailure(MessageBatch.create(List.of(original)), 2, failure),
                    is(ConnectorSourceContext.FailureResult.SETTLED));
         assertThat(outgoing.messages().size(), is(1));
         assertThat(outgoing.messages().getFirst(), instanceOf(DeadLetterMessage.class));
@@ -160,6 +160,138 @@ class ChannelRegistryFailurePolicyTest {
         assertThat(deadLetter.attempts(), is(2));
         assertThat(deadLetter.failureType(), is(IllegalStateException.class.getName()));
         assertThat(deadLetter.failureMessage(), is("handler failed"));
+    }
+
+    @Test
+    void testDeadLetterPreservesAggregateAdmissionForUnknownMessageSizes() {
+        TestIncomingConnector incoming = new TestIncomingConnector();
+        TestOutgoingConnector outgoing = new TestOutgoingConnector();
+        new ChannelRegistry(List.of(registration("orders", ignored -> { })),
+                            yaml("""
+                                    helidon:
+                                      messaging:
+                                        incoming:
+                                          orders:
+                                            connector: test-in
+                                            failure:
+                                              retry:
+                                                max-attempts: 1
+                                              on-exhausted: DEAD_LETTER
+                                              dead-letter:
+                                                channel: orders-dlq
+                                        outgoing:
+                                          orders-dlq:
+                                            connector: test-out
+                                    """),
+                            List.of(incoming, outgoing));
+        MessageBatch<String> batch = MessageBatch.<String>builder()
+                .messages(List.of(unknownMessage("order-1"), unknownMessage("order-2")))
+                .admissionBytes(512)
+                .build();
+
+        ConnectorSourceContext.FailureResult result = incoming.context("orders")
+                .handleFailure(batch, 1, new IllegalStateException("handler failed"));
+
+        assertThat(result, is(ConnectorSourceContext.FailureResult.SETTLED));
+        assertThat(outgoing.messages().size(), is(2));
+        assertThat(outgoing.messages().stream().allMatch(DeadLetterMessage.class::isInstance), is(true));
+    }
+
+    @Test
+    void testDeadLetterUsesApplicationFailureFromStructuredDeliveryFailure() {
+        TestIncomingConnector incoming = new TestIncomingConnector();
+        TestOutgoingConnector outgoing = new TestOutgoingConnector();
+        IllegalStateException applicationFailure = new IllegalStateException("application failed");
+        List<String> handled = new CopyOnWriteArrayList<>();
+        new ChannelRegistry(List.of(registration("orders", message -> {
+                                String entity = (String) message.entity();
+                                handled.add(entity);
+                                if (entity.equals("poison")) {
+                                    throw applicationFailure;
+                                }
+                            })),
+                            yaml("""
+                                    helidon:
+                                      messaging:
+                                        incoming:
+                                          orders:
+                                            connector: test-in
+                                            failure:
+                                              retry:
+                                                max-attempts: 1
+                                              on-exhausted: DEAD_LETTER
+                                              dead-letter:
+                                                channel: orders-dlq
+                                        outgoing:
+                                          orders-dlq:
+                                            connector: test-out
+                                    """),
+                            List.of(incoming, outgoing));
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                 Message.create("poison"),
+                                                                 Message.create("untouched")));
+        ConnectorSourceContext context = incoming.context("orders");
+
+        BatchDeliveryException deliveryFailure = assertThrows(BatchDeliveryException.class,
+                                                               () -> context.emitBatch(batch));
+        assertThat(deliveryFailure.outcomes().stream().map(BatchItemOutcome::status).toList(),
+                   is(List.of(BatchItemStatus.SUCCEEDED,
+                              BatchItemStatus.INDETERMINATE,
+                              BatchItemStatus.NOT_ATTEMPTED)));
+        ConnectorSourceContext.FailureResult result = context.handleFailure(batch.subset(List.of(1)),
+                                                                            1,
+                                                                            deliveryFailure);
+        context.emitBatch(batch.subset(List.of(2)));
+
+        assertThat(result, is(ConnectorSourceContext.FailureResult.SETTLED));
+        assertThat(handled, is(List.of("first", "poison", "untouched")));
+        DeadLetterMessage<?> deadLetter = (DeadLetterMessage<?>) outgoing.messages().getFirst();
+        assertThat(deadLetter.entity(), is("poison"));
+        assertThat(deadLetter.failureType(), is(IllegalStateException.class.getName()));
+        assertThat(deadLetter.failureMessage(), is("application failed"));
+    }
+
+    @Test
+    void testDeadLetterAdmissionUsesOnlySelectedFailureSubset() {
+        TestIncomingConnector incoming = new TestIncomingConnector();
+        TestOutgoingConnector outgoing = new TestOutgoingConnector();
+        new ChannelRegistry(List.of(registration("orders", ignored -> { })),
+                            yaml("""
+                                    helidon:
+                                      messaging:
+                                        channel:
+                                          orders-dlq:
+                                            execution:
+                                              max-in-flight-bytes: 10000
+                                        incoming:
+                                          orders:
+                                            connector: test-in
+                                            failure:
+                                              retry:
+                                                max-attempts: 1
+                                              on-exhausted: DEAD_LETTER
+                                              dead-letter:
+                                                channel: orders-dlq
+                                        outgoing:
+                                          orders-dlq:
+                                            connector: test-out
+                                    """),
+                            List.of(incoming, outgoing));
+        Message<String> healthy = Message.builder("healthy").admissionBytes(10).build();
+        Message<String> poison = Message.builder("poison").admissionBytes(10).build();
+        MessageBatch<String> retained = MessageBatch.<String>builder()
+                .messages(List.of(healthy, poison))
+                .admissionBytes(100_000)
+                .build();
+        MessageBatch<String> failedSubset = retained.subset(List.of(1));
+
+        ConnectorSourceContext.FailureResult result = incoming.context("orders")
+                .handleFailure(failedSubset, 1, new IllegalStateException("handler failed"));
+
+        assertThat(failedSubset.admissionBytes().orElseThrow(), is(10L));
+        assertThat(result, is(ConnectorSourceContext.FailureResult.SETTLED));
+        assertThat(outgoing.messages().size(), is(1));
+        assertThat(outgoing.messages().getFirst().entity(), is("poison"));
     }
 
     @Test
@@ -185,7 +317,7 @@ class ChannelRegistryFailurePolicyTest {
 
         RuntimeException failure = new IllegalStateException("failed");
         ConnectorSourceContext.FailureResult result = incoming.context("orders")
-                .handleFailure(List.of(Message.create("order-1")), 1, failure);
+                .handleFailure(MessageBatch.create(List.of(Message.create("order-1"))), 1, failure);
 
         assertThat(result, is(ConnectorSourceContext.FailureResult.SETTLED));
         assertThat(received.size(), is(1));
@@ -216,12 +348,32 @@ class ChannelRegistryFailurePolicyTest {
                             List.of(incoming));
 
         Message<String> message = Message.create("order-1");
+        MessageBatch<String> batch = MessageBatch.create(List.of(message));
         IllegalStateException fail = new IllegalStateException("fail");
         assertThat(assertThrows(IllegalStateException.class,
-                                () -> incoming.context("fail").handleFailure(List.of(message), 1, fail)),
+                                () -> incoming.context("fail").handleFailure(batch, 1, fail)),
                    sameInstance(fail));
-        assertThat(incoming.context("drop").handleFailure(List.of(message), 1, fail),
+        assertThat(incoming.context("drop").handleFailure(batch, 1, fail),
                    is(ConnectorSourceContext.FailureResult.SETTLED));
+
+        MessageBatch<String> completeBatch = MessageBatch.create(List.of(Message.create("succeeded"),
+                                                                         Message.create("failed"),
+                                                                         Message.create("deferred")));
+        BatchDeliveryException completeFailure = BatchDeliveryException.sequential(
+                "Test delivery",
+                completeBatch,
+                1,
+                fail);
+        MessageBatch<String> policyBatch = completeBatch.subset(List.of(1));
+        BatchDeliveryException alignedFailure = assertThrows(
+                BatchDeliveryException.class,
+                () -> incoming.context("fail").handleFailure(policyBatch, 1, completeFailure));
+        assertThat(alignedFailure.batch(), sameInstance(policyBatch));
+        assertThat(alignedFailure.getCause(), sameInstance(fail));
+        assertThat(alignedFailure.outcomes().size(), is(1));
+        assertThat(alignedFailure.outcome(0).index(), is(0));
+        assertThat(alignedFailure.outcome(0).status(), is(BatchItemStatus.INDETERMINATE));
+        assertThat(alignedFailure.outcome(0).failure().orElseThrow(), sameInstance(fail));
 
         ConnectorSourceContext thirdParty = new ConnectorSourceContext() {
             @Override
@@ -230,12 +382,12 @@ class ChannelRegistryFailurePolicyTest {
             }
 
             @Override
-            public <T> void emit(Message<T> ignored) {
+            public <T> void emitBatch(MessageBatch<T> ignored) {
             }
         };
         assertThat(thirdParty.failurePolicy().maxAttempts(), is(0));
         assertThat(assertThrows(IllegalStateException.class,
-                                () -> thirdParty.handleFailure(List.of(message), 1, fail)),
+                                () -> thirdParty.handleFailure(batch, 1, fail)),
                    sameInstance(fail));
     }
 
@@ -293,12 +445,62 @@ class ChannelRegistryFailurePolicyTest {
         MessagingException result = assertThrows(
                 MessagingException.class,
                 () -> incoming.context("orders")
-                        .handleFailure(List.of(Message.create("order-1")), 1, processingFailure));
+                        .handleFailure(MessageBatch.create(List.of(Message.create("order-1"))),
+                                       1,
+                                       processingFailure));
 
-        assertThat(result.getCause(), sameInstance(routeFailure));
+        assertThat(result.getCause(), instanceOf(BatchDeliveryException.class));
+        assertThat(result.getCause().getCause(), sameInstance(routeFailure));
         assertThat(result.getSuppressed().length, is(1));
         assertThat(result.getSuppressed()[0], sameInstance(processingFailure));
         assertThat(outgoing.sendCount(), is(1));
+    }
+
+    @Test
+    void testPartialDeadLetterRouteFailureMapsOutcomesToPolicyBatch() {
+        TestIncomingConnector incoming = new TestIncomingConnector();
+        IllegalStateException routeFailure = new IllegalStateException("DLQ consumer failed");
+        IllegalStateException processingFailure = new IllegalStateException("handler failed");
+        List<String> routed = new CopyOnWriteArrayList<>();
+        ConsumerRegistration deadLetterConsumer = registration("orders-dlq", message -> {
+            String entity = (String) message.entity();
+            routed.add(entity);
+            if (entity.equals("second")) {
+                throw routeFailure;
+            }
+        });
+        new ChannelRegistry(List.of(registration("orders", ignored -> { }), deadLetterConsumer),
+                            yaml("""
+                                    helidon:
+                                      messaging:
+                                        incoming:
+                                          orders:
+                                            connector: test-in
+                                            failure:
+                                              retry:
+                                                max-attempts: 1
+                                              on-exhausted: DEAD_LETTER
+                                              dead-letter:
+                                                channel: orders-dlq
+                                    """),
+                            List.of(incoming));
+        MessageBatch<String> policyBatch = MessageBatch.create(List.of(Message.create("first"),
+                                                                       Message.create("second"),
+                                                                       Message.create("third")));
+
+        BatchDeliveryException failure = assertThrows(
+                BatchDeliveryException.class,
+                () -> incoming.context("orders").handleFailure(policyBatch, 1, processingFailure));
+
+        assertThat(failure.batch(), sameInstance(policyBatch));
+        assertThat(failure.outcomes().stream().map(BatchItemOutcome::status).toList(),
+                   is(List.of(BatchItemStatus.SUCCEEDED,
+                              BatchItemStatus.INDETERMINATE,
+                              BatchItemStatus.NOT_ATTEMPTED)));
+        assertThat(failure.outcome(1).failure().orElseThrow(), sameInstance(routeFailure));
+        assertThat(failure.getSuppressed().length, is(1));
+        assertThat(failure.getSuppressed()[0], sameInstance(processingFailure));
+        assertThat(routed, is(List.of("first", "second")));
     }
 
     @Test
@@ -758,6 +960,20 @@ class ChannelRegistryFailurePolicyTest {
         return Config.just(yaml, MediaTypes.APPLICATION_YAML);
     }
 
+    private static Message<String> unknownMessage(String entity) {
+        return new Message<>() {
+            @Override
+            public String entity() {
+                return entity;
+            }
+
+            @Override
+            public Map<String, String> headers() {
+                return Map.of();
+            }
+        };
+    }
+
     private static void assertInvalidConnectorConfiguration(UnaryOperator<TestConnectorConfig> configMapper,
                                                             String actual,
                                                             String expected) {
@@ -836,8 +1052,14 @@ class ChannelRegistryFailurePolicyTest {
             }
 
             @Override
-            public void dispatch(Message<?> message) {
-                consumer.accept(message);
+            public void dispatch(MessageBatch<?> batch) {
+                for (int i = 0; i < batch.size(); i++) {
+                    try {
+                        consumer.accept(batch.get(i));
+                    } catch (RuntimeException e) {
+                        throw BatchDeliveryException.sequential("Test consumer", batch, i, e);
+                    }
+                }
             }
         };
     }
@@ -1045,12 +1267,12 @@ class ChannelRegistryFailurePolicyTest {
                 }
 
                 @Override
-                public <T> void send(Message<T> message) {
-                    sends.incrementAndGet();
+                public <T> void sendBatch(MessageBatch<T> batch) {
+                    sends.addAndGet(batch.size());
                     if (failure != null) {
                         throw failure;
                     }
-                    messages.add(message);
+                    messages.addAll(batch.messages());
                 }
 
                 @Override

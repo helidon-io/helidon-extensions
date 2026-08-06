@@ -16,16 +16,15 @@
 
 package io.helidon.extensions.messaging;
 
-import java.util.List;
-
 import io.helidon.service.registry.Service;
 
 /**
  * Synchronous emitter for a named messaging channel.
  * <p>
- * A method returns only after every required channel output completes successfully. Outputs are invoked sequentially
- * and the first failure is propagated to the caller without invoking remaining outputs. An earlier output may have
- * completed before a later output fails, so retrying can deliver the same message more than once.
+ * Every emission enters the runtime as a {@link MessageBatch}. The payload and message methods are singleton-batch
+ * conveniences. A method returns only after every required channel output completes successfully. Outputs are invoked
+ * sequentially and the first failure is propagated to the caller without invoking remaining outputs. An earlier output
+ * may have completed before a later output fails, so retrying can deliver the same message more than once.
  *
  * @param <T> payload type
  */
@@ -41,7 +40,9 @@ public interface Emitter<T> {
      * @throws MessagingException if the target channel does not exist
      * @throws RuntimeException if a handler or outgoing connector fails
      */
-    void emit(T entity);
+    default void emit(T entity) {
+        emitBatch(MessageBatch.create(Message.create(entity)));
+    }
 
     /**
      * Emit a message with metadata.
@@ -53,21 +54,16 @@ public interface Emitter<T> {
      * @throws MessagingException if the target channel does not exist
      * @throws RuntimeException if a handler or outgoing connector fails
      */
-    void emitMessage(Message<? extends T> message);
+    default void emitMessage(Message<? extends T> message) {
+        emitBatch(MessageBatch.create(message));
+    }
 
     /**
      * Emit a batch of messages.
      * <p>
-     * The default implementation emits messages sequentially and stops at the first failure. Messages delivered
-     * before that failure are not rolled back and can be duplicated if the caller retries the batch.
-     *
-     * @param messages messages
+     * @param batch immutable message batch
      * @throws MessagingException if the target channel does not exist
-     * @throws RuntimeException if a handler or outgoing connector fails
+     * @throws BatchDeliveryException if delivery completes partially or its outcome is indeterminate
      */
-    default void emitBatch(List<? extends Message<? extends T>> messages) {
-        for (Message<? extends T> message : messages) {
-            emitMessage(message);
-        }
-    }
+    void emitBatch(MessageBatch<? extends T> batch);
 }

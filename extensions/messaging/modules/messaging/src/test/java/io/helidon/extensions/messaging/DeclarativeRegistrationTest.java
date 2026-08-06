@@ -16,9 +16,11 @@
 
 package io.helidon.extensions.messaging;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -30,8 +32,10 @@ import io.helidon.config.Config;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -435,11 +439,43 @@ class DeclarativeRegistrationTest {
                                                               Config.empty(),
                                                               List.of());
         try {
-            RuntimeException actual = assertThrows(RuntimeException.class,
-                                                   () -> failingRegistry.emit("orders", Message.create("two")));
-            assertSame(expected, actual);
+            BatchDeliveryException actual = assertThrows(
+                    BatchDeliveryException.class,
+                    () -> failingRegistry.emit("orders", Message.create("two")));
+            assertThat(actual.outcome(0).status(), is(BatchItemStatus.INDETERMINATE));
+            assertThat(actual.getCause(), is(instanceOf(BatchDeliveryException.class)));
+            assertSame(expected, actual.getCause().getCause());
         } finally {
             failingRegistry.close();
+        }
+    }
+
+    @Test
+    void rejectsProcessorBatchThatCopiesPublicIdentityWithoutDeliveryLineage() {
+        ProcessorRegistration processor = batchProcessor(
+                "orders",
+                "audit",
+                "processor#forged-batch",
+                batch -> MessageBatch.<String>builder()
+                        .id(batch.id())
+                        .add(Message.create("SECOND"))
+                        .add(Message.create("FIRST"))
+                        .build());
+        AtomicBoolean targetInvoked = new AtomicBoolean();
+        ConsumerRegistration target = consumer("audit", "audit#consume", ignored -> targetInvoked.set(true));
+        ChannelRegistry registry = new ChannelRegistry(List.of(processor, target), Config.empty(), List.of());
+        try {
+            MessageBatch<String> input = MessageBatch.create(List.of(Message.create("first"),
+                                                                     Message.create("second")));
+
+            BatchDeliveryException failure = assertThrows(
+                    BatchDeliveryException.class,
+                    () -> registry.emitBatch("orders", input));
+
+            assertThat(failure.getCause().getMessage(), containsString("did not preserve batch delivery lineage"));
+            assertFalse(targetInvoked.get());
+        } finally {
+            registry.close();
         }
     }
 
@@ -528,8 +564,14 @@ class DeclarativeRegistrationTest {
             }
 
             @Override
-            public void dispatch(Message<?> message) {
-                consumer.accept(message);
+            public void dispatch(MessageBatch<?> batch) {
+                for (int i = 0; i < batch.size(); i++) {
+                    try {
+                        consumer.accept(batch.get(i));
+                    } catch (RuntimeException e) {
+                        throw BatchDeliveryException.sequential("Test consumer", batch, i, e);
+                    }
+                }
             }
         };
     }
@@ -610,8 +652,68 @@ class DeclarativeRegistrationTest {
             }
 
             @Override
-            public Message<?> process(Message<?> message) {
-                return processor.apply(message);
+            public MessageBatch<?> process(MessageBatch<?> batch) {
+                List<Message<?>> results = new ArrayList<>(batch.size());
+                for (int i = 0; i < batch.size(); i++) {
+                    try {
+                        results.add(processor.apply(batch.get(i)));
+                    } catch (RuntimeException e) {
+                        throw BatchDeliveryException.attemptedPrefix("Test processor", batch, i, e);
+                    }
+                }
+                return batch.derive(results);
+            }
+        };
+    }
+
+    private static ProcessorRegistration batchProcessor(String incoming,
+                                                        String outgoing,
+                                                        String handlerId,
+                                                        Function<MessageBatch<?>, MessageBatch<?>> processor) {
+        return new ProcessorRegistration() {
+            @Override
+            public String handlerId() {
+                return handlerId;
+            }
+
+            @Override
+            public String channel() {
+                return incoming;
+            }
+
+            @Override
+            public Class<?> payloadType() {
+                return String.class;
+            }
+
+            @Override
+            public GenericType<?> payloadGenericType() {
+                return STRING_TYPE;
+            }
+
+            @Override
+            public GenericType<?> envelopeGenericType() {
+                return STRING_MESSAGE_TYPE;
+            }
+
+            @Override
+            public String outgoingChannel() {
+                return outgoing;
+            }
+
+            @Override
+            public GenericType<?> outgoingPayloadGenericType() {
+                return STRING_TYPE;
+            }
+
+            @Override
+            public GenericType<?> outgoingEnvelopeGenericType() {
+                return STRING_MESSAGE_TYPE;
+            }
+
+            @Override
+            public MessageBatch<?> process(MessageBatch<?> batch) {
+                return processor.apply(batch);
             }
         };
     }

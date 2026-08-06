@@ -24,7 +24,9 @@ import java.lang.reflect.WildcardType;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -167,36 +169,19 @@ class ChannelRegistry implements MessagingRuntime {
     }
 
     /**
-     * Emit a message to a named channel.
-     * <p>
-     * This method returns only after every required output completes successfully. Output failures are propagated
-     * unchanged.
-     *
-     * @param channel channel name
-     * @param message message
-     * @param <T> payload type
-     * @throws MessagingException if the channel does not exist
-     * @throws RuntimeException if an output fails
-     */
-    @Override
-    public <T> void emit(String channel, Message<T> message) {
-        emitBatch(channel, List.of(message));
-    }
-
-    /**
      * Emit a batch of messages to a named channel.
      * <p>
      * This method returns only after every required output completes successfully. Output failures are propagated
      * unchanged.
      *
      * @param channel channel name
-     * @param messages messages
+     * @param messages immutable message batch
      * @param <T> payload type
      * @throws MessagingException if the channel does not exist
      * @throws RuntimeException if an output fails
      */
     @Override
-    public <T> void emitBatch(String channel, List<? extends Message<? extends T>> messages) {
+    public <T> void emitBatch(String channel, MessageBatch<? extends T> messages) {
         MessagingChannel<?> messagingChannel = channels.get(channel);
         if (messagingChannel == null) {
             throw new MessagingException("Unknown messaging channel " + channel);
@@ -512,10 +497,6 @@ class ChannelRegistry implements MessagingRuntime {
                                                   Set<String> outputChannels) {
         for (ConsumerRegistration registration : consumerRegistrations) {
             if (registration instanceof ProcessorRegistration processor) {
-                if (processor.batch()) {
-                    throw new IllegalArgumentException("Messaging processor " + processor.handlerId()
-                                                               + " cannot consume a batch");
-                }
                 validateGeneratedProducerTarget("processor",
                                                 processor.handlerId(),
                                                 processor.outgoingChannel(),
@@ -593,45 +574,49 @@ class ChannelRegistry implements MessagingRuntime {
         DefaultMessagingChannel.Builder<Object> builder = new DefaultMessagingChannel.Builder<>();
         builder.messagingGraph(graph, channel, executionConfig(config, channel))
                 .payloadType(payloadType);
-        builder.addBatchOutput(messages -> validateMessageTypes(consumerRegistrations, messages));
+        builder.addBatchValidator(messages -> validateMessageTypes(consumerRegistrations, messages));
         for (ConsumerRegistration consumer : consumerRegistrations) {
             if (consumer instanceof ProcessorRegistration processor) {
-                builder.addOutput(message -> processAndRoute(processor, message));
-            } else if (consumer.batch()) {
-                builder.addBatchOutput(messages -> dispatchBatch(consumer, messages));
+                builder.addBatchOutput(messages -> processAndRoute(processor, messages));
             } else {
-                builder.addOutput(consumer::dispatch);
+                builder.addBatchOutput(consumer::dispatch);
             }
         }
         return builder.build();
     }
 
-    private void processAndRoute(ProcessorRegistration processor, Message<?> message) {
-        Message<?> result = processor.process(message);
+    private void processAndRoute(ProcessorRegistration processor, MessageBatch<?> messages) {
+        MessageBatch<?> result = processor.process(messages);
         if (result == null) {
-            throw new MessagingException("Messaging processor " + processor.handlerId() + " returned a null message");
+            throw new MessagingException("Messaging processor " + processor.handlerId() + " returned a null batch");
+        }
+        if (!messages.sameDelivery(result)) {
+            throw new MessagingException("Messaging processor " + processor.handlerId()
+                                                 + " did not preserve batch delivery lineage");
         }
         Class<?> outgoingEnvelopeType = processor.outgoingEnvelopeType();
-        if (!outgoingEnvelopeType.isInstance(result)) {
-            throw new MessagingException("Messaging processor " + processor.handlerId()
-                                                 + " declared outgoing envelope type "
-                                                 + outgoingEnvelopeType.getName()
-                                                 + " but returned " + result.getClass().getName());
-        }
-        Object entity = result.entity();
         Class<?> outgoingPayloadType = processor.outgoingPayloadType();
-        if (entity != null && !outgoingPayloadType.isInstance(entity)) {
-            throw new MessagingException("Messaging processor " + processor.handlerId()
-                                                 + " declared outgoing payload type "
-                                                 + outgoingPayloadType.getName()
-                                                 + " but returned " + entity.getClass().getName());
+        for (Message<?> message : result) {
+            if (!outgoingEnvelopeType.isInstance(message)) {
+                throw new MessagingException("Messaging processor " + processor.handlerId()
+                                                     + " declared outgoing envelope type "
+                                                     + outgoingEnvelopeType.getName()
+                                                     + " but returned " + message.getClass().getName());
+            }
+            Object entity = message.entity();
+            if (entity != null && !outgoingPayloadType.isInstance(entity)) {
+                throw new MessagingException("Messaging processor " + processor.handlerId()
+                                                     + " declared outgoing payload type "
+                                                     + outgoingPayloadType.getName()
+                                                     + " but returned " + entity.getClass().getName());
+            }
         }
         MessagingChannel<?> target = channels.get(processor.outgoingChannel());
         if (target == null) {
             throw new MessagingException("Unknown messaging processor target channel "
                                                  + processor.outgoingChannel());
         }
-        emitBatch(target, List.of(result));
+        emitBatch(target, result);
     }
 
     private MessagingChannel<?> createConfiguredChannel(Config config, String channel) {
@@ -642,12 +627,29 @@ class ChannelRegistry implements MessagingRuntime {
     }
 
     private <T> void emitBatch(MessagingChannel<?> messagingChannel,
-                               List<? extends Message<? extends T>> messages) {
+                               MessageBatch<? extends T> messages) {
         if (!(messagingChannel instanceof DefaultMessagingChannel<?> defaultMessagingChannel)) {
             throw new MessagingException("Unsupported messaging channel implementation "
                                                  + messagingChannel.getClass().getName());
         }
         defaultMessagingChannel.emitBatchObject(messages);
+    }
+
+    private <T> void emitRoutedBatch(MessagingChannel<?> messagingChannel,
+                                     MessageBatch<? extends T> messages) {
+        if (!(messagingChannel instanceof DefaultMessagingChannel<?> defaultMessagingChannel)) {
+            throw new MessagingException("Unsupported messaging channel implementation "
+                                                 + messagingChannel.getClass().getName());
+        }
+        defaultMessagingChannel.emitRoutedBatchObject(messages);
+    }
+
+    private <T> void emitRoutedBatch(String channel, MessageBatch<? extends T> messages) {
+        MessagingChannel<?> messagingChannel = channels.get(channel);
+        if (messagingChannel == null) {
+            throw new MessagingException("Unknown messaging channel " + channel);
+        }
+        emitRoutedBatch(messagingChannel, messages);
     }
 
     private GenericType<?> payloadType(String channel, List<ConsumerRegistration> consumerRegistrations) {
@@ -866,21 +868,16 @@ class ChannelRegistry implements MessagingRuntime {
         }
     }
 
-    private void validateMessageTypes(ConsumerRegistration consumer, List<? extends Message<?>> messages) {
-        for (Message<?> message : messages) {
+    private void validateMessageTypes(ConsumerRegistration consumer, MessageBatch<?> messages) {
+        for (Message<?> message : messages.messages()) {
             validateMessageType(consumer, message);
         }
     }
 
-    private void validateMessageTypes(List<ConsumerRegistration> consumers, List<? extends Message<?>> messages) {
+    private void validateMessageTypes(List<ConsumerRegistration> consumers, MessageBatch<?> messages) {
         for (ConsumerRegistration consumer : consumers) {
             validateMessageTypes(consumer, messages);
         }
-    }
-
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private void dispatchBatch(ConsumerRegistration consumer, List<? extends Message<?>> messages) {
-        consumer.dispatchBatch((List) messages);
     }
 
     private List<OutgoingBinding> prepareOutgoingBindings(Config root,
@@ -1271,64 +1268,118 @@ class ChannelRegistry implements MessagingRuntime {
         }
 
         @Override
-        public <T> void emitBatch(List<? extends Message<T>> messages) {
+        public <T> void emitBatch(MessageBatch<T> messages) {
             ChannelRegistry.this.emitBatch(channel, messages);
         }
 
         @Override
-        public <T> ConnectorDelivery submitDelivery(List<? extends Message<T>> messages,
-                                                    long admissionBytes,
-                                                    Runnable delivery) {
-            return deliveryEngine.submitConnectorDelivery(channel, messages, admissionBytes, delivery);
+        public <T> ConnectorDelivery submitDelivery(MessageBatch<T> messages, Runnable delivery) {
+            return deliveryEngine.submitConnectorDelivery(channel, messages, delivery);
         }
 
         @Override
-        public <T> Optional<ConnectorDelivery> trySubmitDelivery(List<? extends Message<T>> messages,
-                                                                 long admissionBytes,
-                                                                 Runnable delivery) {
-            return deliveryEngine.trySubmitConnectorDelivery(channel, messages, admissionBytes, delivery);
+        public <T> Optional<ConnectorDelivery> trySubmitDelivery(MessageBatch<T> messages, Runnable delivery) {
+            return deliveryEngine.trySubmitConnectorDelivery(channel, messages, delivery);
         }
 
         @Override
-        public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+        public <T> FailureResult handleFailure(MessageBatch<T> messages,
                                                int failedAttempt,
                                                RuntimeException failure) {
             if (failedAttempt < 1) {
                 throw new IllegalArgumentException("failedAttempt must be greater than zero");
             }
+            RuntimeException alignedFailure = BatchDeliveryException.align(messages, failure);
             if (failurePolicy.maxAttempts() == 0 || failedAttempt < failurePolicy.maxAttempts()) {
                 return FailureResult.RETRY;
             }
 
             return switch (failurePolicy.onExhausted()) {
-            case FAIL -> throw failure;
+            case FAIL -> throw alignedFailure;
             case DROP -> {
                 LOGGER.log(System.Logger.Level.WARNING,
                            "Messaging delivery failed after " + failedAttempt
                                    + " attempt(s); dropping " + messages.size()
                                    + " message(s) from channel " + channel,
-                           failure);
+                           alignedFailure);
                 yield FailureResult.SETTLED;
             }
             case DEAD_LETTER -> {
                 String target = failurePolicy.deadLetterChannel().orElseThrow();
                 List<DeadLetterMessage<T>> deadLetters = new ArrayList<>(messages.size());
-                for (Message<T> message : messages) {
-                    deadLetters.add(DeadLetterMessage.create(message, channel, failedAttempt, failure));
+                for (int i = 0; i < messages.size(); i++) {
+                    deadLetters.add(DeadLetterMessage.create(messages.get(i),
+                                                             channel,
+                                                             failedAttempt,
+                                                             deadLetterFailure(messages, i, alignedFailure)));
                 }
+                MessageBatch<T> deadLetterBatch = null;
                 try {
-                    ChannelRegistry.this.emitBatch(target, deadLetters);
+                    deadLetterBatch = deadLetterBatch(messages, deadLetters, target);
+                    ChannelRegistry.this.emitRoutedBatch(target, deadLetterBatch);
                 } catch (RuntimeException routeFailure) {
-                    MessagingException result = new MessagingException(
-                            "Dead-letter delivery from channel " + channel
-                                    + " to channel " + target + " failed",
-                            routeFailure);
-                    result.addSuppressed(failure);
+                    RuntimeException result;
+                    if (deadLetterBatch != null
+                            && routeFailure instanceof BatchDeliveryException batchFailure
+                            && deadLetterBatch.sameDelivery(batchFailure.batch())) {
+                        result = new BatchDeliveryException(
+                                "Dead-letter delivery from channel " + channel + " to channel " + target + " failed",
+                                messages,
+                                batchFailure.outcomes(),
+                                batchFailure);
+                    } else {
+                        result = BatchDeliveryException.indeterminate(
+                                "Dead-letter delivery from channel " + channel + " to channel " + target,
+                                messages,
+                                routeFailure);
+                    }
+                    result.addSuppressed(alignedFailure);
                     throw result;
                 }
                 yield FailureResult.SETTLED;
             }
             };
+        }
+
+        private <T> MessageBatch<T> deadLetterBatch(MessageBatch<T> source,
+                                                    List<? extends Message<? extends T>> deadLetters,
+                                                    String target) {
+            OptionalLong sourceAdmission = source.admissionBytes();
+            if (sourceAdmission.isEmpty()) {
+                return source.derive(deadLetters);
+            }
+            long admissionBytes = sourceAdmission.getAsLong();
+            try {
+                for (Message<? extends T> deadLetter : deadLetters) {
+                    admissionBytes = Math.addExact(admissionBytes, MessageSizes.headersBytes(deadLetter.headers()));
+                }
+            } catch (ArithmeticException e) {
+                throw new MessagingRejectedException(
+                        target,
+                        MessagingRejectedException.Reason.OVERSIZED,
+                        "Dead-letter batch admission size exceeds the supported range on channel " + target,
+                        e);
+            }
+            return source.derive(deadLetters, admissionBytes);
+        }
+
+        private RuntimeException deadLetterFailure(MessageBatch<?> batch,
+                                                   int index,
+                                                   RuntimeException failure) {
+            Set<RuntimeException> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+            RuntimeException current = failure;
+            while (visited.add(current) && current instanceof BatchDeliveryException batchFailure) {
+                int failureIndex = batch.lineageIndexIn(batchFailure.batch(), index);
+                if (failureIndex < 0) {
+                    break;
+                }
+                Throwable itemFailure = batchFailure.outcome(failureIndex).failure().orElse(batchFailure.getCause());
+                if (!(itemFailure instanceof RuntimeException nested)) {
+                    break;
+                }
+                current = nested;
+            }
+            return current;
         }
     }
 

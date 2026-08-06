@@ -19,6 +19,7 @@ package io.helidon.extensions.messaging.connectors.kafka;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +37,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
+import io.helidon.extensions.messaging.BatchDeliveryException;
+import io.helidon.extensions.messaging.BatchItemOutcome;
+import io.helidon.extensions.messaging.BatchItemStatus;
 import io.helidon.extensions.messaging.ConnectorConfig;
 import io.helidon.extensions.messaging.ConnectorDelivery;
 import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
@@ -45,6 +49,7 @@ import io.helidon.extensions.messaging.DeadLetterMessage;
 import io.helidon.extensions.messaging.FailurePolicy;
 import io.helidon.extensions.messaging.IncomingEndpoint;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.MessagingRejectedException;
 
@@ -481,7 +486,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> batch) {
                 handlerStarted.countDown();
                 try {
                     allowSettlement.await();
@@ -538,7 +543,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> batch) {
                 handlerStarted.countDown();
                 try {
                     allowHandlerToFinish.await();
@@ -608,7 +613,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> batch) {
                 dispatchAttempts.incrementAndGet();
                 handlerStarted.countDown();
                 try {
@@ -622,7 +627,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
                                                    int failedAttempt,
                                                    RuntimeException failure) {
                 failurePolicyCalls.incrementAndGet();
@@ -686,7 +691,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> batch) {
                 handlerStarted.countDown();
                 try {
                     while (releaseHandler.getCount() != 0) {
@@ -709,10 +714,9 @@ class KafkaIncomingConnectorTest {
                         .orElseThrow();
                 return Optional.of(new ForwardingReservation(delegate) {
                     @Override
-                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                                    long admissionBytes,
+                    public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch,
                                                                     Runnable delivery) {
-                        return super.tryStart(messages, admissionBytes, delivery)
+                        return super.tryStart(batch, delivery)
                                 .map(deliveryTask -> new TrackingDelivery(deliveryTask, deliveryCloses));
                     }
                 });
@@ -758,6 +762,7 @@ class KafkaIncomingConnectorTest {
         ConsumerRecord<Object, Object> fourth = record(SECOND_TOPIC_PARTITION, 10, "fourth", new RecordHeaders());
         scheduleRecords(consumer, first, second, third, fourth);
         List<List<Message<?>>> attempts = new ArrayList<>();
+        List<String> batchIds = new ArrayList<>();
         ConnectorSourceContext context = new ConnectorSourceContext() {
             @Override
             public String channelName() {
@@ -770,8 +775,9 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
-                attempts.add(List.copyOf(messages));
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                batchIds.add(batch.id());
+                attempts.add(List.copyOf(batch.messages()));
                 if (attempts.size() == 1) {
                     throw new IllegalStateException("dispatch failed");
                 }
@@ -783,7 +789,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
                                                    int failedAttempt,
                                                    RuntimeException failure) {
                 return FailureResult.RETRY;
@@ -805,11 +811,556 @@ class KafkaIncomingConnectorTest {
                            .toList(),
                    is(List.of(expectedAttempt, expectedAttempt)));
         assertThat(attempts.getFirst().stream().allMatch(KafkaMessage.class::isInstance), is(true));
+        assertThat(batchIds.size(), is(2));
+        assertThat(batchIds.get(1), is(batchIds.getFirst()));
         for (int i = 0; i < attempts.getFirst().size(); i++) {
             assertThat(attempts.get(1).get(i), sameInstance(attempts.getFirst().get(i)));
         }
         assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(6L));
         assertThat(consumer.committedOffsets().get(SECOND_TOPIC_PARTITION).offset(), is(11L));
+        assertThat(consumer.commitCount(), is(1));
+        assertThat(consumer.closed(), is(true));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testAllNotAttemptedPollInvokesFailurePolicy() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer,
+                        record(TOPIC_PARTITION, 4, "first", new RecordHeaders()),
+                        record(TOPIC_PARTITION, 5, "second", new RecordHeaders()));
+        AtomicInteger deliveries = new AtomicInteger();
+        AtomicInteger handled = new AtomicInteger();
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "audit";
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                deliveries.incrementAndGet();
+                throw BatchDeliveryException.notAttempted(
+                        "Expected pre-dispatch rejection",
+                        batch,
+                        new MessagingRejectedException("target", MessagingRejectedException.Reason.OVERSIZED));
+            }
+
+            @Override
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                handled.incrementAndGet();
+                assertThat(failedAttempt, is(1));
+                assertThat(failure, instanceOf(BatchDeliveryException.class));
+                BatchDeliveryException batchFailure = (BatchDeliveryException) failure;
+                assertThat(batchFailure.batch(), sameInstance(batch));
+                assertThat(batchFailure.outcomes().stream().map(BatchItemOutcome::status).toList(),
+                           is(List.of(BatchItemStatus.NOT_ATTEMPTED, BatchItemStatus.NOT_ATTEMPTED)));
+                return FailureResult.SETTLED;
+            }
+        };
+        AtomicReference<IncomingEndpointHarness> connectorRef = new AtomicReference<>();
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+        connectorRef.set(connector);
+        consumer.afterCommit(() -> connectorRef.get().close());
+
+        connector.createIncomingEndpoint(config(), context).run();
+
+        assertThat(deliveries.get(), is(1));
+        assertThat(handled.get(), is(1));
+        assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(6L));
+        assertThat(consumer.commitCount(), is(1));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testStructuredFailureRetriesOnlyUnresolvedMessagesWithStableBatchIdentity() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer,
+                        record(TOPIC_PARTITION, 4, "p0-first", new RecordHeaders(), 14),
+                        record(TOPIC_PARTITION, 5, "p0-failed", new RecordHeaders(), 15),
+                        record(TOPIC_PARTITION, 6, "p0-later-success", new RecordHeaders(), 16),
+                        record(SECOND_TOPIC_PARTITION, 9, "p1-first", new RecordHeaders(), 19),
+                        record(SECOND_TOPIC_PARTITION, 10, "p1-failed", new RecordHeaders(), 20));
+        List<MessageBatch<?>> deliveries = new ArrayList<>();
+        AtomicReference<MessageBatch<?>> failureBatch = new AtomicReference<>();
+        AtomicInteger commitsAtRetry = new AtomicInteger(-1);
+        IllegalStateException itemFailure = new IllegalStateException("partial dispatch failed");
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "audit";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+                throw new AssertionError("Kafka source must emit a poll as a batch");
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                deliveries.add(batch);
+                if (deliveries.size() != 1) {
+                    commitsAtRetry.set(consumer.commitCount());
+                    return;
+                }
+                List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
+                for (int i = 0; i < batch.size(); i++) {
+                    KafkaMessage<?, ?> message = (KafkaMessage<?, ?>) batch.get(i);
+                    long offset = message.offset().orElseThrow();
+                    outcomes.add(offset == 4 || offset == 6 || offset == 9
+                                         ? BatchItemOutcome.succeeded(i)
+                                         : BatchItemOutcome.failed(i, itemFailure));
+                }
+                throw new BatchDeliveryException("Expected partial dispatch failure",
+                                                 batch,
+                                                 outcomes,
+                                                 itemFailure);
+            }
+
+            @Override
+            public FailurePolicy failurePolicy() {
+                return KafkaIncomingConnectorTest.failurePolicy(Duration.ofNanos(1));
+            }
+
+            @Override
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                failureBatch.set(batch);
+                assertThat(failure, instanceOf(BatchDeliveryException.class));
+                BatchDeliveryException batchFailure = (BatchDeliveryException) failure;
+                assertThat(batchFailure.batch(), sameInstance(batch));
+                assertThat(batchFailure.outcomes().stream().map(BatchItemOutcome::index).toList(),
+                           is(List.of(0, 1)));
+                assertThat(batchFailure.outcomes().stream().map(BatchItemOutcome::status).toList(),
+                           is(List.of(BatchItemStatus.FAILED, BatchItemStatus.FAILED)));
+                assertThat(batchFailure.outcomes().stream()
+                                   .map(outcome -> outcome.failure().orElseThrow())
+                                   .toList(),
+                           is(List.of(itemFailure, itemFailure)));
+                return FailureResult.RETRY;
+            }
+        };
+        AtomicReference<IncomingEndpointHarness> connectorRef = new AtomicReference<>();
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+        connectorRef.set(connector);
+        consumer.afterCommit(() -> connectorRef.get().close());
+
+        connector.createIncomingEndpoint(config(), context).run();
+
+        assertThat(deliveries.size(), is(2));
+        MessageBatch<?> original = deliveries.getFirst();
+        MessageBatch<?> retry = deliveries.get(1);
+        assertThat(retry, sameInstance(failureBatch.get()));
+        assertThat(retry.id(), is(original.id()));
+        assertThat(retry.size(), is(2));
+        assertThat("the retained poll is not committed between in-memory retries", commitsAtRetry.get(), is(0));
+        assertThat(kafkaPositions(retry), is(Set.of("0:5", "1:10")));
+        Map<String, Message<?>> originals = new LinkedHashMap<>();
+        original.messages().forEach(message -> originals.put(kafkaPosition(message), message));
+        retry.messages().forEach(message -> assertThat(message, sameInstance(originals.get(kafkaPosition(message)))));
+        assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(7L));
+        assertThat(consumer.committedOffsets().get(SECOND_TOPIC_PARTITION).offset(), is(11L));
+        assertThat(consumer.commitCount(), is(1));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testRetryProcessesAttemptedFailureBeforeNotAttemptedRemainder() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer,
+                        record(TOPIC_PARTITION, 4, "poison", new RecordHeaders()),
+                        record(TOPIC_PARTITION, 5, "healthy", new RecordHeaders()));
+        IllegalStateException itemFailure = new IllegalStateException("poison failed");
+        List<MessageBatch<?>> deliveries = new ArrayList<>();
+        List<MessageBatch<?>> handled = new ArrayList<>();
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "audit";
+            }
+
+            @Override
+            public FailurePolicy failurePolicy() {
+                return KafkaIncomingConnectorTest.failurePolicy(Duration.ofNanos(1));
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                deliveries.add(batch);
+                if (deliveries.size() == 1) {
+                    throw BatchDeliveryException.sequential("Expected poison failure", batch, 0, itemFailure);
+                }
+            }
+
+            @Override
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                handled.add(batch);
+                return FailureResult.RETRY;
+            }
+        };
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+        consumer.afterCommit(connector::close);
+
+        connector.createIncomingEndpoint(config(), context).run();
+
+        assertThat(deliveries.stream().map(KafkaIncomingConnectorTest::kafkaPositions).toList(),
+                   is(List.of(Set.of("0:4", "0:5"), Set.of("0:4"), Set.of("0:5"))));
+        assertThat(handled, is(List.of(deliveries.get(1))));
+        assertThat(deliveries.getFirst().subset(List.of(0)).sameDelivery(deliveries.get(1)), is(true));
+        assertThat(deliveries.getFirst().subset(List.of(1)).sameDelivery(deliveries.get(2)), is(true));
+        assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(6L));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testDeferredSubsetRetainsEarlierFailedAttemptCount() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer,
+                        record(TOPIC_PARTITION, 4, "first", new RecordHeaders()),
+                        record(TOPIC_PARTITION, 5, "second", new RecordHeaders()));
+        IllegalStateException itemFailure = new IllegalStateException("expected downstream failure");
+        List<MessageBatch<?>> deliveries = new ArrayList<>();
+        List<MessageBatch<?>> handled = new ArrayList<>();
+        List<Integer> failedAttempts = new ArrayList<>();
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "audit";
+            }
+
+            @Override
+            public FailurePolicy failurePolicy() {
+                return KafkaIncomingConnectorTest.failurePolicy(Duration.ofNanos(1));
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                deliveries.add(batch);
+                if (deliveries.size() == 1) {
+                    throw BatchDeliveryException.indeterminate("Expected initial failure", batch, itemFailure);
+                }
+                if (deliveries.size() == 2) {
+                    throw BatchDeliveryException.sequential("Expected deferred second item",
+                                                            batch,
+                                                            0,
+                                                            itemFailure);
+                }
+                throw itemFailure;
+            }
+
+            @Override
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                handled.add(batch);
+                failedAttempts.add(failedAttempt);
+                return handled.size() == 1 ? FailureResult.RETRY : FailureResult.SETTLED;
+            }
+        };
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+        consumer.afterCommit(connector::close);
+
+        connector.createIncomingEndpoint(config(), context).run();
+
+        assertThat(deliveries.stream().map(KafkaIncomingConnectorTest::kafkaPositions).toList(),
+                   is(List.of(Set.of("0:4", "0:5"), Set.of("0:4", "0:5"), Set.of("0:5"))));
+        assertThat(handled.stream().map(KafkaIncomingConnectorTest::kafkaPositions).toList(),
+                   is(List.of(Set.of("0:4", "0:5"), Set.of("0:4"), Set.of("0:5"))));
+        assertThat(failedAttempts, is(List.of(1, 2, 2)));
+        assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(6L));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testTerminalSettlementProcessesNotAttemptedRemainderNormally() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer,
+                        record(TOPIC_PARTITION, 4, "poison", new RecordHeaders()),
+                        record(TOPIC_PARTITION, 5, "healthy", new RecordHeaders()));
+        IllegalStateException itemFailure = new IllegalStateException("poison failed");
+        List<MessageBatch<?>> deliveries = new ArrayList<>();
+        AtomicReference<MessageBatch<?>> handled = new AtomicReference<>();
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "audit";
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                deliveries.add(batch);
+                if (deliveries.size() == 1) {
+                    throw BatchDeliveryException.sequential("Expected poison failure", batch, 0, itemFailure);
+                }
+            }
+
+            @Override
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                handled.set(batch);
+                return FailureResult.SETTLED;
+            }
+        };
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+        consumer.afterCommit(connector::close);
+
+        connector.createIncomingEndpoint(config(), context).run();
+
+        assertThat(deliveries.stream().map(KafkaIncomingConnectorTest::kafkaPositions).toList(),
+                   is(List.of(Set.of("0:4", "0:5"), Set.of("0:5"))));
+        assertThat(kafkaPositions(handled.get()), is(Set.of("0:4")));
+        assertThat(deliveries.getFirst().subset(List.of(0)).sameDelivery(handled.get()), is(true));
+        assertThat(deliveries.getFirst().subset(List.of(1)).sameDelivery(deliveries.get(1)), is(true));
+        assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(6L));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testStructuredFailureMapsOriginalIndexesAcrossMultipleSubsetRetries() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer,
+                        record(TOPIC_PARTITION, 4, "first", new RecordHeaders()),
+                        record(TOPIC_PARTITION, 5, "second", new RecordHeaders()),
+                        record(TOPIC_PARTITION, 6, "third", new RecordHeaders()),
+                        record(TOPIC_PARTITION, 7, "fourth", new RecordHeaders()));
+        List<MessageBatch<?>> deliveries = new ArrayList<>();
+        List<MessageBatch<?>> handled = new ArrayList<>();
+        IllegalStateException itemFailure = new IllegalStateException("partial dispatch failed");
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "audit";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+                throw new AssertionError("Kafka source must emit a poll as a batch");
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                deliveries.add(batch);
+                if (deliveries.size() == 1) {
+                    throw new BatchDeliveryException(
+                            "Expected first partial failure",
+                            batch,
+                            List.of(BatchItemOutcome.succeeded(0),
+                                    BatchItemOutcome.failed(1, itemFailure),
+                                    BatchItemOutcome.succeeded(2),
+                                    BatchItemOutcome.failed(3, itemFailure)),
+                            itemFailure);
+                }
+                if (deliveries.size() == 2) {
+                    throw new BatchDeliveryException(
+                            "Expected second partial failure",
+                            batch,
+                            List.of(BatchItemOutcome.succeeded(0),
+                                    BatchItemOutcome.failed(1, itemFailure)),
+                            itemFailure);
+                }
+            }
+
+            @Override
+            public FailurePolicy failurePolicy() {
+                return KafkaIncomingConnectorTest.failurePolicy(Duration.ofNanos(1));
+            }
+
+            @Override
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                handled.add(batch);
+                return FailureResult.RETRY;
+            }
+        };
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+        consumer.afterCommit(connector::close);
+
+        connector.createIncomingEndpoint(config(), context).run();
+
+        assertThat(deliveries.stream().map(MessageBatch::size).toList(), is(List.of(4, 2, 1)));
+        assertThat(handled, is(List.of(deliveries.get(1), deliveries.get(2))));
+        assertThat(deliveries.stream().map(MessageBatch::id).distinct().count(), is(1L));
+        assertThat(kafkaPositions(deliveries.get(1)), is(Set.of("0:5", "0:7")));
+        assertThat(kafkaPositions(deliveries.get(2)), is(Set.of("0:7")));
+        assertThat(deliveries.get(2).get(0), sameInstance(deliveries.getFirst().get(3)));
+        assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(8L));
+        assertThat(consumer.commitCount(), is(1));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testUnsettledStructuredFailureCommitsOnlyContiguousPartitionPrefixes() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer,
+                        record(TOPIC_PARTITION, 4, "p0-first", new RecordHeaders(), 14),
+                        record(TOPIC_PARTITION, 5, "p0-failed", new RecordHeaders(), 15),
+                        record(TOPIC_PARTITION, 6, "p0-later-success", new RecordHeaders(), 16),
+                        record(SECOND_TOPIC_PARTITION, 9, "p1-first", new RecordHeaders(), 19),
+                        record(SECOND_TOPIC_PARTITION, 10, "p1-failed", new RecordHeaders(), 20));
+        IllegalStateException itemFailure = new IllegalStateException("partial dispatch failed");
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "audit";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+                throw new AssertionError("Kafka source must emit a poll as a batch");
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
+                for (int i = 0; i < batch.size(); i++) {
+                    KafkaMessage<?, ?> message = (KafkaMessage<?, ?>) batch.get(i);
+                    long offset = message.offset().orElseThrow();
+                    outcomes.add(offset == 4 || offset == 6 || offset == 9
+                                         ? BatchItemOutcome.succeeded(i)
+                                         : BatchItemOutcome.failed(i, itemFailure));
+                }
+                throw new BatchDeliveryException("Expected partial dispatch failure",
+                                                 batch,
+                                                 outcomes,
+                                                 itemFailure);
+            }
+        };
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+
+        BatchDeliveryException failure = assertThrows(
+                BatchDeliveryException.class,
+                () -> connector.createIncomingEndpoint(config(), context).run());
+
+        assertThat(failure.getCause(), sameInstance(itemFailure));
+        assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(5L));
+        assertThat(consumer.committedOffsets().get(SECOND_TOPIC_PARTITION).offset(), is(10L));
+        assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).leaderEpoch(), is(Optional.of(14)));
+        assertThat(consumer.committedOffsets().get(SECOND_TOPIC_PARTITION).leaderEpoch(), is(Optional.of(19)));
+        assertThat(consumer.seekOffsets().get(TOPIC_PARTITION), is(5L));
+        assertThat(consumer.seekOffsets().get(SECOND_TOPIC_PARTITION), is(10L));
+        assertThat(consumer.commitCount(), is(1));
+        assertThat(consumer.closed(), is(true));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testPartialSettlementFailureIsSuppressedOnOriginalDeliveryFailure() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer,
+                        record(TOPIC_PARTITION, 4, "succeeded", new RecordHeaders()),
+                        record(TOPIC_PARTITION, 5, "failed", new RecordHeaders()));
+        IllegalStateException itemFailure = new IllegalStateException("partial dispatch failed");
+        IllegalStateException settlementFailure = new IllegalStateException("partial commit failed");
+        consumer.failCommit(settlementFailure);
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "audit";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+                throw new AssertionError("Kafka source must emit a poll as a batch");
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                throw new BatchDeliveryException(
+                        "Expected partial dispatch failure",
+                        batch,
+                        List.of(BatchItemOutcome.succeeded(0),
+                                BatchItemOutcome.failed(1, itemFailure)),
+                        itemFailure);
+            }
+        };
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+
+        BatchDeliveryException failure = assertThrows(
+                BatchDeliveryException.class,
+                () -> connector.createIncomingEndpoint(config(), context).run());
+
+        assertThat(failure.getCause(), sameInstance(itemFailure));
+        assertThat(failure.getSuppressed().length, is(1));
+        assertThat(failure.getSuppressed()[0], sameInstance(settlementFailure));
+        assertThat(consumer.commitCount(), is(0));
+        assertThat("failed partial commit must not seek past the unresolved record",
+                   consumer.seekOffsets().get(TOPIC_PARTITION),
+                   is(4L));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testPartialTerminalHandlingAdvancesSettlementBeforePropagatingItsFailure() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer,
+                        record(TOPIC_PARTITION, 4, "handled", new RecordHeaders()),
+                        record(TOPIC_PARTITION, 5, "dead-lettered", new RecordHeaders()),
+                        record(TOPIC_PARTITION, 6, "dead-letter-failed", new RecordHeaders()),
+                        record(TOPIC_PARTITION, 7, "dead-letter-not-attempted", new RecordHeaders()));
+        IllegalStateException dispatchFailure = new IllegalStateException("dispatch failed");
+        IllegalStateException deadLetterFailure = new IllegalStateException("dead-letter send failed");
+        AtomicReference<String> originalBatchId = new AtomicReference<>();
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "audit";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+                throw new AssertionError("Kafka source must emit a poll as a batch");
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                originalBatchId.set(batch.id());
+                throw new BatchDeliveryException(
+                        "Expected partial dispatch failure",
+                        batch,
+                        List.of(BatchItemOutcome.succeeded(0),
+                                BatchItemOutcome.failed(1, dispatchFailure),
+                                BatchItemOutcome.failed(2, dispatchFailure),
+                                BatchItemOutcome.failed(3, dispatchFailure)),
+                        dispatchFailure);
+            }
+
+            @Override
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                assertThat(batch.id(), is(originalBatchId.get()));
+                assertThat(kafkaPositions(batch), is(Set.of("0:5", "0:6", "0:7")));
+                List<DeadLetterMessage<T>> deadLetters = batch.messages()
+                        .stream()
+                        .map(message -> DeadLetterMessage.create(message,
+                                                                 "audit",
+                                                                 failedAttempt,
+                                                                 failure))
+                        .toList();
+                MessageBatch<T> deadLetterBatch = batch.derive(deadLetters);
+                assertThat(batch.sameDelivery(deadLetterBatch), is(true));
+                throw BatchDeliveryException.sequential("Expected partial terminal handling failure",
+                                                        deadLetterBatch,
+                                                        1,
+                                                        deadLetterFailure);
+            }
+        };
+        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
+
+        BatchDeliveryException failure = assertThrows(
+                BatchDeliveryException.class,
+                () -> connector.createIncomingEndpoint(config(), context).run());
+
+        assertThat(failure.getCause(), sameInstance(deadLetterFailure));
+        assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(6L));
+        assertThat(consumer.seekOffsets().get(TOPIC_PARTITION), is(6L));
         assertThat(consumer.commitCount(), is(1));
         assertThat(consumer.closed(), is(true));
     }
@@ -1006,7 +1557,7 @@ class KafkaIncomingConnectorTest {
         connector.createIncomingEndpoint(config(),
                                new RecordingContext(new ArrayList<>()) {
                                    @Override
-                                   public <T> void emitBatch(List<? extends Message<T>> messages) {
+                                   public <T> void emitBatch(MessageBatch<T> batch) {
                                        dispatches.incrementAndGet();
                                    }
                                })
@@ -1043,7 +1594,7 @@ class KafkaIncomingConnectorTest {
                                 config(Map.of(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "25")),
                                 new RecordingContext(new ArrayList<>()) {
                                     @Override
-                                    public <T> void emitBatch(List<? extends Message<T>> messages) {
+                                    public <T> void emitBatch(MessageBatch<T> batch) {
                                         dispatches.incrementAndGet();
                                     }
                                 })
@@ -1076,7 +1627,7 @@ class KafkaIncomingConnectorTest {
                 () -> connector.createIncomingEndpoint(config(),
                                              new RecordingContext(new ArrayList<>()) {
                                                  @Override
-                                                 public <T> void emitBatch(List<? extends Message<T>> messages) {
+                                                 public <T> void emitBatch(MessageBatch<T> batch) {
                                                      dispatches.incrementAndGet();
                                                  }
                                              })
@@ -1109,7 +1660,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> batch) {
                 throw processingFailure;
             }
         };
@@ -1141,14 +1692,13 @@ class KafkaIncomingConnectorTest {
                         .orElseThrow();
                 return Optional.of(new ForwardingReservation(delegate) {
                     @Override
-                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                                    long admissionBytes,
+                    public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch,
                                                                     Runnable delivery) {
                         if (admissionAttempts.incrementAndGet() < 3) {
                             return Optional.empty();
                         }
                         pollsAtAdmission.set(consumer.pollCount());
-                        return super.tryStart(messages, admissionBytes, delivery);
+                        return super.tryStart(batch, delivery);
                     }
                 });
             }
@@ -1183,8 +1733,7 @@ class KafkaIncomingConnectorTest {
                         .orElseThrow();
                 return Optional.of(new ForwardingReservation(delegate) {
                     @Override
-                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                                    long admissionBytes,
+                    public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch,
                                                                     Runnable delivery) {
                         return Optional.empty();
                     }
@@ -1396,7 +1945,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> batch) {
             }
 
             @Override
@@ -1420,12 +1969,11 @@ class KafkaIncomingConnectorTest {
                         .orElseThrow();
                 return Optional.of(new ForwardingReservation(delegate) {
                     @Override
-                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                                    long admissionBytes,
+                    public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch,
                                                                     Runnable delivery) {
-                        actualMessages.set(messages.size());
-                        actualBytes.set(admissionBytes);
-                        Optional<ConnectorDelivery> started = super.tryStart(messages, admissionBytes, delivery);
+                        actualMessages.set(batch.size());
+                        actualBytes.set(batch.admissionBytes().orElseThrow());
+                        Optional<ConnectorDelivery> started = super.tryStart(batch, delivery);
                         if (started.isPresent()) {
                             reservationOpen.set(false);
                         }
@@ -1527,11 +2075,10 @@ class KafkaIncomingConnectorTest {
                         .orElseThrow();
                 return Optional.of(new ForwardingReservation(delegate) {
                     @Override
-                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                                    long deliveryBytes,
+                    public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch,
                                                                     Runnable delivery) {
-                        admissionBytes.set(deliveryBytes);
-                        return super.tryStart(messages, deliveryBytes, delivery);
+                        admissionBytes.set(batch.admissionBytes().orElseThrow());
+                        return super.tryStart(batch, delivery);
                     }
                 });
             }
@@ -1541,7 +2088,7 @@ class KafkaIncomingConnectorTest {
 
         connector.createIncomingEndpoint(config(), context).run();
 
-        assertThat(admissionBytes.get(), is(76L));
+        assertThat(admissionBytes.get(), is(96L));
         assertThat(consumer.commitCount(), is(1));
     }
 
@@ -1581,11 +2128,10 @@ class KafkaIncomingConnectorTest {
                         .orElseThrow();
                 return Optional.of(new ForwardingReservation(delegate) {
                     @Override
-                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                                    long deliveryBytes,
+                    public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch,
                                                                     Runnable delivery) {
-                        admissionBytes.set(deliveryBytes);
-                        return super.tryStart(messages, deliveryBytes, delivery);
+                        admissionBytes.set(batch.admissionBytes().orElseThrow());
+                        return super.tryStart(batch, delivery);
                     }
                 });
             }
@@ -1597,7 +2143,7 @@ class KafkaIncomingConnectorTest {
 
         assertThat(estimateCalls.get(), is(1));
         assertThat(context.messages().getFirst(), sameInstance(estimatedMessage.get()));
-        assertThat(admissionBytes.get(), is(10_071L));
+        assertThat(admissionBytes.get(), is(10_091L));
         assertThat(consumer.commitCount(), is(1));
     }
 
@@ -1618,7 +2164,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> batch) {
                 throw new IllegalStateException("dispatch failed");
             }
 
@@ -1628,7 +2174,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
                                                    int failedAttempt,
                                                    RuntimeException failure) {
                 retryStarted.countDown();
@@ -1676,7 +2222,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> batch) {
                 handlerStarted.countDown();
                 try {
                     allowSettlement.await();
@@ -1751,7 +2297,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> batch) {
                 handlerStarted.countDown();
                 try {
                     while (releaseHandler.getCount() != 0) {
@@ -1774,10 +2320,9 @@ class KafkaIncomingConnectorTest {
                         .orElseThrow();
                 return Optional.of(new ForwardingReservation(delegate) {
                     @Override
-                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                                    long admissionBytes,
+                    public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch,
                                                                     Runnable delivery) {
-                        Optional<ConnectorDelivery> admitted = super.tryStart(messages, admissionBytes, delivery)
+                        Optional<ConnectorDelivery> admitted = super.tryStart(batch, delivery)
                                 .map(started -> {
                                     ConnectorDelivery completionHolding = new CompletionHoldingDelivery(
                                             started,
@@ -1878,7 +2423,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> batch) {
                 connectorRef.get().close();
                 closeReturned.countDown();
             }
@@ -2081,15 +2626,13 @@ class KafkaIncomingConnectorTest {
             private final AtomicBoolean closed = new AtomicBoolean();
 
             @Override
-            public <T> ConnectorDelivery start(List<? extends Message<T>> messages,
-                                               long admissionBytes,
+            public <T> ConnectorDelivery start(MessageBatch<T> batch,
                                                Runnable delivery) {
                 throw new AssertionError("An empty Kafka poll must not start its reservation");
             }
 
             @Override
-            public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                            long admissionBytes,
+            public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch,
                                                             Runnable delivery) {
                 throw new AssertionError("An empty Kafka poll must not start its reservation");
             }
@@ -2123,22 +2666,33 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> batch) {
                 beforeFailure.run();
                 throw new IllegalStateException("dispatch failed");
             }
 
             @Override
-            public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
                                                    int failedAttempt,
                                                    RuntimeException failure) {
-                return failureHandler.handle(messages, failedAttempt, failure);
+                return failureHandler.handle(batch, failedAttempt, failure);
             }
         };
     }
 
     private static TrackingMockConsumer trackingConsumer() {
         return new TrackingMockConsumer();
+    }
+
+    private static Set<String> kafkaPositions(MessageBatch<?> batch) {
+        Set<String> positions = new HashSet<>();
+        batch.messages().forEach(message -> positions.add(kafkaPosition(message)));
+        return Set.copyOf(positions);
+    }
+
+    private static String kafkaPosition(Message<?> message) {
+        KafkaMessage<?, ?> kafkaMessage = (KafkaMessage<?, ?>) message;
+        return kafkaMessage.partition().orElseThrow() + ":" + kafkaMessage.offset().orElseThrow();
     }
 
     @SafeVarargs
@@ -2166,6 +2720,22 @@ class KafkaIncomingConnectorTest {
                                                          long offset,
                                                          Object value,
                                                          Headers headers) {
+        return record(partition, offset, value, headers, Optional.empty());
+    }
+
+    private static ConsumerRecord<Object, Object> record(TopicPartition partition,
+                                                         long offset,
+                                                         Object value,
+                                                         Headers headers,
+                                                         int leaderEpoch) {
+        return record(partition, offset, value, headers, Optional.of(leaderEpoch));
+    }
+
+    private static ConsumerRecord<Object, Object> record(TopicPartition partition,
+                                                         long offset,
+                                                         Object value,
+                                                         Headers headers,
+                                                         Optional<Integer> leaderEpoch) {
         return new ConsumerRecord<>(TOPIC,
                                     partition.partition(),
                                     offset,
@@ -2176,7 +2746,7 @@ class KafkaIncomingConnectorTest {
                                     null,
                                     value,
                                     headers,
-                                    Optional.empty());
+                                    leaderEpoch);
     }
 
     private static class TrackingMockConsumer extends MockConsumer<Object, Object> {
@@ -2186,6 +2756,7 @@ class KafkaIncomingConnectorTest {
         private final CountDownLatch releaseAssignment = new CountDownLatch(1);
         private final List<Integer> pollCountsAtCommitInitiation = new ArrayList<>();
         private final List<Map<TopicPartition, OffsetAndMetadata>> commitOffsets = new ArrayList<>();
+        private final Map<TopicPartition, Long> seekOffsets = new LinkedHashMap<>();
         private final ReentrantLock stateLock = new ReentrantLock();
         private final Condition pollAdvanced = stateLock.newCondition();
         private int pollCount;
@@ -2237,6 +2808,17 @@ class KafkaIncomingConnectorTest {
                 }
             }
             return super.assignment();
+        }
+
+        @Override
+        public void seek(TopicPartition partition, long offset) {
+            super.seek(partition, offset);
+            stateLock.lock();
+            try {
+                seekOffsets.put(partition, offset);
+            } finally {
+                stateLock.unlock();
+            }
         }
 
         @Override
@@ -2394,6 +2976,15 @@ class KafkaIncomingConnectorTest {
             }
         }
 
+        private Map<TopicPartition, Long> seekOffsets() {
+            stateLock.lock();
+            try {
+                return Map.copyOf(seekOffsets);
+            } finally {
+                stateLock.unlock();
+            }
+        }
+
         private void afterCommit(Runnable afterCommit) {
             stateLock.lock();
             try {
@@ -2526,9 +3117,9 @@ class KafkaIncomingConnectorTest {
         }
 
         @Override
-        public <T> void emitBatch(List<? extends Message<T>> messages) {
+        public <T> void emitBatch(MessageBatch<T> batch) {
             events.add("dispatch");
-            this.messages.addAll(messages);
+            this.messages.addAll(batch.messages());
         }
 
         private List<Message<?>> messages() {
@@ -2675,17 +3266,15 @@ class KafkaIncomingConnectorTest {
         }
 
         @Override
-        public <T> ConnectorDelivery start(List<? extends Message<T>> messages,
-                                           long admissionBytes,
-                                           Runnable delivery) {
-            return delegate.start(messages, admissionBytes, delivery);
+        public <T> ConnectorDelivery start(MessageBatch<T> batch,
+                                            Runnable delivery) {
+            return delegate.start(batch, delivery);
         }
 
         @Override
-        public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                        long admissionBytes,
-                                                        Runnable delivery) {
-            return delegate.tryStart(messages, admissionBytes, delivery);
+        public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch,
+                                                         Runnable delivery) {
+            return delegate.tryStart(batch, delivery);
         }
 
         @Override
@@ -2720,7 +3309,7 @@ class KafkaIncomingConnectorTest {
 
     @FunctionalInterface
     private interface FailureHandler {
-        ConnectorSourceContext.FailureResult handle(List<? extends Message<?>> messages,
+        ConnectorSourceContext.FailureResult handle(MessageBatch<?> batch,
                                                     int failedAttempt,
                                                     RuntimeException failure);
     }

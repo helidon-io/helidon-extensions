@@ -103,18 +103,18 @@ class MessagingEntryPointsImplTest {
         Object service = new Object();
         AtomicInteger handlerInvocations = new AtomicInteger();
         AtomicReference<Object> receivedService = new AtomicReference<>();
-        AtomicReference<List<Message<?>>> received = new AtomicReference<>();
+        AtomicReference<MessageBatch<?>> received = new AtomicReference<>();
         MessagingEntryPoint.BatchHandler<Object> handler = entryPoints.batchHandler(
                 DESCRIPTOR,
                 Set.of(),
                 List.of(),
                 METHOD,
-                (serviceInstance, messages) -> {
+                (serviceInstance, batch) -> {
                     handlerInvocations.incrementAndGet();
                     receivedService.set(serviceInstance);
-                    received.set(messages);
+                    received.set(batch);
                 });
-        List<Message<?>> batch = new ArrayList<>(List.of(Message.create("one"), Message.create("two")));
+        MessageBatch<?> batch = MessageBatch.create(List.of(Message.create("one"), Message.create("two")));
 
         handler.handle(service, batch);
 
@@ -122,43 +122,41 @@ class MessagingEntryPointsImplTest {
         assertSame(service, interceptor.context().serviceInstance().orElseThrow());
         assertSame(service, receivedService.get());
         assertThat(interceptor.arguments().length, is(1));
+        assertSame(batch, interceptor.arguments()[0]);
+        assertSame(batch, received.get());
         assertThat(received.get(), is(interceptor.arguments()[0]));
         assertThat(received.get().size(), is(2));
         assertThat(handlerInvocations.get(), is(1));
-        assertThrows(UnsupportedOperationException.class, () -> received.get().add(Message.create("three")));
-        batch.clear();
-        assertThat(received.get().size(), is(2));
+        assertThrows(UnsupportedOperationException.class, () -> received.get().messages().clear());
     }
 
     @Test
-    void defensivelyCopiesBatchReplacedByInterceptor() throws Exception {
+    void preservesBatchReplacedByInterceptor() throws Exception {
         Object service = new Object();
-        AtomicReference<List<Message<?>>> replacement = new AtomicReference<>();
+        AtomicReference<MessageBatch<?>> replacement = new AtomicReference<>();
         Interception.EntryPointInterceptor interceptor = new Interception.EntryPointInterceptor() {
             @Override
             public <T> T proceed(InterceptionContext context,
                                  Interception.Interceptor.Chain<T> chain,
                                  Object... arguments) throws Exception {
-                List<Message<?>> mutable = new ArrayList<>(List.of(Message.create("replacement")));
-                replacement.set(mutable);
-                arguments[0] = mutable;
+                MessageBatch<?> batch = MessageBatch.create(List.of(Message.create("replacement")));
+                replacement.set(batch);
+                arguments[0] = batch;
                 return chain.proceed(arguments);
             }
         };
         MessagingEntryPointsImpl entryPoints = new MessagingEntryPointsImpl(List.of(serviceInstance(interceptor)));
-        AtomicReference<List<Message<?>>> received = new AtomicReference<>();
+        AtomicReference<MessageBatch<?>> received = new AtomicReference<>();
 
         entryPoints.batchHandler(DESCRIPTOR,
                                  Set.of(),
                                  List.of(),
                                  METHOD,
-                                 (ignoredService, messages) -> received.set(messages))
-                .handle(service, List.of(Message.create("original")));
+                                 (ignoredService, batch) -> received.set(batch))
+                .handle(service, MessageBatch.create(List.of(Message.create("original"))));
 
-        assertThat(received.get(), is(replacement.get()));
-        assertThrows(UnsupportedOperationException.class, () -> received.get().clear());
-        replacement.get().clear();
-        assertThat(received.get().size(), is(1));
+        assertSame(replacement.get(), received.get());
+        assertThrows(UnsupportedOperationException.class, () -> received.get().messages().clear());
     }
 
     @Test

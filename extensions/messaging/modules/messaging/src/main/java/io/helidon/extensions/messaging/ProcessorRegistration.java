@@ -64,16 +64,17 @@ public interface ProcessorRegistration extends ConsumerRegistration {
     }
 
     /**
-     * Invoke the processor and return the message to deliver to {@link #outgoingChannel()}.
+     * Invoke the processor adapter for one delivery and return one derived batch for
+     * {@link #outgoingChannel()}.
      *
-     * @param message incoming message
-     * @return outgoing message
+     * @param batch incoming batch
+     * @return outgoing batch with preserved delivery lineage
      * @throws RuntimeException if processing fails
      */
-    Message<?> process(Message<?> message);
+    MessageBatch<?> process(MessageBatch<?> batch);
 
     @Override
-    default void dispatch(Message<?> message) {
-        process(message);
+    default void dispatch(MessageBatch<?> batch) {
+        process(batch);
     }
 }

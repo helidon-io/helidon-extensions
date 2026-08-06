@@ -18,8 +18,10 @@ package io.helidon.extensions.messaging.connectors.kafka;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,16 +36,20 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
+import io.helidon.extensions.messaging.BatchDeliveryException;
+import io.helidon.extensions.messaging.BatchItemStatus;
 import io.helidon.extensions.messaging.ConnectorConfig;
 import io.helidon.extensions.messaging.ConnectorDelivery;
 import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.IncomingEndpoint;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.MessagingRejectedException;
 
@@ -63,10 +69,13 @@ import org.apache.kafka.common.errors.WakeupException;
 /**
  * Kafka incoming connector.
  * <p>
- * Each consumer poll is one settlement unit. Its exact immutable message batch remains in flight while the consumer
- * owner thread continues polling with all assigned partitions paused. Next offsets are committed only after dispatch
- * succeeds, or after the portable failure policy explicitly settles the failure. Retrying a poll can duplicate work
- * completed before another required output failed.
+ * Each consumer poll is one retained delivery batch. Its exact immutable messages and opaque batch identity remain in
+ * flight while the consumer owner thread continues polling with all assigned partitions paused. A structured partial
+ * failure retries only attempted failures in a lineage-preserving sub-batch; messages not attempted because an earlier
+ * item failed are deferred until that subset retries or settles. Offsets do not advance between these
+ * in-memory retries while the original poll lease remains retained, so a crash can conservatively redeliver an
+ * uncommitted successful prefix. If a structured failure propagates, each partition advances only through its
+ * contiguous settled prefix; successful records behind an unresolved offset remain eligible for redelivery.
  * <p>
  * The connector caps {@code max.poll.records}, {@code fetch.max.bytes}, and
  * {@code max.partition.fetch.bytes} using the channel delivery limits. These Kafka settings are acquisition hints, not
@@ -337,9 +346,7 @@ final class KafkaIncomingConnector {
                     if (messages.isEmpty()) {
                         continue;
                     }
-                    PendingPoll pendingPoll = PendingPoll.create(records,
-                                                                 List.copyOf(messages),
-                                                                 context);
+                    PendingPoll pendingPoll = PendingPoll.create(records, messages, context);
                     if (!processPoll(consumer,
                                      rebalanceListener,
                                      pendingPoll,
@@ -432,7 +439,18 @@ final class KafkaIncomingConnector {
                     recoverStalePoll(consumer, pendingPoll);
                     return true;
                 }
-                rethrowDeliveryFailure(deliveryTask);
+                try {
+                    rethrowDeliveryFailure(deliveryTask);
+                } catch (RuntimeException e) {
+                    try {
+                        settlePartialPoll(consumer, pendingPoll);
+                    } catch (RuntimeException settlementFailure) {
+                        if (settlementFailure != e) {
+                            e.addSuppressed(settlementFailure);
+                        }
+                    }
+                    throw e;
+                }
                 return commitPoll(consumer, pendingPoll);
             } finally {
                 rebalanceListener.clear(pendingPoll);
@@ -478,9 +496,7 @@ final class KafkaIncomingConnector {
 
             Optional<ConnectorDelivery> admitted;
             try {
-                admitted = reservation.tryStart(pendingPoll.messages(),
-                                                pendingPoll.admissionBytes(),
-                                                active::run);
+                admitted = reservation.tryStart(pendingPoll.batch(), active::run);
                 admitted.ifPresent(active::attach);
             } catch (RuntimeException | Error e) {
                 finishDeliveryStart();
@@ -532,21 +548,51 @@ final class KafkaIncomingConnector {
 
         private void deliver(PendingPoll pendingPoll) {
             int attempts = 0;
+            DeliveryBatch deliveryBatch = DeliveryBatch.initial(pendingPoll.batch());
+            Deque<DeferredDelivery> deferred = new ArrayDeque<>();
             while (!closed.get() && !pendingPoll.stale()) {
                 try {
-                    context.emitBatch(pendingPoll.messages());
+                    context.emitBatch(deliveryBatch.batch());
+                    pendingPoll.settle(deliveryBatch.originalIndexes());
+                    DeferredDelivery next = deferred.pollFirst();
+                    if (next == null) {
+                        return;
+                    }
+                    deliveryBatch = next.batch();
+                    attempts = next.failedAttempts();
+                    continue;
                 } catch (RuntimeException e) {
                     if (closed.get() || pendingPoll.stale()) {
                         return;
+                    }
+                    DeliverySplit split = deliveryBatch.processingFailure(e, pendingPoll);
+                    if (split.deferred() != null) {
+                        deferred.addFirst(new DeferredDelivery(split.deferred(), attempts));
+                    }
+                    deliveryBatch = split.attempted();
+                    if (deliveryBatch == null) {
+                        DeferredDelivery next = deferred.pollFirst();
+                        if (next == null) {
+                            return;
+                        }
+                        deliveryBatch = next.batch();
+                        attempts = next.failedAttempts();
+                        continue;
                     }
                     attempts++;
                     ConnectorSourceContext.FailureResult result;
                     try {
                         result = Objects.requireNonNull(
-                                context.handleFailure(pendingPoll.messages(), attempts, e),
+                                context.handleFailure(deliveryBatch.batch(),
+                                                      attempts,
+                                                      BatchDeliveryException.align(deliveryBatch.batch(), e)),
                                 "Connector source failure result");
                     } catch (RuntimeException failureHandlingFailure) {
                         if (closed.get() || pendingPoll.stale()) {
+                            return;
+                        }
+                        deliveryBatch = deliveryBatch.terminalFailure(failureHandlingFailure, pendingPoll);
+                        if (deliveryBatch == null) {
                             return;
                         }
                         throw failureHandlingFailure;
@@ -557,7 +603,7 @@ final class KafkaIncomingConnector {
                     switch (result) {
                     case RETRY:
                         try {
-                            if (!prepareRedelivery(pendingPoll.messages().size(), attempts, e)) {
+                            if (!prepareRedelivery(deliveryBatch.batch().size(), attempts, e)) {
                                 return;
                             }
                         } catch (RuntimeException redeliveryFailure) {
@@ -571,16 +617,31 @@ final class KafkaIncomingConnector {
                         }
                         continue;
                     case SETTLED:
-                        return;
+                        pendingPoll.settle(deliveryBatch.originalIndexes());
+                        DeferredDelivery next = deferred.pollFirst();
+                        if (next == null) {
+                            return;
+                        }
+                        deliveryBatch = next.batch();
+                        attempts = next.failedAttempts();
+                        continue;
                     default:
                         throw new IllegalStateException("Unsupported connector source failure result: " + result);
                     }
                 }
-                return;
             }
         }
 
         private boolean commitPoll(Consumer<Object, Object> consumer, PendingPoll pendingPoll) {
+            return commitOffsets(consumer, pendingPoll, pendingPoll.nextOffsets());
+        }
+
+        private boolean commitOffsets(Consumer<Object, Object> consumer,
+                                      PendingPoll pendingPoll,
+                                      Map<TopicPartition, OffsetAndMetadata> offsets) {
+            if (offsets.isEmpty()) {
+                return true;
+            }
             long commitStarted = System.nanoTime();
             Exception previousCommitFailure = null;
             while (!closed.get()) {
@@ -609,7 +670,7 @@ final class KafkaIncomingConnector {
                         rethrowCommitFailure(previousCommitFailure);
                     }
                     try {
-                        consumer.commitAsync(pendingPoll.nextOffsets(), (offsets, exception) -> {
+                        consumer.commitAsync(offsets, (committedOffsets, exception) -> {
                             failure.set(exception);
                             completed.set(true);
                         });
@@ -653,6 +714,19 @@ final class KafkaIncomingConnector {
                 }
             }
             return false;
+        }
+
+        private void settlePartialPoll(Consumer<Object, Object> consumer, PendingPoll pendingPoll) {
+            Map<TopicPartition, OffsetAndMetadata> settledOffsets = pendingPoll.contiguousSettledOffsets();
+            if (!commitOffsets(consumer, pendingPoll, settledOffsets) || pendingPoll.stale()) {
+                return;
+            }
+            Set<TopicPartition> assignment = consumer.assignment();
+            pendingPoll.firstUnsettledOffsets().forEach((partition, offset) -> {
+                if (assignment.contains(partition)) {
+                    consumer.seek(partition, offset);
+                }
+            });
         }
 
         private boolean awaitCommitRetry(Consumer<Object, Object> consumer,
@@ -1299,6 +1373,96 @@ final class KafkaIncomingConnector {
         }
     }
 
+    private record DeliveryBatch(MessageBatch<Object> batch, List<Integer> originalIndexes) {
+        private DeliveryBatch {
+            Objects.requireNonNull(batch);
+            originalIndexes = List.copyOf(originalIndexes);
+            if (batch.size() != originalIndexes.size()) {
+                throw new IllegalArgumentException("Kafka delivery batch index count does not match its message count");
+            }
+        }
+
+        private static DeliveryBatch initial(MessageBatch<Object> batch) {
+            List<Integer> originalIndexes = new ArrayList<>(batch.size());
+            for (int i = 0; i < batch.size(); i++) {
+                originalIndexes.add(i);
+            }
+            return new DeliveryBatch(batch, originalIndexes);
+        }
+
+        private DeliverySplit processingFailure(RuntimeException failure, PendingPoll pendingPoll) {
+            if (!(failure instanceof BatchDeliveryException batchFailure)
+                    || !batch.sameDelivery(batchFailure.batch())) {
+                return new DeliverySplit(this, null);
+            }
+
+            List<Integer> attemptedLocalIndexes = new ArrayList<>();
+            List<Integer> deferredLocalIndexes = new ArrayList<>();
+            for (int i = 0; i < batch.size(); i++) {
+                int originalIndex = originalIndexes.get(i);
+                BatchItemStatus status = batchFailure.outcome(i).status();
+                if (status == BatchItemStatus.SUCCEEDED) {
+                    pendingPoll.settle(originalIndex);
+                } else if (status == BatchItemStatus.NOT_ATTEMPTED) {
+                    deferredLocalIndexes.add(i);
+                } else {
+                    attemptedLocalIndexes.add(i);
+                }
+            }
+            DeliveryBatch attempted = select(attemptedLocalIndexes);
+            DeliveryBatch deferred = select(deferredLocalIndexes);
+            if (attempted == null) {
+                // With no attempted failure there is no earlier poison item from which to defer this work. Apply the
+                // delivery failure policy to the not-attempted items so a permanently unavailable route cannot spin.
+                attempted = deferred;
+                deferred = null;
+            }
+            return new DeliverySplit(attempted, deferred);
+        }
+
+        private DeliveryBatch terminalFailure(RuntimeException failure, PendingPoll pendingPoll) {
+            if (!(failure instanceof BatchDeliveryException batchFailure)
+                    || !batch.sameDelivery(batchFailure.batch())) {
+                return this;
+            }
+
+            List<Integer> unresolvedLocalIndexes = new ArrayList<>();
+            for (int i = 0; i < batch.size(); i++) {
+                if (batchFailure.outcome(i).status() == BatchItemStatus.SUCCEEDED) {
+                    pendingPoll.settle(originalIndexes.get(i));
+                } else {
+                    // These items already failed source processing. NOT_ATTEMPTED here describes the terminal route,
+                    // so it must remain unresolved rather than returning to application processing.
+                    unresolvedLocalIndexes.add(i);
+                }
+            }
+            return select(unresolvedLocalIndexes);
+        }
+
+        private DeliveryBatch select(List<Integer> localIndexes) {
+            if (localIndexes.isEmpty()) {
+                return null;
+            }
+            if (localIndexes.size() == batch.size()) {
+                return this;
+            }
+            List<Integer> selectedOriginalIndexes = localIndexes.stream().map(originalIndexes::get).toList();
+            return new DeliveryBatch(batch.subset(localIndexes), selectedOriginalIndexes);
+        }
+    }
+
+    private record DeliverySplit(DeliveryBatch attempted, DeliveryBatch deferred) {
+    }
+
+    private record DeferredDelivery(DeliveryBatch batch, int failedAttempts) {
+        private DeferredDelivery {
+            Objects.requireNonNull(batch);
+            if (failedAttempts < 0) {
+                throw new IllegalArgumentException("Deferred delivery failed attempts must be zero or greater");
+            }
+        }
+    }
+
     private static final class PendingPoll {
         // Batch count plus stale state.
         private static final long POLL_STATE_BYTES = Integer.BYTES + Byte.BYTES;
@@ -1307,22 +1471,29 @@ final class KafkaIncomingConnector {
                 + Long.BYTES
                 + Long.BYTES
                 + Byte.BYTES;
+        // Delivery-to-original index, partition index, record offset, and settlement flag.
+        private static final long ITEM_STATE_BYTES = Integer.BYTES
+                + Integer.BYTES
+                + Long.BYTES
+                + Integer.BYTES;
 
-        private final List<Message<Object>> messages;
+        private final MessageBatch<Object> batch;
         private final Map<TopicPartition, OffsetAndMetadata> nextOffsets;
         private final Map<TopicPartition, Long> firstOffsets;
-        private final long admissionBytes;
+        private final Map<TopicPartition, List<IndexedOffset>> indexedOffsets;
+        private final AtomicIntegerArray settled;
         private final Set<TopicPartition> invalidatedPartitions = new HashSet<>();
         private final AtomicBoolean stale = new AtomicBoolean();
 
-        private PendingPoll(List<Message<Object>> messages,
+        private PendingPoll(MessageBatch<Object> batch,
                             Map<TopicPartition, OffsetAndMetadata> nextOffsets,
                             Map<TopicPartition, Long> firstOffsets,
-                            long admissionBytes) {
-            this.messages = messages;
+                            Map<TopicPartition, List<IndexedOffset>> indexedOffsets) {
+            this.batch = batch;
             this.nextOffsets = nextOffsets;
             this.firstOffsets = firstOffsets;
-            this.admissionBytes = admissionBytes;
+            this.indexedOffsets = indexedOffsets;
+            this.settled = new AtomicIntegerArray(batch.size());
         }
 
         private static PendingPoll create(ConsumerRecords<Object, Object> records,
@@ -1341,6 +1512,16 @@ final class KafkaIncomingConnector {
             Map<TopicPartition, Long> firstOffsets = new LinkedHashMap<>();
             for (TopicPartition partition : records.partitions()) {
                 firstOffsets.put(partition, records.records(partition).getFirst().offset());
+            }
+            Map<TopicPartition, List<IndexedOffset>> indexedOffsets = new LinkedHashMap<>();
+            int batchIndex = 0;
+            for (ConsumerRecord<Object, Object> record : records) {
+                TopicPartition partition = new TopicPartition(record.topic(), record.partition());
+                indexedOffsets.computeIfAbsent(partition, ignored -> new ArrayList<>())
+                        .add(new IndexedOffset(batchIndex++, record.offset(), record.leaderEpoch()));
+            }
+            if (batchIndex != messages.size()) {
+                throw new IllegalStateException("Kafka poll record count does not match its message count");
             }
             Map<TopicPartition, OffsetAndMetadata> nextOffsets = Map.copyOf(records.nextOffsets());
             Map<TopicPartition, Long> immutableFirstOffsets = Map.copyOf(firstOffsets);
@@ -1374,7 +1555,9 @@ final class KafkaIncomingConnector {
             }
             try {
                 admissionBytes = Math.addExact(admissionBytes,
-                                               settlementAdmissionBytes(nextOffsets, immutableFirstOffsets));
+                                               settlementAdmissionBytes(nextOffsets,
+                                                                        immutableFirstOffsets,
+                                                                        indexedOffsets));
             } catch (ArithmeticException e) {
                 throw new MessagingRejectedException(
                         channel,
@@ -1389,14 +1572,22 @@ final class KafkaIncomingConnector {
                         "Kafka poll contains " + admissionBytes + " admission bytes, exceeding channel "
                                 + channel + " limit " + maxDeliveryBytes);
             }
-            return new PendingPoll(messages,
+            MessageBatch<Object> batch = MessageBatch.<Object>builder()
+                    .messages(messages)
+                    .admissionBytes(admissionBytes)
+                    .build();
+            Map<TopicPartition, List<IndexedOffset>> immutableIndexedOffsets = new LinkedHashMap<>();
+            indexedOffsets.forEach((partition, offsets) -> immutableIndexedOffsets.put(partition,
+                                                                                       List.copyOf(offsets)));
+            return new PendingPoll(batch,
                                    nextOffsets,
                                    immutableFirstOffsets,
-                                   admissionBytes);
+                                   Map.copyOf(immutableIndexedOffsets));
         }
 
         private static long settlementAdmissionBytes(Map<TopicPartition, OffsetAndMetadata> nextOffsets,
-                                                     Map<TopicPartition, Long> firstOffsets) {
+                                                     Map<TopicPartition, Long> firstOffsets,
+                                                     Map<TopicPartition, List<IndexedOffset>> indexedOffsets) {
             Set<TopicPartition> partitions = new HashSet<>(firstOffsets.keySet());
             partitions.addAll(nextOffsets.keySet());
             long result = POLL_STATE_BYTES;
@@ -1412,15 +1603,19 @@ final class KafkaIncomingConnector {
                     }
                 }
             }
+            for (List<IndexedOffset> offsets : indexedOffsets.values()) {
+                for (IndexedOffset offset : offsets) {
+                    result = Math.addExact(result, ITEM_STATE_BYTES);
+                    if (offset.leaderEpoch().isPresent()) {
+                        result = Math.addExact(result, Integer.BYTES);
+                    }
+                }
+            }
             return result;
         }
 
-        private List<Message<Object>> messages() {
-            return messages;
-        }
-
-        private long admissionBytes() {
-            return admissionBytes;
+        private MessageBatch<Object> batch() {
+            return batch;
         }
 
         private Map<TopicPartition, OffsetAndMetadata> nextOffsets() {
@@ -1433,6 +1628,53 @@ final class KafkaIncomingConnector {
 
         private Set<TopicPartition> invalidatedPartitions() {
             return invalidatedPartitions;
+        }
+
+        private void settle(List<Integer> originalIndexes) {
+            originalIndexes.forEach(this::settle);
+        }
+
+        private void settle(int originalIndex) {
+            settled.set(originalIndex, 1);
+        }
+
+        private Map<TopicPartition, OffsetAndMetadata> contiguousSettledOffsets() {
+            Map<TopicPartition, OffsetAndMetadata> result = new LinkedHashMap<>();
+            indexedOffsets.forEach((partition, offsets) -> {
+                int settledCount = 0;
+                while (settledCount < offsets.size()
+                        && settled.get(offsets.get(settledCount).batchIndex()) != 0) {
+                    settledCount++;
+                }
+                if (settledCount == 0) {
+                    return;
+                }
+                if (settledCount == offsets.size()) {
+                    result.put(partition, nextOffsets.get(partition));
+                } else {
+                    IndexedOffset lastSettled = offsets.get(settledCount - 1);
+                    OffsetAndMetadata pollNextOffset = nextOffsets.get(partition);
+                    String metadata = pollNextOffset == null ? "" : pollNextOffset.metadata();
+                    result.put(partition,
+                               new OffsetAndMetadata(offsets.get(settledCount).offset(),
+                                                     lastSettled.leaderEpoch(),
+                                                     metadata));
+                }
+            });
+            return Map.copyOf(result);
+        }
+
+        private Map<TopicPartition, Long> firstUnsettledOffsets() {
+            Map<TopicPartition, Long> result = new LinkedHashMap<>();
+            indexedOffsets.forEach((partition, offsets) -> {
+                for (IndexedOffset offset : offsets) {
+                    if (settled.get(offset.batchIndex()) == 0) {
+                        result.put(partition, offset.offset());
+                        break;
+                    }
+                }
+            });
+            return Map.copyOf(result);
         }
 
         private boolean stale() {
@@ -1458,6 +1700,12 @@ final class KafkaIncomingConnector {
                     invalidatedPartitions.add(partition);
                     stale.set(true);
                 }
+            }
+        }
+
+        private record IndexedOffset(int batchIndex, long offset, Optional<Integer> leaderEpoch) {
+            private IndexedOffset {
+                Objects.requireNonNull(leaderEpoch);
             }
         }
     }

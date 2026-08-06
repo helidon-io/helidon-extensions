@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -30,9 +31,13 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
+import io.helidon.extensions.messaging.BatchAtomicity;
+import io.helidon.extensions.messaging.BatchDeliveryException;
+import io.helidon.extensions.messaging.BatchItemOutcome;
 import io.helidon.extensions.messaging.ConnectorConfig;
 import io.helidon.extensions.messaging.DeadLetterMessage;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.OutgoingEndpoint;
 
@@ -315,23 +320,74 @@ final class KafkaOutgoingConnector {
         }
 
         @Override
-        public <T> void send(Message<T> message) {
-            await(enqueue(message));
+        public BatchAtomicity batchAtomicity() {
+            return BatchAtomicity.PER_MESSAGE;
         }
 
         @Override
-        public <T> void sendBatch(List<? extends Message<T>> messages) {
-            Objects.requireNonNull(messages);
-            if (messages.isEmpty()) {
-                return;
+        public <T> void sendBatch(MessageBatch<T> batch) {
+            Objects.requireNonNull(batch);
+            Producer<Object, Object> current;
+            try {
+                current = readyProducer();
+            } catch (RuntimeException failure) {
+                throw BatchDeliveryException.notAttempted("Kafka batch delivery", batch, failure);
+            }
+            List<Future<RecordMetadata>> results = new ArrayList<>(batch.size());
+            RuntimeException enqueueFailure = null;
+            int enqueueFailureIndex = -1;
+            for (int i = 0; i < batch.size(); i++) {
+                try {
+                    results.add(enqueue(current, batch.get(i)));
+                } catch (RuntimeException e) {
+                    enqueueFailure = e;
+                    enqueueFailureIndex = i;
+                    break;
+                }
             }
 
-            List<Future<RecordMetadata>> results = new ArrayList<>(messages.size());
-            for (Message<T> message : messages) {
-                results.add(enqueue(message));
+            List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
+            Throwable primaryFailure = enqueueFailure;
+            boolean interrupted = false;
+            for (int i = 0; i < results.size(); i++) {
+                Future<RecordMetadata> result = results.get(i);
+                try {
+                    result.get(interrupted ? 0 : sendTimeout.toNanos(), TimeUnit.NANOSECONDS);
+                    outcomes.add(BatchItemOutcome.succeeded(i));
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                    primaryFailure = firstFailure(primaryFailure, e);
+                    outcomes.add(BatchItemOutcome.indeterminate(i, e));
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause() == null ? e : e.getCause();
+                    primaryFailure = firstFailure(primaryFailure, cause);
+                    // A producer future failure proves that the configured success point was not observed, but it
+                    // does not prove that the broker never appended the record (for example, an acknowledgement may
+                    // have been lost). Retrying therefore carries duplicate-delivery risk.
+                    outcomes.add(BatchItemOutcome.indeterminate(i, cause));
+                } catch (TimeoutException | CancellationException e) {
+                    primaryFailure = firstFailure(primaryFailure, e);
+                    outcomes.add(BatchItemOutcome.indeterminate(i, e));
+                } catch (RuntimeException e) {
+                    primaryFailure = firstFailure(primaryFailure, e);
+                    outcomes.add(BatchItemOutcome.indeterminate(i, e));
+                }
             }
-            for (Future<RecordMetadata> result : results) {
-                await(result);
+            if (enqueueFailureIndex >= 0) {
+                outcomes.add(BatchItemOutcome.failed(enqueueFailureIndex, enqueueFailure));
+                for (int i = enqueueFailureIndex + 1; i < batch.size(); i++) {
+                    outcomes.add(BatchItemOutcome.notAttempted(i));
+                }
+            }
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            if (primaryFailure != null) {
+                throw new BatchDeliveryException("Cannot send Kafka message batch " + batch.id()
+                                                         + " to topic " + topic,
+                                                 batch,
+                                                 outcomes,
+                                                 primaryFailure);
             }
         }
 
@@ -345,13 +401,13 @@ final class KafkaOutgoingConnector {
             close(closeTimeout, false);
         }
 
-        private Future<RecordMetadata> enqueue(Message<?> message) {
+        private Future<RecordMetadata> enqueue(Producer<Object, Object> current, Message<?> message) {
             Objects.requireNonNull(message);
             if (message instanceof DeadLetterMessage<?> deadLetterMessage) {
-                return enqueue(deadLetterMessage);
+                return enqueue(current, deadLetterMessage);
             }
             if (message instanceof KafkaMessage<?, ?> kafkaMessage) {
-                return enqueue(kafkaMessage);
+                return enqueue(current, kafkaMessage);
             }
             RecordHeaders headers = new RecordHeaders();
             message.headers().forEach((name, value) -> headers.add(name, value.getBytes(StandardCharsets.UTF_8)));
@@ -362,7 +418,7 @@ final class KafkaOutgoingConnector {
                                                                          message.entity(),
                                                                          headers);
             try {
-                return readyProducer().send(record);
+                return current.send(record);
             } catch (RuntimeException e) {
                 if (e instanceof MessagingException messagingException) {
                     throw messagingException;
@@ -371,12 +427,12 @@ final class KafkaOutgoingConnector {
             }
         }
 
-        private Future<RecordMetadata> enqueue(DeadLetterMessage<?> message) {
+        private Future<RecordMetadata> enqueue(Producer<Object, Object> current, DeadLetterMessage<?> message) {
             Message<?> originalMessage = message.originalMessage();
             if (!(originalMessage instanceof KafkaMessage<?, ?> kafkaMessage)) {
                 RecordHeaders headers = new RecordHeaders();
                 message.headers().forEach((name, value) -> addUtf8Header(headers, name, value));
-                return enqueue(null, message.entity(), headers);
+                return enqueue(current, null, message.entity(), headers);
             }
 
             RecordHeaders headers = kafkaHeaders(kafkaMessage);
@@ -419,14 +475,17 @@ final class KafkaOutgoingConnector {
                              kafkaMessage.leaderEpoch().isPresent()
                                      ? kafkaMessage.leaderEpoch().getAsInt()
                                      : null);
-            return enqueue(kafkaMessage.key().orElse(null), message.entity(), headers);
+            return enqueue(current, kafkaMessage.key().orElse(null), message.entity(), headers);
         }
 
-        private Future<RecordMetadata> enqueue(KafkaMessage<?, ?> message) {
-            return enqueue(message.key().orElse(null), message.entity(), kafkaHeaders(message));
+        private Future<RecordMetadata> enqueue(Producer<Object, Object> current, KafkaMessage<?, ?> message) {
+            return enqueue(current, message.key().orElse(null), message.entity(), kafkaHeaders(message));
         }
 
-        private Future<RecordMetadata> enqueue(Object key, Object entity, RecordHeaders headers) {
+        private Future<RecordMetadata> enqueue(Producer<Object, Object> current,
+                                               Object key,
+                                               Object entity,
+                                               RecordHeaders headers) {
             ProducerRecord<Object, Object> record = new ProducerRecord<>(topic,
                                                                          null,
                                                                          null,
@@ -434,7 +493,7 @@ final class KafkaOutgoingConnector {
                                                                          entity,
                                                                          headers);
             try {
-                return readyProducer().send(record);
+                return current.send(record);
             } catch (RuntimeException e) {
                 if (e instanceof MessagingException messagingException) {
                     throw messagingException;
@@ -586,17 +645,8 @@ final class KafkaOutgoingConnector {
             headers.add(name, value.getBytes(StandardCharsets.UTF_8));
         }
 
-        private void await(Future<RecordMetadata> result) {
-            try {
-                result.get(sendTimeout.toNanos(), TimeUnit.NANOSECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new MessagingException("Interrupted while sending Kafka message to topic " + topic, e);
-            } catch (ExecutionException e) {
-                throw new MessagingException("Cannot send Kafka message to topic " + topic, e.getCause());
-            } catch (TimeoutException e) {
-                throw new MessagingException("Timed out sending Kafka message to topic " + topic, e);
-            }
+        private Throwable firstFailure(Throwable current, Throwable additional) {
+            return current == null ? additional : current;
         }
 
         private enum State {
