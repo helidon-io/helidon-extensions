@@ -27,7 +27,8 @@ import dev.langchain4j.model.cohere.CohereScoringModel;
 
 @AiProvider.ModelConfig(value = CohereScoringModel.class,
                         weight = Weighted.DEFAULT_WEIGHT - 20,
-                        providerKey = "cohere")
+                        providerKey = "cohere",
+                        skip = "proxy\\(java\\.net\\.Proxy\\)")
 interface CohereScoringLc4jProvider {
 
     /**
@@ -37,5 +38,20 @@ interface CohereScoringLc4jProvider {
      */
     @Option.Configured
     @Option.RegistryService
+    @Option.Deprecated("httpClientBuilder")
+    @AiProvider.CustomBuilderMapping
     Optional<Proxy> proxy();
+
+    /**
+     * Customizes the model builder to preserve the legacy proxy configuration through the new LangChain4j HTTP client
+     * abstraction.
+     *
+     * @return partially configured LangChain4j model builder
+     */
+    default CohereScoringModel.CohereScoringModelBuilder configuredBuilder() {
+        var modelBuilder = CohereScoringModel.builder();
+        proxy().map(CohereHttpClientSupport::create)
+                .ifPresent(modelBuilder::httpClientBuilder);
+        return modelBuilder;
+    }
 }

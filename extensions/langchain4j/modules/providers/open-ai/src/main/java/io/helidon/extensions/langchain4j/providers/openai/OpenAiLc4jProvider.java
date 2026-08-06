@@ -22,12 +22,10 @@ import io.helidon.builder.api.Option;
 import io.helidon.extensions.langchain4j.AiProvider;
 
 import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.model.openai.OpenAiImageModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 
 @AiProvider.ModelConfig(value = OpenAiChatModel.class)
 @AiProvider.ModelConfig(value = OpenAiStreamingChatModel.class)
-@AiProvider.ModelConfig(value = OpenAiImageModel.class)
 interface OpenAiLc4jProvider {
 
     /**
