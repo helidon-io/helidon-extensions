@@ -27,21 +27,29 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
+import io.helidon.extensions.messaging.BatchAtomicity;
+import io.helidon.extensions.messaging.BatchDeliveryException;
+import io.helidon.extensions.messaging.BatchItemStatus;
 import io.helidon.extensions.messaging.ConnectorConfig;
 import io.helidon.extensions.messaging.DeadLetterMessage;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.OutgoingEndpoint;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.MockProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.PartitionInfo;
@@ -300,7 +308,7 @@ class KafkaOutgoingConnectorTest {
         MockProducer<Object, Object> producer = mockProducer(false);
         KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
         CompletableFuture<Void> sending = CompletableFuture.runAsync(() -> start(connector, config())
-                .sendBatch(List.of(Message.create("first"), Message.create("second"))));
+                .sendBatch(MessageBatch.create(List.of(Message.create("first"), Message.create("second")))));
 
         awaitHistory(producer, 2);
         assertThat("send should wait for broker completion", sending.isDone(), is(false));
@@ -310,6 +318,180 @@ class KafkaOutgoingConnectorTest {
 
         assertThat(producer.history().stream().map(record -> (String) record.value()).toList(),
                    is(List.of("first", "second")));
+    }
+
+    @Test
+    void testBatchIsPerMessageAndReportsEveryEnqueuedOutcome() throws Exception {
+        MockProducer<Object, Object> producer = mockProducer(false);
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        OutgoingEndpoint endpoint = start(connector, config());
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                 Message.create("second"),
+                                                                 Message.create("third")));
+        CompletableFuture<Void> sending = CompletableFuture.runAsync(() -> endpoint.sendBatch(batch));
+
+        awaitHistory(producer, 3);
+        IllegalStateException firstFailure = new IllegalStateException("first failed");
+        assertThat(producer.errorNext(firstFailure), is(true));
+        assertThat(producer.completeNext(), is(true));
+        IllegalArgumentException thirdFailure = new IllegalArgumentException("third failed");
+        assertThat(producer.errorNext(thirdFailure), is(true));
+
+        ExecutionException executionException = assertThrows(ExecutionException.class,
+                                                              () -> sending.get(1, TimeUnit.SECONDS));
+        BatchDeliveryException failure = (BatchDeliveryException) executionException.getCause();
+        assertThat(endpoint.batchAtomicity(), is(BatchAtomicity.PER_MESSAGE));
+        assertThat(failure.batch(), sameInstance(batch));
+        assertThat(failure.getCause(), sameInstance(firstFailure));
+        assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
+                   is(List.of(BatchItemStatus.INDETERMINATE,
+                              BatchItemStatus.SUCCEEDED,
+                              BatchItemStatus.INDETERMINATE)));
+        assertThat(failure.outcome(0).failure().orElseThrow(), sameInstance(firstFailure));
+        assertThat(failure.outcome(2).failure().orElseThrow(), sameInstance(thirdFailure));
+        endpoint.close();
+    }
+
+    @Test
+    void testSynchronousBatchEnqueueFailureMarksRemainingMessagesNotAttempted() {
+        MockProducer<Object, Object> producer = mockProducer(true);
+        IllegalStateException enqueueFailure = new IllegalStateException("enqueue failed");
+        producer.sendException = enqueueFailure;
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        OutgoingEndpoint endpoint = start(connector, config());
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                 Message.create("second")));
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                      () -> endpoint.sendBatch(batch));
+
+        assertThat(failure.batch(), sameInstance(batch));
+        assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
+                   is(List.of(BatchItemStatus.FAILED, BatchItemStatus.NOT_ATTEMPTED)));
+        assertThat(failure.getCause(), instanceOf(MessagingException.class));
+        assertThat(failure.getCause().getCause(), sameInstance(enqueueFailure));
+        assertThat(producer.history().size(), is(0));
+        endpoint.close();
+    }
+
+    @Test
+    void testBatchLifecycleFailureMarksEveryMessageNotAttempted() {
+        AtomicBoolean producerCreated = new AtomicBoolean();
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> {
+            producerCreated.set(true);
+            return mockProducer(true);
+        });
+        OutgoingEndpoint endpoint = connector.createOutgoingEndpoint(config());
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                 Message.create("second")));
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                       () -> endpoint.sendBatch(batch));
+
+        assertThat(failure.batch(), sameInstance(batch));
+        assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
+                   is(List.of(BatchItemStatus.NOT_ATTEMPTED, BatchItemStatus.NOT_ATTEMPTED)));
+        assertThat(failure.getCause(), instanceOf(IllegalStateException.class));
+        assertThat(producerCreated.get(), is(false));
+    }
+
+    @Test
+    void testSynchronousBatchEnqueueFailureStillInspectsPreviouslyEnqueuedRecords() {
+        IllegalStateException enqueueFailure = new IllegalStateException("second enqueue failed");
+        MockProducer<Object, Object> producer = new FailsSecondEnqueueProducer(enqueueFailure);
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        OutgoingEndpoint endpoint = start(connector, config());
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                 Message.create("second"),
+                                                                 Message.create("third")));
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                       () -> endpoint.sendBatch(batch));
+
+        assertThat(failure.batch(), sameInstance(batch));
+        assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
+                   is(List.of(BatchItemStatus.SUCCEEDED,
+                              BatchItemStatus.FAILED,
+                              BatchItemStatus.NOT_ATTEMPTED)));
+        assertThat(failure.getCause(), instanceOf(MessagingException.class));
+        assertThat(failure.getCause().getCause(), sameInstance(enqueueFailure));
+        assertThat(producer.history().stream().map(record -> record.value()).toList(), is(List.of("first")));
+        endpoint.close();
+    }
+
+    @Test
+    void testBatchDeadlineReportsEveryUnfinishedSendAsIndeterminate() {
+        MockProducer<Object, Object> producer = mockProducer(false);
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        OutgoingEndpoint endpoint = start(connector, config(Duration.ofNanos(1)));
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                 Message.create("second")));
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                      () -> endpoint.sendBatch(batch));
+
+        assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
+                   is(List.of(BatchItemStatus.INDETERMINATE, BatchItemStatus.INDETERMINATE)));
+        assertThat(failure.outcome(0).failure().orElseThrow(), instanceOf(TimeoutException.class));
+        assertThat(failure.outcome(1).failure().orElseThrow(), instanceOf(TimeoutException.class));
+        assertThat(producer.history().size(), is(2));
+        endpoint.close();
+    }
+
+    @Test
+    void testBatchWaitsUpToConfiguredTimeoutForEachProducerFuture() {
+        Duration timeout = Duration.ofMillis(37);
+        TimeoutRecordingProducer producer = new TimeoutRecordingProducer();
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        OutgoingEndpoint endpoint = start(connector, config(timeout));
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                 Message.create("second")));
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                       () -> endpoint.sendBatch(batch));
+
+        assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
+                   is(List.of(BatchItemStatus.INDETERMINATE, BatchItemStatus.INDETERMINATE)));
+        assertThat(producer.waitTimeouts(), is(List.of(timeout.toNanos(), timeout.toNanos())));
+        endpoint.close();
+    }
+
+    @Test
+    void testBatchInterruptionInspectsAlreadyCompletedLaterFuturesAndRestoresInterrupt() throws InterruptedException {
+        ControlledFutureProducer producer = new ControlledFutureProducer();
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        OutgoingEndpoint endpoint = start(connector, config(Duration.ofSeconds(5)));
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                 Message.create("second"),
+                                                                 Message.create("third")));
+        AtomicReference<Throwable> thrown = new AtomicReference<>();
+        AtomicBoolean interrupted = new AtomicBoolean();
+        Thread sender = Thread.ofVirtual().start(() -> {
+            try {
+                endpoint.sendBatch(batch);
+            } catch (Throwable t) {
+                thrown.set(t);
+                interrupted.set(Thread.currentThread().isInterrupted());
+            }
+        });
+        producer.awaitSends(3);
+        IllegalStateException thirdFailure = new IllegalStateException("third send failed");
+        producer.complete(1);
+        producer.fail(2, thirdFailure);
+
+        sender.interrupt();
+        sender.join(TimeUnit.SECONDS.toMillis(5));
+
+        assertThat(sender.isAlive(), is(false));
+        assertThat(thrown.get(), instanceOf(BatchDeliveryException.class));
+        BatchDeliveryException failure = (BatchDeliveryException) thrown.get();
+        assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
+                   is(List.of(BatchItemStatus.INDETERMINATE,
+                              BatchItemStatus.SUCCEEDED,
+                              BatchItemStatus.INDETERMINATE)));
+        assertThat(failure.outcome(2).failure().orElseThrow(), sameInstance(thirdFailure));
+        assertThat(interrupted.get(), is(true));
+        endpoint.close();
     }
 
     @Test
@@ -336,11 +518,13 @@ class KafkaOutgoingConnectorTest {
         KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
         OutgoingEndpoint endpoint = start(connector, config());
 
-        MessagingException exception = assertThrows(
-                MessagingException.class,
+        BatchDeliveryException exception = assertThrows(
+                BatchDeliveryException.class,
                 () -> endpoint.send(Message.create("audit event")));
 
-        assertThat(exception.getCause(), sameInstance(failure));
+        assertThat(exception.outcome(0).status(), is(BatchItemStatus.FAILED));
+        assertThat(exception.getCause(), instanceOf(MessagingException.class));
+        assertThat(exception.getCause().getCause(), sameInstance(failure));
         endpoint.close();
     }
 
@@ -534,8 +718,9 @@ class KafkaOutgoingConnectorTest {
         assertThat(starter.isAlive(), is(false));
         assertThat(startupFailure.get(), instanceOf(RuntimeException.class));
         assertThat(producer.closeTimeout(), is(Duration.ZERO));
-        MessagingException sendFailure = assertThrows(MessagingException.class,
-                                                       () -> endpoint.send(Message.create("not sent")));
+        BatchDeliveryException sendFailure = assertThrows(BatchDeliveryException.class,
+                                                           () -> endpoint.send(Message.create("not sent")));
+        assertThat(sendFailure.outcome(0).status(), is(BatchItemStatus.NOT_ATTEMPTED));
         assertThat(sendFailure.getCause(), instanceOf(IllegalStateException.class));
     }
 
@@ -725,6 +910,113 @@ class KafkaOutgoingConnectorTest {
             return (topic, data) -> data == null
                     ? null
                     : String.valueOf(data).getBytes(StandardCharsets.UTF_8);
+        }
+    }
+
+    private static final class FailsSecondEnqueueProducer extends MockProducer<Object, Object> {
+        private final RuntimeException failure;
+        private final AtomicInteger sends = new AtomicInteger();
+
+        private FailsSecondEnqueueProducer(RuntimeException failure) {
+            super(cluster(), true, null, CloseTrackingProducer.serializer(), CloseTrackingProducer.serializer());
+            this.failure = failure;
+        }
+
+        @Override
+        public Future<RecordMetadata> send(ProducerRecord<Object, Object> record) {
+            if (sends.incrementAndGet() == 2) {
+                throw failure;
+            }
+            return super.send(record);
+        }
+    }
+
+    private static final class ControlledFutureProducer extends MockProducer<Object, Object> {
+        private final List<CompletableFuture<RecordMetadata>> sends = new ArrayList<>();
+        private final ReentrantLock sendsLock = new ReentrantLock();
+        private final Condition sendsChanged = sendsLock.newCondition();
+
+        private ControlledFutureProducer() {
+            super(cluster(), false, null, CloseTrackingProducer.serializer(), CloseTrackingProducer.serializer());
+        }
+
+        @Override
+        public Future<RecordMetadata> send(ProducerRecord<Object, Object> record) {
+            CompletableFuture<RecordMetadata> result = new CompletableFuture<>();
+            sendsLock.lock();
+            try {
+                sends.add(result);
+                sendsChanged.signalAll();
+                return result;
+            } finally {
+                sendsLock.unlock();
+            }
+        }
+
+        private void awaitSends(int count) throws InterruptedException {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            sendsLock.lockInterruptibly();
+            try {
+                while (sends.size() < count) {
+                    long remainingNanos = deadline - System.nanoTime();
+                    if (remainingNanos <= 0) {
+                        throw new AssertionError("Timed out waiting for " + count + " Kafka sends");
+                    }
+                    sendsChanged.awaitNanos(remainingNanos);
+                }
+            } finally {
+                sendsLock.unlock();
+            }
+        }
+
+        private void complete(int index) {
+            future(index).complete(null);
+        }
+
+        private void fail(int index, RuntimeException failure) {
+            future(index).completeExceptionally(failure);
+        }
+
+        private CompletableFuture<RecordMetadata> future(int index) {
+            sendsLock.lock();
+            try {
+                return sends.get(index);
+            } finally {
+                sendsLock.unlock();
+            }
+        }
+    }
+
+    private static final class TimeoutRecordingProducer extends MockProducer<Object, Object> {
+        private final List<TimeoutRecordingFuture> sends = new ArrayList<>();
+
+        private TimeoutRecordingProducer() {
+            super(cluster(), false, null, CloseTrackingProducer.serializer(), CloseTrackingProducer.serializer());
+        }
+
+        @Override
+        public Future<RecordMetadata> send(ProducerRecord<Object, Object> record) {
+            TimeoutRecordingFuture result = new TimeoutRecordingFuture();
+            sends.add(result);
+            return result;
+        }
+
+        private List<Long> waitTimeouts() {
+            return sends.stream().map(TimeoutRecordingFuture::timeoutNanos).toList();
+        }
+    }
+
+    private static final class TimeoutRecordingFuture extends CompletableFuture<RecordMetadata> {
+        private long timeoutNanos = -1;
+
+        @Override
+        public RecordMetadata get(long timeout, TimeUnit unit) throws TimeoutException {
+            timeoutNanos = unit.toNanos(timeout);
+            throw new TimeoutException("expected timeout");
+        }
+
+        private long timeoutNanos() {
+            return timeoutNanos;
         }
     }
 

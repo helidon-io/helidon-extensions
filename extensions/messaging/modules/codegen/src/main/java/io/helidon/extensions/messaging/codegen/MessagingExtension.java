@@ -127,12 +127,12 @@ class MessagingExtension implements RegistryCodegenExtension {
         classModel.addField(handler -> handler
                 .accessModifier(AccessModifier.PRIVATE)
                 .isFinal(true)
-                .type(TypeName.builder(consumerMethod.batch()
+                .type(TypeName.builder(consumerMethod.explicitBatchHandler()
                                                ? MessagingTypes.MESSAGING_ENTRY_POINT_BATCH_HANDLER
                                                : MessagingTypes.MESSAGING_ENTRY_POINT_HANDLER)
                               .addTypeArgument(typeInfo.typeName())
                               .build())
-                .name(consumerMethod.batch() ? "batchHandler" : "handler"));
+                .name(consumerMethod.explicitBatchHandler() ? "batchHandler" : "handler"));
 
         classModel.addConstructor(ctr -> ctr
                 .addAnnotation(Annotation.create(ServiceCodegenTypes.SERVICE_ANNOTATION_INJECT))
@@ -148,9 +148,9 @@ class MessagingExtension implements RegistryCodegenExtension {
                 .addContent(ctx.descriptorType(typeInfo.typeName()))
                 .addContentLine(".INSTANCE;")
                 .addContent("this.")
-                .addContent(consumerMethod.batch() ? "batchHandler" : "handler")
+                .addContent(consumerMethod.explicitBatchHandler() ? "batchHandler" : "handler")
                 .addContent(" = entryPoints.")
-                .addContent(consumerMethod.batch() ? "batchHandler" : "handler")
+                .addContent(consumerMethod.explicitBatchHandler() ? "batchHandler" : "handler")
                 .addContentLine("(")
                 .increaseContentPadding()
                 .increaseContentPadding()
@@ -163,7 +163,7 @@ class MessagingExtension implements RegistryCodegenExtension {
                 .addContent(CodegenUtil.toConstantName(ctx.uniqueName(typeInfo, element)))
                 .addContentLine(",")
                 .addContent("this::")
-                .addContent(consumerMethod.batch() ? "invokeBatch" : "invoke")
+                .addContent(consumerMethod.explicitBatchHandler() ? "invokeBatch" : "invoke")
                 .addContentLine(");")
                 .decreaseContentPadding()
                 .decreaseContentPadding());
@@ -193,14 +193,11 @@ class MessagingExtension implements RegistryCodegenExtension {
 
         addGenericTypeMethod(classModel, "envelopeGenericType", "ENVELOPE_GENERIC_TYPE");
 
-        if (consumerMethod.batch()) {
-            addBatchMethod(classModel);
-        }
         if (consumerMethod.processor()) {
             addProcessorMetadata(classModel, consumerMethod);
             addProcessMethod(classModel, typeInfo, element);
-        } else if (!consumerMethod.batch()) {
-            addDispatchMethod(classModel, typeInfo, element);
+        } else {
+            addDispatchMethod(classModel, typeInfo, element, consumerMethod.explicitBatchHandler());
         }
         addInvocationMethod(roundContext, classModel, typeInfo, element, consumerMethod);
 
@@ -208,15 +205,6 @@ class MessagingExtension implements RegistryCodegenExtension {
                                       classModel,
                                       typeInfo.typeName(),
                                       element.originatingElementValue());
-    }
-
-    private void addBatchMethod(ClassModel.Builder classModel) {
-        classModel.addMethod(method -> method
-                .addAnnotation(Annotations.OVERRIDE)
-                .accessModifier(AccessModifier.PUBLIC)
-                .returnType(TypeNames.PRIMITIVE_BOOLEAN)
-                .name("batch")
-                .addContentLine("return true;"));
     }
 
     private void addLiteralMethod(ClassModel.Builder classModel, String name, String value) {
@@ -232,42 +220,55 @@ class MessagingExtension implements RegistryCodegenExtension {
 
     private void addDispatchMethod(ClassModel.Builder classModel,
                                    TypeInfo typeInfo,
-                                   TypedElementInfo element) {
+                                   TypedElementInfo element,
+                                   boolean explicitBatchHandler) {
+        if (explicitBatchHandler) {
+            classModel.addMethod(dispatch -> dispatch
+                    .addAnnotation(Annotations.OVERRIDE)
+                    .accessModifier(AccessModifier.PUBLIC)
+                    .returnType(TypeName.create(void.class))
+                    .name("dispatch")
+                    .addParameter(messages -> messages
+                            .type(messageBatchWildcardType())
+                            .name("messages"))
+                    .update(method -> addBatchHandlerInvocation(method, typeInfo, element)));
+            return;
+        }
+
         classModel.addMethod(dispatch -> dispatch
                 .addAnnotation(Annotations.OVERRIDE)
                 .accessModifier(AccessModifier.PUBLIC)
                 .returnType(TypeName.create(void.class))
                 .name("dispatch")
+                .addParameter(messages -> messages
+                        .type(messageBatchWildcardType())
+                        .name("messages"))
+                .addContentLine("for (int index = 0; index < messages.size(); index++) {")
+                .increaseContentPadding()
+                .addContentLine("try {")
+                .increaseContentPadding()
+                .addContentLine("dispatchMessage(messages.get(index));")
+                .decreaseContentPadding()
+                .addContentLine("} catch (RuntimeException e) {")
+                .increaseContentPadding()
+                .addContent("throw ")
+                .addContent(MessagingTypes.BATCH_DELIVERY_EXCEPTION)
+                .addContent(".sequential(")
+                .addContentLiteral("Messaging consumer " + handlerId(typeInfo, element))
+                .addContentLine(", messages, index, e);")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .decreaseContentPadding()
+                .addContentLine("}"));
+
+        classModel.addMethod(dispatch -> dispatch
+                .accessModifier(AccessModifier.PRIVATE)
+                .returnType(TypeName.create(void.class))
+                .name("dispatchMessage")
                 .addParameter(message -> message
                         .type(messageWildcardType())
                         .name("message"))
                 .update(method -> addHandlerInvocation(method, typeInfo, element)));
-    }
-
-    private void addBatchDispatchMethods(ClassModel.Builder classModel,
-                                         TypeInfo typeInfo,
-                                         TypedElementInfo element) {
-        classModel.addMethod(method -> method
-                .addAnnotation(Annotations.OVERRIDE)
-                .accessModifier(AccessModifier.PUBLIC)
-                .returnType(TypeName.create(void.class))
-                .name("dispatch")
-                .addParameter(message -> message
-                        .type(messageWildcardType())
-                        .name("message"))
-                .addContent("dispatchBatch(")
-                .addContent(MessagingTypes.LIST)
-                .addContentLine(".of(message));"));
-
-        classModel.addMethod(method -> method
-                .addAnnotation(Annotations.OVERRIDE)
-                .accessModifier(AccessModifier.PUBLIC)
-                .returnType(TypeName.create(void.class))
-                .name("dispatchBatch")
-                .addParameter(messages -> messages
-                        .type(messageWildcardListType())
-                        .name("messages"))
-                .update(dispatch -> addBatchHandlerInvocation(dispatch, typeInfo, element)));
     }
 
     private void addProcessMethod(ClassModel.Builder classModel,
@@ -276,8 +277,39 @@ class MessagingExtension implements RegistryCodegenExtension {
         classModel.addMethod(process -> process
                 .addAnnotation(Annotations.OVERRIDE)
                 .accessModifier(AccessModifier.PUBLIC)
-                .returnType(messageWildcardType())
+                .returnType(messageBatchWildcardType())
                 .name("process")
+                .addParameter(messages -> messages
+                        .type(messageBatchWildcardType())
+                        .name("messages"))
+                .addContent("var processedMessages = new ")
+                .addContent(MessagingTypes.ARRAY_LIST)
+                .addContent("<")
+                .addContent(messageWildcardType())
+                .addContentLine(">(messages.size());")
+                .addContentLine("for (int index = 0; index < messages.size(); index++) {")
+                .increaseContentPadding()
+                .addContentLine("try {")
+                .increaseContentPadding()
+                .addContentLine("processedMessages.add(processMessage(messages.get(index)));")
+                .decreaseContentPadding()
+                .addContentLine("} catch (RuntimeException e) {")
+                .increaseContentPadding()
+                .addContent("throw ")
+                .addContent(MessagingTypes.BATCH_DELIVERY_EXCEPTION)
+                .addContent(".attemptedPrefix(")
+                .addContentLiteral("Messaging processor " + handlerId(typeInfo, element))
+                .addContentLine(", messages, index, e);")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .addContentLine("return messages.derive(processedMessages);"));
+
+        classModel.addMethod(process -> process
+                .accessModifier(AccessModifier.PRIVATE)
+                .returnType(messageWildcardType())
+                .name("processMessage")
                 .addParameter(message -> message
                         .type(messageWildcardType())
                         .name("message"))
@@ -324,9 +356,7 @@ class MessagingExtension implements RegistryCodegenExtension {
         String description = handlerId(typeInfo, element);
         method.addContentLine("try {")
                 .increaseContentPadding()
-                .addContent("batchHandler.handle(consumer.get(), ")
-                .addContent(MessagingTypes.LIST)
-                .addContentLine(".copyOf(messages));")
+                .addContentLine("batchHandler.handle(consumer.get(), messages);")
                 .decreaseContentPadding()
                 .addContentLine("} catch (RuntimeException | Error e) {")
                 .increaseContentPadding()
@@ -387,11 +417,7 @@ class MessagingExtension implements RegistryCodegenExtension {
                                      TypeInfo typeInfo,
                                      TypedElementInfo element,
                                      ConsumerMethod consumerMethod) {
-        if (consumerMethod.batch()) {
-            addBatchDispatchMethods(classModel, typeInfo, element);
-            TypeName batchType = TypeName.builder(MessagingTypes.LIST)
-                    .addTypeArgument(consumerMethod.envelopeType())
-                    .build();
+        if (consumerMethod.explicitBatchHandler()) {
             classModel.addMethod(invoke -> invoke
                     .addAnnotation(Annotation.create(SuppressWarnings.class, "unchecked"))
                     .accessModifier(AccessModifier.PRIVATE)
@@ -402,13 +428,11 @@ class MessagingExtension implements RegistryCodegenExtension {
                             .type(typeInfo.typeName())
                             .name("consumerInstance"))
                     .addParameter(messages -> messages
-                            .type(messageWildcardListType())
+                            .type(messageBatchWildcardType())
                             .name("messages"))
                     .addContent("var typedMessages = (")
-                    .addContent(batchType)
-                    .addContent(") (")
-                    .addContent(MessagingTypes.LIST)
-                    .addContentLine("<?>) messages;")
+                    .addContent(messageBatchType(consumerMethod.payloadType()))
+                    .addContentLine(") messages;")
                     .addContentLine("try {")
                     .increaseContentPadding()
                     .addContent("consumerInstance.")
@@ -557,11 +581,12 @@ class MessagingExtension implements RegistryCodegenExtension {
 
         if (element.parameterArguments().size() == 1) {
             TypedElementInfo argument = element.parameterArguments().getFirst();
-            MessageType batchMessageType = batchMessageType(roundContext, argument);
-            if (batchMessageType != null) {
+            rejectLegacyListBatch(roundContext, argument);
+            BatchType batchType = batchType(roundContext, argument);
+            if (batchType != null) {
                 if (argument.hasAnnotation(MessagingTypes.HEADER_PARAM)
                         || argument.hasAnnotation(MessagingTypes.ENTITY)) {
-                    throw new CodegenException("List<Message<T>> batch consumer parameters cannot use messaging annotations",
+                    throw new CodegenException("MessageBatch<T> consumer parameters cannot use messaging annotations",
                                                argument.originatingElementValue());
                 }
                 if (element.hasAnnotation(MessagingTypes.OUTGOING)) {
@@ -569,12 +594,14 @@ class MessagingExtension implements RegistryCodegenExtension {
                                                element.originatingElementValue());
                 }
                 validateTerminalReturn(element);
-                return ConsumerMethod.terminal(batchMessageType.payloadType(), batchMessageType.envelopeType(), true);
+                return ConsumerMethod.terminalBatch(batchType.payloadType(),
+                                                    messageType(batchType.payloadType()));
             }
         } else {
             for (TypedElementInfo argument : element.parameterArguments()) {
-                if (batchMessageType(roundContext, argument) != null) {
-                    throw new CodegenException("List<Message<T>> batch consumers must declare exactly one parameter",
+                rejectLegacyListBatch(roundContext, argument);
+                if (batchType(roundContext, argument) != null) {
+                    throw new CodegenException("MessageBatch<T> consumers must declare exactly one parameter",
                                                argument.originatingElementValue());
                 }
             }
@@ -634,7 +661,7 @@ class MessagingExtension implements RegistryCodegenExtension {
         MessageType primary = primaryViews.getFirst();
         if (!element.hasAnnotation(MessagingTypes.OUTGOING)) {
             validateTerminalReturn(element);
-            return ConsumerMethod.terminal(primary.payloadType(), primary.envelopeType(), false);
+            return ConsumerMethod.terminal(primary.payloadType(), primary.envelopeType());
         }
 
         String outgoingChannel = annotationName(element,
@@ -724,26 +751,42 @@ class MessagingExtension implements RegistryCodegenExtension {
         }
     }
 
-    private MessageType batchMessageType(RegistryRoundContext roundContext, TypedElementInfo argument) {
+    private void rejectLegacyListBatch(RegistryRoundContext roundContext, TypedElementInfo argument) {
         TypeName typeName = argument.typeName();
         if (!typeName.genericTypeName().equals(MessagingTypes.LIST)) {
-            return null;
+            return;
         }
         if (typeName.typeArguments().isEmpty()) {
-            throw new CodegenException("Messaging payload parameter must not use a raw generic type: " + typeName,
-                                       argument.originatingElementValue());
+            return;
         }
         MessageType messageType = messageType(roundContext,
                                               typeName.typeArguments().getFirst(),
                                               argument.originatingElementValue());
-        if (messageType == null) {
-            return null;
-        }
-        if (messageType.payloadType().equals(TypeNames.WILDCARD)) {
-            throw new CodegenException("List<Message<T>> batch consumer parameters must declare a concrete payload type",
+        if (messageType != null) {
+            throw new CodegenException("List<Message<T>> batch consumers are not supported; use MessageBatch<T>",
                                        argument.originatingElementValue());
         }
-        return messageType;
+    }
+
+    private BatchType batchType(RegistryRoundContext roundContext, TypedElementInfo argument) {
+        TypeName envelopeType = argument.typeName();
+        if (!envelopeType.genericTypeName().equals(MessagingTypes.MESSAGE_BATCH)) {
+            return null;
+        }
+        if (envelopeType.typeArguments().isEmpty()) {
+            throw new CodegenException("MessageBatch consumer parameters must declare a payload type",
+                                       argument.originatingElementValue());
+        }
+        TypeName payloadType = envelopeType.typeArguments().getFirst();
+        if (!isConcretePayloadType(payloadType)) {
+            throw new CodegenException("MessageBatch consumer parameter " + envelopeType
+                                               + " resolves to non-concrete payload type " + payloadType,
+                                       argument.originatingElementValue());
+        }
+        return new BatchType(concreteType(roundContext,
+                                          payloadType,
+                                          argument.originatingElementValue(),
+                                          "MessageBatch payload type"));
     }
 
     private MessageType messageType(RegistryRoundContext roundContext, TypeName envelopeType, Object origin) {
@@ -752,7 +795,10 @@ class MessagingExtension implements RegistryCodegenExtension {
             return null;
         }
 
-        TypeName resolvedMessageType = resolveMessageType(typeInfo, envelopeType, new HashSet<>());
+        TypeName resolvedMessageType = resolveSuperType(typeInfo,
+                                                        envelopeType,
+                                                        MessagingTypes.MESSAGE,
+                                                        new HashSet<>());
         if (resolvedMessageType == null) {
             return null;
         }
@@ -776,19 +822,22 @@ class MessagingExtension implements RegistryCodegenExtension {
                                concreteType(roundContext, payloadType, origin, "Message payload type"));
     }
 
-    private TypeName resolveMessageType(TypeInfo typeInfo, TypeName typeUsage, Set<String> visited) {
+    private TypeName resolveSuperType(TypeInfo typeInfo,
+                                      TypeName typeUsage,
+                                      TypeName targetType,
+                                      Set<String> visited) {
         String visitKey = typeInfo.rawType().fqName() + "|" + typeUsage.resolvedName();
         if (!visited.add(visitKey)) {
             return null;
         }
-        if (typeInfo.rawType().equals(MessagingTypes.MESSAGE)) {
+        if (typeInfo.rawType().equals(targetType)) {
             return typeUsage;
         }
 
         Map<String, TypeName> bindings = typeBindings(typeInfo.declaredType(), typeUsage);
         for (TypeInfo interfaceInfo : typeInfo.interfaceTypeInfo()) {
             TypeName interfaceUsage = resolveType(interfaceInfo.typeName(), bindings);
-            TypeName resolved = resolveMessageType(interfaceInfo, interfaceUsage, visited);
+            TypeName resolved = resolveSuperType(interfaceInfo, interfaceUsage, targetType, visited);
             if (resolved != null) {
                 return resolved;
             }
@@ -796,7 +845,7 @@ class MessagingExtension implements RegistryCodegenExtension {
         if (typeInfo.superTypeInfo().isPresent()) {
             TypeInfo superTypeInfo = typeInfo.superTypeInfo().get();
             TypeName superTypeUsage = resolveType(superTypeInfo.typeName(), bindings);
-            return resolveMessageType(superTypeInfo, superTypeUsage, visited);
+            return resolveSuperType(superTypeInfo, superTypeUsage, targetType, visited);
         }
         return null;
     }
@@ -1073,9 +1122,15 @@ class MessagingExtension implements RegistryCodegenExtension {
                 .build();
     }
 
-    private TypeName messageWildcardListType() {
-        return TypeName.builder(MessagingTypes.LIST)
-                .addTypeArgument(messageWildcardType())
+    private TypeName messageBatchWildcardType() {
+        return TypeName.builder(MessagingTypes.MESSAGE_BATCH)
+                .addTypeArgument(TypeNames.WILDCARD)
+                .build();
+    }
+
+    private TypeName messageBatchType(TypeName payloadType) {
+        return TypeName.builder(MessagingTypes.MESSAGE_BATCH)
+                .addTypeArgument(payloadType)
                 .build();
     }
 
@@ -1233,15 +1288,29 @@ class MessagingExtension implements RegistryCodegenExtension {
     private record MessageType(TypeName envelopeType, TypeName payloadType) {
     }
 
+    private record BatchType(TypeName payloadType) {
+    }
+
     private record ConsumerMethod(TypeName payloadType,
                                   TypeName envelopeType,
-                                  boolean batch,
+                                  boolean explicitBatchHandler,
                                   String outgoingChannel,
                                   TypeName outgoingPayloadType,
                                   TypeName outgoingEnvelopeType,
                                   boolean returnsEnvelope) {
-        private static ConsumerMethod terminal(TypeName payloadType, TypeName envelopeType, boolean batch) {
-            return new ConsumerMethod(payloadType, envelopeType, batch, null, null, null, false);
+        private static ConsumerMethod terminal(TypeName payloadType, TypeName envelopeType) {
+            return new ConsumerMethod(payloadType, envelopeType, false, null, null, null, false);
+        }
+
+        private static ConsumerMethod terminalBatch(TypeName payloadType,
+                                                    TypeName envelopeType) {
+            return new ConsumerMethod(payloadType,
+                                      envelopeType,
+                                      true,
+                                      null,
+                                      null,
+                                      null,
+                                      false);
         }
 
         private static ConsumerMethod processor(TypeName payloadType,

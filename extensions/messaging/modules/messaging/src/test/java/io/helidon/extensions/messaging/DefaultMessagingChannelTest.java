@@ -22,8 +22,11 @@ import java.util.OptionalLong;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
+
+import io.helidon.common.GenericType;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -85,6 +88,233 @@ class DefaultMessagingChannelTest {
             graph.emitter(second).emit("second");
 
             assertThat(delivered, is(List.of("first", "second")));
+        }
+    }
+
+    @Test
+    void earlierOutputSuccessMakesLaterConfirmedFailureIndeterminate() {
+        AtomicInteger firstOutputInvocations = new AtomicInteger();
+        RuntimeException itemFailure = new RuntimeException("second output rejected the item");
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> channel = builder.channel("fan-out", String.class);
+        builder.batchSink(channel, ignored -> firstOutputInvocations.incrementAndGet())
+                .batchSink(channel, batch -> {
+                    throw new BatchDeliveryException("second output failed",
+                                                     batch,
+                                                     List.of(BatchItemOutcome.failed(0, itemFailure)),
+                                                     itemFailure);
+                });
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("message")));
+
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+
+            BatchDeliveryException failure = assertThrows(
+                    BatchDeliveryException.class,
+                    () -> graph.emitter(channel).emitBatch(batch));
+
+            assertThat(firstOutputInvocations.get(), is(1));
+            assertSame(batch, failure.batch());
+            assertThat(failure.outcome(0).status(), is(BatchItemStatus.INDETERMINATE));
+        }
+    }
+
+    @Test
+    void fanOutNormalizesMixedBatchOutcomesAcrossEarlierAndLaterOutputs() {
+        AtomicInteger firstOutputInvocations = new AtomicInteger();
+        AtomicInteger laterOutputInvocations = new AtomicInteger();
+        RuntimeException itemFailure = new RuntimeException("second output failed");
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> channel = builder.channel("fan-out", String.class);
+        builder.batchSink(channel, ignored -> firstOutputInvocations.incrementAndGet())
+                .batchSink(channel, batch -> {
+                    throw new BatchDeliveryException(
+                            "mixed second output failure",
+                            batch,
+                            List.of(BatchItemOutcome.succeeded(0),
+                                    BatchItemOutcome.failed(1, itemFailure),
+                                    BatchItemOutcome.notAttempted(2),
+                                    BatchItemOutcome.indeterminate(3, itemFailure)),
+                            itemFailure);
+                })
+                .batchSink(channel, ignored -> laterOutputInvocations.incrementAndGet());
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                 Message.create("second"),
+                                                                 Message.create("third"),
+                                                                 Message.create("fourth")));
+
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+
+            BatchDeliveryException failure = assertThrows(
+                    BatchDeliveryException.class,
+                    () -> graph.emitter(channel).emitBatch(batch));
+
+            assertThat(firstOutputInvocations.get(), is(1));
+            assertThat(laterOutputInvocations.get(), is(0));
+            assertSame(batch, failure.batch());
+            assertThat(failure.outcomes().stream().map(BatchItemOutcome::status).toList(),
+                       is(List.of(BatchItemStatus.INDETERMINATE,
+                                  BatchItemStatus.INDETERMINATE,
+                                  BatchItemStatus.INDETERMINATE,
+                                  BatchItemStatus.INDETERMINATE)));
+        }
+    }
+
+    @Test
+    void targetAdmissionRejectionBeforeDispatchIsNotAttempted() {
+        AtomicInteger targetInvocations = new AtomicInteger();
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> source = builder.channel("source", String.class);
+        MessagingChannel<String> target = builder.channel(
+                "target",
+                GenericType.create(String.class),
+                MessagingExecutionConfig.builder().maxInFlightMessages(1).build());
+        builder.route(source, target)
+                .batchSink(target, ignored -> targetInvocations.incrementAndGet());
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                 Message.create("second")));
+
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+
+            BatchDeliveryException failure = assertThrows(
+                    BatchDeliveryException.class,
+                    () -> graph.emitter(source).emitBatch(batch));
+
+            assertSame(batch, failure.batch());
+            assertThat(failure.outcomes().stream().map(BatchItemOutcome::status).toList(),
+                       is(List.of(BatchItemStatus.NOT_ATTEMPTED, BatchItemStatus.NOT_ATTEMPTED)));
+            assertThat(targetInvocations.get(), is(0));
+            MessagingRejectedException rejection = (MessagingRejectedException) failure.getCause();
+            assertThat(rejection.reason(), is(MessagingRejectedException.Reason.OVERSIZED));
+        }
+    }
+
+    @Test
+    void earlierFanOutSuccessMakesTargetAdmissionRejectionIndeterminate() {
+        AtomicInteger earlierOutputInvocations = new AtomicInteger();
+        AtomicInteger targetInvocations = new AtomicInteger();
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> source = builder.channel("source", String.class);
+        MessagingChannel<String> target = builder.channel(
+                "target",
+                GenericType.create(String.class),
+                MessagingExecutionConfig.builder().maxInFlightMessages(1).build());
+        builder.batchSink(source, ignored -> earlierOutputInvocations.incrementAndGet())
+                .route(source, target)
+                .batchSink(target, ignored -> targetInvocations.incrementAndGet());
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                 Message.create("second")));
+
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+
+            BatchDeliveryException failure = assertThrows(
+                    BatchDeliveryException.class,
+                    () -> graph.emitter(source).emitBatch(batch));
+
+            assertSame(batch, failure.batch());
+            assertThat(failure.outcomes().stream().map(BatchItemOutcome::status).toList(),
+                       is(List.of(BatchItemStatus.INDETERMINATE, BatchItemStatus.INDETERMINATE)));
+            assertThat(earlierOutputInvocations.get(), is(1));
+            assertThat(targetInvocations.get(), is(0));
+        }
+    }
+
+    @Test
+    void targetCancellationAfterDispatchRemainsIndeterminate() {
+        AtomicInteger targetInvocations = new AtomicInteger();
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> source = builder.channel("source", String.class);
+        MessagingChannel<String> target = builder.channel("target", String.class);
+        builder.route(source, target)
+                .batchSink(target, ignored -> {
+                    targetInvocations.incrementAndGet();
+                    throw new MessagingRejectedException(
+                            target.name(),
+                            MessagingRejectedException.Reason.CANCELLED,
+                            "Target delivery was cancelled after dispatch started");
+                });
+        MessageBatch<String> batch = MessageBatch.create(Message.create("message"));
+
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+
+            BatchDeliveryException failure = assertThrows(
+                    BatchDeliveryException.class,
+                    () -> graph.emitter(source).emitBatch(batch));
+
+            assertSame(batch, failure.batch());
+            assertThat(failure.outcome(0).status(), is(BatchItemStatus.INDETERMINATE));
+            assertThat(targetInvocations.get(), is(1));
+        }
+    }
+
+    @Test
+    void applicationSideEffectBeforeNestedRejectionRemainsIndeterminate() {
+        AtomicInteger sourceSideEffects = new AtomicInteger();
+        AtomicInteger targetInvocations = new AtomicInteger();
+        AtomicReference<Emitter<String>> targetEmitter = new AtomicReference<>();
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> source = builder.channel("source", String.class);
+        MessagingChannel<String> target = builder.channel(
+                "target",
+                GenericType.create(String.class),
+                MessagingExecutionConfig.builder().maxInFlightMessages(1).build());
+        builder.batchSink(source, ignored -> {
+                    sourceSideEffects.incrementAndGet();
+                    targetEmitter.get().emitBatch(MessageBatch.create(List.of(Message.create("first"),
+                                                                              Message.create("second"))));
+                })
+                .batchSink(target, ignored -> targetInvocations.incrementAndGet());
+        MessageBatch<String> batch = MessageBatch.create(Message.create("source-message"));
+
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+            targetEmitter.set(graph.emitter(target));
+
+            BatchDeliveryException failure = assertThrows(
+                    BatchDeliveryException.class,
+                    () -> graph.emitter(source).emitBatch(batch));
+
+            assertSame(batch, failure.batch());
+            assertThat(failure.outcome(0).status(), is(BatchItemStatus.INDETERMINATE));
+            assertThat(sourceSideEffects.get(), is(1));
+            assertThat(targetInvocations.get(), is(0));
+        }
+    }
+
+    @Test
+    void processorSideEffectsBeforeTargetRejectionRemainIndeterminate() {
+        AtomicInteger processorInvocations = new AtomicInteger();
+        AtomicInteger targetInvocations = new AtomicInteger();
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<String> source = builder.channel("source", String.class);
+        MessagingChannel<String> target = builder.channel(
+                "target",
+                GenericType.create(String.class),
+                MessagingExecutionConfig.builder().maxInFlightMessages(1).build());
+        builder.payloadProcessor(source, target, payload -> {
+                    processorInvocations.incrementAndGet();
+                    return payload;
+                })
+                .batchSink(target, ignored -> targetInvocations.incrementAndGet());
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                 Message.create("second")));
+
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+
+            BatchDeliveryException failure = assertThrows(
+                    BatchDeliveryException.class,
+                    () -> graph.emitter(source).emitBatch(batch));
+
+            assertSame(batch, failure.batch());
+            assertThat(failure.outcomes().stream().map(BatchItemOutcome::status).toList(),
+                       is(List.of(BatchItemStatus.INDETERMINATE, BatchItemStatus.INDETERMINATE)));
+            assertThat(processorInvocations.get(), is(2));
+            assertThat(targetInvocations.get(), is(0));
         }
     }
 

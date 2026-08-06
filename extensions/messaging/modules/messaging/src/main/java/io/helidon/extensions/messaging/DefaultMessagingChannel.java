@@ -35,17 +35,20 @@ import io.helidon.common.GenericType;
  */
 final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T> {
     private final GenericType<T> payloadType;
-    private final List<Consumer<List<Message<?>>>> outputs;
+    private final List<Consumer<MessageBatch<?>>> validators;
+    private final List<Consumer<MessageBatch<?>>> outputs;
     private final DeliveryEngine deliveryEngine;
     private final String channelName;
     private final DefaultMessagingGraph graph;
 
     private DefaultMessagingChannel(GenericType<T> payloadType,
-                                    List<Consumer<List<Message<?>>>> outputs,
+                                    List<Consumer<MessageBatch<?>>> validators,
+                                    List<Consumer<MessageBatch<?>>> outputs,
                                     DeliveryEngine deliveryEngine,
                                     String channelName,
                                     DefaultMessagingGraph graph) {
         this.payloadType = payloadType;
+        this.validators = List.copyOf(validators);
         this.outputs = new CopyOnWriteArrayList<>(outputs);
         this.deliveryEngine = deliveryEngine;
         this.channelName = channelName;
@@ -63,26 +66,16 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T
     }
 
     @Override
-    public void emit(T entity) {
-        emitMessage(Message.create(entity));
-    }
-
-    @Override
-    public void emitMessage(Message<? extends T> message) {
-        emitBatch(List.of(message));
-    }
-
-    @Override
-    public void emitBatch(List<? extends Message<? extends T>> messages) {
-        emitBatchObject(messages);
+    public void emitBatch(MessageBatch<? extends T> batch) {
+        emitBatchObject(batch);
     }
 
     void addOutput(Consumer<Message<?>> output) {
-        outputs.add(messages -> messages.forEach(output));
+        outputs.add(batch -> dispatchMessages(batch, output));
     }
 
-    void addBatchOutput(Consumer<List<Message<?>>> output) {
-        outputs.add(output);
+    void addBatchOutput(Consumer<MessageBatch<T>> output) {
+        outputs.add(batch -> output.accept(castBatch(batch)));
     }
 
     void addOutgoingConnector(ConnectorSink output) {
@@ -94,26 +87,39 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T
     }
 
     void emitPayloadObject(Object entity) {
-        emitBatchObject(List.of(Message.create(entity)));
+        emitBatchObject(MessageBatch.create(Message.create(entity)));
     }
 
     void emitMessageObject(Message<?> message) {
-        emitBatchObject(List.of(Objects.requireNonNull(message)));
+        emitBatchObject(MessageBatch.create(Objects.requireNonNull(message)));
     }
 
-    void emitBatchObject(List<? extends Message<?>> messages) {
+    void emitBatchObject(MessageBatch<?> messages) {
         Objects.requireNonNull(messages);
-        if (messages.isEmpty()) {
-            return;
-        }
         graph.ensureRunning();
-        List<Message<?>> batch = toBatch(messages);
+        MessageBatch<?> batch = toBatch(messages);
         deliveryEngine.dispatch(channelName, batch, () -> dispatchBatch(batch));
     }
 
-    private void dispatchBatch(List<Message<?>> batch) {
-        for (Consumer<List<Message<?>>> output : outputs) {
-            output.accept(batch);
+    void emitRoutedBatchObject(MessageBatch<?> messages) {
+        try {
+            emitBatchObject(messages);
+        } catch (RuntimeException failure) {
+            if (DeliveryEngine.isPreDispatchRejection(failure)) {
+                throw BatchDeliveryException.notAttempted("Messaging nested delivery admission", messages, failure);
+            }
+            throw failure;
+        }
+    }
+
+    private void dispatchBatch(MessageBatch<?> batch) {
+        validators.forEach(validator -> validator.accept(batch));
+        for (int i = 0; i < outputs.size(); i++) {
+            try {
+                outputs.get(i).accept(batch);
+            } catch (RuntimeException e) {
+                throw normalizeFailure(batch, i, e);
+            }
         }
     }
 
@@ -133,8 +139,14 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T
         return entity == null || payloadType.rawType().isInstance(entity);
     }
 
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private MessageBatch<T> castBatch(MessageBatch<?> batch) {
+        return (MessageBatch) batch;
+    }
+
     static final class Builder<T> {
-        private final List<Consumer<List<Message<?>>>> outputs = new ArrayList<>();
+        private final List<Consumer<MessageBatch<?>>> validators = new ArrayList<>();
+        private final List<Consumer<MessageBatch<?>>> outputs = new ArrayList<>();
         private final List<ConnectorSink> connectorOutputs = new ArrayList<>();
         private GenericType<T> payloadType;
         private MessagingExecutionConfig executionConfig;
@@ -151,11 +163,16 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T
         }
 
         Builder<T> addOutput(Consumer<Message<T>> output) {
-            outputs.add(messages -> messages.forEach(message -> output.accept(cast(message))));
+            outputs.add(messages -> dispatchMessages(messages, message -> output.accept(cast(message))));
             return this;
         }
 
-        Builder<T> addBatchOutput(Consumer<List<Message<T>>> output) {
+        Builder<T> addBatchValidator(Consumer<MessageBatch<T>> validator) {
+            validators.add(messages -> validator.accept(castBatch(messages)));
+            return this;
+        }
+
+        Builder<T> addBatchOutput(Consumer<MessageBatch<T>> output) {
             outputs.add(messages -> output.accept(castBatch(messages)));
             return this;
         }
@@ -173,6 +190,7 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T
             DefaultMessagingGraph actualGraph = Objects.requireNonNull(messagingGraph, "messagingGraph");
             MessagingExecutionConfig actualExecutionConfig = Objects.requireNonNull(executionConfig, "executionConfig");
             DefaultMessagingChannel<T> channel = new DefaultMessagingChannel<>(actualPayloadType,
+                                                                               validators,
                                                                                outputs,
                                                                                actualGraph.deliveryEngine(),
                                                                                actualChannelName,
@@ -201,8 +219,8 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T
         }
 
         @SuppressWarnings({"unchecked", "rawtypes"})
-        private List<Message<T>> castBatch(List<Message<?>> messages) {
-            return (List) messages;
+        private MessageBatch<T> castBatch(MessageBatch<?> messages) {
+            return (MessageBatch) messages;
         }
 
     }
@@ -211,17 +229,62 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T
         return new StreamSource(stream, consumer);
     }
 
-    private List<Message<?>> toBatch(List<? extends Message<?>> messages) {
-        List<Message<?>> batch = new ArrayList<>(messages.size());
-        for (Message<?> message : messages) {
-            batch.add(toMessage(Objects.requireNonNull(message)));
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private MessageBatch<?> toBatch(MessageBatch<?> messages) {
+        if (messages.size() <= 0 || messages.messages().size() != messages.size()) {
+            throw new IllegalArgumentException("Message batch must contain a consistent non-empty message snapshot");
         }
-        return List.copyOf(batch);
+        for (Message<?> message : messages.messages()) {
+            toMessage(Objects.requireNonNull(message));
+        }
+        return (MessageBatch) messages;
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static void send(ConnectorSink output, List<Message<?>> messages) {
-        output.sendBatch((List) messages);
+    private static void send(ConnectorSink output, MessageBatch<?> messages) {
+        output.sendBatch((MessageBatch) messages);
+    }
+
+    private static void dispatchMessages(MessageBatch<?> batch, Consumer<Message<?>> output) {
+        for (int i = 0; i < batch.size(); i++) {
+            try {
+                output.accept(batch.get(i));
+            } catch (RuntimeException e) {
+                throw BatchDeliveryException.sequential("Messaging per-message output", batch, i, e);
+            }
+        }
+    }
+
+    private RuntimeException normalizeFailure(MessageBatch<?> batch, int outputIndex, RuntimeException failure) {
+        BatchDeliveryException batchFailure;
+        if (failure instanceof BatchDeliveryException actualFailure
+                && batch.sameDelivery(actualFailure.batch())) {
+            batchFailure = actualFailure;
+        } else {
+            return BatchDeliveryException.indeterminate("Messaging batch output", batch, failure);
+        }
+        if (batchFailure.batch() != batch) {
+            batchFailure = new BatchDeliveryException(batchFailure.getMessage(),
+                                                      batch,
+                                                      batchFailure.outcomes(),
+                                                      batchFailure);
+        }
+        boolean earlierOutputCompleted = outputIndex > 0;
+        boolean laterOutputSkipped = outputIndex + 1 < outputs.size();
+        if (!earlierOutputCompleted && !laterOutputSkipped) {
+            return batchFailure;
+        }
+        List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
+        for (BatchItemOutcome outcome : batchFailure.outcomes()) {
+            boolean partiallyDelivered = outcome.status() == BatchItemStatus.SUCCEEDED && laterOutputSkipped
+                    || outcome.status() != BatchItemStatus.SUCCEEDED
+                            && outcome.status() != BatchItemStatus.INDETERMINATE
+                            && earlierOutputCompleted;
+            outcomes.add(partiallyDelivered
+                                 ? BatchItemOutcome.indeterminate(outcome.index(), failure)
+                                 : outcome);
+        }
+        return new BatchDeliveryException(batchFailure.getMessage(), batch, outcomes, batchFailure);
     }
 
     private static final class StreamSource implements ConnectorSource, ConnectorEndpoint {

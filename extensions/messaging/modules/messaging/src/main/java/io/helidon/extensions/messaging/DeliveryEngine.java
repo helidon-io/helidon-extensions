@@ -87,77 +87,77 @@ final class DeliveryEngine implements AutoCloseable {
     }
 
     void dispatch(String channel,
-                  List<? extends Message<?>> messages,
+                  MessageBatch<?> batch,
                   Runnable action) {
-        Objects.requireNonNull(messages);
+        Objects.requireNonNull(batch);
         Objects.requireNonNull(action);
         ChannelDispatcher dispatcher = dispatcher(channel);
         DeliveryContext parent = CURRENT_DELIVERY.get();
         if (parent != null && parent.connectorLease(this, channel)) {
-            parent.dispatchWithinLease(messages, action);
+            parent.dispatchWithinLease(batch, action);
             return;
         }
         if (parent != null && parent.path().contains(new DeliveryNode(this, channel))) {
             throw new MessagingException("Cyclic synchronous messaging emission: "
                                                  + String.join(" -> ", parent.pathNames()) + " -> " + channel);
         }
-        DeliveryCost cost = deliveryCost(channel, messages);
-        AdmissionMode admissionMode = parent == null ? AdmissionMode.WAIT : AdmissionMode.NESTED;
-        DeliveryTask task = dispatcher.submit(cost,
-                                              parent == null ? List.of() : parent.path(),
-                                              false,
-                                              admissionMode,
-                                              List.of(),
-                                              action);
-        if (task == null) {
-            throw rejected(channel,
-                           MessagingRejectedException.Reason.SATURATED,
-                           "Nested delivery cannot run immediately on channel " + channel);
+        DeliveryTask task;
+        try {
+            DeliveryCost cost = deliveryCost(channel, batch);
+            AdmissionMode admissionMode = parent == null ? AdmissionMode.WAIT : AdmissionMode.NESTED;
+            task = dispatcher.submit(cost,
+                                     parent == null ? List.of() : parent.path(),
+                                     false,
+                                     admissionMode,
+                                     null,
+                                     action);
+            if (task == null) {
+                throw rejected(channel,
+                               MessagingRejectedException.Reason.SATURATED,
+                               "Nested delivery cannot run immediately on channel " + channel);
+            }
+        } catch (MessagingRejectedException e) {
+            if (parent != null && canMarkNotAttempted(e)) {
+                throw new PreDispatchRejectedException(e);
+            }
+            throw e;
         }
         awaitCaller(task);
     }
 
     ConnectorDelivery submitConnectorDelivery(String channel,
-                                               List<? extends Message<?>> messages,
-                                               long admissionBytes,
+                                               MessageBatch<?> batch,
                                                Runnable action) {
-        Objects.requireNonNull(messages);
+        Objects.requireNonNull(batch);
         Objects.requireNonNull(action);
-        if (admissionBytes < 0) {
-            throw new IllegalArgumentException("admissionBytes must be zero or greater");
-        }
         ChannelDispatcher dispatcher = dispatcher(channel);
         DeliveryContext parent = CURRENT_DELIVERY.get();
         if (parent != null) {
             throw new MessagingException("A connector delivery cannot be submitted from messaging dispatch");
         }
-        DeliveryCost cost = connectorDeliveryCost(channel, messages, admissionBytes);
+        DeliveryCost cost = connectorDeliveryCost(channel, batch);
         return dispatcher.submit(cost,
                                  List.of(),
                                  true,
                                  AdmissionMode.WAIT,
-                                 messages,
+                                 batch,
                                  action);
     }
 
     Optional<ConnectorDelivery> trySubmitConnectorDelivery(String channel,
-                                                           List<? extends Message<?>> messages,
-                                                           long admissionBytes,
+                                                           MessageBatch<?> batch,
                                                            Runnable action) {
-        Objects.requireNonNull(messages);
+        Objects.requireNonNull(batch);
         Objects.requireNonNull(action);
-        if (admissionBytes < 0) {
-            throw new IllegalArgumentException("admissionBytes must be zero or greater");
-        }
         DeliveryContext parent = CURRENT_DELIVERY.get();
         if (parent != null) {
             throw new MessagingException("A connector delivery cannot be submitted from messaging dispatch");
         }
-        DeliveryTask task = dispatcher(channel).submit(connectorDeliveryCost(channel, messages, admissionBytes),
+        DeliveryTask task = dispatcher(channel).submit(connectorDeliveryCost(channel, batch),
                                                        List.of(),
                                                        true,
                                                        AdmissionMode.TRY,
-                                                       messages,
+                                                       batch,
                                                        action);
         return Optional.ofNullable(task);
     }
@@ -302,37 +302,38 @@ final class DeliveryEngine implements AutoCloseable {
         return dispatcher;
     }
 
-    private DeliveryCost deliveryCost(String channel, List<? extends Message<?>> messages) {
+    private DeliveryCost deliveryCost(String channel, MessageBatch<?> batch) {
+        validateBatch(batch);
         DeliveryBytes bytes;
         try {
-            bytes = deliveryBytes(messages);
+            bytes = deliveryBytes(batch.messages());
         } catch (ArithmeticException e) {
             throw rejected(channel,
                            MessagingRejectedException.Reason.OVERSIZED,
                            "Message batch admission byte size exceeds the supported range");
         }
-        if (bytes.firstUnknown().isPresent()) {
+        OptionalLong declaredBatchBytes = batchAdmissionBytes(batch);
+        if (bytes.firstUnknown().isPresent() && declaredBatchBytes.isEmpty()) {
             Message<?> unknown = bytes.firstUnknown().get();
             throw rejected(channel,
                            MessagingRejectedException.Reason.UNKNOWN_SIZE,
                            "Message " + unknown.getClass().getName()
                                    + " does not declare an admission byte size");
         }
-        return new DeliveryCost(messages.size(), bytes.knownBytes());
+        long effectiveBytes = declaredBatchBytes.isPresent()
+                ? Math.max(declaredBatchBytes.getAsLong(), bytes.knownBytes())
+                : bytes.knownBytes();
+        return new DeliveryCost(batch.size(), effectiveBytes);
     }
 
     private DeliveryCost connectorDeliveryCost(String channel,
-                                               List<? extends Message<?>> messages,
-                                               long admissionBytes) {
-        if (admissionBytes < 0) {
-            throw new IllegalArgumentException("admissionBytes must be zero or greater");
-        }
-        if (messages.isEmpty()) {
-            throw new IllegalArgumentException("Connector delivery must contain at least one message");
-        }
+                                               MessageBatch<?> batch) {
+        validateBatch(batch);
+        long admissionBytes = batchAdmissionBytes(batch)
+                .orElseThrow(() -> new IllegalArgumentException("Connector delivery admission bytes must be declared"));
         DeliveryBytes declaredMessages;
         try {
-            declaredMessages = deliveryBytes(messages);
+            declaredMessages = deliveryBytes(batch.messages());
         } catch (ArithmeticException e) {
             throw rejected(channel,
                            MessagingRejectedException.Reason.OVERSIZED,
@@ -344,7 +345,31 @@ final class DeliveryEngine implements AutoCloseable {
                            MessagingRejectedException.Reason.OVERSIZED,
                            "Message batch admission byte size exceeds the supported range");
         }
-        return new DeliveryCost(messages.size(), effectiveBytes);
+        return new DeliveryCost(batch.size(), effectiveBytes);
+    }
+
+    private void validateBatch(MessageBatch<?> batch) {
+        Objects.requireNonNull(batch);
+        String batchId = Objects.requireNonNull(batch.id(), "Message batch identity");
+        if (batchId.isBlank() || batchId.length() > MessageBatch.MAX_ID_LENGTH) {
+            throw new IllegalArgumentException("Message batch identity must be non-blank and no longer than "
+                                                       + MessageBatch.MAX_ID_LENGTH + " characters");
+        }
+        if (batch.size() <= 0) {
+            throw new IllegalArgumentException("Message batch must contain at least one message");
+        }
+        if (batch.messages().size() != batch.size()) {
+            throw new IllegalArgumentException("Message batch size does not match its message snapshot");
+        }
+        batch.messages().forEach(Objects::requireNonNull);
+    }
+
+    private OptionalLong batchAdmissionBytes(MessageBatch<?> batch) {
+        OptionalLong result = Objects.requireNonNull(batch.admissionBytes());
+        if (result.isPresent() && result.getAsLong() < 0) {
+            throw new IllegalArgumentException("Message batch admission bytes must be zero or greater");
+        }
+        return result;
     }
 
     private DeliveryCost connectorReservationCost(String channel,
@@ -592,6 +617,17 @@ final class DeliveryEngine implements AutoCloseable {
         return new MessagingRejectedException(channel, reason, message);
     }
 
+    static boolean isPreDispatchRejection(RuntimeException failure) {
+        return failure instanceof PreDispatchRejectedException;
+    }
+
+    private static boolean canMarkNotAttempted(MessagingRejectedException failure) {
+        return switch (failure.reason()) {
+        case OVERSIZED, UNKNOWN_SIZE, SATURATED -> true;
+        case TIMEOUT, SHUTDOWN, CANCELLED -> false;
+        };
+    }
+
     boolean ownsShutdownRejection(Throwable failure) {
         return failure instanceof RuntimeShutdownException shutdown && shutdown.owner == this;
     }
@@ -624,7 +660,7 @@ final class DeliveryEngine implements AutoCloseable {
                                     List<DeliveryNode> parentPath,
                                     boolean connectorLease,
                                     AdmissionMode admissionMode,
-                                    List<? extends Message<?>> connectorMessages,
+                                    MessageBatch<?> connectorBatch,
                                     Runnable action) {
             validateCost(cost);
             DeliveryTask task = new DeliveryTask(this,
@@ -633,7 +669,7 @@ final class DeliveryEngine implements AutoCloseable {
                                                                      channel,
                                                                      parentPath,
                                                                      connectorLease,
-                                                                     connectorMessages),
+                                                                     connectorBatch),
                                                  connectorLease,
                                                  action);
             if (admissionMode == AdmissionMode.NESTED || admissionMode == AdmissionMode.TRY) {
@@ -832,7 +868,7 @@ final class DeliveryEngine implements AutoCloseable {
 
         private DeliveryTask startReservation(DeliveryReservation reservation,
                                               DeliveryCost actualCost,
-                                              List<? extends Message<?>> connectorMessages,
+                                              MessageBatch<?> connectorBatch,
                                               Runnable action,
                                               AdmissionMode admissionMode) {
             validateReservationActual(reservation, actualCost);
@@ -842,7 +878,7 @@ final class DeliveryEngine implements AutoCloseable {
                                                                      channel,
                                                                      List.of(),
                                                                      true,
-                                                                     connectorMessages),
+                                                                     connectorBatch),
                                                  true,
                                                  action);
             Object admissionToken = null;
@@ -1411,6 +1447,12 @@ final class DeliveryEngine implements AutoCloseable {
         }
     }
 
+    private static final class PreDispatchRejectedException extends MessagingRejectedException {
+        private PreDispatchRejectedException(MessagingRejectedException failure) {
+            super(failure.channel(), failure.reason(), failure.getMessage(), failure);
+        }
+    }
+
     private final class DeliveryReservation implements ConnectorDeliveryReservation {
         private final ChannelDispatcher dispatcher;
         private final DeliveryCost reservedCost;
@@ -1428,17 +1470,15 @@ final class DeliveryEngine implements AutoCloseable {
         }
 
         @Override
-        public <T> ConnectorDelivery start(List<? extends Message<T>> messages,
-                                           long admissionBytes,
-                                           Runnable delivery) {
+        public <T> ConnectorDelivery start(MessageBatch<T> batch, Runnable delivery) {
             claimStart();
             try {
-                Objects.requireNonNull(messages);
+                Objects.requireNonNull(batch);
                 Objects.requireNonNull(delivery);
-                DeliveryCost actualCost = connectorDeliveryCost(dispatcher.channel, messages, admissionBytes);
+                DeliveryCost actualCost = connectorDeliveryCost(dispatcher.channel, batch);
                 return dispatcher.startReservation(this,
                                                    actualCost,
-                                                   messages,
+                                                   batch,
                                                    delivery,
                                                    AdmissionMode.WAIT);
             } catch (RuntimeException | Error e) {
@@ -1448,17 +1488,15 @@ final class DeliveryEngine implements AutoCloseable {
         }
 
         @Override
-        public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                        long admissionBytes,
-                                                        Runnable delivery) {
+        public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch, Runnable delivery) {
             claimStart();
             try {
-                Objects.requireNonNull(messages);
+                Objects.requireNonNull(batch);
                 Objects.requireNonNull(delivery);
-                DeliveryCost actualCost = connectorDeliveryCost(dispatcher.channel, messages, admissionBytes);
+                DeliveryCost actualCost = connectorDeliveryCost(dispatcher.channel, batch);
                 DeliveryTask task = dispatcher.startReservation(this,
                                                                 actualCost,
-                                                                messages,
+                                                                batch,
                                                                 delivery,
                                                                 AdmissionMode.TRY);
                 if (task == null) {
@@ -1669,14 +1707,14 @@ final class DeliveryEngine implements AutoCloseable {
         private final String channel;
         private final List<DeliveryNode> path;
         private final boolean connectorLease;
-        private final List<Message<?>> retainedMessages;
+        private final MessageBatch<?> retainedBatch;
         private int dispatchDepth;
 
         private DeliveryContext(DeliveryEngine owner,
                                 String channel,
                                 List<DeliveryNode> parentPath,
                                 boolean connectorLease,
-                                List<? extends Message<?>> retainedMessages) {
+                                MessageBatch<?> retainedBatch) {
             this.owner = owner;
             this.channel = channel;
             List<DeliveryNode> path = new ArrayList<>(parentPath.size() + 1);
@@ -1684,7 +1722,7 @@ final class DeliveryEngine implements AutoCloseable {
             path.add(new DeliveryNode(owner, channel));
             this.path = List.copyOf(path);
             this.connectorLease = connectorLease;
-            this.retainedMessages = connectorLease ? List.copyOf(retainedMessages) : List.of();
+            this.retainedBatch = connectorLease ? Objects.requireNonNull(retainedBatch) : null;
         }
 
         private boolean connectorLease(DeliveryEngine targetOwner, String targetChannel) {
@@ -1694,12 +1732,12 @@ final class DeliveryEngine implements AutoCloseable {
                     && dispatchDepth == 0;
         }
 
-        private void dispatchWithinLease(List<? extends Message<?>> messages, Runnable action) {
+        private void dispatchWithinLease(MessageBatch<?> batch, Runnable action) {
             if (dispatchDepth != 0) {
                 throw new MessagingException("Cyclic synchronous messaging emission: "
                                                      + String.join(" -> ", pathNames()) + " -> " + channel);
             }
-            if (!retains(messages)) {
+            if (!retains(batch)) {
                 throw owner.rejected(
                         channel,
                         MessagingRejectedException.Reason.OVERSIZED,
@@ -1713,25 +1751,8 @@ final class DeliveryEngine implements AutoCloseable {
             }
         }
 
-        private boolean retains(List<? extends Message<?>> messages) {
-            if (messages.size() > retainedMessages.size()) {
-                return false;
-            }
-            boolean[] matched = new boolean[retainedMessages.size()];
-            for (Message<?> message : messages) {
-                boolean found = false;
-                for (int i = 0; i < retainedMessages.size(); i++) {
-                    if (!matched[i] && retainedMessages.get(i) == message) {
-                        matched[i] = true;
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    return false;
-                }
-            }
-            return true;
+        private boolean retains(MessageBatch<?> batch) {
+            return batch.isRetainedSubsetOf(retainedBatch);
         }
 
         private List<DeliveryNode> path() {

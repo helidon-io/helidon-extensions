@@ -21,11 +21,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.HashSet;
-import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
+import io.helidon.extensions.messaging.BatchAtomicity;
+import io.helidon.extensions.messaging.BatchDeliveryException;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.OutgoingEndpoint;
 
@@ -33,7 +36,9 @@ import io.helidon.extensions.messaging.OutgoingEndpoint;
  * File outgoing endpoint implementation.
  * <p>
  * A delivery completes successfully when the connector's {@code Files.writeString(...)} call returns without
- * throwing.
+ * throwing. A failure after a batch append starts reports every item as indeterminate because an append can fail after
+ * writing an unknown prefix of the encoded content. Failures before lock acquisition report every item as not
+ * attempted.
  */
 final class FileOutgoingConnector {
     private static final ReentrantLock[] WRITE_LOCKS = new ReentrantLock[64];
@@ -116,28 +121,37 @@ final class FileOutgoingConnector {
         }
 
         @Override
-        public <T> void send(Message<T> message) {
-            Thread sendThread = beginSend();
-            try {
-                write(String.valueOf(message.entity()) + config.lineSeparator());
-            } finally {
-                endSend(sendThread);
-            }
+        public BatchAtomicity batchAtomicity() {
+            return BatchAtomicity.PER_MESSAGE;
         }
 
         @Override
-        public <T> void sendBatch(List<? extends Message<T>> messages) {
-            Thread sendThread = beginSend();
+        public <T> void sendBatch(MessageBatch<T> batch) {
+            Objects.requireNonNull(batch);
+            Thread sendThread;
             try {
-                if (messages.isEmpty()) {
-                    return;
-                }
+                sendThread = beginSend();
+            } catch (RuntimeException failure) {
+                throw BatchDeliveryException.notAttempted("File batch delivery", batch, failure);
+            }
+            try {
                 StringBuilder content = new StringBuilder();
-                for (Message<T> message : messages) {
-                    content.append(message.entity())
-                            .append(config.lineSeparator());
+                try {
+                    for (Message<T> message : batch.messages()) {
+                        content.append(message.entity())
+                                .append(config.lineSeparator());
+                    }
+                } catch (RuntimeException failure) {
+                    throw BatchDeliveryException.notAttempted("File batch encoding", batch, failure);
                 }
-                write(content.toString());
+                writeBatch(content.toString(), batch);
+            } catch (RuntimeException failure) {
+                if (failure instanceof BatchDeliveryException batchFailure) {
+                    throw batchFailure;
+                }
+                throw BatchDeliveryException.indeterminate("File batch delivery outcome is indeterminate",
+                                                           batch,
+                                                           failure);
             } finally {
                 endSend(sendThread);
             }
@@ -164,12 +178,15 @@ final class FileOutgoingConnector {
             }
         }
 
-        private void write(String content) {
+        private <T> void writeBatch(String content, MessageBatch<T> batch) {
             try {
                 writeLock.lockInterruptibly();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new MessagingException("File outgoing connector write was interrupted", e);
+                throw BatchDeliveryException.notAttempted(
+                        "File batch delivery was interrupted before the write started",
+                        batch,
+                        e);
             }
             try {
                 fileWriter.write(path, content);

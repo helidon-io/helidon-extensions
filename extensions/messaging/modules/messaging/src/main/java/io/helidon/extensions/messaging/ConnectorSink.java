@@ -16,8 +16,6 @@
 
 package io.helidon.extensions.messaging;
 
-import java.util.List;
-
 /**
  * Synchronous outgoing connector sink.
  * <p>
@@ -26,6 +24,15 @@ import java.util.List;
  * underlying cause when one is available.
  */
 public interface ConnectorSink {
+    /**
+     * Batch completion capability of this connector binding.
+     *
+     * @return batch atomicity
+     */
+    default BatchAtomicity batchAtomicity() {
+        return BatchAtomicity.PER_MESSAGE;
+    }
+
     /**
      * Send a payload-only message.
      * <p>
@@ -36,7 +43,7 @@ public interface ConnectorSink {
      * @throws RuntimeException if sending fails or its outcome is indeterminate
      */
     default <T> void send(T entity) {
-        send(Message.create(entity));
+        sendBatch(MessageBatch.create(Message.create(entity)));
     }
 
     /**
@@ -48,21 +55,16 @@ public interface ConnectorSink {
      * @param <T> payload type
      * @throws RuntimeException if sending fails or its outcome is indeterminate
      */
-    <T> void send(Message<T> message);
+    default <T> void send(Message<T> message) {
+        sendBatch(MessageBatch.create(message));
+    }
 
     /**
      * Send a batch of messages to the connector target.
      * <p>
-     * The default implementation sends messages sequentially and stops at the first failure. Messages sent before that
-     * failure are not rolled back and can be duplicated if the caller retries the batch.
-     *
-     * @param messages messages
+     * @param batch immutable message batch
      * @param <T> payload type
-     * @throws RuntimeException if sending fails or its outcome is indeterminate
+     * @throws BatchDeliveryException if sending completes partially or its outcome is indeterminate
      */
-    default <T> void sendBatch(List<? extends Message<T>> messages) {
-        for (Message<T> message : messages) {
-            send(message);
-        }
-    }
+    <T> void sendBatch(MessageBatch<T> batch);
 }

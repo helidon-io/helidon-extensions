@@ -16,22 +16,19 @@
 
 package io.helidon.extensions.messaging;
 
-import java.util.List;
-
 import io.helidon.common.GenericType;
 import io.helidon.service.registry.Service;
 
 /**
  * Generated consumer registration contract.
+ * <p>
+ * The runtime always dispatches a {@link MessageBatch}. Generated registrations adapt that batch to the declared handler
+ * signature: payload and message handlers are invoked once per item, while a batch handler is invoked once per delivery.
  */
 @Service.Contract
 public interface ConsumerRegistration {
     /**
      * Stable identity of this generated handler registration.
-     * <p>
-     * Generated registrations override this with the declaring service and method signature. The default keeps manual
-     * registrations source-compatible and provides a stable, instance-derived diagnostic fallback; manual registrations
-     * that require a normative identity should override this method.
      *
      * @return handler identity
      */
@@ -55,9 +52,6 @@ public interface ConsumerRegistration {
 
     /**
      * Expected payload type including generic arguments.
-     * <p>
-     * Generated registrations override this method to retain the complete declared payload type. The default keeps
-     * manually implemented registrations source-compatible and represents their raw {@link #payloadType()}.
      *
      * @return generic payload type
      */
@@ -67,9 +61,6 @@ public interface ConsumerRegistration {
 
     /**
      * Expected message envelope raw type.
-     * <p>
-     * The default accepts any {@link Message} implementation. Generated registrations override this for consumer
-     * parameters that declare a more specific message subtype.
      *
      * @return message envelope raw type
      */
@@ -79,9 +70,6 @@ public interface ConsumerRegistration {
 
     /**
      * Expected message envelope type including generic arguments.
-     * <p>
-     * Generated registrations override this method to retain the complete declared envelope type. The default keeps
-     * manually implemented registrations source-compatible and represents their raw {@link #envelopeType()}.
      *
      * @return generic message envelope type
      */
@@ -90,36 +78,11 @@ public interface ConsumerRegistration {
     }
 
     /**
-     * Whether this registration consumes message batches.
+     * Dispatch one immutable delivery batch to the generated invocation adapter.
      *
-     * @return {@code true} for batch consumers
-     */
-    default boolean batch() {
-        return false;
-    }
-
-    /**
-     * Dispatch the message to the generated consumer invoker.
-     * <p>
-     * A successful return means the consumer method completed. Consumer failures must be propagated with their causes
-     * preserved.
-     *
-     * @param message message to dispatch
+     * @param batch delivery batch
+     * @throws BatchDeliveryException if delivery completes partially or its outcome is indeterminate
      * @throws RuntimeException if the consumer fails
      */
-    void dispatch(Message<?> message);
-
-    /**
-     * Dispatch a batch to the generated consumer invoker.
-     * <p>
-     * The default implementation dispatches messages sequentially and stops at the first failure.
-     *
-     * @param messages messages to dispatch
-     * @throws RuntimeException if the consumer fails
-     */
-    default void dispatchBatch(List<Message<?>> messages) {
-        for (Message<?> message : messages) {
-            dispatch(message);
-        }
-    }
+    void dispatch(MessageBatch<?> batch);
 }

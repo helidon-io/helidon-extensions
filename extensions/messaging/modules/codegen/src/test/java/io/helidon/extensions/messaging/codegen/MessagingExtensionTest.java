@@ -335,6 +335,9 @@ class MessagingExtensionTest {
         assertTrue(source.contains("InterceptedConsumer__ServiceDescriptor.METHOD_"), source);
         assertTrue(source.contains("this::invoke"), source);
         assertTrue(source.contains("Handler<InterceptedConsumer> handler"), source);
+        assertTrue(source.contains("void dispatch(MessageBatch<?> messages)"), source);
+        assertTrue(source.contains("dispatchMessage(messages.get(index));"), source);
+        assertTrue(source.contains("BatchDeliveryException.sequential("), source);
         assertTrue(source.contains("handler.handle(consumer.get(), message)"), source);
         assertTrue(source.contains("invoke(InterceptedConsumer consumerInstance,"), source);
         assertTrue(source.contains("consumerInstance.consume("), source);
@@ -371,7 +374,10 @@ class MessagingExtensionTest {
         assertTrue(source.contains("return \"audit\";"), source);
         assertTrue(source.contains("new GenericType<Integer>()"), source);
         assertTrue(source.contains("new GenericType<Message<Integer>>()"), source);
-        assertTrue(source.contains("Message<?> process(Message<?> message)"), source);
+        assertTrue(source.contains("MessageBatch<?> process(MessageBatch<?> messages)"), source);
+        assertTrue(source.contains("processedMessages.add(processMessage(messages.get(index)));"), source);
+        assertTrue(source.contains("return messages.derive(processedMessages);"), source);
+        assertTrue(source.contains("BatchDeliveryException.attemptedPrefix("), source);
         assertTrue(source.contains("Handler<PayloadProcessor> handler"), source);
         assertTrue(source.contains("handler.handle(consumer.get(), message)"), source);
         assertTrue(source.contains("invoke(PayloadProcessor consumerInstance,"), source);
@@ -472,21 +478,20 @@ class MessagingExtensionTest {
     }
 
     @Test
-    void generatesSingleInvocationBatchBridge() throws IOException {
+    void generatesSingleBatchHandlerInvocation() throws IOException {
         TestCompiler.Result result = compile("""
                 package com.example;
 
                 import java.io.IOException;
-                import java.util.List;
 
-                import io.helidon.extensions.messaging.Message;
+                import io.helidon.extensions.messaging.MessageBatch;
                 import io.helidon.extensions.messaging.Messaging;
                 import io.helidon.service.registry.Service;
 
                 @Service.Singleton
                 class BatchConsumer {
                     @Messaging.OnMessage("orders")
-                    void consume(List<Message<String>> messages) throws IOException {
+                    void consume(MessageBatch<String> messages) throws IOException {
                     }
                 }
                 """);
@@ -496,11 +501,62 @@ class MessagingExtensionTest {
         assertTrue(source.contains("BatchHandler<BatchConsumer> batchHandler"), source);
         assertTrue(source.contains("entryPoints.batchHandler("), source);
         assertTrue(source.contains("this::invokeBatch"), source);
-        assertTrue(source.contains("batchHandler.handle(consumer.get(), List.copyOf(messages));"), source);
+        assertTrue(source.contains("void dispatch(MessageBatch<?> messages)"), source);
+        assertFalse(source.contains("dispatchBatch("), source);
+        assertFalse(source.contains("batchType()"), source);
+        assertFalse(source.contains("batchGenericType()"), source);
+        assertFalse(source.contains("boolean batch()"), source);
+        assertTrue(source.contains("batchHandler.handle(consumer.get(), messages);"), source);
         assertTrue(source.contains("invokeBatch(BatchConsumer consumerInstance,"), source);
+        assertTrue(source.contains("var typedMessages = (MessageBatch<String>) messages;"), source);
         assertTrue(source.contains("consumerInstance.consume(typedMessages);"), source);
         assertFalse(source.contains("consumer.get().consume("), source);
         assertSingleOccurrence(source, "consumer.get()");
+    }
+
+    @Test
+    void messageBatchCannotBeSubtyped() {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.MessageBatch;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                class CustomBatch<T> extends MessageBatch<T> {
+                }
+
+                @Service.Singleton
+                class BatchConsumer {
+                    @Messaging.OnMessage("orders")
+                    void consume(CustomBatch<Integer> messages) {
+                    }
+                }
+                """);
+
+        assertDiagnostic(result, "cannot inherit from final");
+    }
+
+    @Test
+    void rejectsLegacyListOfMessagesBatchHandler() {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import java.util.List;
+
+                import io.helidon.extensions.messaging.Message;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class LegacyBatchConsumer {
+                    @Messaging.OnMessage("orders")
+                    void consume(List<Message<String>> messages) {
+                    }
+                }
+                """);
+
+        assertDiagnostic(result, "List<Message<T>> batch consumers are not supported; use MessageBatch<T>");
     }
 
     @Test
@@ -530,8 +586,8 @@ class MessagingExtensionTest {
         assertTrue(source.contains("com.example.MetadataEmitterProducer#emitter:orders"), source);
         assertTrue(source.contains("new GenericType<List<String>>()"), source);
         assertTrue(source.contains("new GenericType<Message<List<String>>>()"), source);
-        assertTrue(source.contains("void emitMessage(Message<? extends List<String>> message)"), source);
-        assertTrue(source.contains("void emitBatch(List<? extends Message<? extends List<String>>> messages)"), source);
+        assertTrue(source.contains("void emitBatch(MessageBatch<? extends List<String>> messages)"), source);
+        assertFalse(source.contains("void emitMessage("), source);
     }
 
     @Test

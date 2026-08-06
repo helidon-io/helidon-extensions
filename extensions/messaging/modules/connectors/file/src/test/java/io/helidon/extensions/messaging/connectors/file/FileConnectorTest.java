@@ -47,6 +47,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
+import io.helidon.extensions.messaging.BatchAtomicity;
+import io.helidon.extensions.messaging.BatchDeliveryException;
+import io.helidon.extensions.messaging.BatchItemOutcome;
+import io.helidon.extensions.messaging.BatchItemStatus;
 import io.helidon.extensions.messaging.ConnectorConfig;
 import io.helidon.extensions.messaging.ConnectorDelivery;
 import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
@@ -56,6 +60,7 @@ import io.helidon.extensions.messaging.FailurePolicy;
 import io.helidon.extensions.messaging.IncomingConnectorProvider;
 import io.helidon.extensions.messaging.IncomingEndpoint;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingChannel;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.MessagingGraph;
@@ -145,7 +150,11 @@ class FileConnectorTest {
 
         assertThat(Files.exists(firstPath), is(false));
         assertThat(Files.exists(secondPath), is(false));
-        assertThrows(IllegalStateException.class, () -> first.send(Message.create("before start")));
+        BatchDeliveryException beforeStart = assertThrows(
+                BatchDeliveryException.class,
+                () -> first.send(Message.create("before start")));
+        assertThat(beforeStart.outcome(0).status(), is(BatchItemStatus.NOT_ATTEMPTED));
+        assertThat(beforeStart.getCause(), instanceOf(IllegalStateException.class));
 
         first.start();
         second.start();
@@ -154,7 +163,11 @@ class FileConnectorTest {
 
         first.close();
         first.close();
-        assertThrows(IllegalStateException.class, () -> first.send(Message.create("after close")));
+        BatchDeliveryException firstClosed = assertThrows(
+                BatchDeliveryException.class,
+                () -> first.send(Message.create("after close")));
+        assertThat(firstClosed.outcome(0).status(), is(BatchItemStatus.NOT_ATTEMPTED));
+        assertThat(firstClosed.getCause(), instanceOf(IllegalStateException.class));
 
         second.send(Message.create("second remains available"));
         second.flush();
@@ -218,7 +231,11 @@ class FileConnectorTest {
         assertThat(writeInterrupted.get(), is(true));
         assertThat(sendThread.isAlive(), is(false));
         assertThat(sendFailure.get(), instanceOf(MessagingException.class));
-        assertThrows(IllegalStateException.class, () -> blocked.send(Message.create("after close")));
+        BatchDeliveryException blockedClosed = assertThrows(
+                BatchDeliveryException.class,
+                () -> blocked.send(Message.create("after close")));
+        assertThat(blockedClosed.outcome(0).status(), is(BatchItemStatus.NOT_ATTEMPTED));
+        assertThat(blockedClosed.getCause(), instanceOf(IllegalStateException.class));
 
         sibling.send(Message.create("sibling remains available"));
         sibling.flush();
@@ -265,7 +282,11 @@ class FileConnectorTest {
         assertThat(sendFailure.get(), nullValue());
         assertThat(writeInterrupted.get(), is(false));
         assertThat(written.get(), is("admitted\n"));
-        assertThrows(IllegalStateException.class, () -> endpoint.send(Message.create("after close")));
+        BatchDeliveryException closed = assertThrows(
+                BatchDeliveryException.class,
+                () -> endpoint.send(Message.create("after close")));
+        assertThat(closed.outcome(0).status(), is(BatchItemStatus.NOT_ATTEMPTED));
+        assertThat(closed.getCause(), instanceOf(IllegalStateException.class));
     }
 
     @Test
@@ -349,10 +370,123 @@ class FileConnectorTest {
         Path auditLog = tempDir.resolve("audit.log");
         var sink = outgoingEndpoint(config(auditLog, "|"));
 
-        sink.sendBatch(List.of(Message.create("first audit event"),
-                               Message.create("second audit event")));
+        sink.sendBatch(MessageBatch.create(List.of(Message.create("first audit event"),
+                                                   Message.create("second audit event"))));
 
         assertThat(Files.readString(auditLog), is("first audit event|second audit event|"));
+        assertThat(sink.batchAtomicity(), is(BatchAtomicity.PER_MESSAGE));
+    }
+
+    @Test
+    void testBatchWriteFailureReportsEveryOutcomeAsIndeterminate(@TempDir Path tempDir) {
+        RuntimeException expectedFailure = new MessagingException("expected write failure");
+        OutgoingEndpoint sink = FileOutgoingConnector.createEndpoint(config(tempDir.resolve("audit.log")),
+                                                                     (path, content) -> {
+                                                                         throw expectedFailure;
+                                                                     });
+        sink.start();
+        MessageBatch<String> batch = MessageBatch.<String>builder()
+                .id("file-batch")
+                .add(Message.create("first audit event"))
+                .add(Message.create("second audit event"))
+                .build();
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                       () -> sink.sendBatch(batch));
+
+        assertThat(failure.batch(), sameInstance(batch));
+        assertThat(failure.getCause(), sameInstance(expectedFailure));
+        assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
+                   is(List.of(BatchItemStatus.INDETERMINATE, BatchItemStatus.INDETERMINATE)));
+        assertThat(failure.outcomes().stream().map(outcome -> outcome.index()).toList(), is(List.of(0, 1)));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testBatchInterruptedBeforeWriteReportsEveryItemNotAttempted(@TempDir Path tempDir) throws Exception {
+        Path auditLog = tempDir.resolve("audit.log");
+        CountDownLatch writeStarted = new CountDownLatch(1);
+        CountDownLatch releaseWrite = new CountDownLatch(1);
+        OutgoingEndpoint lockOwner = FileOutgoingConnector.createEndpoint(config(auditLog), (path, content) -> {
+            writeStarted.countDown();
+            try {
+                releaseWrite.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new MessagingException("Unexpected interrupted lock owner", e);
+            }
+        });
+        OutgoingEndpoint waiting = FileOutgoingConnector.createEndpoint(config(auditLog));
+        lockOwner.start();
+        waiting.start();
+        Thread lockOwnerThread = Thread.ofVirtual().start(() -> lockOwner.send(Message.create("owner")));
+        assertThat(writeStarted.await(1, TimeUnit.SECONDS), is(true));
+
+        CountDownLatch readyForLock = new CountDownLatch(1);
+        Object first = new Object() {
+            @Override
+            public String toString() {
+                readyForLock.countDown();
+                return "first";
+            }
+        };
+        MessageBatch<Object> batch = MessageBatch.create(List.of(Message.create(first), Message.create("second")));
+        AtomicReference<Throwable> sendFailure = new AtomicReference<>();
+        Thread waitingThread = Thread.ofVirtual().start(() -> {
+            try {
+                waiting.sendBatch(batch);
+            } catch (Throwable t) {
+                sendFailure.set(t);
+            }
+        });
+        assertThat(readyForLock.await(1, TimeUnit.SECONDS), is(true));
+        waiting.forceClose();
+        waitingThread.join(TimeUnit.SECONDS.toMillis(1));
+        releaseWrite.countDown();
+        lockOwnerThread.join(TimeUnit.SECONDS.toMillis(1));
+
+        assertThat(waitingThread.isAlive(), is(false));
+        assertThat(sendFailure.get(), instanceOf(BatchDeliveryException.class));
+        BatchDeliveryException failure = (BatchDeliveryException) sendFailure.get();
+        assertThat(failure.batch(), sameInstance(batch));
+        assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
+                   is(List.of(BatchItemStatus.NOT_ATTEMPTED, BatchItemStatus.NOT_ATTEMPTED)));
+    }
+
+    @Test
+    void testBatchLifecycleFailureReportsEveryItemNotAttempted(@TempDir Path tempDir) {
+        OutgoingEndpoint sink = FileOutgoingConnector.createEndpoint(config(tempDir.resolve("audit.log")));
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"), Message.create("second")));
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class, () -> sink.sendBatch(batch));
+
+        assertThat(failure.batch(), sameInstance(batch));
+        assertThat(failure.getCause(), instanceOf(IllegalStateException.class));
+        assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
+                   is(List.of(BatchItemStatus.NOT_ATTEMPTED, BatchItemStatus.NOT_ATTEMPTED)));
+    }
+
+    @Test
+    void testBatchEncodingFailureReportsEveryItemNotAttempted(@TempDir Path tempDir) {
+        RuntimeException expectedFailure = new RuntimeException("expected encoding failure");
+        Object invalidPayload = new Object() {
+            @Override
+            public String toString() {
+                throw expectedFailure;
+            }
+        };
+        Path auditLog = tempDir.resolve("audit.log");
+        OutgoingEndpoint sink = outgoingEndpoint(config(auditLog));
+        MessageBatch<Object> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                 Message.create(invalidPayload)));
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class, () -> sink.sendBatch(batch));
+
+        assertThat(failure.batch(), sameInstance(batch));
+        assertThat(failure.getCause(), sameInstance(expectedFailure));
+        assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
+                   is(List.of(BatchItemStatus.NOT_ATTEMPTED, BatchItemStatus.NOT_ATTEMPTED)));
+        assertThat(Files.exists(auditLog), is(false));
     }
 
     @Test
@@ -436,10 +570,10 @@ class FileConnectorTest {
 
         try (MessagingGraph graph = builder.build()) {
             graph.start();
-            graph.emitter(channel).emitBatch(List.of(Message.create("first audit event"),
-                                                     Message.builder("second audit event")
-                                                             .header("key", "value")
-                                                             .build()));
+            graph.emitter(channel).emitBatch(MessageBatch.create(List.of(Message.create("first audit event"),
+                                                                         Message.builder("second audit event")
+                                                                                 .header("key", "value")
+                                                                                 .build())));
 
             assertThat(Files.readString(auditLog), is("first audit event|second audit event|"));
         }
@@ -474,7 +608,7 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> messages) {
                 attempts.add(entities(messages));
                 int currentAttempt = attempt.getAndIncrement();
                 if (currentAttempt == 0) {
@@ -486,7 +620,7 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+            public <T> FailureResult handleFailure(MessageBatch<T> messages,
                                                    int failedAttempt,
                                                    RuntimeException failure) {
                 handledBatches.add(entities(messages));
@@ -513,6 +647,270 @@ class FileConnectorTest {
     }
 
     @Test
+    void testAllNotAttemptedDeliveryInvokesFailurePolicy(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "first\nsecond\n");
+        AtomicInteger deliveries = new AtomicInteger();
+        AtomicInteger handled = new AtomicInteger();
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "events";
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                deliveries.incrementAndGet();
+                throw BatchDeliveryException.notAttempted(
+                        "Expected pre-dispatch rejection",
+                        batch,
+                        new MessagingRejectedException("target", MessagingRejectedException.Reason.OVERSIZED));
+            }
+
+            @Override
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                handled.incrementAndGet();
+                assertThat(failedAttempt, is(1));
+                assertThat(failure, instanceOf(BatchDeliveryException.class));
+                BatchDeliveryException batchFailure = (BatchDeliveryException) failure;
+                assertThat(batchFailure.batch(), sameInstance(batch));
+                assertThat(batchFailure.outcomes().stream().map(BatchItemOutcome::status).toList(),
+                           is(List.of(BatchItemStatus.NOT_ATTEMPTED, BatchItemStatus.NOT_ATTEMPTED)));
+                return FailureResult.SETTLED;
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(deliveries.get(), is(1));
+        assertThat(handled.get(), is(1));
+        assertThat(offset, is(Math.toIntExact(Files.size(input))));
+    }
+
+    @Test
+    void testStructuredPartialFailureRetriesAttemptedBeforeNotAttempted(@TempDir Path tempDir)
+            throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "first\nsecond\nthird\n");
+        RuntimeException expectedFailure = new IllegalStateException("expected downstream failure");
+        List<MessageBatch<?>> attempts = new ArrayList<>();
+        List<MessageBatch<?>> handled = new ArrayList<>();
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public FailurePolicy failurePolicy() {
+                return FailurePolicy.builder()
+                        .retryDelay(Duration.ofMillis(1))
+                        .build();
+            }
+
+            @Override
+            public String channelName() {
+                return "events";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+                throw new AssertionError("File source must emit appended lines as a batch");
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                attempts.add(batch);
+                if (attempts.size() == 1) {
+                    throw BatchDeliveryException.sequential("Expected partial delivery", batch, 1, expectedFailure);
+                }
+            }
+
+            @Override
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                handled.add(batch);
+                assertThat(failedAttempt, is(1));
+                assertThat(failure, instanceOf(BatchDeliveryException.class));
+                BatchDeliveryException batchFailure = (BatchDeliveryException) failure;
+                assertThat(batchFailure.batch(), sameInstance(batch));
+                assertThat(batchFailure.outcomes().size(), is(1));
+                assertThat(batchFailure.outcome(0).index(), is(0));
+                assertThat(batchFailure.outcome(0).status(), is(BatchItemStatus.INDETERMINATE));
+                assertThat(batchFailure.outcome(0).failure().orElseThrow(), sameInstance(expectedFailure));
+                return FailureResult.RETRY;
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(attempts.stream().map(FileConnectorTest::entities).toList(),
+                   is(List.of(List.of("first", "second", "third"), List.of("second"), List.of("third"))));
+        assertThat(handled.size(), is(1));
+        assertThat(handled.getFirst(), sameInstance(attempts.get(1)));
+        assertThat(attempts.getFirst().subset(List.of(1)).sameDelivery(attempts.get(1)), is(true));
+        assertThat(attempts.getFirst().subset(List.of(2)).sameDelivery(attempts.get(2)), is(true));
+        assertThat(attempts.get(1).admissionBytes().isPresent(), is(true));
+        assertThat(offset, is(Math.toIntExact(Files.size(input))));
+    }
+
+    @Test
+    void testDeferredSubsetRetainsEarlierFailedAttemptCount(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "first\nsecond\n");
+        RuntimeException expectedFailure = new IllegalStateException("expected downstream failure");
+        List<MessageBatch<?>> deliveries = new ArrayList<>();
+        List<MessageBatch<?>> handled = new ArrayList<>();
+        List<Integer> failedAttempts = new ArrayList<>();
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public FailurePolicy failurePolicy() {
+                return FailurePolicy.builder()
+                        .retryDelay(Duration.ofNanos(1))
+                        .build();
+            }
+
+            @Override
+            public String channelName() {
+                return "events";
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                deliveries.add(batch);
+                if (deliveries.size() == 1) {
+                    throw BatchDeliveryException.indeterminate("Expected initial failure", batch, expectedFailure);
+                }
+                if (deliveries.size() == 2) {
+                    throw BatchDeliveryException.sequential("Expected deferred second item",
+                                                            batch,
+                                                            0,
+                                                            expectedFailure);
+                }
+                throw expectedFailure;
+            }
+
+            @Override
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                handled.add(batch);
+                failedAttempts.add(failedAttempt);
+                return handled.size() == 1 ? FailureResult.RETRY : FailureResult.SETTLED;
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(deliveries.stream().map(FileConnectorTest::entities).toList(),
+                   is(List.of(List.of("first", "second"), List.of("first", "second"), List.of("second"))));
+        assertThat(handled.stream().map(FileConnectorTest::entities).toList(),
+                   is(List.of(List.of("first", "second"), List.of("first"), List.of("second"))));
+        assertThat(failedAttempts, is(List.of(1, 2, 2)));
+        assertThat(offset, is(Math.toIntExact(Files.size(input))));
+    }
+
+    @Test
+    void testStructuredPartialTerminalHandlingDefersNotAttemptedMessages(@TempDir Path tempDir)
+            throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "first\nsecond\nthird\n");
+        RuntimeException expectedFailure = new IllegalStateException("expected downstream failure");
+        List<MessageBatch<?>> attempts = new ArrayList<>();
+        AtomicReference<MessageBatch<?>> handled = new AtomicReference<>();
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "events";
+            }
+
+            @Override
+            public <T> void emit(Message<T> message) {
+                throw new AssertionError("File source must emit appended lines as a batch");
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                attempts.add(batch);
+                if (attempts.size() == 1) {
+                    throw BatchDeliveryException.sequential("Expected partial delivery", batch, 1, expectedFailure);
+                }
+            }
+
+            @Override
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                handled.set(batch);
+                return FailureResult.SETTLED;
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(entities(handled.get()), is(List.of("second")));
+        assertThat(attempts.stream().map(FileConnectorTest::entities).toList(),
+                   is(List.of(List.of("first", "second", "third"), List.of("third"))));
+        assertThat(attempts.getFirst().subset(List.of(1)).sameDelivery(handled.get()), is(true));
+        assertThat(attempts.getFirst().subset(List.of(2)).sameDelivery(attempts.get(1)), is(true));
+        assertThat(offset, is(Math.toIntExact(Files.size(input))));
+    }
+
+    @Test
+    void testStructuredPartialTerminalFailureRetriesOnlyUnresolvedLineage(@TempDir Path tempDir)
+            throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "first\nsecond\nthird\n");
+        RuntimeException processingFailure = new IllegalStateException("expected downstream failure");
+        RuntimeException routeFailure = new IllegalStateException("expected terminal route failure");
+        List<MessageBatch<?>> handled = new ArrayList<>();
+        List<RuntimeException> handledFailures = new ArrayList<>();
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "events";
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                throw processingFailure;
+            }
+
+            @Override
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                handled.add(batch);
+                handledFailures.add(failure);
+                assertThat(failedAttempt, is(1));
+                if (handled.size() == 1) {
+                    List<Message<T>> routedMessages = batch.messages()
+                            .stream()
+                            .map(message -> Message.create(message.entity()))
+                            .toList();
+                    MessageBatch<T> routedBatch = batch.derive(routedMessages);
+                    throw BatchDeliveryException.sequential("Expected partial terminal delivery",
+                                                            routedBatch,
+                                                            1,
+                                                            routeFailure);
+                }
+                return FailureResult.SETTLED;
+            }
+        };
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(handled.stream().map(FileConnectorTest::entities).toList(),
+                   is(List.of(List.of("first", "second", "third"), List.of("second", "third"))));
+        assertThat(handled.getFirst().subset(List.of(1, 2)).sameDelivery(handled.get(1)), is(true));
+        assertThat(handledFailures, is(List.of(processingFailure, processingFailure)));
+        assertThat(offset, is(Math.toIntExact(Files.size(input))));
+    }
+
+    @Test
     void testSettledFailureAdvancesPastCapturedBatch(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "first\nsecond\n");
@@ -534,7 +932,7 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> messages) {
                 attempts.add(entities(messages));
                 if (attempt.getAndIncrement() == 0) {
                     append(input, "third\n");
@@ -543,7 +941,7 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+            public <T> FailureResult handleFailure(MessageBatch<T> messages,
                                                    int failedAttempt,
                                                    RuntimeException failure) {
                 handledBatches.add(entities(messages));
@@ -611,7 +1009,7 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> messages) {
                 attempts.add(entities(messages));
                 if (attempt.getAndIncrement() == 0) {
                     replace(input, replacement);
@@ -620,7 +1018,7 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+            public <T> FailureResult handleFailure(MessageBatch<T> messages,
                                                    int failedAttempt,
                                                    RuntimeException failure) {
                 return FailureResult.SETTLED;
@@ -830,7 +1228,7 @@ class FileConnectorTest {
             }
         }) {
             @Override
-            public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+            public <T> FailureResult handleFailure(MessageBatch<T> messages,
                                                    int failedAttempt,
                                                    RuntimeException failure) {
                 TrackingDelivery delivery = reservations().getFirst().delivery();
@@ -1599,14 +1997,14 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> messages) {
                 attempts.add(entities(messages));
                 append(input, "third\n");
                 throw deliveryFailure;
             }
 
             @Override
-            public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+            public <T> FailureResult handleFailure(MessageBatch<T> messages,
                                                    int failedAttempt,
                                                    RuntimeException failure) {
                 failedAttempts.add(failedAttempt);
@@ -1649,12 +2047,12 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> messages) {
                 throw new IllegalStateException("expected downstream failure");
             }
 
             @Override
-            public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+            public <T> FailureResult handleFailure(MessageBatch<T> messages,
                                                    int failedAttempt,
                                                    RuntimeException failure) {
                 retryScheduled.countDown();
@@ -1680,6 +2078,70 @@ class FileConnectorTest {
         assertThat(thread.isAlive(), is(false));
         assertThat(failure.get(), nullValue());
         assertThat(offset.get(), is(0));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testCloseStopsPartialTerminalRouteWithoutInvokingUnresolvedSubset(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "first\nsecond\nthird\n");
+        RuntimeException processingFailure = new IllegalStateException("expected downstream failure");
+        RuntimeException routeFailure = new IllegalStateException("expected terminal route failure");
+        CountDownLatch terminalRouteStarted = new CountDownLatch(1);
+        CountDownLatch releaseTerminalRoute = new CountDownLatch(1);
+        AtomicInteger terminalRouteInvocations = new AtomicInteger();
+        ConnectorSourceContext context = new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return "events";
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                throw processingFailure;
+            }
+
+            @Override
+            public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                                   int failedAttempt,
+                                                   RuntimeException failure) {
+                terminalRouteInvocations.incrementAndGet();
+                terminalRouteStarted.countDown();
+                try {
+                    releaseTerminalRoute.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new MessagingException("Terminal route interrupted", e);
+                }
+                throw BatchDeliveryException.sequential("Expected partial terminal delivery",
+                                                        batch,
+                                                        1,
+                                                        routeFailure);
+            }
+        };
+        FileConnectorProvider provider = new FileConnectorProvider();
+        var source = (FileIncomingConnector.FileSource) provider.createIncomingEndpoint(incomingConfig(input), context);
+        AtomicInteger offset = new AtomicInteger(-1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread thread = Thread.ofVirtual().start(() -> {
+            try {
+                offset.set(source.emitAppendedLines(input, 0));
+            } catch (Throwable t) {
+                failure.set(t);
+            }
+        });
+        assertThat(terminalRouteStarted.await(1, TimeUnit.SECONDS), is(true));
+
+        source.close();
+        releaseTerminalRoute.countDown();
+        thread.join(TimeUnit.SECONDS.toMillis(1));
+
+        assertThat(thread.isAlive(), is(false));
+        assertThat(failure.get(), nullValue());
+        assertThat(offset.get(), is(0));
+        assertThat("closure must not invoke the terminal route for the unresolved subset",
+                   terminalRouteInvocations.get(),
+                   is(1));
     }
 
     @Test
@@ -1743,15 +2205,13 @@ class FileConnectorTest {
                 if (reservationCount.incrementAndGet() == 1) {
                     return new ConnectorDeliveryReservation() {
                         @Override
-                        public <T> ConnectorDelivery start(List<? extends Message<T>> messages,
-                                                           long admissionBytes,
+                        public <T> ConnectorDelivery start(MessageBatch<T> messages,
                                                            Runnable delivery) {
                             throw new AssertionError("Initial empty read must not start a delivery");
                         }
 
                         @Override
-                        public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                                       long admissionBytes,
+                        public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> messages,
                                                                        Runnable delivery) {
                             throw new AssertionError("Initial empty read must not start a delivery");
                         }
@@ -1764,8 +2224,7 @@ class FileConnectorTest {
                 }
                 return new ConnectorDeliveryReservation() {
                     @Override
-                    public <T> ConnectorDelivery start(List<? extends Message<T>> messages,
-                                                       long admissionBytes,
+                    public <T> ConnectorDelivery start(MessageBatch<T> messages,
                                                        Runnable delivery) {
                         startWait.countDown();
                         try {
@@ -1781,10 +2240,9 @@ class FileConnectorTest {
                     }
 
                     @Override
-                    public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                                   long admissionBytes,
+                    public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> messages,
                                                                    Runnable delivery) {
-                        return Optional.of(start(messages, admissionBytes, delivery));
+                        return Optional.of(start(messages, delivery));
                     }
 
                     @Override
@@ -1884,7 +2342,7 @@ class FileConnectorTest {
                 }
 
                 @Override
-                public <T> void emit(Message<T> message) {
+                public <T> void emitBatch(MessageBatch<T> batch) {
                     throw new AssertionError("No existing file content should be emitted");
                 }
             });
@@ -1928,7 +2386,7 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> messages) {
                 deliveries.add(entities(messages));
                 delivered.countDown();
             }
@@ -1975,7 +2433,7 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> messages) {
                 deliveries.add(entities(messages));
                 delivered.countDown();
             }
@@ -2113,7 +2571,7 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> messages) {
                 consumer.accept(messages);
             }
         };
@@ -2139,12 +2597,12 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> messages) {
                 consumer.accept(messages);
             }
 
             @Override
-            public <T> FailureResult handleFailure(List<? extends Message<T>> messages,
+            public <T> FailureResult handleFailure(MessageBatch<T> messages,
                                                    int failedAttempt,
                                                    RuntimeException failure) {
                 return FailureResult.RETRY;
@@ -2177,14 +2635,14 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> void emitBatch(List<? extends Message<T>> messages) {
+            public <T> void emitBatch(MessageBatch<T> messages) {
                 consumer.accept(messages);
             }
         };
     }
 
-    private static List<String> entities(List<? extends Message<?>> messages) {
-        return messages.stream()
+    private static List<String> entities(MessageBatch<?> messages) {
+        return messages.messages().stream()
                 .map(message -> String.valueOf(message.entity()))
                 .toList();
     }
@@ -2245,7 +2703,7 @@ class FileConnectorTest {
         }
 
         @Override
-        public <T> void emitBatch(List<? extends Message<T>> messages) {
+        public <T> void emitBatch(MessageBatch<T> messages) {
             consumer.accept(messages);
         }
 
@@ -2273,9 +2731,9 @@ class FileConnectorTest {
         }
 
         @Override
-        public <T> ConnectorDelivery start(List<? extends Message<T>> messages,
-                                           long admissionBytes,
+        public <T> ConnectorDelivery start(MessageBatch<T> messages,
                                            Runnable action) {
+            long admissionBytes = messages.admissionBytes().orElseThrow();
             if (!open()) {
                 throw new IllegalStateException("Reservation is not open");
             }
@@ -2291,10 +2749,9 @@ class FileConnectorTest {
         }
 
         @Override
-        public <T> Optional<ConnectorDelivery> tryStart(List<? extends Message<T>> messages,
-                                                        long admissionBytes,
+        public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> messages,
                                                         Runnable action) {
-            return Optional.of(start(messages, admissionBytes, action));
+            return Optional.of(start(messages, action));
         }
 
         @Override
@@ -2457,6 +2914,6 @@ class FileConnectorTest {
 
     @FunctionalInterface
     private interface BatchConsumer {
-        void accept(List<? extends Message<?>> messages);
+        void accept(MessageBatch<?> messages);
     }
 }

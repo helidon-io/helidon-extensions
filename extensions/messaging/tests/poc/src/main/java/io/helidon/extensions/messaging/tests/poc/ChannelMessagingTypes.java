@@ -39,6 +39,7 @@ import io.helidon.extensions.messaging.Emitter;
 import io.helidon.extensions.messaging.IncomingConnectorProvider;
 import io.helidon.extensions.messaging.IncomingEndpoint;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessageSizeEstimator;
 import io.helidon.extensions.messaging.Messaging;
 import io.helidon.extensions.messaging.MessagingException;
@@ -50,7 +51,6 @@ class ChannelMessagingTypes {
     static final String CHANNEL_ONE = "channel-one";
     static final String CHANNEL_TWO = "channel-two";
     static final String CUSTOM_MESSAGE_CHANNEL = "custom-message-channel";
-    static final String CUSTOM_MESSAGE_BATCH_CHANNEL = "custom-message-batch-channel";
     static final String MULTI_HOP_MESSAGE_CHANNEL = "multi-hop-message-channel";
     static final String FORWARDING_INPUT_CHANNEL = "forwarding-input-channel";
     static final String FORWARDING_OUTPUT_CHANNEL = "forwarding-output-channel";
@@ -90,12 +90,12 @@ class ChannelMessagingTypes {
         }
 
         void emitChannelOneBatch(String first, String second) {
-            channelOne.emitBatch(List.of(Messaging.message(first)
-                                                 .header("key", "batch-first")
-                                                 .build(),
-                                         Messaging.message(second)
-                                                 .header("key", "batch-second")
-                                                 .build()));
+            channelOne.emitBatch(MessageBatch.create(List.of(Messaging.message(first)
+                                                                     .header("key", "batch-first")
+                                                                     .build(),
+                                                             Messaging.message(second)
+                                                                     .header("key", "batch-second")
+                                                                     .build())));
         }
 
         void emitChannelTwo(String entity) {
@@ -137,14 +137,14 @@ class ChannelMessagingTypes {
 
     @Service.Singleton
     static class BatchChannelOneConsumer {
-        private final List<List<Message<String>>> batches = new CopyOnWriteArrayList<>();
+        private final List<MessageBatch<String>> batches = new CopyOnWriteArrayList<>();
 
         @Messaging.OnMessage(CHANNEL_ONE)
-        void consume(List<Message<String>> batch) {
-            batches.add(List.copyOf(batch));
+        void consume(MessageBatch<String> batch) {
+            batches.add(batch);
         }
 
-        List<List<Message<String>>> batches() {
+        List<MessageBatch<String>> batches() {
             return batches;
         }
     }
@@ -182,20 +182,6 @@ class ChannelMessagingTypes {
 
         List<Message<Integer>> messages() {
             return messages;
-        }
-    }
-
-    @Service.Singleton
-    static class CustomMessageBatchConsumer {
-        private final List<List<CustomMessage<String, Integer>>> batches = new CopyOnWriteArrayList<>();
-
-        @Messaging.OnMessage(CUSTOM_MESSAGE_BATCH_CHANNEL)
-        void consume(List<CustomMessage<String, Integer>> batch) {
-            batches.add(List.copyOf(batch));
-        }
-
-        List<List<CustomMessage<String, Integer>>> batches() {
-            return batches;
         }
     }
 
@@ -322,6 +308,20 @@ class ChannelMessagingTypes {
 
         MessagingException failure() {
             return failure;
+        }
+    }
+
+    @Service.Singleton
+    static class ForwardedBatchConsumer {
+        private final List<MessageBatch<String>> batches = new CopyOnWriteArrayList<>();
+
+        @Messaging.OnMessage(FORWARDING_OUTPUT_CHANNEL)
+        void consume(MessageBatch<String> batch) {
+            batches.add(batch);
+        }
+
+        List<MessageBatch<String>> batches() {
+            return batches;
         }
     }
 

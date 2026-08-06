@@ -56,7 +56,7 @@ class DeliveryEngineTest {
             AtomicBoolean callerObservedCompletion = new AtomicBoolean();
 
             AsyncTask caller = async(() -> {
-                engine.dispatch("orders", List.of(message(1)), () -> {
+                dispatch(engine, "orders", List.of(message(1)), () -> {
                     runtimeThread.set(Thread.currentThread());
                     entered.countDown();
                     await(release);
@@ -102,17 +102,17 @@ class DeliveryEngineTest {
                     active.decrementAndGet();
                 }
             };
-            ConnectorDelivery first = engine.submitConnectorDelivery("orders",
+            ConnectorDelivery first = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
                                                                       1,
                                                                       blockingAction);
-            ConnectorDelivery second = engine.submitConnectorDelivery("orders",
+            ConnectorDelivery second = submitConnectorDelivery(engine, "orders",
                                                                        List.of(message(1)),
                                                                        1,
                                                                        blockingAction);
 
             await(activeStarted);
-            ConnectorDelivery third = engine.submitConnectorDelivery("orders",
+            ConnectorDelivery third = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
                                                                       1,
                                                                       thirdStarted::countDown);
@@ -140,16 +140,16 @@ class DeliveryEngineTest {
             AtomicInteger invocations = new AtomicInteger();
             List<Message<?>> exact = List.of(message(4), message(6));
 
-            engine.dispatch("orders", exact, invocations::incrementAndGet);
+            dispatch(engine, "orders", exact, invocations::incrementAndGet);
 
             MessagingRejectedException messageLimit = assertThrows(
                     MessagingRejectedException.class,
-                    () -> engine.dispatch("orders",
+                    () -> dispatch(engine, "orders",
                                           List.of(message(1), message(1), message(1)),
                                           invocations::incrementAndGet));
             MessagingRejectedException byteLimit = assertThrows(
                     MessagingRejectedException.class,
-                    () -> engine.dispatch("orders",
+                    () -> dispatch(engine, "orders",
                                           List.of(message(5), message(6)),
                                           invocations::incrementAndGet));
 
@@ -157,7 +157,7 @@ class DeliveryEngineTest {
             assertEquals(MessagingRejectedException.Reason.OVERSIZED, byteLimit.reason());
             assertEquals(1, invocations.get());
 
-            engine.dispatch("orders", exact, invocations::incrementAndGet);
+            dispatch(engine, "orders", exact, invocations::incrementAndGet);
             assertEquals(2, invocations.get());
         }
     }
@@ -173,7 +173,7 @@ class DeliveryEngineTest {
             CountDownLatch firstStarted = new CountDownLatch(1);
             CountDownLatch releaseFirst = new CountDownLatch(1);
             CountDownLatch secondStarted = new CountDownLatch(1);
-            ConnectorDelivery first = engine.submitConnectorDelivery("orders",
+            ConnectorDelivery first = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
                                                                       1,
                                                                       () -> {
@@ -182,7 +182,7 @@ class DeliveryEngineTest {
                                                                       });
             await(firstStarted);
 
-            AsyncTask second = async(() -> engine.dispatch("orders",
+            AsyncTask second = async(() -> dispatch(engine, "orders",
                                                            List.of(message(1)),
                                                            secondStarted::countDown));
             awaitWaiting(second);
@@ -204,7 +204,7 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(timeoutConfig, "orders")) {
             CountDownLatch firstStarted = new CountDownLatch(1);
             CountDownLatch releaseFirst = new CountDownLatch(1);
-            ConnectorDelivery first = engine.submitConnectorDelivery("orders",
+            ConnectorDelivery first = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
                                                                       1,
                                                                       () -> {
@@ -215,7 +215,7 @@ class DeliveryEngineTest {
             try {
                 MessagingRejectedException failure = assertThrows(
                         MessagingRejectedException.class,
-                        () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+                        () -> dispatch(engine, "orders", List.of(message(1)), () -> { }));
                 assertEquals(MessagingRejectedException.Reason.TIMEOUT, failure.reason());
             } finally {
                 releaseFirst.countDown();
@@ -236,7 +236,7 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(1);
             CountDownLatch releaseActive = new CountDownLatch(1);
-            ConnectorDelivery active = engine.submitConnectorDelivery(
+            ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
                     1,
@@ -246,14 +246,14 @@ class DeliveryEngineTest {
                     });
             await(activeStarted);
 
-            AsyncTask firstPending = async(() -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+            AsyncTask firstPending = async(() -> dispatch(engine, "orders", List.of(message(1)), () -> { }));
             awaitWaiting(firstPending);
-            AsyncTask secondPending = async(() -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+            AsyncTask secondPending = async(() -> dispatch(engine, "orders", List.of(message(1)), () -> { }));
             awaitWaiting(secondPending);
 
             MessagingRejectedException saturated = assertThrows(
                     MessagingRejectedException.class,
-                    () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+                    () -> dispatch(engine, "orders", List.of(message(1)), () -> { }));
             assertEquals(MessagingRejectedException.Reason.SATURATED, saturated.reason());
 
             releaseActive.countDown();
@@ -276,7 +276,7 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(config, "orders");
              ConnectorDeliveryReservation ignored = engine.reserveConnectorDelivery("orders", 1, 1)) {
             AtomicBoolean delivered = new AtomicBoolean();
-            engine.dispatch("orders", List.of(message(1)), () -> delivered.set(true));
+            dispatch(engine, "orders", List.of(message(1)), () -> delivered.set(true));
             assertTrue(delivered.get());
         }
     }
@@ -301,7 +301,7 @@ class DeliveryEngineTest {
             try {
                 MessagingRejectedException rejection = assertThrows(
                         MessagingRejectedException.class,
-                        () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+                        () -> dispatch(engine, "orders", List.of(message(1)), () -> { }));
                 assertEquals(MessagingRejectedException.Reason.SATURATED, rejection.reason());
             } finally {
                 releaseLock.countDown();
@@ -309,7 +309,7 @@ class DeliveryEngineTest {
             }
 
             AtomicBoolean admitted = new AtomicBoolean();
-            engine.dispatch("orders", List.of(message(1)), () -> admitted.set(true));
+            dispatch(engine, "orders", List.of(message(1)), () -> admitted.set(true));
             assertTrue(admitted.get());
         }
     }
@@ -415,22 +415,22 @@ class DeliveryEngineTest {
             }
 
             @Override
-            public <T> void emit(Message<T> message) {
+            public <T> void emitBatch(MessageBatch<T> message) {
             }
         };
         ConnectorDeliveryReservation reservation = context.reserveDelivery(1, 1);
         MessagingRejectedException oversized = assertThrows(
                 MessagingRejectedException.class,
-                () -> reservation.start(List.of(message(1), message(1)), 1, () -> { }));
+                () -> start(reservation, List.of(message(1), message(1)), 1, () -> { }));
         assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
         assertThrows(IllegalStateException.class,
-                     () -> reservation.start(List.of(message(1)), 1, () -> { }));
+                     () -> start(reservation, List.of(message(1)), 1, () -> { }));
 
         ConnectorDeliveryReservation empty = context.reserveDelivery(1, 1);
         assertThrows(IllegalArgumentException.class,
-                     () -> empty.start(List.of(), 0, () -> { }));
+                     () -> start(empty, List.of(), 0, () -> { }));
         assertThrows(IllegalArgumentException.class,
-                     () -> context.submitDelivery(List.of(), 0, () -> { }));
+                     () -> context.submitDelivery(MessageBatch.create(List.of()), () -> { }));
 
         Message<Object> negative = new Message<>() {
             @Override
@@ -450,7 +450,7 @@ class DeliveryEngineTest {
         };
         ConnectorDeliveryReservation invalid = context.reserveDelivery(1, 1);
         assertThrows(IllegalArgumentException.class,
-                     () -> invalid.start(List.of(negative), 0, () -> { }));
+                     () -> start(invalid, List.of(negative), 0, () -> { }));
     }
 
     @Test
@@ -462,14 +462,14 @@ class DeliveryEngineTest {
             }
 
             @Override
-            public <T> void emit(Message<T> message) {
+            public <T> void emitBatch(MessageBatch<T> message) {
             }
         };
         ConnectorDeliveryReservation reservation = context.reserveDelivery(2, 5);
 
         MessagingRejectedException oversized = assertThrows(
                 MessagingRejectedException.class,
-                () -> reservation.start(List.of(unknownMessage(), message(6)), 1, () -> { }));
+                () -> start(reservation, List.of(unknownMessage(), message(6)), 1, () -> { }));
 
         assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
     }
@@ -483,14 +483,14 @@ class DeliveryEngineTest {
             }
 
             @Override
-            public <T> void emit(Message<T> message) {
+            public <T> void emitBatch(MessageBatch<T> message) {
             }
         };
         ConnectorDeliveryReservation reservation = context.reserveDelivery(1, 1);
 
         MessagingRejectedException oversized = assertThrows(
                 MessagingRejectedException.class,
-                () -> reservation.start(List.of(overflowingDeadLetter()), 1, () -> { }));
+                () -> start(reservation, List.of(overflowingDeadLetter()), 1, () -> { }));
 
         assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
     }
@@ -504,21 +504,20 @@ class DeliveryEngineTest {
             }
 
             @Override
-            public <T> void emit(Message<T> message) {
+            public <T> void emitBatch(MessageBatch<T> message) {
             }
 
             @Override
-            public <T> ConnectorDelivery submitDelivery(List<? extends Message<T>> messages,
-                                                        long admissionBytes,
+            public <T> ConnectorDelivery submitDelivery(MessageBatch<T> batch,
                                                         Runnable delivery) {
                 return null;
             }
         };
         ConnectorDeliveryReservation reservation = context.reserveDelivery(1, 1);
         assertThrows(NullPointerException.class,
-                     () -> reservation.start(List.of(message(1)), 1, () -> { }));
+                     () -> start(reservation, List.of(message(1)), 1, () -> { }));
         assertThrows(IllegalStateException.class,
-                     () -> reservation.start(List.of(message(1)), 1, () -> { }));
+                     () -> start(reservation, List.of(message(1)), 1, () -> { }));
     }
 
     @Test
@@ -531,11 +530,11 @@ class DeliveryEngineTest {
             ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
             MessagingRejectedException oversized = assertThrows(
                     MessagingRejectedException.class,
-                    () -> reservation.start(List.of(message(2)), 2, () -> { }));
+                    () -> start(reservation, List.of(message(2)), 2, () -> { }));
             assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
             MessagingRejectedException closed = assertThrows(
                     MessagingRejectedException.class,
-                    () -> reservation.start(List.of(message(1)), 1, () -> { }));
+                    () -> start(reservation, List.of(message(1)), 1, () -> { }));
             assertEquals(MessagingRejectedException.Reason.CANCELLED, closed.reason());
 
             ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1, 1)
@@ -555,7 +554,7 @@ class DeliveryEngineTest {
 
             MessagingRejectedException oversized = assertThrows(
                     MessagingRejectedException.class,
-                    () -> reservation.start(List.of(unknownMessage(), message(6)), 1, () -> { }));
+                    () -> start(reservation, List.of(unknownMessage(), message(6)), 1, () -> { }));
 
             assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
             engine.reserveConnectorDelivery("orders", 2, 5).close();
@@ -569,14 +568,14 @@ class DeliveryEngineTest {
             ConnectorDeliveryReservation blocking = engine.reserveConnectorDelivery("orders", 1, 1);
             IllegalArgumentException blockingFailure = assertThrows(
                     IllegalArgumentException.class,
-                    () -> blocking.start(List.of(message(1)), -1, () -> { }));
-            assertEquals("admissionBytes must be zero or greater", blockingFailure.getMessage());
+                    () -> start(blocking, List.of(message(1)), -1, () -> { }));
+            assertEquals("Message batch admission bytes must be zero or greater", blockingFailure.getMessage());
 
             ConnectorDeliveryReservation nonBlocking = engine.reserveConnectorDelivery("orders", 1, 1);
             IllegalArgumentException nonBlockingFailure = assertThrows(
                     IllegalArgumentException.class,
-                    () -> nonBlocking.tryStart(List.of(message(1)), -1, () -> { }));
-            assertEquals("admissionBytes must be zero or greater", nonBlockingFailure.getMessage());
+                    () -> tryStart(nonBlocking, List.of(message(1)), -1, () -> { }));
+            assertEquals("Message batch admission bytes must be zero or greater", nonBlockingFailure.getMessage());
 
             engine.reserveConnectorDelivery("orders", 1, 1).close();
         }
@@ -592,19 +591,19 @@ class DeliveryEngineTest {
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 2, 2);
-            ConnectorDelivery delivery = reservation.start(List.of(message(1)), 1, () -> { });
+            ConnectorDelivery delivery = start(reservation, List.of(message(1)), 1, () -> { });
             assertTrue(delivery.await(WAIT));
 
             ConnectorDeliveryReservation pendingCapacity = engine.tryReserveConnectorDelivery("orders", 2, 2)
                     .orElseThrow();
             pendingCapacity.close();
-            assertTrue(engine.trySubmitConnectorDelivery("orders",
+            assertTrue(trySubmitConnectorDelivery(engine, "orders",
                                                          List.of(message(2)),
                                                          2,
                                                          () -> { }).isEmpty());
 
             delivery.close();
-            ConnectorDelivery fullDelivery = engine.trySubmitConnectorDelivery("orders",
+            ConnectorDelivery fullDelivery = trySubmitConnectorDelivery(engine, "orders",
                                                                                  List.of(message(2)),
                                                                                  2,
                                                                                  () -> { })
@@ -634,7 +633,7 @@ class DeliveryEngineTest {
             await(lockHeld);
 
             AsyncTask waiting = async(() -> {
-                ConnectorDelivery delivery = reservation.start(List.of(message(1)), 1, () -> { });
+                ConnectorDelivery delivery = start(reservation, List.of(message(1)), 1, () -> { });
                 delivery.close();
             });
             try {
@@ -714,7 +713,7 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(1);
             CountDownLatch releaseActive = new CountDownLatch(1);
-            ConnectorDelivery active = engine.submitConnectorDelivery(
+            ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
                     1,
@@ -727,7 +726,7 @@ class DeliveryEngineTest {
 
             MessagingRejectedException timeout = assertThrows(
                     MessagingRejectedException.class,
-                    () -> reservation.start(List.of(message(1)), 1, () -> { }));
+                    () -> start(reservation, List.of(message(1)), 1, () -> { }));
             assertEquals(MessagingRejectedException.Reason.TIMEOUT, timeout.reason());
             ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1, 1)
                     .orElseThrow();
@@ -750,7 +749,7 @@ class DeliveryEngineTest {
             ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
             CountDownLatch activeStarted = new CountDownLatch(1);
             CountDownLatch releaseActive = new CountDownLatch(1);
-            ConnectorDelivery active = engine.submitConnectorDelivery(
+            ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
                     1,
@@ -760,12 +759,12 @@ class DeliveryEngineTest {
                     });
             await(activeStarted);
 
-            assertTrue(reservation.tryStart(List.of(message(1)), 1, () -> { }).isEmpty());
+            assertTrue(tryStart(reservation, List.of(message(1)), 1, () -> { }).isEmpty());
             assertTrue(engine.tryReserveConnectorDelivery("orders", 1, 1).isEmpty());
 
             releaseActive.countDown();
             await(active);
-            ConnectorDelivery delivery = reservation.tryStart(List.of(message(1)), 1, () -> { })
+            ConnectorDelivery delivery = tryStart(reservation, List.of(message(1)), 1, () -> { })
                     .orElseThrow();
             await(delivery);
         }
@@ -783,7 +782,7 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(1);
             CountDownLatch releaseActive = new CountDownLatch(1);
-            ConnectorDelivery active = engine.submitConnectorDelivery(
+            ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
                     1,
@@ -793,7 +792,7 @@ class DeliveryEngineTest {
                     });
             await(activeStarted);
             ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
-            AsyncTask waiting = async(() -> reservation.start(List.of(message(1)), 1, () -> { }));
+            AsyncTask waiting = async(() -> start(reservation, List.of(message(1)), 1, () -> { }));
             awaitWaiting(waiting);
 
             waiting.thread().interrupt();
@@ -821,7 +820,7 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(1);
             CountDownLatch releaseActive = new CountDownLatch(1);
-            ConnectorDelivery active = engine.submitConnectorDelivery(
+            ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
                     1,
@@ -831,11 +830,11 @@ class DeliveryEngineTest {
                     });
             await(activeStarted);
             ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
-            AsyncTask firstStart = async(() -> reservation.start(List.of(message(1)), 1, () -> { }));
+            AsyncTask firstStart = async(() -> start(reservation, List.of(message(1)), 1, () -> { }));
             awaitWaiting(firstStart);
 
             assertThrows(IllegalStateException.class,
-                         () -> reservation.start(List.of(message(1)), 1, () -> { }));
+                         () -> start(reservation, List.of(message(1)), 1, () -> { }));
             reservation.close();
             MessagingRejectedException cancelled = assertInstanceOf(
                     MessagingRejectedException.class,
@@ -858,7 +857,7 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(1);
             CountDownLatch releaseActive = new CountDownLatch(1);
-            ConnectorDelivery active = engine.submitConnectorDelivery(
+            ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
                     1,
@@ -870,11 +869,11 @@ class DeliveryEngineTest {
             ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
             AtomicReference<ConnectorDelivery> firstDelivery = new AtomicReference<>();
             AsyncTask firstStart = async(() -> firstDelivery.set(
-                    reservation.start(List.of(message(1)), 1, () -> { })));
+                    start(reservation, List.of(message(1)), 1, () -> { })));
             awaitWaiting(firstStart);
 
             assertThrows(IllegalStateException.class,
-                         () -> reservation.start(List.of(message(2)), 2, () -> { }));
+                         () -> start(reservation, List.of(message(2)), 2, () -> { }));
 
             releaseActive.countDown();
             await(active);
@@ -895,7 +894,7 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(config, "orders")) {
             ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
             Thread.sleep(50);
-            ConnectorDelivery delivery = reservation.start(List.of(message(1)), 1, () -> { });
+            ConnectorDelivery delivery = start(reservation, List.of(message(1)), 1, () -> { });
             await(delivery);
         }
     }
@@ -914,7 +913,7 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(1);
             CountDownLatch releaseActive = new CountDownLatch(1);
-            ConnectorDelivery active = engine.submitConnectorDelivery(
+            ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
                     1,
@@ -927,7 +926,7 @@ class DeliveryEngineTest {
             long started = System.nanoTime();
             AsyncTask waiting = async(() -> {
                 ConnectorDeliveryReservation second = engine.reserveConnectorDelivery("orders", 1, 1);
-                second.start(List.of(message(1)), 1, () -> { });
+                start(second, List.of(message(1)), 1, () -> { });
             });
             awaitWaiting(waiting);
             Thread.sleep(300);
@@ -959,14 +958,14 @@ class DeliveryEngineTest {
         closedReservation.close();
         MessagingRejectedException cancelled = assertThrows(
                 MessagingRejectedException.class,
-                () -> closedReservation.start(List.of(message(1)), 1, () -> { }));
+                () -> start(closedReservation, List.of(message(1)), 1, () -> { }));
         assertEquals(MessagingRejectedException.Reason.CANCELLED, cancelled.reason());
 
         ConnectorDeliveryReservation shutdownReservation = engine.reserveConnectorDelivery("orders", 1, 1);
         engine.close();
         MessagingRejectedException shutdown = assertThrows(
                 MessagingRejectedException.class,
-                () -> shutdownReservation.start(List.of(message(1)), 1, () -> { }));
+                () -> start(shutdownReservation, List.of(message(1)), 1, () -> { }));
         assertEquals(MessagingRejectedException.Reason.SHUTDOWN, shutdown.reason());
     }
 
@@ -1062,7 +1061,7 @@ class DeliveryEngineTest {
             CountDownLatch releaseFirst = new CountDownLatch(1);
             List<Integer> order = new CopyOnWriteArrayList<>();
 
-            ConnectorDelivery first = engine.submitConnectorDelivery("orders",
+            ConnectorDelivery first = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
                                                                       1,
                                                                       () -> {
@@ -1071,11 +1070,11 @@ class DeliveryEngineTest {
                                                                           await(releaseFirst);
                                                                       });
             await(firstStarted);
-            ConnectorDelivery second = engine.submitConnectorDelivery("orders",
+            ConnectorDelivery second = submitConnectorDelivery(engine, "orders",
                                                                        List.of(message(1)),
                                                                        1,
                                                                        () -> order.add(2));
-            ConnectorDelivery third = engine.submitConnectorDelivery("orders",
+            ConnectorDelivery third = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
                                                                       1,
                                                                       () -> order.add(3));
@@ -1100,7 +1099,7 @@ class DeliveryEngineTest {
             CountDownLatch firstStarted = new CountDownLatch(1);
             CountDownLatch releaseFirst = new CountDownLatch(1);
             AtomicBoolean rejectedActionRan = new AtomicBoolean();
-            ConnectorDelivery first = engine.submitConnectorDelivery("orders",
+            ConnectorDelivery first = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
                                                                       1,
                                                                       () -> {
@@ -1109,7 +1108,7 @@ class DeliveryEngineTest {
                                                                       });
             await(firstStarted);
 
-            AsyncTask waiting = async(() -> engine.dispatch("orders",
+            AsyncTask waiting = async(() -> dispatch(engine, "orders",
                                                             List.of(message(1)),
                                                             () -> rejectedActionRan.set(true)));
             awaitWaiting(waiting);
@@ -1124,13 +1123,13 @@ class DeliveryEngineTest {
 
             releaseFirst.countDown();
             await(first);
-            engine.dispatch("orders", List.of(message(1)), () -> { });
+            dispatch(engine, "orders", List.of(message(1)), () -> { });
         }
 
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(1);
             CountDownLatch interrupted = new CountDownLatch(1);
-            ConnectorDelivery active = engine.submitConnectorDelivery("orders",
+            ConnectorDelivery active = submitConnectorDelivery(engine, "orders",
                                                                        List.of(message(1)),
                                                                        1,
                                                                        () -> {
@@ -1146,13 +1145,13 @@ class DeliveryEngineTest {
             assertEquals(MessagingRejectedException.Reason.CANCELLED, cancellation.reason());
             await(interrupted);
 
-            assertTrue(engine.trySubmitConnectorDelivery("orders",
+            assertTrue(trySubmitConnectorDelivery(engine, "orders",
                                                          List.of(message(1)),
                                                          1,
                                                          () -> { }).isEmpty());
             active.close();
             AtomicBoolean nextRan = new AtomicBoolean();
-            engine.dispatch("orders", List.of(message(1)), () -> nextRan.set(true));
+            dispatch(engine, "orders", List.of(message(1)), () -> nextRan.set(true));
             assertTrue(nextRan.get());
         }
     }
@@ -1169,13 +1168,13 @@ class DeliveryEngineTest {
 
             IllegalStateException actual = assertThrows(
                     IllegalStateException.class,
-                    () -> engine.dispatch("orders", List.of(message(1)), () -> {
+                    () -> dispatch(engine, "orders", List.of(message(1)), () -> {
                         throw expected;
                     }));
             assertSame(expected, actual);
 
             AtomicBoolean nextRan = new AtomicBoolean();
-            engine.dispatch("orders", List.of(message(1)), () -> nextRan.set(true));
+            dispatch(engine, "orders", List.of(message(1)), () -> nextRan.set(true));
             assertTrue(nextRan.get());
         }
     }
@@ -1193,22 +1192,20 @@ class DeliveryEngineTest {
             CountDownLatch competitorStarted = new CountDownLatch(1);
             List<String> order = new CopyOnWriteArrayList<>();
             Message<?> retained = message(1);
+            MessageBatch<?> retainedBatch = batch(List.of(retained), 1);
             Runnable retryWork = () -> {
-                engine.dispatch("orders", List.of(retained), () -> {
+                dispatch(engine, "orders", retainedBatch, () -> {
                     order.add("attempt-1");
                     firstAttemptStarted.countDown();
                     await(allowRetry);
                 });
-                engine.dispatch("orders", List.of(retained), () -> order.add("attempt-2"));
+                dispatch(engine, "orders", retainedBatch, () -> order.add("attempt-2"));
             };
 
-            ConnectorDelivery delivery = engine.submitConnectorDelivery("orders",
-                                                                         List.of(retained),
-                                                                         1,
-                                                                         retryWork);
+            ConnectorDelivery delivery = engine.submitConnectorDelivery("orders", retainedBatch, retryWork);
             await(firstAttemptStarted);
 
-            AsyncTask competitor = async(() -> engine.dispatch("orders",
+            AsyncTask competitor = async(() -> dispatch(engine, "orders",
                                                                List.of(message(1)),
                                                                () -> {
                                                                    order.add("competitor");
@@ -1225,20 +1222,81 @@ class DeliveryEngineTest {
     }
 
     @Test
+    void connectorLeaseAcceptsLineageSubsetAndRejectsReplacementEnvelopes() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxInFlightMessages(3)
+                .maxInFlightBytes(3)
+                .build();
+        MessageBatch<String> retainedBatch = MessageBatch.<String>builder()
+                .id("retained-batch")
+                .messages(List.of(message(1), message(1), message(1)))
+                .build();
+        MessageBatch<String> retryBatch = retainedBatch.subset(List.of(0, 2));
+        MessageBatch<String> replacementBatch = retryBatch.derive(
+                List.of(message(1), message(1)));
+        MessageBatch<String> rebuiltBatch = MessageBatch.<String>builder()
+                .id(retainedBatch.id())
+                .messages(retainedBatch.messages())
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            AtomicBoolean subsetEmitted = new AtomicBoolean();
+            ConnectorDelivery delivery = engine.submitConnectorDelivery(
+                    "orders",
+                    retainedBatch,
+                    () -> {
+                        dispatch(engine, "orders", retryBatch, () -> subsetEmitted.set(true));
+                        MessagingRejectedException failure = assertThrows(
+                                MessagingRejectedException.class,
+                                () -> dispatch(engine, "orders", replacementBatch, () -> { }));
+                        assertEquals(MessagingRejectedException.Reason.OVERSIZED, failure.reason());
+                        MessagingRejectedException rebuiltFailure = assertThrows(
+                                MessagingRejectedException.class,
+                                () -> dispatch(engine, "orders", rebuiltBatch, () -> { }));
+                        assertEquals(MessagingRejectedException.Reason.OVERSIZED, rebuiltFailure.reason());
+                    });
+
+            await(delivery);
+            assertTrue(subsetEmitted.get());
+        }
+    }
+
+    @Test
+    void connectorLeaseAcceptsUnknownSizeLineageSubsetCoveredByRetainedParent() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxInFlightMessages(2)
+                .maxInFlightBytes(2)
+                .build();
+        MessageBatch<Object> retainedBatch = batch(List.of(unknownMessage(), message(1)), 2);
+        MessageBatch<Object> retryBatch = retainedBatch.subset(List.of(0));
+        assertTrue(retryBatch.admissionBytes().isEmpty());
+
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            AtomicBoolean subsetEmitted = new AtomicBoolean();
+            ConnectorDelivery delivery = engine.submitConnectorDelivery(
+                    "orders",
+                    retainedBatch,
+                    () -> dispatch(engine, "orders", retryBatch, () -> subsetEmitted.set(true)));
+
+            await(delivery);
+            assertTrue(subsetEmitted.get());
+        }
+    }
+
+    @Test
     void connectorDeliveryRetainsAdmissionThroughSettlementLease() throws Exception {
         MessagingExecutionConfig config = configBuilder()
                 .maxInFlightMessages(1)
                 .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDelivery delivery = engine.submitConnectorDelivery("orders",
+            ConnectorDelivery delivery = submitConnectorDelivery(engine, "orders",
                                                                          List.of(message(1)),
                                                                          1,
                                                                          () -> { });
             assertTrue(delivery.await(WAIT));
 
             CountDownLatch competitorStarted = new CountDownLatch(1);
-            AsyncTask competitor = async(() -> engine.dispatch("orders",
+            AsyncTask competitor = async(() -> dispatch(engine, "orders",
                                                                List.of(message(1)),
                                                                competitorStarted::countDown));
             awaitWaiting(competitor);
@@ -1260,7 +1318,7 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(1);
             CountDownLatch releaseActive = new CountDownLatch(1);
-            ConnectorDelivery active = engine.submitConnectorDelivery("orders",
+            ConnectorDelivery active = submitConnectorDelivery(engine, "orders",
                                                                        List.of(message(1)),
                                                                        1,
                                                                        () -> {
@@ -1269,14 +1327,14 @@ class DeliveryEngineTest {
                                                                        });
             await(activeStarted);
 
-            AsyncTask pending = async(() -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+            AsyncTask pending = async(() -> dispatch(engine, "orders", List.of(message(1)), () -> { }));
             awaitWaiting(pending);
 
             MessagingRejectedException saturated = assertThrows(
                     MessagingRejectedException.class,
-                    () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+                    () -> dispatch(engine, "orders", List.of(message(1)), () -> { }));
             assertEquals(MessagingRejectedException.Reason.SATURATED, saturated.reason());
-            assertTrue(engine.trySubmitConnectorDelivery("orders",
+            assertTrue(trySubmitConnectorDelivery(engine, "orders",
                                                          List.of(message(1)),
                                                          1,
                                                          () -> { }).isEmpty());
@@ -1297,7 +1355,7 @@ class DeliveryEngineTest {
                 rootsStarted.countDown();
                 await(rootsStarted);
                 try {
-                    engine.dispatch("b", List.of(message(1)), () -> { });
+                    dispatch(engine, "b", List.of(message(1)), () -> { });
                     fail("nested delivery unexpectedly ran");
                 } catch (MessagingRejectedException e) {
                     nestedRejected.countDown();
@@ -1309,7 +1367,7 @@ class DeliveryEngineTest {
                 rootsStarted.countDown();
                 await(rootsStarted);
                 try {
-                    engine.dispatch("a", List.of(message(1)), () -> { });
+                    dispatch(engine, "a", List.of(message(1)), () -> { });
                     fail("nested delivery unexpectedly ran");
                 } catch (MessagingRejectedException e) {
                     nestedRejected.countDown();
@@ -1318,8 +1376,8 @@ class DeliveryEngineTest {
                 }
             };
 
-            AsyncTask first = async(() -> engine.dispatch("a", List.of(message(1)), aToB));
-            AsyncTask second = async(() -> engine.dispatch("b", List.of(message(1)), bToA));
+            AsyncTask first = async(() -> dispatch(engine, "a", List.of(message(1)), aToB));
+            AsyncTask second = async(() -> dispatch(engine, "b", List.of(message(1)), bToA));
 
             MessagingRejectedException firstFailure =
                     assertInstanceOf(MessagingRejectedException.class, failure(first));
@@ -1340,14 +1398,14 @@ class DeliveryEngineTest {
             Runnable aToB = () -> rejectTogether(
                     rootsStarted,
                     nestedRejected,
-                    () -> secondEngine.dispatch("b", List.of(message(1)), () -> { }));
+                    () -> dispatch(secondEngine, "b", List.of(message(1)), () -> { }));
             Runnable bToA = () -> rejectTogether(
                     rootsStarted,
                     nestedRejected,
-                    () -> firstEngine.dispatch("a", List.of(message(1)), () -> { }));
+                    () -> dispatch(firstEngine, "a", List.of(message(1)), () -> { }));
 
-            AsyncTask first = async(() -> firstEngine.dispatch("a", List.of(message(1)), aToB));
-            AsyncTask second = async(() -> secondEngine.dispatch("b", List.of(message(1)), bToA));
+            AsyncTask first = async(() -> dispatch(firstEngine, "a", List.of(message(1)), aToB));
+            AsyncTask second = async(() -> dispatch(secondEngine, "b", List.of(message(1)), bToA));
 
             assertEquals(MessagingRejectedException.Reason.SATURATED,
                          assertInstanceOf(MessagingRejectedException.class, failure(first)).reason());
@@ -1365,7 +1423,7 @@ class DeliveryEngineTest {
             engine.registerChannel("orders", config);
             MessagingRejectedException failure = assertThrows(
                     MessagingRejectedException.class,
-                    () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+                    () -> dispatch(engine, "orders", List.of(message(1)), () -> { }));
             assertEquals(MessagingRejectedException.Reason.OVERSIZED, failure.reason());
         }
     }
@@ -1376,7 +1434,7 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(config, "orders")) {
             MessagingRejectedException failure = assertThrows(
                     MessagingRejectedException.class,
-                    () -> engine.dispatch("orders",
+                    () -> dispatch(engine, "orders",
                                           List.of(unknownMessage(), message(1)),
                                           () -> { }));
 
@@ -1396,7 +1454,7 @@ class DeliveryEngineTest {
 
             NullPointerException failure = assertThrows(
                     NullPointerException.class,
-                    () -> engine.dispatch("orders",
+                    () -> dispatch(engine, "orders",
                                           List.of(unknownMessage(), invalidEstimatorResult),
                                           () -> { }));
 
@@ -1427,7 +1485,7 @@ class DeliveryEngineTest {
             engine.registerChannel("orders-dlq", config);
             AtomicBoolean delivered = new AtomicBoolean();
 
-            engine.dispatch("orders-dlq",
+            dispatch(engine, "orders-dlq",
                             List.of(DeadLetterMessage.create(original,
                                                             "orders",
                                                             1,
@@ -1447,7 +1505,7 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(config, "orders-dlq")) {
             MessagingRejectedException direct = assertThrows(
                     MessagingRejectedException.class,
-                    () -> engine.submitConnectorDelivery("orders-dlq",
+                    () -> submitConnectorDelivery(engine, "orders-dlq",
                                                          List.of(deadLetter),
                                                          1,
                                                          () -> { }));
@@ -1456,7 +1514,7 @@ class DeliveryEngineTest {
             ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders-dlq", 1, 1);
             MessagingRejectedException reserved = assertThrows(
                     MessagingRejectedException.class,
-                    () -> reservation.start(List.of(deadLetter), 1, () -> { }));
+                    () -> start(reservation, List.of(deadLetter), 1, () -> { }));
             assertEquals(MessagingRejectedException.Reason.OVERSIZED, reserved.reason());
 
             engine.reserveConnectorDelivery("orders-dlq", 1, 1).close();
@@ -1467,11 +1525,11 @@ class DeliveryEngineTest {
     void connectorLeaseRejectsEmissionBeyondItsReservation() throws Exception {
         MessagingExecutionConfig config = configBuilder().build();
         try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDelivery delivery = engine.submitConnectorDelivery(
+            ConnectorDelivery delivery = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
                     1,
-                    () -> engine.dispatch("orders", List.of(message(2)), () -> { }));
+                    () -> dispatch(engine, "orders", List.of(message(2)), () -> { }));
             try {
                 MessagingRejectedException failure = assertThrows(
                         MessagingRejectedException.class,
@@ -1487,11 +1545,11 @@ class DeliveryEngineTest {
     void connectorLeaseRejectsDifferentMessageWithinItsReservation() throws Exception {
         MessagingExecutionConfig config = configBuilder().build();
         try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDelivery delivery = engine.submitConnectorDelivery(
+            ConnectorDelivery delivery = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
                     1,
-                    () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+                    () -> dispatch(engine, "orders", List.of(message(1)), () -> { }));
             try {
                 MessagingRejectedException failure = assertThrows(
                         MessagingRejectedException.class,
@@ -1507,13 +1565,13 @@ class DeliveryEngineTest {
     void connectorLeaseAcceptsItsRetainedUnknownSizeEnvelope() throws Exception {
         MessagingExecutionConfig config = configBuilder().build();
         List<Message<String>> retained = List.of(unknownMessage());
+        MessageBatch<?> retainedBatch = batch(retained, 5);
         try (DeliveryEngine engine = engine(config, "orders")) {
             AtomicBoolean emitted = new AtomicBoolean();
             ConnectorDelivery delivery = engine.submitConnectorDelivery(
                     "orders",
-                    retained,
-                    5,
-                    () -> engine.dispatch("orders", retained, () -> emitted.set(true)));
+                    retainedBatch,
+                    () -> dispatch(engine, "orders", retainedBatch, () -> emitted.set(true)));
             await(delivery);
             assertTrue(emitted.get());
         }
@@ -1524,7 +1582,7 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder().build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             assertThrows(IllegalArgumentException.class,
-                         () -> engine.submitConnectorDelivery("orders", List.of(), 0, () -> { }));
+                         () -> submitConnectorDelivery(engine, "orders", List.of(), 0, () -> { }));
 
             ByteBuffer mutable = ByteBuffer.allocate(8);
             mutable.limit(1);
@@ -1547,7 +1605,7 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(config, "orders")) {
             MessagingRejectedException oversized = assertThrows(
                     MessagingRejectedException.class,
-                    () -> engine.dispatch("orders", List.of(message), () -> { }));
+                    () -> dispatch(engine, "orders", List.of(message), () -> { }));
             assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
         }
 
@@ -1573,7 +1631,7 @@ class DeliveryEngineTest {
         CountDownLatch sourceInterrupted = new CountDownLatch(1);
         AtomicBoolean queuedRan = new AtomicBoolean();
 
-        ConnectorDelivery active = engine.submitConnectorDelivery("orders",
+        ConnectorDelivery active = submitConnectorDelivery(engine, "orders",
                                                                    List.of(message(1)),
                                                                    1,
                                                                    () -> {
@@ -1581,7 +1639,7 @@ class DeliveryEngineTest {
                                                                        awaitInterruption(activeInterrupted);
                                                                    });
         await(activeStarted);
-        ConnectorDelivery queued = engine.submitConnectorDelivery("orders",
+        ConnectorDelivery queued = submitConnectorDelivery(engine, "orders",
                                                                    List.of(message(1)),
                                                                    1,
                                                                    () -> queuedRan.set(true));
@@ -1608,7 +1666,7 @@ class DeliveryEngineTest {
 
         MessagingRejectedException dispatchFailure = assertThrows(
                 MessagingRejectedException.class,
-                () -> engine.dispatch("orders", List.of(message(1)), () -> { }));
+                () -> dispatch(engine, "orders", List.of(message(1)), () -> { }));
         MessagingRejectedException sourceFailure = assertThrows(
                 MessagingRejectedException.class,
                 () -> engine.startSource("new-source", () -> { }));
@@ -1621,18 +1679,18 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder().build();
         try (DeliveryEngine engine = engine(config, "a", "b")) {
             AtomicBoolean nestedRan = new AtomicBoolean();
-            engine.dispatch("a",
+            dispatch(engine, "a",
                             List.of(message(1)),
-                            () -> engine.dispatch("b",
+                            () -> dispatch(engine, "b",
                                                   List.of(message(1)),
                                                   () -> nestedRan.set(true)));
             assertTrue(nestedRan.get());
 
             MessagingException failure = assertThrows(
                     MessagingException.class,
-                    () -> engine.dispatch("a",
+                    () -> dispatch(engine, "a",
                                           List.of(message(1)),
-                                          () -> engine.dispatch("a",
+                                          () -> dispatch(engine, "a",
                                                                 List.of(message(1)),
                                                                 () -> { })));
             assertThat(failure.getMessage(), containsString("a -> a"));
@@ -1645,10 +1703,10 @@ class DeliveryEngineTest {
         try (DeliveryEngine engine = engine(config, "a", "b")) {
             MessagingException failure = assertThrows(
                     MessagingException.class,
-                    () -> engine.dispatch(
+                    () -> dispatch(engine,
                             "a",
                             List.of(message(1)),
-                            () -> engine.submitConnectorDelivery("b",
+                            () -> submitConnectorDelivery(engine, "b",
                                                                  List.of(message(1)),
                                                                  1,
                                                                  () -> { })));
@@ -1662,22 +1720,22 @@ class DeliveryEngineTest {
         try (DeliveryEngine firstEngine = engine(config, "orders");
              DeliveryEngine secondEngine = engine(config, "orders")) {
             AtomicBoolean nestedRan = new AtomicBoolean();
-            firstEngine.dispatch("orders",
+            dispatch(firstEngine, "orders",
                                  List.of(message(1)),
-                                 () -> secondEngine.dispatch("orders",
+                                 () -> dispatch(secondEngine, "orders",
                                                              List.of(message(1)),
                                                              () -> nestedRan.set(true)));
             assertTrue(nestedRan.get());
 
             MessagingException cycle = assertThrows(
                     MessagingException.class,
-                    () -> firstEngine.dispatch(
+                    () -> dispatch(firstEngine,
                             "orders",
                             List.of(message(1)),
-                            () -> secondEngine.dispatch(
+                            () -> dispatch(secondEngine,
                                     "orders",
                                     List.of(message(1)),
-                                    () -> firstEngine.dispatch("orders",
+                                    () -> dispatch(firstEngine, "orders",
                                                                List.of(message(1)),
                                                                () -> { }))));
             assertThat(cycle.getMessage(), containsString("orders -> orders -> orders"));
@@ -1699,6 +1757,58 @@ class DeliveryEngineTest {
             engine.registerChannel(channel, config);
         }
         return engine;
+    }
+
+    private static void dispatch(DeliveryEngine engine,
+                                 String channel,
+                                 List<? extends Message<?>> messages,
+                                 Runnable action) {
+        engine.dispatch(channel, MessageBatch.create(messages), action);
+    }
+
+    private static void dispatch(DeliveryEngine engine,
+                                 String channel,
+                                 MessageBatch<?> messages,
+                                 Runnable action) {
+        engine.dispatch(channel, messages, action);
+    }
+
+    private static ConnectorDelivery submitConnectorDelivery(DeliveryEngine engine,
+                                                              String channel,
+                                                              List<? extends Message<?>> messages,
+                                                              long admissionBytes,
+                                                              Runnable action) {
+        return engine.submitConnectorDelivery(channel, batch(messages, admissionBytes), action);
+    }
+
+    private static java.util.Optional<ConnectorDelivery> trySubmitConnectorDelivery(
+            DeliveryEngine engine,
+            String channel,
+            List<? extends Message<?>> messages,
+            long admissionBytes,
+            Runnable action) {
+        return engine.trySubmitConnectorDelivery(channel, batch(messages, admissionBytes), action);
+    }
+
+    private static ConnectorDelivery start(ConnectorDeliveryReservation reservation,
+                                           List<? extends Message<?>> messages,
+                                           long admissionBytes,
+                                           Runnable action) {
+        return reservation.start(batch(messages, admissionBytes), action);
+    }
+
+    private static java.util.Optional<ConnectorDelivery> tryStart(ConnectorDeliveryReservation reservation,
+                                                                 List<? extends Message<?>> messages,
+                                                                 long admissionBytes,
+                                                                 Runnable action) {
+        return reservation.tryStart(batch(messages, admissionBytes), action);
+    }
+
+    private static MessageBatch<Object> batch(List<? extends Message<?>> messages, long admissionBytes) {
+        return MessageBatch.builder()
+                .messages(messages)
+                .admissionBytes(admissionBytes)
+                .build();
     }
 
     private static Message<String> message(long bytes) {

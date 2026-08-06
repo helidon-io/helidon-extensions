@@ -92,7 +92,7 @@ class MessagingGraphTest {
             }
 
             @Override
-            public <T> void send(Message<T> message) {
+            public <T> void sendBatch(MessageBatch<T> batch) {
             }
 
             @Override
@@ -176,7 +176,9 @@ class MessagingGraphTest {
                              "admit-incoming"),
                      events);
 
-        AsyncTask delivery = async(() -> engine.dispatch("orders", List.of(message("order")), () -> {
+        AsyncTask delivery = async(() -> engine.dispatch("orders",
+                                                         MessageBatch.create(List.of(message("order"))),
+                                                         () -> {
             events.add("delivery-start");
             deliveryStarted.countDown();
             await(releaseDelivery);
@@ -299,7 +301,7 @@ class MessagingGraphTest {
             }
 
             @Override
-            public <T> void send(Message<T> message) {
+            public <T> void sendBatch(MessageBatch<T> batch) {
             }
 
             @Override
@@ -592,10 +594,14 @@ class MessagingGraphTest {
         CountDownLatch allowNested = new CountDownLatch(1);
         CountDownLatch nestedCompleted = new CountDownLatch(1);
 
-        AsyncTask admitted = async(() -> engine.dispatch("upstream", List.of(message("root")), () -> {
+        AsyncTask admitted = async(() -> engine.dispatch("upstream",
+                                                        MessageBatch.create(List.of(message("root"))),
+                                                        () -> {
             rootStarted.countDown();
             await(allowNested);
-            engine.dispatch("downstream", List.of(message("nested")), nestedCompleted::countDown);
+            engine.dispatch("downstream",
+                            MessageBatch.create(List.of(message("nested"))),
+                            nestedCompleted::countDown);
         }));
         await(rootStarted);
         AsyncTask closing = async(graph::close);
@@ -626,7 +632,9 @@ class MessagingGraphTest {
         CountDownLatch releaseDelivery = new CountDownLatch(1);
         CountDownLatch interrupted = new CountDownLatch(1);
 
-        AsyncTask delivery = async(() -> engine.dispatch("orders", List.of(message("blocked")), () -> {
+        AsyncTask delivery = async(() -> engine.dispatch("orders",
+                                                         MessageBatch.create(List.of(message("blocked"))),
+                                                         () -> {
             deliveryStarted.countDown();
             try {
                 releaseDelivery.await();
@@ -1228,7 +1236,7 @@ class MessagingGraphTest {
         long deadline = System.nanoTime() + WAIT.toNanos();
         while (System.nanoTime() < deadline) {
             try {
-                engine.dispatch(channel, List.of(message("probe")), () -> { });
+                engine.dispatch(channel, MessageBatch.create(List.of(message("probe"))), () -> { });
             } catch (MessagingRejectedException e) {
                 return e;
             }
@@ -1335,7 +1343,7 @@ class MessagingGraphTest {
         }
 
         @Override
-        public <T> void send(Message<T> message) {
+        public <T> void sendBatch(MessageBatch<T> batch) {
         }
 
         @Override

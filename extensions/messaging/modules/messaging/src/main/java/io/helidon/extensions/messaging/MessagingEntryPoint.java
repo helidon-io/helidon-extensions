@@ -65,7 +65,7 @@ public final class MessagingEntryPoint {
          * @param messages immutable message batch
          * @throws Exception if invocation fails
          */
-        void handle(T serviceInstance, List<Message<?>> messages) throws Exception;
+        void handle(T serviceInstance, MessageBatch<?> messages) throws Exception;
     }
 
     /**

@@ -16,17 +16,15 @@
 
 package io.helidon.extensions.messaging;
 
-import java.util.List;
-
 import io.helidon.common.Api;
 import io.helidon.service.registry.Service;
 
 /**
  * Internal synchronous runtime contract used by generated messaging emitters.
  * <p>
- * A successful emission returns only after all required outputs complete. Outputs are invoked sequentially and the
- * first failure is propagated to the caller. Already completed outputs are not rolled back, so a retry can duplicate
- * delivery.
+ * Every emission enters the runtime as a {@link MessageBatch}. A successful emission returns only after all required
+ * outputs complete. Outputs are invoked sequentially and the first failure is propagated to the caller. Already
+ * completed outputs are not rolled back, so a retry can duplicate delivery.
  */
 @Api.Internal
 @Service.Contract
@@ -48,7 +46,9 @@ public interface MessagingRuntime {
      * @throws MessagingException if the named channel does not exist
      * @throws RuntimeException if a handler or outgoing connector fails
      */
-    <T> void emit(String channel, Message<T> message);
+    default <T> void emit(String channel, Message<T> message) {
+        emitBatch(channel, MessageBatch.create(message));
+    }
 
     /**
      * Emit a batch of messages to a named channel.
@@ -57,10 +57,10 @@ public interface MessagingRuntime {
      * caller with their causes preserved. Completed outputs are not rolled back if a later output fails.
      *
      * @param channel channel name
-     * @param messages messages
+     * @param batch immutable message batch
      * @param <T> payload type
      * @throws MessagingException if the named channel does not exist
-     * @throws RuntimeException if a handler or outgoing connector fails
+     * @throws BatchDeliveryException if delivery completes partially or its outcome is indeterminate
      */
-    <T> void emitBatch(String channel, List<? extends Message<? extends T>> messages);
+    <T> void emitBatch(String channel, MessageBatch<? extends T> batch);
 }

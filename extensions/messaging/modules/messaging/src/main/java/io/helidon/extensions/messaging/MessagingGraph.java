@@ -16,7 +16,6 @@
 
 package io.helidon.extensions.messaging;
 
-import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Stream;
@@ -152,7 +151,7 @@ public interface MessagingGraph extends AutoCloseable {
                                   Stream<? extends Message<? extends T>> source);
 
         /**
-         * Route every message from one channel to another channel of the same type.
+         * Route each delivery batch unchanged from one channel to another channel of the same type.
          *
          * @param source source channel
          * @param target target channel
@@ -162,7 +161,8 @@ public interface MessagingGraph extends AutoCloseable {
         <T> Builder route(MessagingChannel<T> source, MessagingChannel<T> target);
 
         /**
-         * Add a payload processor. Message metadata is not propagated by a payload processor.
+         * Add a payload processor. The processor is invoked once per batch item in order and its results form one
+         * lineage-preserving derived batch. Message metadata is not propagated by a payload processor.
          *
          * @param source source channel
          * @param target target channel
@@ -176,7 +176,8 @@ public interface MessagingGraph extends AutoCloseable {
                                         Function<? super I, ? extends O> processor);
 
         /**
-         * Add a message processor.
+         * Add a message processor. The processor is invoked once per batch item in order and its results form one
+         * lineage-preserving derived batch.
          *
          * @param source source channel
          * @param target target channel
@@ -210,16 +211,6 @@ public interface MessagingGraph extends AutoCloseable {
         <T> Builder messageSink(MessagingChannel<T> source, Consumer<? super Message<T>> sink);
 
         /**
-         * Add a payload batch sink.
-         *
-         * @param source source channel
-         * @param sink payload batch sink
-         * @param <T> payload type
-         * @return updated builder
-         */
-        <T> Builder payloadBatchSink(MessagingChannel<T> source, Consumer<? super List<T>> sink);
-
-        /**
          * Add a message batch sink.
          *
          * @param source source channel
@@ -227,7 +218,7 @@ public interface MessagingGraph extends AutoCloseable {
          * @param <T> payload type
          * @return updated builder
          */
-        <T> Builder messageBatchSink(MessagingChannel<T> source, Consumer<? super List<Message<T>>> sink);
+        <T> Builder batchSink(MessagingChannel<T> source, Consumer<MessageBatch<T>> sink);
 
         /**
          * Add an outgoing connector as a required channel sink.

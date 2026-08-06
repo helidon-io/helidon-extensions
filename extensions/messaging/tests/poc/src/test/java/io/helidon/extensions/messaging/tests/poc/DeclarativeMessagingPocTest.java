@@ -31,9 +31,12 @@ import java.util.stream.Stream;
 import io.helidon.common.GenericType;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
+import io.helidon.extensions.messaging.BatchDeliveryException;
+import io.helidon.extensions.messaging.BatchItemStatus;
 import io.helidon.extensions.messaging.ConnectorSink;
 import io.helidon.extensions.messaging.EmitterRegistration;
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingChannel;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.MessagingGraph;
@@ -43,10 +46,10 @@ import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.BatchChan
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.BroadCustomMessageConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ChannelTwoConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.CustomMessage;
-import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.CustomMessageBatchConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.CustomMessageConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.FailingConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.FirstChannelOneConsumer;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ForwardedBatchConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ForwardedMessageConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ForwardingProcessor;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.HeaderDelivery;
@@ -77,7 +80,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasSize;
-import static org.hamcrest.Matchers.sameInstance;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -175,20 +178,15 @@ class DeclarativeMessagingPocTest {
 
     @Test
     void testImperativeChannelPreservesBatchForBatchOutputsAndConnectors() {
-        List<List<Message<String>>> batches = new CopyOnWriteArrayList<>();
+        List<MessageBatch<String>> batches = new CopyOnWriteArrayList<>();
         List<List<String>> connectorBatches = new CopyOnWriteArrayList<>();
 
         MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<String> channel = builder.channel("imperative-batch", String.class);
-        builder.messageBatchSink(channel, batch -> batches.add(List.copyOf(batch)))
+        builder.batchSink(channel, batches::add)
                 .outgoingConnector(channel, new ConnectorSink() {
                     @Override
-                    public <T> void send(Message<T> message) {
-                        throw new AssertionError("sendBatch should be used");
-                    }
-
-                    @Override
-                    public <T> void sendBatch(List<? extends Message<T>> messages) {
+                    public <T> void sendBatch(MessageBatch<T> messages) {
                         List<String> entities = new ArrayList<>();
                         for (Message<T> message : messages) {
                             entities.add(String.valueOf(message.entity()));
@@ -200,34 +198,36 @@ class DeclarativeMessagingPocTest {
         try (MessagingGraph graph = builder.build()) {
             graph.start();
             graph.emitter(channel)
-                    .emitBatch(List.of(Message.builder("first")
-                                              .header("source", "batch")
-                                              .build(),
-                                       Message.create("second")));
+                    .emitBatch(MessageBatch.create(List.of(Message.builder("first")
+                                                                  .header("source", "batch")
+                                                                  .build(),
+                                                           Message.create("second"))));
 
             assertThat(batches, hasSize(1));
-            assertThat(batches.getFirst(), hasSize(2));
-            assertThat(batches.getFirst().getFirst().header("source").orElseThrow(), is("batch"));
+            assertThat(batches.getFirst().size(), is(2));
+            assertThat(batches.getFirst().payloads(), is(List.of("first", "second")));
+            assertThat(batches.getFirst().get(0).header("source").orElseThrow(), is("batch"));
             assertThat(connectorBatches, is(List.of(List.of("first", "second"))));
         }
     }
 
     @Test
     void testOutgoingConnectorFailureFailsChannelEmit() {
+        MessagingException expectedFailure = new MessagingException("connector failed", new IOException("I/O failed"));
         MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<String> channel = builder.channel("imperative-connector-failure", String.class);
         builder.outgoingConnector(channel, new ConnectorSink() {
             @Override
-            public <T> void send(Message<T> message) {
-                throw new MessagingException("connector failed", new IOException("I/O failed"));
+            public <T> void sendBatch(MessageBatch<T> batch) {
+                throw expectedFailure;
             }
         });
 
         try (MessagingGraph graph = builder.build()) {
             graph.start();
-            MessagingException thrown = assertThrows(MessagingException.class,
-                                                      () -> graph.emitter(channel).emit("test message"));
-            assertThat(thrown.getCause().getMessage(), is("I/O failed"));
+            BatchDeliveryException thrown = assertBatchFailure(expectedFailure,
+                                                                () -> graph.emitter(channel).emit("test message"));
+            assertThat(rootCause(thrown).getMessage(), is("I/O failed"));
         }
     }
 
@@ -281,8 +281,7 @@ class DeclarativeMessagingPocTest {
             }
 
             assertThat(emissionCompleted.await(10, TimeUnit.SECONDS), is(true));
-            assertThat(actualFailure.get(), sameInstance(expectedFailure));
-            assertThat(actualFailure.get().getCause(), sameInstance(expectedFailure.getCause()));
+            assertBatchFailure(expectedFailure, actualFailure.get());
             assertThat(invokedOutputs, is(List.of("first", "second")));
         }
     }
@@ -307,9 +306,7 @@ class DeclarativeMessagingPocTest {
         try (MessagingGraph graph = builder.build()) {
             graph.start();
             var emitter = graph.emitter(channel);
-            MessagingException thrown = assertThrows(MessagingException.class,
-                                                      () -> emitter.emit("test message"));
-            assertThat(thrown, sameInstance(expectedFailure));
+            assertBatchFailure(expectedFailure, () -> emitter.emit("test message"));
 
             emitter.emit("test message");
 
@@ -335,7 +332,7 @@ class DeclarativeMessagingPocTest {
         assertThat(secondConsumer.messages(), hasSize(1));
         assertThat(secondConsumer.messages().getFirst().entity(), is("runtime message"));
         assertThat(batchConsumer.batches(), hasSize(1));
-        assertThat(batchConsumer.batches().getFirst().getFirst().entity(), is("runtime message"));
+        assertThat(batchConsumer.batches().getFirst().get(0).entity(), is("runtime message"));
     }
 
     @Test
@@ -380,13 +377,16 @@ class DeclarativeMessagingPocTest {
     void testRuntimeCanEmitBatchIntoNamedChannel() {
         MessagingRuntime runtime = registry.get(MessagingRuntime.class);
 
-        runtime.emitBatch(ChannelMessagingTypes.CHANNEL_ONE,
-                          List.of(Message.builder("runtime batch first")
-                                          .header("key", "batch-1")
-                                          .build(),
-                                  Message.builder("runtime batch second")
-                                          .header("key", "batch-2")
-                                          .build()));
+        MessageBatch<String> batch = MessageBatch.<String>builder()
+                .id("runtime-batch")
+                .add(Message.builder("runtime batch first")
+                             .header("key", "batch-1")
+                             .build())
+                .add(Message.builder("runtime batch second")
+                             .header("key", "batch-2")
+                             .build())
+                .build();
+        runtime.emitBatch(ChannelMessagingTypes.CHANNEL_ONE, batch);
 
         var firstConsumer = registry.get(FirstChannelOneConsumer.class);
         var secondConsumer = registry.get(SecondChannelOneConsumer.class);
@@ -396,7 +396,8 @@ class DeclarativeMessagingPocTest {
         assertThat(firstConsumer.keys(), is(List.of("batch-1", "batch-2")));
         assertThat(secondConsumer.messages(), hasSize(2));
         assertThat(batchConsumer.batches(), hasSize(1));
-        assertThat(batchConsumer.batches().getFirst(), hasSize(2));
+        assertThat(batchConsumer.batches().getFirst().size(), is(2));
+        assertThat(batchConsumer.batches().getFirst().id(), is("runtime-batch"));
         assertThat(batchConsumer.batches().getFirst().get(0).entity(), is("runtime batch first"));
         assertThat(batchConsumer.batches().getFirst().get(1).header("key").orElseThrow(), is("batch-2"));
     }
@@ -420,22 +421,6 @@ class DeclarativeMessagingPocTest {
     }
 
     @Test
-    void testCustomMessageSubtypeBatchDispatch() {
-        MessagingRuntime runtime = registry.get(MessagingRuntime.class);
-        List<CustomMessage<String, Integer>> batch =
-                List.of(new ImmutableCustomMessage<>("first-key", 1, Map.of()),
-                        new ImmutableCustomMessage<>("second-key", 2, Map.of("source", "batch")));
-
-        runtime.emitBatch(ChannelMessagingTypes.CUSTOM_MESSAGE_BATCH_CHANNEL, batch);
-
-        var consumer = registry.get(CustomMessageBatchConsumer.class);
-        assertThat(consumer.batches(), is(List.of(batch)));
-        assertThat(consumer.batches().getFirst().get(0).key(), is("first-key"));
-        assertThat(consumer.batches().getFirst().get(1).entity(), is(2));
-        assertThat(consumer.batches().getFirst().get(1).header("source").orElseThrow(), is("batch"));
-    }
-
-    @Test
     void testCustomMessageSubtypeRejectsBaseEnvelope() {
         MessagingRuntime runtime = registry.get(MessagingRuntime.class);
 
@@ -446,13 +431,6 @@ class DeclarativeMessagingPocTest {
         assertThat(singleFailure.getMessage(), containsString(CustomMessage.class.getName()));
         assertThat(registry.get(BroadCustomMessageConsumer.class).messages(), empty());
         assertThat(registry.get(CustomMessageConsumer.class).messages(), empty());
-
-        IllegalArgumentException batchFailure =
-                assertThrows(IllegalArgumentException.class,
-                             () -> runtime.emitBatch(ChannelMessagingTypes.CUSTOM_MESSAGE_BATCH_CHANNEL,
-                                                    List.of(Message.create(1), Message.create(2))));
-        assertThat(batchFailure.getMessage(), containsString("expected message envelope type"));
-        assertThat(batchFailure.getMessage(), containsString(CustomMessage.class.getName()));
     }
 
     @Test
@@ -485,7 +463,7 @@ class DeclarativeMessagingPocTest {
         assertThat(firstConsumer.keys(), is(List.of("value")));
         assertThat(secondConsumer.messages(), hasSize(1));
         assertThat(batchConsumer.batches(), hasSize(1));
-        assertThat(batchConsumer.batches().getFirst(), hasSize(1));
+        assertThat(batchConsumer.batches().getFirst().size(), is(1));
         assertThat(channelTwoConsumer.messages(), empty());
 
         Message<String> firstMessage = firstConsumer.messages().getFirst();
@@ -510,7 +488,7 @@ class DeclarativeMessagingPocTest {
         assertThat(firstConsumer.keys(), is(List.of("batch-first", "batch-second")));
         assertThat(secondConsumer.messages(), hasSize(2));
         assertThat(batchConsumer.batches(), hasSize(1));
-        assertThat(batchConsumer.batches().getFirst(), hasSize(2));
+        assertThat(batchConsumer.batches().getFirst().size(), is(2));
         assertThat(batchConsumer.batches().getFirst().get(0).entity(), is("emitter batch first"));
         assertThat(batchConsumer.batches().getFirst().get(1).entity(), is("emitter batch second"));
     }
@@ -520,11 +498,7 @@ class DeclarativeMessagingPocTest {
         var producer = registry.get(Producer.class);
         var consumer = registry.get(FailingConsumer.class);
 
-        MessagingException thrown = assertThrows(MessagingException.class,
-                                                  () -> producer.emitFailingChannel("test message"));
-
-        assertThat(thrown, sameInstance(consumer.failure()));
-        assertThat(thrown.getCause(), sameInstance(consumer.failure().getCause()));
+        assertBatchFailure(consumer.failure(), () -> producer.emitFailingChannel("test message"));
     }
 
     @Test
@@ -538,8 +512,7 @@ class DeclarativeMessagingPocTest {
         assertThat(observer.awaitDelivery(), is(true));
         RuntimeException thrown = observer.deliveryFailure().orElseThrow();
 
-        assertThat(thrown, sameInstance(consumer.failure()));
-        assertThat(thrown.getCause(), sameInstance(consumer.failure().getCause()));
+        assertBatchFailure(consumer.failure(), thrown);
     }
 
     @Test
@@ -552,6 +525,28 @@ class DeclarativeMessagingPocTest {
         assertThat(consumer.messages(), hasSize(1));
         assertThat(consumer.messages().getFirst().entity(), is("forwarded: test message"));
         assertThat(consumer.messages().getFirst().header("processor").orElseThrow(), is("forwarding"));
+    }
+
+    @Test
+    void testProcessorMapsBatchWithoutFragmentingIt() {
+        MessagingRuntime runtime = registry.get(MessagingRuntime.class);
+        MessageBatch<String> input = MessageBatch.<String>builder()
+                .id("processor-batch")
+                .add(Message.create("first"))
+                .add(Message.create("second"))
+                .build();
+
+        runtime.emitBatch(ChannelMessagingTypes.FORWARDING_INPUT_CHANNEL, input);
+
+        var messageConsumer = registry.get(ForwardedMessageConsumer.class);
+        var batchConsumer = registry.get(ForwardedBatchConsumer.class);
+        assertThat(messageConsumer.messages().stream().map(Message::entity).toList(),
+                   is(List.of("forwarded: first", "forwarded: second")));
+        assertThat(batchConsumer.batches(), hasSize(1));
+        assertThat(batchConsumer.batches().getFirst().id(), is("processor-batch"));
+        assertThat(input.sameDelivery(batchConsumer.batches().getFirst()), is(true));
+        assertThat(batchConsumer.batches().getFirst().payloads(),
+                   is(List.of("forwarded: first", "forwarded: second")));
     }
 
     @Test
@@ -584,13 +579,9 @@ class DeclarativeMessagingPocTest {
         var processor = registry.get(ForwardingProcessor.class);
         var consumer = registry.get(ForwardedMessageConsumer.class);
 
-        MessagingException thrown =
-                assertThrows(MessagingException.class,
-                             () -> runtime.emit(ChannelMessagingTypes.FORWARDING_INPUT_CHANNEL,
-                                                Message.create("processor-fail")));
-
-        assertThat(thrown, sameInstance(processor.failure()));
-        assertThat(thrown.getCause(), sameInstance(processor.failure().getCause()));
+        assertBatchFailure(processor.failure(),
+                           () -> runtime.emit(ChannelMessagingTypes.FORWARDING_INPUT_CHANNEL,
+                                              Message.create("processor-fail")));
         assertThat(consumer.messages(), empty());
     }
 
@@ -599,13 +590,9 @@ class DeclarativeMessagingPocTest {
         MessagingRuntime runtime = registry.get(MessagingRuntime.class);
         var consumer = registry.get(ForwardedMessageConsumer.class);
 
-        MessagingException thrown =
-                assertThrows(MessagingException.class,
-                             () -> runtime.emit(ChannelMessagingTypes.FORWARDING_INPUT_CHANNEL,
-                                                Message.create("fail")));
-
-        assertThat(thrown, sameInstance(consumer.failure()));
-        assertThat(thrown.getCause(), sameInstance(consumer.failure().getCause()));
+        assertBatchFailure(consumer.failure(),
+                           () -> runtime.emit(ChannelMessagingTypes.FORWARDING_INPUT_CHANNEL,
+                                              Message.create("fail")));
         assertThat(consumer.messages(), empty());
     }
 
@@ -614,12 +601,13 @@ class DeclarativeMessagingPocTest {
         MessagingRuntime runtime = registry.get(MessagingRuntime.class);
         var consumer = registry.get(RequiredHeaderConsumer.class);
 
-        MessagingException thrown =
-                assertThrows(MessagingException.class,
+        BatchDeliveryException thrown =
+                assertThrows(BatchDeliveryException.class,
                              () -> runtime.emit(ChannelMessagingTypes.REQUIRED_HEADER_CHANNEL,
                                                 Message.create("missing header")));
 
-        assertThat(thrown.getMessage(), containsString("required"));
+        assertSingleIndeterminateOutcome(thrown);
+        assertThat(rootCause(thrown).getMessage(), containsString("required"));
         assertThat(consumer.deliveries(), empty());
 
         runtime.emit(ChannelMessagingTypes.REQUIRED_HEADER_CHANNEL,
@@ -667,12 +655,12 @@ class DeclarativeMessagingPocTest {
         TestEntryPointInterceptor.reset();
 
         runtime.emitBatch(ChannelMessagingTypes.CHANNEL_ONE,
-                          List.of(Message.builder("first")
-                                          .header("key", "first")
-                                          .build(),
-                                  Message.builder("second")
-                                          .header("key", "second")
-                                          .build()));
+                          MessageBatch.create(List.of(Message.builder("first")
+                                                             .header("key", "first")
+                                                             .build(),
+                                                      Message.builder("second")
+                                                             .header("key", "second")
+                                                             .build())));
 
         long batchExecutions = TestEntryPointInterceptor.executions()
                 .stream()
@@ -802,10 +790,34 @@ class DeclarativeMessagingPocTest {
     private static ConnectorSink sink(List<Message<?>> messages) {
         return new ConnectorSink() {
             @Override
-            public <T> void send(Message<T> message) {
-                messages.add(message);
+            public <T> void sendBatch(MessageBatch<T> batch) {
+                messages.addAll(batch.messages());
             }
         };
+    }
+
+    private static BatchDeliveryException assertBatchFailure(Throwable expectedFailure, Runnable action) {
+        BatchDeliveryException actualFailure = assertThrows(BatchDeliveryException.class, action::run);
+        return assertBatchFailure(expectedFailure, actualFailure);
+    }
+
+    private static BatchDeliveryException assertBatchFailure(Throwable expectedFailure, Throwable actualFailure) {
+        BatchDeliveryException batchFailure = assertInstanceOf(BatchDeliveryException.class, actualFailure);
+        assertSingleIndeterminateOutcome(batchFailure);
+        Throwable cause = batchFailure;
+        while (cause != null) {
+            if (cause == expectedFailure) {
+                return batchFailure;
+            }
+            cause = cause.getCause();
+        }
+        throw new AssertionError("Expected failure is not present in the batch failure cause chain", batchFailure);
+    }
+
+    private static void assertSingleIndeterminateOutcome(BatchDeliveryException failure) {
+        assertThat(failure.batch().size(), is(1));
+        assertThat(failure.outcomes(), hasSize(1));
+        assertThat(failure.outcome(0).status(), is(BatchItemStatus.INDETERMINATE));
     }
 
     private static Throwable rootCause(Throwable throwable) {

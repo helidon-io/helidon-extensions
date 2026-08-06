@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import io.helidon.extensions.messaging.Message;
+import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.Messaging;
 import io.helidon.service.registry.Service;
 
@@ -31,8 +32,8 @@ class AuditConsumer {
     private final List<Message<String>> messages = new CopyOnWriteArrayList<>();
 
     @Messaging.OnMessage(Main.AUDIT_CHANNEL)
-    void consume(List<Message<String>> batch) {
-        messages.addAll(batch);
+    void consume(MessageBatch<String> batch) {
+        messages.addAll(batch.messages());
     }
 
     List<Message<String>> messages() {
