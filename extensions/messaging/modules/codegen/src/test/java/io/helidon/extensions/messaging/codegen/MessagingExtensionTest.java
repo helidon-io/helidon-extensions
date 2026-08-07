@@ -82,7 +82,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class ConflictingEnvelopeConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(KeyedMessage<String, Integer> first,
                                  KeyedMessage<Long, Integer> second) {
                     }
@@ -106,7 +106,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class GenericEnvelopeConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     <K> void consume(KeyedMessage<K, Integer> message) {
                     }
                 }
@@ -129,7 +129,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class WildcardEnvelopeConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(KeyedMessage<?, Integer> message) {
                     }
                 }
@@ -152,7 +152,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class GenericWildcardEnvelopeConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     <K> void consume(KeyedMessage<? extends K, Integer> message) {
                     }
                 }
@@ -177,7 +177,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class GenericMetadataConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(KeyedMessage<String, List<Integer>> message) {
                     }
                 }
@@ -209,7 +209,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class PrimitiveConsumer {
-                    @Messaging.OnMessage("numbers")
+                    @Messaging.ReceiveFrom("numbers")
                     void consume(int value) {
                     }
                 }
@@ -317,7 +317,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class InterceptedConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(Message<String> message,
                                  @Messaging.HeaderParam("required") String required,
                                  @Messaging.HeaderParam("optional") Optional<String> optional) throws IOException {
@@ -359,7 +359,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class PayloadProcessor {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     @Messaging.SendTo("audit")
                     Integer process(String value) {
                         return value.length();
@@ -399,7 +399,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class EnvelopeProcessor {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     @Messaging.SendTo("audit")
                     Message<Integer> process(Message<String> message) {
                         return Message.create(message.entity().length());
@@ -428,7 +428,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class ArrayEnvelopeProcessor {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     @Messaging.SendTo("audit")
                     ArrayMessage<String> process(String value) {
                         return null;
@@ -437,7 +437,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class ArrayPayloadConsumer {
-                    @Messaging.OnMessage("audit")
+                    @Messaging.ReceiveFrom("audit")
                     void consume(String[][] value) {
                     }
                 }
@@ -490,7 +490,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class BatchConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(MessageBatch<String> messages) throws IOException {
                     }
                 }
@@ -515,7 +515,7 @@ class MessagingExtensionTest {
     }
 
     @Test
-    void rejectsSendToOnMessageBatchHandler() {
+    void rejectsSendToOnReceiveFromBatchHandler() {
         assertDiagnostic(compile("""
                 package com.example;
 
@@ -525,13 +525,13 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class BatchProcessor {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     @Messaging.SendTo("audit")
                     void consume(MessageBatch<String> messages) {
                     }
                 }
                 """),
-                         "Batch @Messaging.OnMessage methods cannot declare @Messaging.SendTo");
+                         "Batch @Messaging.ReceiveFrom methods cannot declare @Messaging.SendTo");
     }
 
     @Test
@@ -548,7 +548,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class BatchConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(CustomBatch<Integer> messages) {
                     }
                 }
@@ -570,7 +570,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class LegacyBatchConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(List<Message<String>> messages) {
                     }
                 }
@@ -628,7 +628,7 @@ class MessagingExtensionTest {
                     @Service.Named("audit")
                     Emitter<List<String>> emitter;
 
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     @Messaging.SendTo("audit")
                     Message<List<String>> process(Message<List<String>> message) {
                         return message;
@@ -672,7 +672,7 @@ class MessagingExtensionTest {
 
                 @Deprecated
                 class NotAService {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(String value) {
                     }
                 }
@@ -687,7 +687,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class InvalidHandler {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     private void consume(String value) {
                     }
                 }
@@ -702,7 +702,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class StaticHandler {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     static void consume(String value) {
                     }
                 }
@@ -720,12 +720,12 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class BlankChannel {
-                    @Messaging.OnMessage(" ")
+                    @Messaging.ReceiveFrom(" ")
                     void consume(String value) {
                     }
                 }
                 """),
-                         "channel must not be blank");
+                         "@Messaging.ReceiveFrom channel must not be blank");
 
         assertDiagnostic(compile("""
                 package com.example;
@@ -735,7 +735,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class BlankSendToChannel {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     @Messaging.SendTo(" ")
                     String process(String value) {
                         return value;
@@ -752,7 +752,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class PaddedSendToChannel {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     @Messaging.SendTo(" audit")
                     String process(String value) {
                         return value;
@@ -769,7 +769,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class ControlCharacterSendToChannel {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     @Messaging.SendTo("audit\\nchannel")
                     String process(String value) {
                         return value;
@@ -786,16 +786,16 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class DuplicateRoute {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void first(String value) {
                     }
 
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void second(Integer value) {
                     }
                 }
                 """),
-                         "declares multiple @Messaging.OnMessage handlers for channel orders");
+                         "declares multiple @Messaging.ReceiveFrom handlers for channel orders");
     }
 
     @Test
@@ -809,7 +809,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class AmbiguousConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(@Messaging.Entity String entity, Message<String> message) {
                     }
                 }
@@ -824,7 +824,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class InvalidHeaderConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(@Messaging.Entity String entity,
                                  @Messaging.HeaderParam("attempt") Integer attempt) {
                     }
@@ -840,7 +840,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class DuplicateHeaderConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(@Messaging.Entity String entity,
                                  @Messaging.HeaderParam("id") String first,
                                  @Messaging.HeaderParam("id") String second) {
@@ -860,13 +860,13 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class ReturningTerminal {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     String consume(String value) {
                         return value;
                     }
                 }
                 """),
-                         "Terminal @Messaging.OnMessage methods must return void");
+                         "Terminal @Messaging.ReceiveFrom methods must return void");
 
         assertDiagnostic(compile("""
                 package com.example;
@@ -876,7 +876,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class VoidProcessor {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     @Messaging.SendTo("audit")
                     void consume(String value) {
                     }
@@ -894,14 +894,14 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class AsyncProcessor {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     @Messaging.SendTo("audit")
                     CompletableFuture<String> consume(String value) {
                         return CompletableFuture.completedFuture(value);
                     }
                 }
                 """),
-                         "Asynchronous or publisher @Messaging.OnMessage return types are not supported");
+                         "Asynchronous or publisher @Messaging.ReceiveFrom return types are not supported");
 
         assertDiagnostic(compile("""
                 package com.example;
@@ -917,7 +917,7 @@ class MessagingExtensionTest {
                     }
                 }
                 """),
-                         "@Messaging.SendTo is only allowed on @Messaging.OnMessage methods");
+                         "@Messaging.SendTo is only allowed on @Messaging.ReceiveFrom methods");
     }
 
     @Test
@@ -932,7 +932,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class RawPayloadConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(List value) {
                     }
                 }
@@ -1101,7 +1101,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class %s {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(String value) {
                     }
                 }
@@ -1150,7 +1150,7 @@ class MessagingExtensionTest {
                     @Service.Named("audit")
                     Emitter<String> emitter;
 
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(String value) {
                     }
                 }
@@ -1161,7 +1161,7 @@ class MessagingExtensionTest {
                     @Service.Named("audit")
                     Emitter<String> emitter;
 
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(String value) {
                     }
                 }
@@ -1190,11 +1190,11 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class CollidingConsumer {
-                    @Messaging.OnMessage("first")
+                    @Messaging.ReceiveFrom("first")
                     void consume(Aa value) {
                     }
 
-                    @Messaging.OnMessage("second")
+                    @Messaging.ReceiveFrom("second")
                     void consume(BB value) {
                     }
                 }
@@ -1233,7 +1233,7 @@ class MessagingExtensionTest {
                     private static class Payload {
                     }
 
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(Payload payload) {
                     }
                 }
@@ -1269,7 +1269,7 @@ class MessagingExtensionTest {
 
                 @Service.Singleton
                 class ThrowableConsumer {
-                    @Messaging.OnMessage("orders")
+                    @Messaging.ReceiveFrom("orders")
                     void consume(String value) throws Throwable {
                     }
                 }

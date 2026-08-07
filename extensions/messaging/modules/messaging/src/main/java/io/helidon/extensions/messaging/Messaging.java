@@ -43,17 +43,17 @@ public final class Messaging {
     }
 
     /**
-     * Message consumer method.
+     * Marks a method that receives messages from a channel.
      */
     @Documented
     @Retention(RetentionPolicy.CLASS)
     @Target(ElementType.METHOD)
     @Service.EntryPoint
-    public @interface OnMessage {
+    public @interface ReceiveFrom {
         /**
-         * Channel name.
+         * Source channel name.
          *
-         * @return channel name
+         * @return source channel name
          */
         String value();
     }

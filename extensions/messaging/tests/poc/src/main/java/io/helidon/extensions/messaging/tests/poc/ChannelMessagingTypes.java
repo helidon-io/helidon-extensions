@@ -115,7 +115,7 @@ class ChannelMessagingTypes {
     static class FirstChannelOneConsumer extends MessageConsumer {
         private final List<String> keys = new CopyOnWriteArrayList<>();
 
-        @Messaging.OnMessage(CHANNEL_ONE)
+        @Messaging.ReceiveFrom(CHANNEL_ONE)
         void consume(@Messaging.HeaderParam("key") String key,
                      Message<String> message) {
             keys.add(key);
@@ -129,7 +129,7 @@ class ChannelMessagingTypes {
 
     @Service.Singleton
     static class SecondChannelOneConsumer extends MessageConsumer {
-        @Messaging.OnMessage(CHANNEL_ONE)
+        @Messaging.ReceiveFrom(CHANNEL_ONE)
         void consume(Message<String> message) {
             messages().add(message);
         }
@@ -139,7 +139,7 @@ class ChannelMessagingTypes {
     static class BatchChannelOneConsumer {
         private final List<MessageBatch<String>> batches = new CopyOnWriteArrayList<>();
 
-        @Messaging.OnMessage(CHANNEL_ONE)
+        @Messaging.ReceiveFrom(CHANNEL_ONE)
         void consume(MessageBatch<String> batch) {
             batches.add(batch);
         }
@@ -151,7 +151,7 @@ class ChannelMessagingTypes {
 
     @Service.Singleton
     static class ChannelTwoConsumer extends MessageConsumer {
-        @Messaging.OnMessage(CHANNEL_TWO)
+        @Messaging.ReceiveFrom(CHANNEL_TWO)
         void consume(String payload) {
             messages().add(Message.builder(payload).build());
         }
@@ -161,7 +161,7 @@ class ChannelMessagingTypes {
     static class CustomMessageConsumer {
         private final List<CustomMessage<String, Integer>> messages = new CopyOnWriteArrayList<>();
 
-        @Messaging.OnMessage(CUSTOM_MESSAGE_CHANNEL)
+        @Messaging.ReceiveFrom(CUSTOM_MESSAGE_CHANNEL)
         void consume(CustomMessage<String, Integer> message) {
             messages.add(message);
         }
@@ -175,7 +175,7 @@ class ChannelMessagingTypes {
     static class BroadCustomMessageConsumer {
         private final List<Message<Integer>> messages = new CopyOnWriteArrayList<>();
 
-        @Messaging.OnMessage(CUSTOM_MESSAGE_CHANNEL)
+        @Messaging.ReceiveFrom(CUSTOM_MESSAGE_CHANNEL)
         void consume(Message<Integer> message) {
             messages.add(message);
         }
@@ -189,7 +189,7 @@ class ChannelMessagingTypes {
     static class MultiHopMessageConsumer {
         private final List<MultiHopMessage<String, List<Integer>>> messages = new CopyOnWriteArrayList<>();
 
-        @Messaging.OnMessage(MULTI_HOP_MESSAGE_CHANNEL)
+        @Messaging.ReceiveFrom(MULTI_HOP_MESSAGE_CHANNEL)
         void consume(MultiHopMessage<String, List<Integer>> message) {
             messages.add(message);
         }
@@ -204,7 +204,7 @@ class ChannelMessagingTypes {
         private final MessagingException failure = new MessagingException("processor failed",
                                                                           new IOException("processor I/O failed"));
 
-        @Messaging.OnMessage(FORWARDING_INPUT_CHANNEL)
+        @Messaging.ReceiveFrom(FORWARDING_INPUT_CHANNEL)
         @Messaging.SendTo(FORWARDING_OUTPUT_CHANNEL)
         Message<String> forward(String payload) {
             if ("processor-fail".equals(payload)) {
@@ -222,7 +222,7 @@ class ChannelMessagingTypes {
 
     @Service.Singleton
     static class PayloadProcessor {
-        @Messaging.OnMessage(PAYLOAD_PROCESSOR_INPUT_CHANNEL)
+        @Messaging.ReceiveFrom(PAYLOAD_PROCESSOR_INPUT_CHANNEL)
         @Messaging.SendTo(PAYLOAD_PROCESSOR_OUTPUT_CHANNEL)
         String process(String payload) {
             return "processed: " + payload;
@@ -231,7 +231,7 @@ class ChannelMessagingTypes {
 
     @Service.Singleton
     static class PayloadProcessorConsumer extends MessageConsumer {
-        @Messaging.OnMessage(PAYLOAD_PROCESSOR_OUTPUT_CHANNEL)
+        @Messaging.ReceiveFrom(PAYLOAD_PROCESSOR_OUTPUT_CHANNEL)
         void consume(Message<String> message) {
             messages().add(message);
         }
@@ -239,7 +239,7 @@ class ChannelMessagingTypes {
 
     @Service.Singleton
     static class ArrayEnvelopeProcessor {
-        @Messaging.OnMessage(ARRAY_PROCESSOR_INPUT_CHANNEL)
+        @Messaging.ReceiveFrom(ARRAY_PROCESSOR_INPUT_CHANNEL)
         @Messaging.SendTo(ARRAY_PROCESSOR_OUTPUT_CHANNEL)
         ArrayMessage<String> process(String payload) {
             String processed = "processed: " + payload;
@@ -253,7 +253,7 @@ class ChannelMessagingTypes {
     static class ArrayPayloadConsumer {
         private final List<String[][]> payloads = new CopyOnWriteArrayList<>();
 
-        @Messaging.OnMessage(ARRAY_PROCESSOR_OUTPUT_CHANNEL)
+        @Messaging.ReceiveFrom(ARRAY_PROCESSOR_OUTPUT_CHANNEL)
         void consume(String[][] payload) {
             payloads.add(payload);
         }
@@ -267,7 +267,7 @@ class ChannelMessagingTypes {
     static class RequiredHeaderConsumer {
         private final List<HeaderDelivery> deliveries = new CopyOnWriteArrayList<>();
 
-        @Messaging.OnMessage(REQUIRED_HEADER_CHANNEL)
+        @Messaging.ReceiveFrom(REQUIRED_HEADER_CHANNEL)
         void consume(@Messaging.Entity String payload,
                      @Messaging.HeaderParam("required") String required) {
             deliveries.add(new HeaderDelivery(payload, required));
@@ -282,7 +282,7 @@ class ChannelMessagingTypes {
     static class OptionalHeaderConsumer {
         private final List<OptionalHeaderDelivery> deliveries = new CopyOnWriteArrayList<>();
 
-        @Messaging.OnMessage(OPTIONAL_HEADER_CHANNEL)
+        @Messaging.ReceiveFrom(OPTIONAL_HEADER_CHANNEL)
         void consume(@Messaging.Entity String payload,
                      @Messaging.HeaderParam("trace-id") Optional<String> traceId) {
             deliveries.add(new OptionalHeaderDelivery(payload, traceId));
@@ -298,7 +298,7 @@ class ChannelMessagingTypes {
         private final MessagingException failure = new MessagingException("downstream handler failed",
                                                                           new IOException("downstream I/O failed"));
 
-        @Messaging.OnMessage(FORWARDING_OUTPUT_CHANNEL)
+        @Messaging.ReceiveFrom(FORWARDING_OUTPUT_CHANNEL)
         void consume(Message<String> message) {
             if (message.entity().equals("forwarded: fail")) {
                 throw failure;
@@ -315,7 +315,7 @@ class ChannelMessagingTypes {
     static class ForwardedBatchConsumer {
         private final List<MessageBatch<String>> batches = new CopyOnWriteArrayList<>();
 
-        @Messaging.OnMessage(FORWARDING_OUTPUT_CHANNEL)
+        @Messaging.ReceiveFrom(FORWARDING_OUTPUT_CHANNEL)
         void consume(MessageBatch<String> batch) {
             batches.add(batch);
         }
@@ -330,7 +330,7 @@ class ChannelMessagingTypes {
         private final MessagingException failure = new MessagingException("handler failed",
                                                                           new IOException("handler I/O failed"));
 
-        @Messaging.OnMessage(FAILING_CHANNEL)
+        @Messaging.ReceiveFrom(FAILING_CHANNEL)
         void consume(String payload) {
             throw failure;
         }
@@ -344,7 +344,7 @@ class ChannelMessagingTypes {
     static class PerLookupInterceptedConsumer {
         private static final Queue<PerLookupInterceptedConsumer> INSTANCES = new ConcurrentLinkedQueue<>();
 
-        @Messaging.OnMessage(PER_LOOKUP_INTERCEPTED_CHANNEL)
+        @Messaging.ReceiveFrom(PER_LOOKUP_INTERCEPTED_CHANNEL)
         void consume(String payload) {
             INSTANCES.add(this);
         }
@@ -512,7 +512,7 @@ class ChannelMessagingTypes {
     static class ShutdownConsumer {
         private static final List<String> EVENTS = new CopyOnWriteArrayList<>();
 
-        @Messaging.OnMessage(SHUTDOWN_CHANNEL)
+        @Messaging.ReceiveFrom(SHUTDOWN_CHANNEL)
         void consume(String ignored) {
         }
 
