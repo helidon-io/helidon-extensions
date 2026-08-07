@@ -144,7 +144,7 @@ class ScoringModelConfigTest {
     }
 
     @Test
-    void testNamedHttpClientBuilderTakesPrecedence(ServiceRegistry registry) {
+    void testNamedHttpClientBuilderTakesPrecedenceOverSocksProxy(ServiceRegistry registry) {
         // language=YAML
         var yaml = """
                 langchain4j:
@@ -155,7 +155,7 @@ class ScoringModelConfigTest {
                   providers:
                     cohere:
                       api-key: api-key
-                      proxy.service-registry.named: customProxy
+                      proxy.service-registry.named: socksProxy
                       http-client-builder.service-registry.named: customHttpClient
                 """;
 

@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.langchain4j.codegen;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -53,6 +54,7 @@ import static io.helidon.common.types.TypeNames.WEIGHT;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.CONFIG;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.MODEL_CONFIGS_TYPE;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.MODEL_CONFIG_TYPE;
+import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.MODEL_LIFECYCLE;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.SVC_SERVICES_FACTORY;
 import static io.helidon.service.codegen.ServiceCodegenTypes.SERVICE_ANNOTATION_NAMED;
 import static io.helidon.service.codegen.ServiceCodegenTypes.SERVICE_ANNOTATION_PRE_DESTROY;
@@ -166,6 +168,12 @@ class ModelFactoryCodegen implements CodegenExtension {
                                     .type(servicesType(modelType))
                                     .build());
 
+        classModel.addField(Field.builder()
+                                    .name("ownedModels")
+                                    .accessModifier(AccessModifier.PRIVATE)
+                                    .type(closeablesType())
+                                    .build());
+
         classModel.addConstructor(Constructor.builder()
                                           .accessModifier(AccessModifier.PACKAGE_PRIVATE)
                                           .description("Creates a new " + modelClassNamePrefix + "Factory.")
@@ -183,7 +191,10 @@ class ModelFactoryCodegen implements CodegenExtension {
                                                                 .build()));
 
         classModel.addMethod(servicesMethod(modelType));
-        classModel.addMethod(preDestroyMethod(modelType));
+        classModel.addMethod(preDestroyMethod());
+        classModel.addMethod(closeModelsMethod());
+        classModel.addMethod(shouldCloseModelMethod());
+        classModel.addMethod(addOwnedModelMethod());
 
         var modelNamePrefix = modelAnnotation.typeValue().map(TypeName::className)
                 .orElseThrow(() -> new CodegenException("Missing model class"));
@@ -220,9 +231,23 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .increaseContentPadding()
                 .addContentLine("if (services == null) {")
                 .increaseContentPadding()
-                .addContentLine("services = modelNames.stream()")
+                .addContent("var createdServices = new ")
+                .addContent(ArrayList.class)
+                .addContent("<")
+                .addContent(SERVICE_QUALIFIED_INSTANCE)
+                .addContent("<")
+                .addContent(modelType)
+                .addContentLine(">>();")
+                .addContent("var createdModels = new ")
+                .addContent(ArrayList.class)
+                .addContent("<")
+                .addContent(AutoCloseable.class)
+                .addContentLine(">();")
+                .addContentLine("try {")
                 .increaseContentPadding()
-                .addContentLine(".map(name -> buildModel(name, config)")
+                .addContentLine("for (var name : modelNames) {")
+                .increaseContentPadding()
+                .addContentLine("buildModel(name, config, createdModels)")
                 .increaseContentPadding()
                 .addContent(".map(model -> ")
                 .addContent(SERVICE_QUALIFIED_INSTANCE)
@@ -230,12 +255,30 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .increaseContentPadding()
                 .addContent(".create(model, ")
                 .addContent(SERVICE_QUALIFIER)
-                .addContentLine(".createNamed(name))))")
+                .addContentLine(".createNamed(name)))")
                 .decreaseContentPadding()
+                .addContentLine(".ifPresent(createdServices::add);")
                 .decreaseContentPadding()
-                .addContentLine(".flatMap(Optional::stream)")
+                .addContentLine("}")
+                .addContent("var completedServices = ")
+                .addContent(LIST)
+                .addContentLine(".copyOf(createdServices);")
+                .addContent("var completedModels = ")
+                .addContent(LIST)
+                .addContentLine(".copyOf(createdModels);")
+                .addContentLine("services = completedServices;")
+                .addContentLine("ownedModels = completedModels;")
                 .decreaseContentPadding()
-                .addContentLine(".toList();")
+                .addContent("} catch (")
+                .addContent(RuntimeException.class)
+                .addContent(" | ")
+                .addContent(Error.class)
+                .addContentLine(" e) {")
+                .increaseContentPadding()
+                .addContentLine("closeModels(createdModels, e);")
+                .addContentLine("throw e;")
+                .decreaseContentPadding()
+                .addContentLine("}")
                 .decreaseContentPadding()
                 .addContentLine("}")
                 .addContentLine("return services;")
@@ -244,26 +287,63 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .build();
     }
 
-    private static Method preDestroyMethod(TypeName modelType) {
+    private static Method preDestroyMethod() {
         return Method.builder()
                 .addAnnotation(Annotation.create(SERVICE_ANNOTATION_PRE_DESTROY))
                 .accessModifier(PACKAGE_PRIVATE)
                 .name("preDestroy")
-                .addContent(servicesType(modelType))
-                .addContentLine(" servicesToClose;")
+                .addContent(closeablesType())
+                .addContentLine(" modelsToClose;")
                 .addContentLine("synchronized (this) {")
                 .increaseContentPadding()
-                .addContentLine("servicesToClose = services;")
+                .addContentLine("modelsToClose = ownedModels;")
                 .addContent("services = ")
+                .addContent(LIST)
+                .addContentLine(".of();")
+                .addContent("ownedModels = ")
                 .addContent(LIST)
                 .addContentLine(".of();")
                 .decreaseContentPadding()
                 .addContentLine("}")
-                .addContentLine("if (servicesToClose == null) {")
+                .addContentLine("if (modelsToClose == null) {")
                 .increaseContentPadding()
                 .addContentLine("return;")
                 .decreaseContentPadding()
                 .addContentLine("}")
+                .addContentLine("var failure = closeModels(modelsToClose, null);")
+                .addContentLine("if (failure != null) {")
+                .increaseContentPadding()
+                .addContent("if (failure instanceof ")
+                .addContent(Error.class)
+                .addContentLine(" error) {")
+                .increaseContentPadding()
+                .addContentLine("throw error;")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .addContent("throw new ")
+                .addContent(IllegalStateException.class)
+                .addContent("(")
+                .addContentLiteral("Failed to close LangChain4j model instances.")
+                .addContentLine(", failure);")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .build();
+    }
+
+    private static Method closeModelsMethod() {
+        return Method.builder()
+                .accessModifier(AccessModifier.PRIVATE)
+                .isStatic(true)
+                .name("closeModels")
+                .returnType(TypeName.create(Throwable.class))
+                .addParameter(Parameter.builder()
+                                      .type(closeablesType())
+                                      .name("models")
+                                      .build())
+                .addParameter(Parameter.builder()
+                                      .type(Throwable.class)
+                                      .name("failure")
+                                      .build())
                 .addContent("var closed = ")
                 .addContent(Collections.class)
                 .addContent(".newSetFromMap(new ")
@@ -273,22 +353,16 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent(", ")
                 .addContent(Boolean.class)
                 .addContentLine(">());")
-                .addContent(Exception.class)
-                .addContentLine(" failure = null;")
-                .addContentLine("for (var service : servicesToClose) {")
+                .addContentLine("for (var model : models) {")
                 .increaseContentPadding()
-                .addContent(Object.class)
-                .addContentLine(" instance = service.get();")
-                .addContent("if (instance instanceof ")
-                .addContent(AutoCloseable.class)
-                .addContentLine(" closeable && closed.add(closeable)) {")
+                .addContentLine("if (closed.add(model)) {")
                 .increaseContentPadding()
                 .addContentLine("try {")
                 .increaseContentPadding()
-                .addContentLine("closeable.close();")
+                .addContentLine("model.close();")
                 .decreaseContentPadding()
                 .addContent("} catch (")
-                .addContent(Exception.class)
+                .addContent(Throwable.class)
                 .addContentLine(" e) {")
                 .increaseContentPadding()
                 .addContentLine("if (failure == null) {")
@@ -306,13 +380,44 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContentLine("}")
                 .decreaseContentPadding()
                 .addContentLine("}")
-                .addContentLine("if (failure != null) {")
+                .addContentLine("return failure;")
+                .build();
+    }
+
+    private static Method shouldCloseModelMethod() {
+        return Method.builder()
+                .accessModifier(AccessModifier.PRIVATE)
+                .isStatic(true)
+                .name("shouldCloseModel")
+                .returnType(TypeNames.PRIMITIVE_BOOLEAN)
+                .addParameter(Parameter.builder()
+                                      .type(TypeNames.OBJECT)
+                                      .name("modelConfig")
+                                      .build())
+                .addContent("return !(modelConfig instanceof ")
+                .addContent(MODEL_LIFECYCLE)
+                .addContentLine(" lifecycle) || lifecycle.closeModelOnShutdown();")
+                .build();
+    }
+
+    private static Method addOwnedModelMethod() {
+        return Method.builder()
+                .accessModifier(AccessModifier.PRIVATE)
+                .isStatic(true)
+                .name("addOwnedModel")
+                .addParameter(Parameter.builder()
+                                      .type(TypeNames.OBJECT)
+                                      .name("model")
+                                      .build())
+                .addParameter(Parameter.builder()
+                                      .type(closeablesType())
+                                      .name("ownedModels")
+                                      .build())
+                .addContent("if (model instanceof ")
+                .addContent(AutoCloseable.class)
+                .addContentLine(" closeable) {")
                 .increaseContentPadding()
-                .addContent("throw new ")
-                .addContent(IllegalStateException.class)
-                .addContent("(")
-                .addContentLiteral("Failed to close LangChain4j model instances.")
-                .addContentLine(", failure);")
+                .addContentLine("ownedModels.add(closeable);")
                 .decreaseContentPadding()
                 .addContentLine("}")
                 .build();
@@ -323,6 +428,12 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addTypeArgument(TypeName.builder(SERVICE_QUALIFIED_INSTANCE)
                                          .addTypeArgument(modelType)
                                          .build())
+                .build();
+    }
+
+    private static TypeName closeablesType() {
+        return TypeName.builder(LIST)
+                .addTypeArgument(TypeName.create(AutoCloseable.class))
                 .build();
     }
 
@@ -338,7 +449,6 @@ class ModelFactoryCodegen implements CodegenExtension {
         return Method.builder()
                 .accessModifier(PROTECTED)
                 .name("buildModel")
-                .isStatic(true)
                 .description("Builds a new model configured with the given configuration builder.")
                 .addParameter(Parameter.builder()
                                       .type(STRING)
@@ -349,6 +459,11 @@ class ModelFactoryCodegen implements CodegenExtension {
                                       .type(CONFIG)
                                       .description("Configuration for the new model.")
                                       .name("config")
+                                      .build())
+                .addParameter(Parameter.builder()
+                                      .type(closeablesType())
+                                      .description("Models owned by this factory.")
+                                      .name("ownedModels")
                                       .build())
                 .returnType(Returns.builder()
                                     .description("New model configured with the given configuration builder.")
@@ -368,8 +483,16 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent("return ").addContent(OPTIONAL).addContentLine(".empty();")
                 .decreaseContentPadding()
                 .addContentLine("}")
+                .addContentLine("var modelConfig = configBuilder.build();")
+                .addContentLine("boolean closeModel = shouldCloseModel(modelConfig);")
+                .addContentLine("var model = create(modelConfig);")
+                .addContentLine("if (closeModel) {")
+                .increaseContentPadding()
+                .addContentLine("addOwnedModel(model, ownedModels);")
+                .decreaseContentPadding()
+                .addContentLine("}")
                 .addContent("return ").addContent(OPTIONAL)
-                .addContentLine(".of(create(configBuilder.build()));")
+                .addContentLine(".of(model);")
                 .build();
     }
 

@@ -26,12 +26,12 @@ import com.oracle.bmc.Region;
 import com.oracle.bmc.auth.BasicAuthenticationDetailsProvider;
 import com.oracle.bmc.generativeaiinference.GenerativeAiInferenceClient;
 import dev.langchain4j.community.model.oracle.oci.genai.OciGenAiCohereChatModel;
-import dev.langchain4j.community.model.oracle.oci.genai.OciGenAiCohereStreamingChatModel;
 
-@AiProvider.ModelConfig(OciGenAiCohereChatModel.class)
-@AiProvider.ModelConfig(OciGenAiCohereStreamingChatModel.class)
+@AiProvider.ModelConfig(
+        value = OciGenAiCohereChatModel.class,
+        skip = "genAiAsyncClient\\(com\\.oracle\\.bmc\\.generativeaiinference\\.GenerativeAiInferenceAsyncClient\\)")
 @Prototype.CustomMethods(OciFactoryMethods.class)
-interface OciGenAiCohereLc4jProvider {
+interface OciGenAiCohereLc4jProvider extends AiProvider.ModelLifecycle {
 
     /**
      * OCI LLM Model name or OCID.
@@ -75,4 +75,9 @@ interface OciGenAiCohereLc4jProvider {
     @Option.Configured
     @Option.RegistryService
     Optional<GenerativeAiInferenceClient> genAiClient();
+
+    @Override
+    default boolean closeModelOnShutdown() {
+        return genAiClient().isEmpty();
+    }
 }
