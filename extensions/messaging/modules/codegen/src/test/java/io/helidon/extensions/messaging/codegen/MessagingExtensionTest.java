@@ -360,7 +360,7 @@ class MessagingExtensionTest {
                 @Service.Singleton
                 class PayloadProcessor {
                     @Messaging.OnMessage("orders")
-                    @Messaging.Outgoing("audit")
+                    @Messaging.SendTo("audit")
                     Integer process(String value) {
                         return value.length();
                     }
@@ -400,7 +400,7 @@ class MessagingExtensionTest {
                 @Service.Singleton
                 class EnvelopeProcessor {
                     @Messaging.OnMessage("orders")
-                    @Messaging.Outgoing("audit")
+                    @Messaging.SendTo("audit")
                     Message<Integer> process(Message<String> message) {
                         return Message.create(message.entity().length());
                     }
@@ -429,7 +429,7 @@ class MessagingExtensionTest {
                 @Service.Singleton
                 class ArrayEnvelopeProcessor {
                     @Messaging.OnMessage("orders")
-                    @Messaging.Outgoing("audit")
+                    @Messaging.SendTo("audit")
                     ArrayMessage<String> process(String value) {
                         return null;
                     }
@@ -512,6 +512,26 @@ class MessagingExtensionTest {
         assertTrue(source.contains("consumerInstance.consume(typedMessages);"), source);
         assertFalse(source.contains("consumer.get().consume("), source);
         assertSingleOccurrence(source, "consumer.get()");
+    }
+
+    @Test
+    void rejectsSendToOnMessageBatchHandler() {
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.MessageBatch;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class BatchProcessor {
+                    @Messaging.OnMessage("orders")
+                    @Messaging.SendTo("audit")
+                    void consume(MessageBatch<String> messages) {
+                    }
+                }
+                """),
+                         "Batch @Messaging.OnMessage methods cannot declare @Messaging.SendTo");
     }
 
     @Test
@@ -609,7 +629,7 @@ class MessagingExtensionTest {
                     Emitter<List<String>> emitter;
 
                     @Messaging.OnMessage("orders")
-                    @Messaging.Outgoing("audit")
+                    @Messaging.SendTo("audit")
                     Message<List<String>> process(Message<List<String>> message) {
                         return message;
                     }
@@ -714,6 +734,57 @@ class MessagingExtensionTest {
                 import io.helidon.service.registry.Service;
 
                 @Service.Singleton
+                class BlankSendToChannel {
+                    @Messaging.OnMessage("orders")
+                    @Messaging.SendTo(" ")
+                    String process(String value) {
+                        return value;
+                    }
+                }
+                """),
+                         "@Messaging.SendTo channel must not be blank");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class PaddedSendToChannel {
+                    @Messaging.OnMessage("orders")
+                    @Messaging.SendTo(" audit")
+                    String process(String value) {
+                        return value;
+                    }
+                }
+                """),
+                         "@Messaging.SendTo channel must not have leading or trailing whitespace");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class ControlCharacterSendToChannel {
+                    @Messaging.OnMessage("orders")
+                    @Messaging.SendTo("audit\\nchannel")
+                    String process(String value) {
+                        return value;
+                    }
+                }
+                """),
+                         "@Messaging.SendTo channel must not contain control characters");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
                 class DuplicateRoute {
                     @Messaging.OnMessage("orders")
                     void first(String value) {
@@ -806,7 +877,7 @@ class MessagingExtensionTest {
                 @Service.Singleton
                 class VoidProcessor {
                     @Messaging.OnMessage("orders")
-                    @Messaging.Outgoing("audit")
+                    @Messaging.SendTo("audit")
                     void consume(String value) {
                     }
                 }
@@ -824,7 +895,7 @@ class MessagingExtensionTest {
                 @Service.Singleton
                 class AsyncProcessor {
                     @Messaging.OnMessage("orders")
-                    @Messaging.Outgoing("audit")
+                    @Messaging.SendTo("audit")
                     CompletableFuture<String> consume(String value) {
                         return CompletableFuture.completedFuture(value);
                     }
@@ -839,14 +910,14 @@ class MessagingExtensionTest {
                 import io.helidon.service.registry.Service;
 
                 @Service.Singleton
-                class OrphanOutgoing {
-                    @Messaging.Outgoing("audit")
+                class OrphanSendTo {
+                    @Messaging.SendTo("audit")
                     String consume(String value) {
                         return value;
                     }
                 }
                 """),
-                         "@Messaging.Outgoing is only allowed on @Messaging.OnMessage methods");
+                         "@Messaging.SendTo is only allowed on @Messaging.OnMessage methods");
     }
 
     @Test

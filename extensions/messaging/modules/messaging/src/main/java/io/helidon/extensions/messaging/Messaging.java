@@ -59,16 +59,16 @@ public final class Messaging {
     }
 
     /**
-     * Outgoing channel of a one-to-one message processor method.
+     * Target channel for the value returned by a one-to-one message processor method.
      */
     @Documented
     @Retention(RetentionPolicy.CLASS)
     @Target(ElementType.METHOD)
-    public @interface Outgoing {
+    public @interface SendTo {
         /**
-         * Channel name.
+         * Target channel name.
          *
-         * @return channel name
+         * @return target channel name
          */
         String value();
     }

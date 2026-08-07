@@ -82,7 +82,7 @@ final class KafkaMessagingTypes {
         private final BlockingQueue<Message<String>> deliveries = new LinkedBlockingQueue<>();
 
         @Messaging.OnMessage(FORWARDING_INCOMING_CHANNEL)
-        @Messaging.Outgoing(FORWARDING_OUTGOING_CHANNEL)
+        @Messaging.SendTo(FORWARDING_OUTGOING_CHANNEL)
         Message<String> forward(Message<String> message) {
             deliveries.add(message);
             return Message.builder("forwarded: " + message.entity())
@@ -101,7 +101,7 @@ final class KafkaMessagingTypes {
         private final AtomicInteger attempts = new AtomicInteger();
 
         @Messaging.OnMessage(FAILING_FORWARDING_INCOMING_CHANNEL)
-        @Messaging.Outgoing(FAILING_FORWARDING_OUTGOING_CHANNEL)
+        @Messaging.SendTo(FAILING_FORWARDING_OUTGOING_CHANNEL)
         String forward(Message<String> message) {
             attempts.incrementAndGet();
             deliveries.add(message);
