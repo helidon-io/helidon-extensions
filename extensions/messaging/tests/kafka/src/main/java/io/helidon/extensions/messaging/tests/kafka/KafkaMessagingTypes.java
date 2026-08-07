@@ -81,7 +81,7 @@ final class KafkaMessagingTypes {
     static class ForwardingReceiver {
         private final BlockingQueue<Message<String>> deliveries = new LinkedBlockingQueue<>();
 
-        @Messaging.OnMessage(FORWARDING_INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(FORWARDING_INCOMING_CHANNEL)
         @Messaging.SendTo(FORWARDING_OUTGOING_CHANNEL)
         Message<String> forward(Message<String> message) {
             deliveries.add(message);
@@ -100,7 +100,7 @@ final class KafkaMessagingTypes {
         private final BlockingQueue<Message<String>> deliveries = new LinkedBlockingQueue<>();
         private final AtomicInteger attempts = new AtomicInteger();
 
-        @Messaging.OnMessage(FAILING_FORWARDING_INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(FAILING_FORWARDING_INCOMING_CHANNEL)
         @Messaging.SendTo(FAILING_FORWARDING_OUTGOING_CHANNEL)
         String forward(Message<String> message) {
             attempts.incrementAndGet();
@@ -123,7 +123,7 @@ final class KafkaMessagingTypes {
 
         private final BlockingQueue<KafkaMessage<String, String>> deliveries = new LinkedBlockingQueue<>();
 
-        @Messaging.OnMessage(RESTART_INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(RESTART_INCOMING_CHANNEL)
         void receive(KafkaMessage<String, String> message) {
             deliveries.add(message);
             if (FAIL_DELIVERIES.get()) {
@@ -153,7 +153,7 @@ final class KafkaMessagingTypes {
         private final CountDownLatch allowSuccessfulDelivery = new CountDownLatch(1);
         private final AtomicInteger poisonAttempts = new AtomicInteger();
 
-        @Messaging.OnMessage(DROP_INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(DROP_INCOMING_CHANNEL)
         void receive(String entity) {
             if ("poison".equals(entity)) {
                 int attempt = poisonAttempts.incrementAndGet();
@@ -210,7 +210,7 @@ final class KafkaMessagingTypes {
         private final List<String> batchIds = new CopyOnWriteArrayList<>();
         private final BlockingQueue<PartitionRecord> successfulRecords = new LinkedBlockingQueue<>();
 
-        @Messaging.OnMessage(PARTITION_RETRY_INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(PARTITION_RETRY_INCOMING_CHANNEL)
         @SuppressWarnings("unchecked")
         void receive(MessageBatch<String> messages) {
             batchIds.add(messages.id());
@@ -276,7 +276,7 @@ final class KafkaMessagingTypes {
     static class NumericReceiver {
         private final BlockingQueue<KafkaMessage<Long, Integer>> messages = new LinkedBlockingQueue<>();
 
-        @Messaging.OnMessage(NUMERIC_INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(NUMERIC_INCOMING_CHANNEL)
         void receive(KafkaMessage<Long, Integer> message) {
             messages.add(message);
         }
@@ -335,7 +335,7 @@ final class KafkaMessagingTypes {
             this.receiver = receiver;
         }
 
-        @Messaging.OnMessage(INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(INCOMING_CHANNEL)
         void receivePayload(String payload) {
             receiver.recordPayload(payload);
         }
@@ -350,7 +350,7 @@ final class KafkaMessagingTypes {
             this.receiver = receiver;
         }
 
-        @Messaging.OnMessage(INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(INCOMING_CHANNEL)
         void receiveMessage(Message<String> message) {
             receiver.recordMessage(message);
         }
@@ -365,7 +365,7 @@ final class KafkaMessagingTypes {
             this.receiver = receiver;
         }
 
-        @Messaging.OnMessage(INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(INCOMING_CHANNEL)
         void receiveAnnotated(@Messaging.HeaderParam("trace-id") String traceId,
                               Message<String> message) {
             receiver.recordAnnotated(traceId, message);
@@ -381,7 +381,7 @@ final class KafkaMessagingTypes {
             this.receiver = receiver;
         }
 
-        @Messaging.OnMessage(INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(INCOMING_CHANNEL)
         void receiveBatch(MessageBatch<String> batch) {
             receiver.recordBatch(batch);
         }
@@ -435,7 +435,7 @@ final class KafkaMessagingTypes {
             this.receiver = receiver;
         }
 
-        @Messaging.OnMessage(METADATA_INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(METADATA_INCOMING_CHANNEL)
         void receive(KafkaMessage<String, String> message) {
             receiver.recordMessage(message);
         }
@@ -450,7 +450,7 @@ final class KafkaMessagingTypes {
             this.receiver = receiver;
         }
 
-        @Messaging.OnMessage(METADATA_INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(METADATA_INCOMING_CHANNEL)
         void receiveBatch(MessageBatch<String> batch) {
             receiver.recordBatch(batch);
         }
@@ -463,7 +463,7 @@ final class KafkaMessagingTypes {
         private final CountDownLatch allowSecondAttempt = new CountDownLatch(1);
         private final AtomicInteger attempts = new AtomicInteger();
 
-        @Messaging.OnMessage(REDELIVERY_INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(REDELIVERY_INCOMING_CHANNEL)
         void receive(Message<String> message) {
             int attempt = attempts.incrementAndGet();
             deliveries.add(message);
@@ -506,7 +506,7 @@ final class KafkaMessagingTypes {
         private final List<FailedBatch> failedBatches = new CopyOnWriteArrayList<>();
         private final AtomicBoolean allowAllFailures = new AtomicBoolean();
 
-        @Messaging.OnMessage(DEAD_LETTER_INCOMING_CHANNEL)
+        @Messaging.ReceiveFrom(DEAD_LETTER_INCOMING_CHANNEL)
         void receive(MessageBatch<String> messages) {
             List<String> entities = messages.payloads();
             int attempt = attempts.computeIfAbsent(entities, ignored -> new AtomicInteger()).incrementAndGet();

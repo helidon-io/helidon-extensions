@@ -31,7 +31,7 @@ import io.helidon.service.registry.Service;
 class AuditConsumer {
     private final List<Message<String>> messages = new CopyOnWriteArrayList<>();
 
-    @Messaging.OnMessage(Main.AUDIT_CHANNEL)
+    @Messaging.ReceiveFrom(Main.AUDIT_CHANNEL)
     void consume(MessageBatch<String> batch) {
         messages.addAll(batch.messages());
     }

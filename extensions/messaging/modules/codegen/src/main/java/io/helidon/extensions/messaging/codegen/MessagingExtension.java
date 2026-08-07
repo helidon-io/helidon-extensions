@@ -61,7 +61,7 @@ class MessagingExtension implements RegistryCodegenExtension {
 
     @Override
     public void process(RegistryRoundContext roundContext) {
-        Collection<TypedElementInfo> elements = roundContext.annotatedElements(MessagingTypes.ON_MESSAGE);
+        Collection<TypedElementInfo> elements = roundContext.annotatedElements(MessagingTypes.RECEIVE_FROM);
         validateSendToAnnotations(roundContext);
         Map<ServiceChannel, TypedElementInfo> handlers = new LinkedHashMap<>();
         for (TypedElementInfo element : elements) {
@@ -79,13 +79,13 @@ class MessagingExtension implements RegistryCodegenExtension {
                                    "Messaging handler service type");
             validateDirectDeclaration(typeInfo, element);
             String channel = annotationName(element,
-                                            MessagingTypes.ON_MESSAGE,
-                                            "@Messaging.OnMessage channel");
+                                            MessagingTypes.RECEIVE_FROM,
+                                            "@Messaging.ReceiveFrom channel");
             ServiceChannel serviceChannel = new ServiceChannel(serviceType, channel);
             TypedElementInfo previous = handlers.putIfAbsent(serviceChannel, element);
             if (previous != null) {
                 throw new CodegenException("Service " + serviceType
-                                                   + " declares multiple @Messaging.OnMessage handlers for channel "
+                                                   + " declares multiple @Messaging.ReceiveFrom handlers for channel "
                                                    + channel,
                                            element.originatingElementValue());
             }
@@ -568,14 +568,14 @@ class MessagingExtension implements RegistryCodegenExtension {
             return;
         }
 
-        throw new CodegenException("Unsupported @Messaging.OnMessage parameter " + argument.toDeclaration()
+        throw new CodegenException("Unsupported @Messaging.ReceiveFrom parameter " + argument.toDeclaration()
                                            + ". Use @Messaging.Entity, @Messaging.HeaderParam, or Message<T>.",
                                    argument.originatingElementValue());
     }
 
     private ConsumerMethod consumerMethod(RegistryRoundContext roundContext, TypedElementInfo element) {
         if (element.parameterArguments().isEmpty()) {
-            throw new CodegenException("@Messaging.OnMessage methods must declare exactly one primary message view",
+            throw new CodegenException("@Messaging.ReceiveFrom methods must declare exactly one primary message view",
                                        element.originatingElementValue());
         }
 
@@ -590,7 +590,7 @@ class MessagingExtension implements RegistryCodegenExtension {
                                                argument.originatingElementValue());
                 }
                 if (element.hasAnnotation(MessagingTypes.SEND_TO)) {
-                    throw new CodegenException("Batch @Messaging.OnMessage methods cannot declare @Messaging.SendTo",
+                    throw new CodegenException("Batch @Messaging.ReceiveFrom methods cannot declare @Messaging.SendTo",
                                                element.originatingElementValue());
                 }
                 validateTerminalReturn(element);
@@ -644,7 +644,7 @@ class MessagingExtension implements RegistryCodegenExtension {
                                                     "Messaging payload parameter");
                 primaryViews.add(new MessageType(messageType(payloadType), payloadType));
             } else {
-                throw new CodegenException("Unsupported unannotated @Messaging.OnMessage parameter "
+                throw new CodegenException("Unsupported unannotated @Messaging.ReceiveFrom parameter "
                                                    + argument.toDeclaration()
                                                    + ". Multi-parameter handlers require @Messaging.Entity, "
                                                    + "@Messaging.HeaderParam, or Message<T>.",
@@ -653,7 +653,7 @@ class MessagingExtension implements RegistryCodegenExtension {
         }
 
         if (primaryViews.size() != 1) {
-            throw new CodegenException("@Messaging.OnMessage methods must declare exactly one primary message view; found "
+            throw new CodegenException("@Messaging.ReceiveFrom methods must declare exactly one primary message view; found "
                                                + primaryViews.size(),
                                        element.originatingElementValue());
         }
@@ -697,7 +697,7 @@ class MessagingExtension implements RegistryCodegenExtension {
 
     private void validateTerminalReturn(TypedElementInfo element) {
         if (!element.typeName().equals(TypeNames.PRIMITIVE_VOID)) {
-            throw new CodegenException("Terminal @Messaging.OnMessage methods must return void; add "
+            throw new CodegenException("Terminal @Messaging.ReceiveFrom methods must return void; add "
                                                + "@Messaging.SendTo for a processor return value",
                                        element.originatingElementValue());
         }
@@ -705,7 +705,7 @@ class MessagingExtension implements RegistryCodegenExtension {
 
     private void rejectAsyncReturn(RegistryRoundContext roundContext, TypedElementInfo element) {
         if (isAsyncReturnType(roundContext, element.typeName(), new HashSet<>())) {
-            throw new CodegenException("Asynchronous or publisher @Messaging.OnMessage return types are not supported: "
+            throw new CodegenException("Asynchronous or publisher @Messaging.ReceiveFrom return types are not supported: "
                                                + element.typeName(),
                                        element.originatingElementValue());
         }
@@ -1136,30 +1136,30 @@ class MessagingExtension implements RegistryCodegenExtension {
 
     private void validateConsumerMethod(TypedElementInfo element) {
         if (element.kind() != ElementKind.METHOD) {
-            throw new CodegenException("@Messaging.OnMessage is only allowed on methods",
+            throw new CodegenException("@Messaging.ReceiveFrom is only allowed on methods",
                                        element.originatingElementValue());
         }
         if (element.accessModifier() == AccessModifier.PRIVATE) {
-            throw new CodegenException("@Messaging.OnMessage is only allowed on non-private methods",
+            throw new CodegenException("@Messaging.ReceiveFrom is only allowed on non-private methods",
                                        element.originatingElementValue());
         }
         if (element.elementModifiers().contains(Modifier.STATIC)) {
-            throw new CodegenException("@Messaging.OnMessage is only allowed on instance methods",
+            throw new CodegenException("@Messaging.ReceiveFrom is only allowed on instance methods",
                                        element.originatingElementValue());
         }
         if (element.elementModifiers().contains(Modifier.ABSTRACT)) {
-            throw new CodegenException("@Messaging.OnMessage is not allowed on abstract methods",
+            throw new CodegenException("@Messaging.ReceiveFrom is not allowed on abstract methods",
                                        element.originatingElementValue());
         }
         if (element.elementModifiers().contains(Modifier.NATIVE)) {
-            throw new CodegenException("@Messaging.OnMessage is not allowed on native methods",
+            throw new CodegenException("@Messaging.ReceiveFrom is not allowed on native methods",
                                        element.originatingElementValue());
         }
     }
 
     private void checkTypeIsService(RegistryRoundContext roundContext, TypeInfo typeInfo) {
         if (roundContext.generatedType(ctx.descriptorType(typeInfo.typeName())).isEmpty()) {
-            throw new CodegenException("@Messaging.OnMessage declaring type must be a Service Registry service",
+            throw new CodegenException("@Messaging.ReceiveFrom declaring type must be a Service Registry service",
                                        typeInfo.originatingElementValue());
         }
     }
@@ -1167,7 +1167,7 @@ class MessagingExtension implements RegistryCodegenExtension {
     private void validateConcreteOwner(TypeInfo typeInfo, TypedElementInfo element) {
         if ((typeInfo.kind() != ElementKind.CLASS && typeInfo.kind() != ElementKind.RECORD)
                 || typeInfo.elementModifiers().contains(Modifier.ABSTRACT)) {
-            throw new CodegenException("@Messaging.OnMessage declaring type must be a concrete class or record",
+            throw new CodegenException("@Messaging.ReceiveFrom declaring type must be a concrete class or record",
                                        element.originatingElementValue());
         }
     }
@@ -1178,7 +1178,7 @@ class MessagingExtension implements RegistryCodegenExtension {
                 .anyMatch(candidate -> candidate.kind() == ElementKind.METHOD
                         && candidate.signature().equals(element.signature()));
         if (!declared) {
-            throw new CodegenException("Inherited @Messaging.OnMessage methods are not registered; override and annotate "
+            throw new CodegenException("Inherited @Messaging.ReceiveFrom methods are not registered; override and annotate "
                                                + "the method directly on " + typeInfo.typeName(),
                                        element.originatingElementValue());
         }
@@ -1186,8 +1186,8 @@ class MessagingExtension implements RegistryCodegenExtension {
 
     private void validateSendToAnnotations(RegistryRoundContext roundContext) {
         for (TypedElementInfo element : roundContext.annotatedElements(MessagingTypes.SEND_TO)) {
-            if (element.kind() != ElementKind.METHOD || !element.hasAnnotation(MessagingTypes.ON_MESSAGE)) {
-                throw new CodegenException("@Messaging.SendTo is only allowed on @Messaging.OnMessage methods",
+            if (element.kind() != ElementKind.METHOD || !element.hasAnnotation(MessagingTypes.RECEIVE_FROM)) {
+                throw new CodegenException("@Messaging.SendTo is only allowed on @Messaging.ReceiveFrom methods",
                                            element.originatingElementValue());
             }
         }
