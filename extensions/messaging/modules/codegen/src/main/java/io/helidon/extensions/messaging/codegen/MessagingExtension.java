@@ -62,7 +62,7 @@ class MessagingExtension implements RegistryCodegenExtension {
     @Override
     public void process(RegistryRoundContext roundContext) {
         Collection<TypedElementInfo> elements = roundContext.annotatedElements(MessagingTypes.ON_MESSAGE);
-        validateOutgoingAnnotations(roundContext);
+        validateSendToAnnotations(roundContext);
         Map<ServiceChannel, TypedElementInfo> handlers = new LinkedHashMap<>();
         for (TypedElementInfo element : elements) {
             validateConsumerMethod(element);
@@ -322,7 +322,7 @@ class MessagingExtension implements RegistryCodegenExtension {
         String description = handlerId(typeInfo, element);
         method.addContentLine("try {")
                 .increaseContentPadding();
-        if (element.hasAnnotation(MessagingTypes.OUTGOING)) {
+        if (element.hasAnnotation(MessagingTypes.SEND_TO)) {
             method.addContentLine("return handler.handle(consumer.get(), message)")
                     .increaseContentPadding()
                     .addContent(".orElseThrow(() -> new ")
@@ -589,8 +589,8 @@ class MessagingExtension implements RegistryCodegenExtension {
                     throw new CodegenException("MessageBatch<T> consumer parameters cannot use messaging annotations",
                                                argument.originatingElementValue());
                 }
-                if (element.hasAnnotation(MessagingTypes.OUTGOING)) {
-                    throw new CodegenException("Batch @Messaging.OnMessage methods cannot declare @Messaging.Outgoing",
+                if (element.hasAnnotation(MessagingTypes.SEND_TO)) {
+                    throw new CodegenException("Batch @Messaging.OnMessage methods cannot declare @Messaging.SendTo",
                                                element.originatingElementValue());
                 }
                 validateTerminalReturn(element);
@@ -659,16 +659,16 @@ class MessagingExtension implements RegistryCodegenExtension {
         }
 
         MessageType primary = primaryViews.getFirst();
-        if (!element.hasAnnotation(MessagingTypes.OUTGOING)) {
+        if (!element.hasAnnotation(MessagingTypes.SEND_TO)) {
             validateTerminalReturn(element);
             return ConsumerMethod.terminal(primary.payloadType(), primary.envelopeType());
         }
 
         String outgoingChannel = annotationName(element,
-                                                MessagingTypes.OUTGOING,
-                                                "@Messaging.Outgoing channel");
+                                                MessagingTypes.SEND_TO,
+                                                "@Messaging.SendTo channel");
         if (element.typeName().equals(TypeNames.PRIMITIVE_VOID)) {
-            throw new CodegenException("@Messaging.Outgoing processors must return a payload or Message<T>",
+            throw new CodegenException("@Messaging.SendTo processors must return a payload or Message<T>",
                                        element.originatingElementValue());
         }
         rejectAsyncReturn(roundContext, element);
@@ -698,7 +698,7 @@ class MessagingExtension implements RegistryCodegenExtension {
     private void validateTerminalReturn(TypedElementInfo element) {
         if (!element.typeName().equals(TypeNames.PRIMITIVE_VOID)) {
             throw new CodegenException("Terminal @Messaging.OnMessage methods must return void; add "
-                                               + "@Messaging.Outgoing for a processor return value",
+                                               + "@Messaging.SendTo for a processor return value",
                                        element.originatingElementValue());
         }
     }
@@ -1184,10 +1184,10 @@ class MessagingExtension implements RegistryCodegenExtension {
         }
     }
 
-    private void validateOutgoingAnnotations(RegistryRoundContext roundContext) {
-        for (TypedElementInfo element : roundContext.annotatedElements(MessagingTypes.OUTGOING)) {
+    private void validateSendToAnnotations(RegistryRoundContext roundContext) {
+        for (TypedElementInfo element : roundContext.annotatedElements(MessagingTypes.SEND_TO)) {
             if (element.kind() != ElementKind.METHOD || !element.hasAnnotation(MessagingTypes.ON_MESSAGE)) {
-                throw new CodegenException("@Messaging.Outgoing is only allowed on @Messaging.OnMessage methods",
+                throw new CodegenException("@Messaging.SendTo is only allowed on @Messaging.OnMessage methods",
                                            element.originatingElementValue());
             }
         }

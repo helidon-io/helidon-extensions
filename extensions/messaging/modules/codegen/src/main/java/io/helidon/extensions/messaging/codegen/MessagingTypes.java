@@ -57,7 +57,7 @@ final class MessagingTypes {
     static final TypeName OBJECTS = TypeName.create("java.util.Objects");
     static final TypeName ON_MESSAGE = TypeName.create("io.helidon.extensions.messaging.Messaging.OnMessage");
     static final TypeName OPTIONAL = TypeNames.OPTIONAL;
-    static final TypeName OUTGOING = TypeName.create("io.helidon.extensions.messaging.Messaging.Outgoing");
+    static final TypeName SEND_TO = TypeName.create("io.helidon.extensions.messaging.Messaging.SendTo");
     static final TypeName PROCESSOR_REGISTRATION =
             TypeName.create("io.helidon.extensions.messaging.ProcessorRegistration");
 

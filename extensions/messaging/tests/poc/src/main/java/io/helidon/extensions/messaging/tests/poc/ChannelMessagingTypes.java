@@ -205,7 +205,7 @@ class ChannelMessagingTypes {
                                                                           new IOException("processor I/O failed"));
 
         @Messaging.OnMessage(FORWARDING_INPUT_CHANNEL)
-        @Messaging.Outgoing(FORWARDING_OUTPUT_CHANNEL)
+        @Messaging.SendTo(FORWARDING_OUTPUT_CHANNEL)
         Message<String> forward(String payload) {
             if ("processor-fail".equals(payload)) {
                 throw failure;
@@ -223,7 +223,7 @@ class ChannelMessagingTypes {
     @Service.Singleton
     static class PayloadProcessor {
         @Messaging.OnMessage(PAYLOAD_PROCESSOR_INPUT_CHANNEL)
-        @Messaging.Outgoing(PAYLOAD_PROCESSOR_OUTPUT_CHANNEL)
+        @Messaging.SendTo(PAYLOAD_PROCESSOR_OUTPUT_CHANNEL)
         String process(String payload) {
             return "processed: " + payload;
         }
@@ -240,7 +240,7 @@ class ChannelMessagingTypes {
     @Service.Singleton
     static class ArrayEnvelopeProcessor {
         @Messaging.OnMessage(ARRAY_PROCESSOR_INPUT_CHANNEL)
-        @Messaging.Outgoing(ARRAY_PROCESSOR_OUTPUT_CHANNEL)
+        @Messaging.SendTo(ARRAY_PROCESSOR_OUTPUT_CHANNEL)
         ArrayMessage<String> process(String payload) {
             String processed = "processed: " + payload;
             long admissionBytes = payload.getBytes(StandardCharsets.UTF_8).length
