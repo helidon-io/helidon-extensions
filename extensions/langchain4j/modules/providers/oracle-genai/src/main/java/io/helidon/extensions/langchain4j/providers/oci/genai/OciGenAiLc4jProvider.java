@@ -27,16 +27,13 @@ import com.oracle.bmc.Region;
 import com.oracle.bmc.auth.BasicAuthenticationDetailsProvider;
 import com.oracle.bmc.generativeaiinference.GenerativeAiInferenceClient;
 import dev.langchain4j.community.model.oracle.oci.genai.OciGenAiChatModel;
-import dev.langchain4j.community.model.oracle.oci.genai.OciGenAiStreamingChatModel;
 
 @AiProvider.ModelConfig(
         value = OciGenAiChatModel.class,
-        skip = "logitBias\\(java\\.lang\\.Object\\)")
-@AiProvider.ModelConfig(
-        value = OciGenAiStreamingChatModel.class,
-        skip = "logitBias\\(java\\.lang\\.Object\\)")
+        skip = {"logitBias\\(java\\.lang\\.Object\\)",
+                "genAiAsyncClient\\(com\\.oracle\\.bmc\\.generativeaiinference\\.GenerativeAiInferenceAsyncClient\\)"})
 @Prototype.CustomMethods(OciFactoryMethods.class)
-interface OciGenAiLc4jProvider {
+interface OciGenAiLc4jProvider extends AiProvider.ModelLifecycle {
 
     /**
      * OCI LLM Model name or OCID.
@@ -80,6 +77,11 @@ interface OciGenAiLc4jProvider {
     @Option.Configured
     @Option.RegistryService
     Optional<GenerativeAiInferenceClient> genAiClient();
+
+    @Override
+    default boolean closeModelOnShutdown() {
+        return genAiClient().isEmpty();
+    }
 
     /**
      * Modifies the likelihood of specified tokens that appear in the completion.

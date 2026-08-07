@@ -34,12 +34,22 @@ public class MockProxyFactory implements Service.ServicesFactory<Proxy> {
 
         return List.of(
                 Service.QualifiedInstance.create(createMockProxy("defaultProxy"), Qualifier.createNamed("@default")),
-                Service.QualifiedInstance.create(createMockProxy("customProxy"), Qualifier.createNamed("customProxy"))
+                Service.QualifiedInstance.create(createMockProxy("customProxy"), Qualifier.createNamed("customProxy")),
+                Service.QualifiedInstance.create(createSocksProxy("socksProxy"), Qualifier.createNamed("socksProxy"))
         );
     }
 
     private static Proxy createMockProxy(String name) {
         return new Proxy(Proxy.Type.HTTP, new InetSocketAddress(8080)) {
+            @Override
+            public String toString() {
+                return name;
+            }
+        };
+    }
+
+    private static Proxy createSocksProxy(String name) {
+        return new Proxy(Proxy.Type.SOCKS, new InetSocketAddress(1080)) {
             @Override
             public String toString() {
                 return name;

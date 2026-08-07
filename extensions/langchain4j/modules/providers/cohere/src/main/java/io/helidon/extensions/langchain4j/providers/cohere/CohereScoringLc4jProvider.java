@@ -23,13 +23,25 @@ import io.helidon.builder.api.Option;
 import io.helidon.common.Weighted;
 import io.helidon.extensions.langchain4j.AiProvider;
 
+import dev.langchain4j.http.client.HttpClientBuilder;
 import dev.langchain4j.model.cohere.CohereScoringModel;
 
 @AiProvider.ModelConfig(value = CohereScoringModel.class,
                         weight = Weighted.DEFAULT_WEIGHT - 20,
                         providerKey = "cohere",
-                        skip = "proxy\\(java\\.net\\.Proxy\\)")
+                        skip = {"proxy\\(java\\.net\\.Proxy\\)",
+                                "httpClientBuilder\\(dev\\.langchain4j\\.http\\.client\\.HttpClientBuilder\\)"})
 interface CohereScoringLc4jProvider {
+
+    /**
+     * HTTP client builder to use.
+     *
+     * @return an {@link Optional} containing HTTP client builder to use
+     */
+    @Option.Configured
+    @Option.RegistryService
+    @AiProvider.CustomBuilderMapping
+    Optional<HttpClientBuilder> httpClientBuilder();
 
     /**
      * Proxy to use.
@@ -50,7 +62,8 @@ interface CohereScoringLc4jProvider {
      */
     default CohereScoringModel.CohereScoringModelBuilder configuredBuilder() {
         var modelBuilder = CohereScoringModel.builder();
-        proxy().map(CohereHttpClientSupport::create)
+        httpClientBuilder()
+                .or(() -> proxy().map(CohereHttpClientSupport::create))
                 .ifPresent(modelBuilder::httpClientBuilder);
         return modelBuilder;
     }
