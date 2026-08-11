@@ -21,7 +21,6 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
-import java.util.OptionalLong;
 import java.util.UUID;
 
 /**
@@ -38,8 +37,7 @@ import java.util.UUID;
  */
 public final class MessageBatch<T> implements Iterable<Message<T>> {
     /**
-     * Maximum opaque identity length. This bounds runtime bookkeeping that is intentionally excluded from the logical
-     * content admission weight.
+     * Maximum opaque identity length.
      */
     public static final int MAX_ID_LENGTH = 256;
 
@@ -48,14 +46,11 @@ public final class MessageBatch<T> implements Iterable<Message<T>> {
     private final List<Message<T>> messages;
     private final List<T> payloads;
     private final List<Integer> lineage;
-    private final OptionalLong declaredAdmissionBytes;
-    private final OptionalLong admissionBytes;
 
     private MessageBatch(Object deliveryToken,
                          String id,
                          List<Message<T>> messages,
-                         List<Integer> lineage,
-                         OptionalLong declaredAdmissionBytes) {
+                         List<Integer> lineage) {
         this.deliveryToken = Objects.requireNonNull(deliveryToken);
         this.id = validateId(id);
         if (messages.isEmpty()) {
@@ -83,8 +78,6 @@ public final class MessageBatch<T> implements Iterable<Message<T>> {
         this.messages = List.copyOf(messageSnapshot);
         this.payloads = Collections.unmodifiableList(payloadSnapshot);
         this.lineage = List.copyOf(lineageSnapshot);
-        this.declaredAdmissionBytes = Objects.requireNonNull(declaredAdmissionBytes);
-        this.admissionBytes = calculateAdmissionBytes();
     }
 
     /**
@@ -169,17 +162,6 @@ public final class MessageBatch<T> implements Iterable<Message<T>> {
     }
 
     /**
-     * Declared logical byte weight of the complete batch for admission control.
-     * <p>
-     * A present value conservatively covers every known message and any content retained only by the batch.
-     *
-     * @return complete batch admission weight, or empty when unknown
-     */
-    public OptionalLong admissionBytes() {
-        return admissionBytes;
-    }
-
-    /**
      * Whether another framework-derived batch represents the exact same ordered delivery items.
      * <p>
      * Envelope instances may differ after a processor or dead-letter transformation. Exact lineage compatibility makes
@@ -222,10 +204,6 @@ public final class MessageBatch<T> implements Iterable<Message<T>> {
 
     /**
      * Create an ordered retry or routing subset while preserving delivery identity and item lineage.
-     * <p>
-     * A proper subset recalculates its admission weight from the selected messages. An aggregate declaration for the
-     * source batch cannot be safely apportioned to fewer items; if a selected message has no declared size, the subset
-     * admission weight is therefore unknown.
      *
      * @param indexes strictly increasing local indexes
      * @return derived subset
@@ -249,10 +227,7 @@ public final class MessageBatch<T> implements Iterable<Message<T>> {
             selectedLineage.add(lineage.get(index));
             previous = index;
         }
-        OptionalLong subsetAdmissionBytes = actualIndexes.size() == size()
-                ? declaredAdmissionBytes
-                : OptionalLong.empty();
-        return new MessageBatch<>(deliveryToken, id, selectedMessages, selectedLineage, subsetAdmissionBytes);
+        return new MessageBatch<>(deliveryToken, id, selectedMessages, selectedLineage);
     }
 
     /**
@@ -262,20 +237,8 @@ public final class MessageBatch<T> implements Iterable<Message<T>> {
      * @param <R> derived payload type
      * @return derived batch
      */
-    public <R> MessageBatch<R> derive(List<? extends Message<? extends R>> derivedMessages) {
-        return derive(derivedMessages, OptionalLong.empty());
-    }
-
-    <R> MessageBatch<R> derive(List<? extends Message<? extends R>> derivedMessages, long admissionBytes) {
-        if (admissionBytes < 0) {
-            throw new IllegalArgumentException("Derived message batch admission bytes must be zero or greater");
-        }
-        return derive(derivedMessages, OptionalLong.of(admissionBytes));
-    }
-
     @SuppressWarnings("unchecked")
-    private <R> MessageBatch<R> derive(List<? extends Message<? extends R>> derivedMessages,
-                                       OptionalLong admissionBytes) {
+    public <R> MessageBatch<R> derive(List<? extends Message<? extends R>> derivedMessages) {
         List<? extends Message<? extends R>> actualMessages = List.copyOf(Objects.requireNonNull(derivedMessages));
         if (actualMessages.size() != size()) {
             throw new IllegalArgumentException("Derived message batch must contain one message per source item");
@@ -284,7 +247,7 @@ public final class MessageBatch<T> implements Iterable<Message<T>> {
         for (Message<? extends R> message : actualMessages) {
             typedMessages.add((Message<R>) Objects.requireNonNull(message));
         }
-        return new MessageBatch<>(deliveryToken, id, typedMessages, lineage, admissionBytes);
+        return new MessageBatch<>(deliveryToken, id, typedMessages, lineage);
     }
 
     @Override
@@ -303,29 +266,6 @@ public final class MessageBatch<T> implements Iterable<Message<T>> {
         return actualId;
     }
 
-    private OptionalLong calculateAdmissionBytes() {
-        long knownBytes = 0;
-        boolean unknown = false;
-        try {
-            for (Message<T> message : messages) {
-                OptionalLong messageBytes = Objects.requireNonNull(message.admissionBytes());
-                if (messageBytes.isPresent()) {
-                    knownBytes = Math.addExact(knownBytes, messageBytes.getAsLong());
-                } else {
-                    unknown = true;
-                }
-            }
-        } catch (ArithmeticException e) {
-            return OptionalLong.empty();
-        }
-        if (unknown && declaredAdmissionBytes.isEmpty()) {
-            return OptionalLong.empty();
-        }
-        return OptionalLong.of(declaredAdmissionBytes.isPresent()
-                                       ? Math.max(declaredAdmissionBytes.getAsLong(), knownBytes)
-                                       : knownBytes);
-    }
-
     /**
      * Message batch builder.
      *
@@ -334,7 +274,6 @@ public final class MessageBatch<T> implements Iterable<Message<T>> {
     public static final class Builder<T> {
         private final List<Message<T>> messages = new ArrayList<>();
         private String id = UUID.randomUUID().toString();
-        private OptionalLong admissionBytes = OptionalLong.empty();
 
         private Builder() {
         }
@@ -376,20 +315,6 @@ public final class MessageBatch<T> implements Iterable<Message<T>> {
         }
 
         /**
-         * Declare the logical byte weight of the complete batch content.
-         *
-         * @param admissionBytes complete batch content admission weight
-         * @return updated builder
-         */
-        public Builder<T> admissionBytes(long admissionBytes) {
-            if (admissionBytes < 0) {
-                throw new IllegalArgumentException("Message batch admission bytes must be zero or greater");
-            }
-            this.admissionBytes = OptionalLong.of(admissionBytes);
-            return this;
-        }
-
-        /**
          * Build an immutable batch.
          *
          * @return batch
@@ -399,7 +324,7 @@ public final class MessageBatch<T> implements Iterable<Message<T>> {
             for (int i = 0; i < messages.size(); i++) {
                 lineage.add(i);
             }
-            return new MessageBatch<>(new Object(), id, messages, lineage, admissionBytes);
+            return new MessageBatch<>(new Object(), id, messages, lineage);
         }
     }
 }

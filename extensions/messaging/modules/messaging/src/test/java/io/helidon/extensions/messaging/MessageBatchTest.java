@@ -18,8 +18,6 @@ package io.helidon.extensions.messaging;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.OptionalLong;
 
 import org.junit.jupiter.api.Test;
 
@@ -32,8 +30,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MessageBatchTest {
     @Test
     void createsImmutableEnvelopePreservingSnapshot() {
-        Message<String> first = weightedMessage("one", 3);
-        Message<String> second = weightedMessage("two", 5);
+        Message<String> first = Message.create("one");
+        Message<String> second = Message.create("two");
         List<Message<String>> source = new ArrayList<>(List.of(first, second));
 
         MessageBatch<String> batch = MessageBatch.<String>builder()
@@ -47,54 +45,16 @@ class MessageBatchTest {
         assertSame(first, batch.get(0));
         assertSame(second, batch.get(1));
         assertEquals(List.of("one", "two"), batch.payloads());
-        assertEquals(8, batch.admissionBytes().orElseThrow());
         assertEquals(batch.messages(), toList(batch));
         assertThrows(UnsupportedOperationException.class, () -> batch.messages().clear());
         assertThrows(UnsupportedOperationException.class, () -> batch.payloads().clear());
     }
 
     @Test
-    void usesConservativeDeclaredAdmissionWeight() {
-        MessageBatch<String> declaredLarger = MessageBatch.<String>builder()
-                .add(weightedMessage("one", 3))
-                .add(weightedMessage("two", 5))
-                .admissionBytes(13)
-                .build();
-        MessageBatch<String> calculatedLarger = MessageBatch.<String>builder()
-                .add(weightedMessage("one", 3))
-                .add(weightedMessage("two", 5))
-                .admissionBytes(2)
-                .build();
-        MessageBatch<String> declaredForUnknown = MessageBatch.<String>builder()
-                .add(Message.create("unknown"))
-                .admissionBytes(7)
-                .build();
-        MessageBatch<String> declaredWithKnownAndUnknown = MessageBatch.<String>builder()
-                .add(weightedMessage("one", 3))
-                .add(unknownMessage("unknown"))
-                .add(weightedMessage("two", 5))
-                .admissionBytes(7)
-                .build();
-        MessageBatch<String> unknown = MessageBatch.create(List.of(unknownMessage("unknown")));
-        MessageBatch<String> overflowing = MessageBatch.<String>builder()
-                .add(weightedMessage("one", Long.MAX_VALUE))
-                .add(weightedMessage("two", 1))
-                .admissionBytes(Long.MAX_VALUE)
-                .build();
-
-        assertEquals(13, declaredLarger.admissionBytes().orElseThrow());
-        assertEquals(8, calculatedLarger.admissionBytes().orElseThrow());
-        assertEquals(7, declaredForUnknown.admissionBytes().orElseThrow());
-        assertEquals(8, declaredWithKnownAndUnknown.admissionBytes().orElseThrow());
-        assertTrue(unknown.admissionBytes().isEmpty());
-        assertTrue(overflowing.admissionBytes().isEmpty());
-    }
-
-    @Test
     void preservesDeliveryLineageAcrossDerivationAndSubsets() {
-        Message<String> first = weightedMessage("one", 3);
-        Message<String> second = weightedMessage("two", 5);
-        Message<String> third = weightedMessage("three", 7);
+        Message<String> first = Message.create("one");
+        Message<String> second = Message.create("two");
+        Message<String> third = Message.create("three");
         MessageBatch<String> original = MessageBatch.<String>builder()
                 .id("batch-1")
                 .messages(List.of(first, second, third))
@@ -125,21 +85,20 @@ class MessageBatchTest {
     }
 
     @Test
-    void recalculatesAdmissionWeightForSelectedSubset() {
-        MessageBatch<String> original = MessageBatch.<String>builder()
-                .add(weightedMessage("one", 3))
-                .add(unknownMessage("unknown"))
-                .add(weightedMessage("three", 7))
-                .admissionBytes(20)
-                .build();
+    void selectedSubsetPreservesEnvelopeIdentityAndOrder() {
+        Message<String> first = Message.create("one");
+        Message<String> second = Message.create("two");
+        Message<String> third = Message.create("three");
+        MessageBatch<String> original = MessageBatch.create(List.of(first, second, third));
 
-        MessageBatch<String> knownSubset = original.subset(List.of(0, 2));
-        MessageBatch<String> unknownSubset = original.subset(List.of(1));
+        MessageBatch<String> selected = original.subset(List.of(0, 2));
         MessageBatch<String> completeSelection = original.subset(List.of(0, 1, 2));
 
-        assertEquals(10, knownSubset.admissionBytes().orElseThrow());
-        assertTrue(unknownSubset.admissionBytes().isEmpty());
-        assertEquals(20, completeSelection.admissionBytes().orElseThrow());
+        assertEquals(List.of("one", "three"), selected.payloads());
+        assertSame(first, selected.get(0));
+        assertSame(third, selected.get(1));
+        assertTrue(selected.isRetainedSubsetOf(original));
+        assertTrue(completeSelection.sameDelivery(original));
     }
 
     @Test
@@ -152,8 +111,6 @@ class MessageBatchTest {
                              .id("x".repeat(MessageBatch.MAX_ID_LENGTH + 1))
                              .add(Message.create("one"))
                              .build());
-        assertThrows(IllegalArgumentException.class,
-                     () -> MessageBatch.<String>builder().add(Message.create("one")).admissionBytes(-1));
         assertThrows(NullPointerException.class,
                      () -> MessageBatch.<String>builder().messages(null));
         assertThrows(NullPointerException.class,
@@ -217,39 +174,6 @@ class MessageBatchTest {
         assertThrows(IndexOutOfBoundsException.class,
                      () -> BatchDeliveryException.sequential("send", batch, 2, new RuntimeException()));
         assertThrows(IllegalArgumentException.class, () -> BatchItemOutcome.succeeded(-1));
-    }
-
-    private static Message<String> weightedMessage(String payload, long admissionBytes) {
-        return new Message<>() {
-            @Override
-            public String entity() {
-                return payload;
-            }
-
-            @Override
-            public Map<String, String> headers() {
-                return Map.of();
-            }
-
-            @Override
-            public OptionalLong admissionBytes() {
-                return OptionalLong.of(admissionBytes);
-            }
-        };
-    }
-
-    private static Message<String> unknownMessage(String payload) {
-        return new Message<>() {
-            @Override
-            public String entity() {
-                return payload;
-            }
-
-            @Override
-            public Map<String, String> headers() {
-                return Map.of();
-            }
-        };
     }
 
     private static <T> List<Message<T>> toList(MessageBatch<T> batch) {

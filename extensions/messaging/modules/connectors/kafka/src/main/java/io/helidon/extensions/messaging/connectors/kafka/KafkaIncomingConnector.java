@@ -16,7 +16,6 @@
 
 package io.helidon.extensions.messaging.connectors.kafka;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -28,7 +27,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -77,15 +75,11 @@ import org.apache.kafka.common.errors.WakeupException;
  * uncommitted successful prefix. If a structured failure propagates, each partition advances only through its
  * contiguous settled prefix; successful records behind an unresolved offset remain eligible for redelivery.
  * <p>
- * The connector caps {@code max.poll.records}, {@code fetch.max.bytes}, and
- * {@code max.partition.fetch.bytes} using the channel delivery limits. These Kafka settings are acquisition hints, not
- * admission guarantees: Kafka may return an oversized first record batch and may retain additional fetched records in
- * its client cache. Before every normal poll, the source reserves the channel's maximum delivery budget; while that
- * reservation is unavailable, assigned partitions remain paused and only heartbeat-maintenance polls run. Every
- * materialized poll is then weighed again, including its settlement metadata, before the reservation transfers to the
- * actual delivery. An oversized poll is rejected without committing it. Broker and topic record-batch limits must be
- * aligned separately when oversized batches need to be rejected before consumption; runtime admission does not bound
- * transient Kafka-client or deserializer memory.
+ * The connector caps Kafka's {@code max.poll.records} with the channel delivery limit. Before every normal poll, the
+ * source reserves that message capacity; while the reservation is unavailable, assigned partitions remain paused and
+ * only heartbeat-maintenance polls run. A defensive post-poll check rejects a client result that exceeds the reserved
+ * message count without committing it. Kafka fetch and record byte limits remain transport-specific client properties;
+ * runtime admission does not bound transient Kafka-client or deserializer memory.
  */
 final class KafkaIncomingConnector {
     private static final System.Logger LOGGER = System.getLogger(KafkaIncomingConnector.class.getName());
@@ -177,8 +171,7 @@ final class KafkaIncomingConnector {
                 }
                 consumer = consumerFactory.create(KafkaConnectorConfigSupport.consumerProperties(
                         config,
-                        context.maxDeliveryMessages(),
-                        context.maxDeliveryBytes()));
+                        context.maxDeliveryMessages()));
                 activeConsumer.set(consumer);
                 if (!closed.get()) {
                     SourceRebalanceListener rebalanceListener = new SourceRebalanceListener(consumer);
@@ -371,8 +364,7 @@ final class KafkaIncomingConnector {
                     }
                     admissionBudget.requireAvailable();
                     Optional<ConnectorDeliveryReservation> reservation = context.tryReserveDelivery(
-                            context.maxDeliveryMessages(),
-                            context.maxDeliveryBytes());
+                            context.maxDeliveryMessages());
                     if (reservation.isPresent()) {
                         return reservation.get();
                     }
@@ -1464,19 +1456,6 @@ final class KafkaIncomingConnector {
     }
 
     private static final class PendingPoll {
-        // Batch count plus stale state.
-        private static final long POLL_STATE_BYTES = Integer.BYTES + Byte.BYTES;
-        // Partition id, first offset, next offset, and invalidation state.
-        private static final long PARTITION_STATE_BYTES = Integer.BYTES
-                + Long.BYTES
-                + Long.BYTES
-                + Byte.BYTES;
-        // Delivery-to-original index, partition index, record offset, and settlement flag.
-        private static final long ITEM_STATE_BYTES = Integer.BYTES
-                + Integer.BYTES
-                + Long.BYTES
-                + Integer.BYTES;
-
         private final MessageBatch<Object> batch;
         private final Map<TopicPartition, OffsetAndMetadata> nextOffsets;
         private final Map<TopicPartition, Long> firstOffsets;
@@ -1501,7 +1480,6 @@ final class KafkaIncomingConnector {
                                           ConnectorSourceContext context) {
             String channel = context.channelName();
             int maxDeliveryMessages = context.maxDeliveryMessages();
-            long maxDeliveryBytes = context.maxDeliveryBytes();
             if (messages.size() > maxDeliveryMessages) {
                 throw new MessagingRejectedException(
                         channel,
@@ -1525,56 +1503,8 @@ final class KafkaIncomingConnector {
             }
             Map<TopicPartition, OffsetAndMetadata> nextOffsets = Map.copyOf(records.nextOffsets());
             Map<TopicPartition, Long> immutableFirstOffsets = Map.copyOf(firstOffsets);
-            long admissionBytes = 0;
-            for (Message<Object> message : messages) {
-                OptionalLong estimate = Objects.requireNonNull(
-                        context.messageAdmissionBytes(message),
-                        "Connector source message admission byte size");
-                long messageBytes = estimate
-                        .orElseThrow(() -> new MessagingRejectedException(
-                                channel,
-                                MessagingRejectedException.Reason.UNKNOWN_SIZE,
-                                "Kafka record admission size is unknown on channel " + channel));
-                if (messageBytes < 0) {
-                    throw new IllegalArgumentException("Message admission byte size must be zero or greater");
-                }
-                KafkaMessageImpl<?, ?> kafkaMessage = (KafkaMessageImpl<?, ?>) message;
-                long recordLowerBound = kafkaMessage.recordAdmissionLowerBound()
-                        .orElseThrow(() -> new IllegalStateException(
-                                "Incoming Kafka message is missing its record admission lower bound"));
-                messageBytes = Math.max(messageBytes, recordLowerBound);
-                try {
-                    admissionBytes = Math.addExact(admissionBytes, messageBytes);
-                } catch (ArithmeticException e) {
-                    throw new MessagingRejectedException(
-                            channel,
-                            MessagingRejectedException.Reason.OVERSIZED,
-                            "Kafka poll admission size exceeds the supported range on channel " + channel,
-                            e);
-                }
-            }
-            try {
-                admissionBytes = Math.addExact(admissionBytes,
-                                               settlementAdmissionBytes(nextOffsets,
-                                                                        immutableFirstOffsets,
-                                                                        indexedOffsets));
-            } catch (ArithmeticException e) {
-                throw new MessagingRejectedException(
-                        channel,
-                        MessagingRejectedException.Reason.OVERSIZED,
-                        "Kafka poll admission size exceeds the supported range on channel " + channel,
-                        e);
-            }
-            if (admissionBytes > maxDeliveryBytes) {
-                throw new MessagingRejectedException(
-                        channel,
-                        MessagingRejectedException.Reason.OVERSIZED,
-                        "Kafka poll contains " + admissionBytes + " admission bytes, exceeding channel "
-                                + channel + " limit " + maxDeliveryBytes);
-            }
             MessageBatch<Object> batch = MessageBatch.<Object>builder()
                     .messages(messages)
-                    .admissionBytes(admissionBytes)
                     .build();
             Map<TopicPartition, List<IndexedOffset>> immutableIndexedOffsets = new LinkedHashMap<>();
             indexedOffsets.forEach((partition, offsets) -> immutableIndexedOffsets.put(partition,
@@ -1583,35 +1513,6 @@ final class KafkaIncomingConnector {
                                    nextOffsets,
                                    immutableFirstOffsets,
                                    Map.copyOf(immutableIndexedOffsets));
-        }
-
-        private static long settlementAdmissionBytes(Map<TopicPartition, OffsetAndMetadata> nextOffsets,
-                                                     Map<TopicPartition, Long> firstOffsets,
-                                                     Map<TopicPartition, List<IndexedOffset>> indexedOffsets) {
-            Set<TopicPartition> partitions = new HashSet<>(firstOffsets.keySet());
-            partitions.addAll(nextOffsets.keySet());
-            long result = POLL_STATE_BYTES;
-            for (TopicPartition partition : partitions) {
-                result = Math.addExact(result, partition.topic().getBytes(StandardCharsets.UTF_8).length);
-                result = Math.addExact(result, PARTITION_STATE_BYTES);
-                OffsetAndMetadata nextOffset = nextOffsets.get(partition);
-                if (nextOffset != null) {
-                    result = Math.addExact(result,
-                                           nextOffset.metadata().getBytes(StandardCharsets.UTF_8).length);
-                    if (nextOffset.leaderEpoch().isPresent()) {
-                        result = Math.addExact(result, Integer.BYTES);
-                    }
-                }
-            }
-            for (List<IndexedOffset> offsets : indexedOffsets.values()) {
-                for (IndexedOffset offset : offsets) {
-                    result = Math.addExact(result, ITEM_STATE_BYTES);
-                    if (offset.leaderEpoch().isPresent()) {
-                        result = Math.addExact(result, Integer.BYTES);
-                    }
-                }
-            }
-            return result;
         }
 
         private MessageBatch<Object> batch() {

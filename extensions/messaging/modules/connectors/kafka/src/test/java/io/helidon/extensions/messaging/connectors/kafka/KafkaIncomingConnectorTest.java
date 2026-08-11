@@ -24,7 +24,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -32,7 +31,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
@@ -707,10 +705,9 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
-                                                                             long maxAdmissionBytes) {
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
                 ConnectorDeliveryReservation delegate = ConnectorSourceContext.super
-                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
+                        .tryReserveDelivery(maxMessages)
                         .orElseThrow();
                 return Optional.of(new ForwardingReservation(delegate) {
                     @Override
@@ -1685,10 +1682,9 @@ class KafkaIncomingConnectorTest {
         AtomicInteger pollsAtAdmission = new AtomicInteger();
         ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
             @Override
-            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
-                                                                             long maxAdmissionBytes) {
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
                 ConnectorDeliveryReservation delegate = super
-                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
+                        .tryReserveDelivery(maxMessages)
                         .orElseThrow();
                 return Optional.of(new ForwardingReservation(delegate) {
                     @Override
@@ -1726,10 +1722,9 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
-                                                                             long maxAdmissionBytes) {
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
                 ConnectorDeliveryReservation delegate = super
-                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
+                        .tryReserveDelivery(maxMessages)
                         .orElseThrow();
                 return Optional.of(new ForwardingReservation(delegate) {
                     @Override
@@ -1760,8 +1755,7 @@ class KafkaIncomingConnectorTest {
         CountDownLatch reservationAttempted = new CountDownLatch(1);
         ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
             @Override
-            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
-                                                                             long maxAdmissionBytes) {
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
                 reservationAttempted.countDown();
                 return Optional.empty();
             }
@@ -1795,8 +1789,7 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
-                                                                             long maxAdmissionBytes) {
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
                 return Optional.empty();
             }
         };
@@ -1820,8 +1813,7 @@ class KafkaIncomingConnectorTest {
         AtomicReference<IncomingEndpointHarness> connectorRef = new AtomicReference<>();
         ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
             @Override
-            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
-                                                                             long maxAdmissionBytes) {
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
                 return switch (reservationAttempts.incrementAndGet()) {
                 case 1 -> Optional.of(unusedReservation(reservationCloses));
                 case 2 -> Optional.empty();
@@ -1854,8 +1846,7 @@ class KafkaIncomingConnectorTest {
         AtomicReference<IncomingEndpointHarness> connectorRef = new AtomicReference<>();
         ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
             @Override
-            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
-                                                                             long maxAdmissionBytes) {
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
                 if (reservationAttempts.incrementAndGet() > 1) {
                     connectorRef.get().close();
                     return Optional.empty();
@@ -1891,8 +1882,7 @@ class KafkaIncomingConnectorTest {
         AtomicReference<IncomingEndpointHarness> connectorRef = new AtomicReference<>();
         ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
             @Override
-            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
-                                                                             long maxAdmissionBytes) {
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
                 return switch (reservationAttempts.incrementAndGet()) {
                 case 1 -> Optional.of(unusedReservation(new AtomicInteger()));
                 case 2 -> {
@@ -1926,9 +1916,7 @@ class KafkaIncomingConnectorTest {
         AtomicInteger leaseCloses = new AtomicInteger();
         AtomicBoolean reservationOpen = new AtomicBoolean();
         AtomicInteger reservedMessages = new AtomicInteger();
-        AtomicLong reservedBytes = new AtomicLong();
         AtomicInteger actualMessages = new AtomicInteger();
-        AtomicLong actualBytes = new AtomicLong();
         AtomicReference<ConnectorDelivery> trackedLease = new AtomicReference<>();
         consumer.beforeNextPoll(() -> assertThat("normal poll must run inside an open reservation",
                                                   reservationOpen.get(),
@@ -1954,25 +1942,17 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public long maxDeliveryBytes() {
-                return 128;
-            }
-
-            @Override
-            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
-                                                                             long maxAdmissionBytes) {
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
                 reservedMessages.set(maxMessages);
-                reservedBytes.set(maxAdmissionBytes);
                 reservationOpen.set(true);
                 ConnectorDeliveryReservation delegate = ConnectorSourceContext.super
-                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
+                        .tryReserveDelivery(maxMessages)
                         .orElseThrow();
                 return Optional.of(new ForwardingReservation(delegate) {
                     @Override
                     public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch,
                                                                     Runnable delivery) {
                         actualMessages.set(batch.size());
-                        actualBytes.set(batch.admissionBytes().orElseThrow());
                         Optional<ConnectorDelivery> started = super.tryStart(batch, delivery);
                         if (started.isPresent()) {
                             reservationOpen.set(false);
@@ -2004,15 +1984,13 @@ class KafkaIncomingConnectorTest {
 
         assertThat(trackedLease.get().isDone(), is(true));
         assertThat(reservedMessages.get(), is(2));
-        assertThat(reservedBytes.get(), is(128L));
         assertThat(actualMessages.get() <= reservedMessages.get(), is(true));
-        assertThat(actualBytes.get() <= reservedBytes.get(), is(true));
         assertThat(leaseCloses.get(), is(1));
         assertThat(consumer.commitCount(), is(1));
     }
 
     @Test
-    void testPostPollSafetyCheckEnforcesLimitsWhenKafkaAcquisitionHintsAreExceeded() {
+    void testPostPollSafetyCheckEnforcesMessageLimitWhenKafkaAcquisitionHintIsExceeded() {
         TrackingMockConsumer messageLimitedConsumer = trackingConsumer();
         scheduleRecords(messageLimitedConsumer,
                         record(0, "first", new RecordHeaders()),
@@ -2036,115 +2014,6 @@ class KafkaIncomingConnectorTest {
         assertThat(messageFailure.reason(), is(MessagingRejectedException.Reason.OVERSIZED));
         assertThat(messageAcquisitionProperties.get().get(ConsumerConfig.MAX_POLL_RECORDS_CONFIG), is(1));
         assertThat(messageLimitedConsumer.commitCount(), is(0));
-
-        TrackingMockConsumer byteLimitedConsumer = trackingConsumer();
-        scheduleRecords(byteLimitedConsumer, record(0, "first", new RecordHeaders()));
-        ConnectorSourceContext byteLimitedContext = new RecordingContext(new ArrayList<>()) {
-            @Override
-            public long maxDeliveryBytes() {
-                return 1;
-            }
-        };
-        AtomicReference<Map<String, Object>> byteAcquisitionProperties = new AtomicReference<>();
-        IncomingEndpointHarness byteLimitedConnector = new IncomingEndpointHarness(properties -> {
-            byteAcquisitionProperties.set(properties);
-            return byteLimitedConsumer;
-        });
-
-        MessagingRejectedException byteFailure = assertThrows(
-                MessagingRejectedException.class,
-                () -> byteLimitedConnector.createIncomingEndpoint(config(), byteLimitedContext).run());
-
-        assertThat(byteFailure.reason(), is(MessagingRejectedException.Reason.OVERSIZED));
-        assertThat(byteAcquisitionProperties.get().get(ConsumerConfig.FETCH_MAX_BYTES_CONFIG), is(1));
-        assertThat(byteAcquisitionProperties.get().get(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG), is(1));
-        assertThat(byteLimitedConsumer.commitCount(), is(0));
-    }
-
-    @Test
-    void testAdmissionIncludesRetainedPollSettlementMetadata() {
-        TrackingMockConsumer consumer = trackingConsumer();
-        scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
-        AtomicLong admissionBytes = new AtomicLong();
-        ConnectorSourceContext context = new RecordingContext(new ArrayList<>()) {
-            @Override
-            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
-                                                                             long maxAdmissionBytes) {
-                ConnectorDeliveryReservation delegate = super
-                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
-                        .orElseThrow();
-                return Optional.of(new ForwardingReservation(delegate) {
-                    @Override
-                    public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch,
-                                                                    Runnable delivery) {
-                        admissionBytes.set(batch.admissionBytes().orElseThrow());
-                        return super.tryStart(batch, delivery);
-                    }
-                });
-            }
-        };
-        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
-        consumer.afterCommit(connector::close);
-
-        connector.createIncomingEndpoint(config(), context).run();
-
-        assertThat(admissionBytes.get(), is(96L));
-        assertThat(consumer.commitCount(), is(1));
-    }
-
-    @Test
-    void testRuntimeMessageEstimateCannotUnderstateSerializedRecord() {
-        TrackingMockConsumer consumer = trackingConsumer();
-        Object payload = new Object();
-        scheduleRecords(consumer, new ConsumerRecord<>(TOPIC,
-                                                       TOPIC_PARTITION.partition(),
-                                                       0,
-                                                       ConsumerRecord.NO_TIMESTAMP,
-                                                       TimestampType.NO_TIMESTAMP_TYPE,
-                                                       ConsumerRecord.NULL_SIZE,
-                                                       10_000,
-                                                       null,
-                                                       payload,
-                                                       new RecordHeaders(),
-                                                       Optional.empty()));
-        AtomicInteger estimateCalls = new AtomicInteger();
-        AtomicLong admissionBytes = new AtomicLong();
-        AtomicReference<Message<?>> estimatedMessage = new AtomicReference<>();
-        RecordingContext context = new RecordingContext(new ArrayList<>()) {
-            @Override
-            public OptionalLong messageAdmissionBytes(Message<?> message) {
-                assertThat(message.admissionBytes().isEmpty(), is(true));
-                assertThat(message.entity(), sameInstance(payload));
-                estimatedMessage.set(message);
-                estimateCalls.incrementAndGet();
-                return OptionalLong.of(64);
-            }
-
-            @Override
-            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
-                                                                             long maxAdmissionBytes) {
-                ConnectorDeliveryReservation delegate = super
-                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
-                        .orElseThrow();
-                return Optional.of(new ForwardingReservation(delegate) {
-                    @Override
-                    public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch,
-                                                                    Runnable delivery) {
-                        admissionBytes.set(batch.admissionBytes().orElseThrow());
-                        return super.tryStart(batch, delivery);
-                    }
-                });
-            }
-        };
-        IncomingEndpointHarness connector = new IncomingEndpointHarness(ignored -> consumer);
-        consumer.afterCommit(connector::close);
-
-        connector.createIncomingEndpoint(config(), context).run();
-
-        assertThat(estimateCalls.get(), is(1));
-        assertThat(context.messages().getFirst(), sameInstance(estimatedMessage.get()));
-        assertThat(admissionBytes.get(), is(10_091L));
-        assertThat(consumer.commitCount(), is(1));
     }
 
     @Test
@@ -2313,10 +2182,9 @@ class KafkaIncomingConnectorTest {
             }
 
             @Override
-            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages,
-                                                                             long maxAdmissionBytes) {
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
                 ConnectorDeliveryReservation delegate = ConnectorSourceContext.super
-                        .tryReserveDelivery(maxMessages, maxAdmissionBytes)
+                        .tryReserveDelivery(maxMessages)
                         .orElseThrow();
                 return Optional.of(new ForwardingReservation(delegate) {
                     @Override

@@ -33,7 +33,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.OptionalLong;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
@@ -60,10 +59,9 @@ class ChannelRegistry implements MessagingRuntime {
                     List<EmitterRegistration> emitterRegistrations,
                     Config config,
                     List<ConnectorProvider<?>> connectorProviders,
-                    List<MessageSizeEstimator> sizeEstimators,
                     MessagingLifecycleGuard lifecycleGuard) {
         MessagingExecutionConfig defaultExecutionConfig = executionConfig(config, null);
-        this.deliveryEngine = new DeliveryEngine(defaultExecutionConfig, sizeEstimators);
+        this.deliveryEngine = new DeliveryEngine(defaultExecutionConfig);
         this.graph = new DefaultMessagingGraph(deliveryEngine);
         try {
             initialize(consumerRegistrations,
@@ -81,52 +79,33 @@ class ChannelRegistry implements MessagingRuntime {
     ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
                     Config config,
                     List<ConnectorProvider<?>> connectorProviders,
-                    List<MessageSizeEstimator> sizeEstimators,
                     MessagingLifecycleGuard lifecycleGuard) {
         this(consumerRegistrations,
              List.of(),
              config,
              connectorProviders,
-             sizeEstimators,
              lifecycleGuard);
     }
 
     ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
                     Config config,
-                    List<ConnectorProvider<?>> connectorProviders,
-                    List<MessageSizeEstimator> sizeEstimators) {
+                    List<ConnectorProvider<?>> connectorProviders) {
         this(consumerRegistrations,
              List.of(),
              config,
              connectorProviders,
-             sizeEstimators,
              new MessagingLifecycleGuard());
     }
 
     ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
                     List<EmitterRegistration> emitterRegistrations,
                     Config config,
-                    List<ConnectorProvider<?>> connectorProviders,
-                    List<MessageSizeEstimator> sizeEstimators) {
+                    List<ConnectorProvider<?>> connectorProviders) {
         this(consumerRegistrations,
              emitterRegistrations,
              config,
              connectorProviders,
-             sizeEstimators,
              new MessagingLifecycleGuard());
-    }
-
-    ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
-                    Config config,
-                    List<ConnectorProvider<?>> connectorProviders) {
-        this(consumerRegistrations, config, connectorProviders, List.of());
-    }
-
-    ChannelRegistry(List<ConsumerRegistration> consumerRegistrations,
-                    List<EmitterRegistration> emitterRegistrations,
-                    Config config,
-                    List<ConnectorProvider<?>> connectorProviders) {
-        this(consumerRegistrations, emitterRegistrations, config, connectorProviders, List.of());
     }
 
     private void initialize(List<ConsumerRegistration> consumerRegistrations,
@@ -1238,28 +1217,18 @@ class ChannelRegistry implements MessagingRuntime {
         }
 
         @Override
-        public long maxDeliveryBytes() {
-            return deliveryEngine.maxDeliveryBytes(channel);
-        }
-
-        @Override
-        public OptionalLong messageAdmissionBytes(Message<?> message) {
-            return deliveryEngine.messageAdmissionBytes(message);
-        }
-
-        @Override
         public Optional<Duration> admissionTimeout() {
             return deliveryEngine.admissionTimeout(channel);
         }
 
         @Override
-        public ConnectorDeliveryReservation reserveDelivery(int maxMessages, long maxAdmissionBytes) {
-            return deliveryEngine.reserveConnectorDelivery(channel, maxMessages, maxAdmissionBytes);
+        public ConnectorDeliveryReservation reserveDelivery(int maxMessages) {
+            return deliveryEngine.reserveConnectorDelivery(channel, maxMessages);
         }
 
         @Override
-        public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages, long maxAdmissionBytes) {
-            return deliveryEngine.tryReserveConnectorDelivery(channel, maxMessages, maxAdmissionBytes);
+        public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
+            return deliveryEngine.tryReserveConnectorDelivery(channel, maxMessages);
         }
 
         @Override
@@ -1313,14 +1282,12 @@ class ChannelRegistry implements MessagingRuntime {
                                                              failedAttempt,
                                                              deadLetterFailure(messages, i, alignedFailure)));
                 }
-                MessageBatch<T> deadLetterBatch = null;
+                MessageBatch<T> deadLetterBatch = messages.derive(deadLetters);
                 try {
-                    deadLetterBatch = deadLetterBatch(messages, deadLetters, target);
                     ChannelRegistry.this.emitRoutedBatch(target, deadLetterBatch);
                 } catch (RuntimeException routeFailure) {
                     RuntimeException result;
-                    if (deadLetterBatch != null
-                            && routeFailure instanceof BatchDeliveryException batchFailure
+                    if (routeFailure instanceof BatchDeliveryException batchFailure
                             && deadLetterBatch.sameDelivery(batchFailure.batch())) {
                         result = new BatchDeliveryException(
                                 "Dead-letter delivery from channel " + channel + " to channel " + target + " failed",
@@ -1339,28 +1306,6 @@ class ChannelRegistry implements MessagingRuntime {
                 yield FailureResult.SETTLED;
             }
             };
-        }
-
-        private <T> MessageBatch<T> deadLetterBatch(MessageBatch<T> source,
-                                                    List<? extends Message<? extends T>> deadLetters,
-                                                    String target) {
-            OptionalLong sourceAdmission = source.admissionBytes();
-            if (sourceAdmission.isEmpty()) {
-                return source.derive(deadLetters);
-            }
-            long admissionBytes = sourceAdmission.getAsLong();
-            try {
-                for (Message<? extends T> deadLetter : deadLetters) {
-                    admissionBytes = Math.addExact(admissionBytes, MessageSizes.headersBytes(deadLetter.headers()));
-                }
-            } catch (ArithmeticException e) {
-                throw new MessagingRejectedException(
-                        target,
-                        MessagingRejectedException.Reason.OVERSIZED,
-                        "Dead-letter batch admission size exceeds the supported range on channel " + target,
-                        e);
-            }
-            return source.derive(deadLetters, admissionBytes);
         }
 
         private RuntimeException deadLetterFailure(MessageBatch<?> batch,

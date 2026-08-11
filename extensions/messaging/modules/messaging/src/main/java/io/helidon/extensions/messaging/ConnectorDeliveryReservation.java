@@ -20,11 +20,11 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Pending message-count and byte capacity reserved by an incoming connector before it acquires transport data.
+ * Pending message-count capacity reserved by an incoming connector before it acquires transport data.
  * <p>
  * A connector must reserve the maximum delivery it may retain before polling, reading, or otherwise accepting that
  * delivery from its transport. The actual delivery supplied to {@link #start(MessageBatch, Runnable)} must not exceed
- * either reserved dimension. Starting atomically transfers the actual cost from pending capacity to in-flight
+ * the reserved message count. Starting atomically transfers the actual count from pending capacity to in-flight
  * capacity and releases unused reservation capacity.
  * <p>
  * A reservation has one owner and one terminal transition: it is either started once or closed. Closing is
@@ -40,12 +40,11 @@ public interface ConnectorDeliveryReservation extends AutoCloseable {
      * The retained lease covers the supplied batch and subsets created through {@link MessageBatch#subset(List)}.
      * Rebuilt batches and replacement envelopes require separate admission.
      *
-     * @param batch complete retained delivery with declared admission weight
+     * @param batch complete retained delivery
      * @param delivery delivery logic, including retry and terminal failure handling
      * @param <T> payload type
      * @return admitted delivery task and settlement lease
      * @throws MessagingRejectedException if the delivery cannot be admitted
-     * @throws IllegalArgumentException if the batch is empty or has no valid declared admission weight
      * @throws IllegalStateException if this reservation was already started or another start is in progress
      */
     <T> ConnectorDelivery start(MessageBatch<T> batch, Runnable delivery);
@@ -56,12 +55,11 @@ public interface ConnectorDeliveryReservation extends AutoCloseable {
      * The retained lease covers the supplied batch and subsets created through {@link MessageBatch#subset(List)}.
      * Rebuilt batches and replacement envelopes require separate admission.
      *
-     * @param batch complete retained delivery with declared admission weight
+     * @param batch complete retained delivery
      * @param delivery delivery logic, including retry and terminal failure handling
      * @param <T> payload type
      * @return admitted delivery task, or empty when in-flight capacity is currently unavailable
      * @throws MessagingRejectedException if the delivery exceeds this reservation or the reservation is unavailable
-     * @throws IllegalArgumentException if the batch is empty or has no valid declared admission weight
      * @throws IllegalStateException if this reservation was already started or another start is in progress
      */
     <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch, Runnable delivery);

@@ -79,19 +79,6 @@ interface MessagingExecutionConfigBlueprint {
     int maxPendingMessages();
 
     /**
-     * Maximum total admission size retained by waiting callers and open connector reservations.
-     * <p>
-     * An open connector reservation retains its declared maximum while the connector may acquire transport data.
-     * Immediately admissible caller deliveries do not consume this budget. A delivery that cannot fit is rejected
-     * instead of parking while retaining unaccounted data.
-     *
-     * @return maximum pending admission bytes
-     */
-    @Option.Configured("max-pending-bytes")
-    @Option.Default("67108864")
-    long maxPendingBytes();
-
-    /**
      * Maximum number of admitted messages.
      * <p>
      * This includes queued and executing work and completed connector deliveries whose admission lease remains held
@@ -102,18 +89,6 @@ interface MessagingExecutionConfigBlueprint {
     @Option.Configured("max-in-flight-messages")
     @Option.Default("1024")
     int maxInFlightMessages();
-
-    /**
-     * Maximum total admission size of admitted messages.
-     * <p>
-     * This includes queued and executing work and completed connector deliveries whose admission lease remains held
-     * until transport settlement or abandonment.
-     *
-     * @return maximum in-flight bytes
-     */
-    @Option.Configured("max-in-flight-bytes")
-    @Option.Default("67108864")
-    long maxInFlightBytes();
 
     /**
      * Optional maximum time to wait for capacity.
@@ -157,15 +132,9 @@ interface MessagingExecutionConfigBlueprint {
                 throw new IllegalArgumentException(
                         "messaging.execution.max-pending-messages must be greater than zero");
             }
-            if (target.maxPendingBytes() <= 0) {
-                throw new IllegalArgumentException("messaging.execution.max-pending-bytes must be greater than zero");
-            }
             if (target.maxInFlightMessages() <= 0) {
                 throw new IllegalArgumentException(
                         "messaging.execution.max-in-flight-messages must be greater than zero");
-            }
-            if (target.maxInFlightBytes() <= 0) {
-                throw new IllegalArgumentException("messaging.execution.max-in-flight-bytes must be greater than zero");
             }
             target.admissionTimeout().ifPresent(timeout -> requirePositive(timeout,
                                                                            "messaging.execution.admission-timeout"));

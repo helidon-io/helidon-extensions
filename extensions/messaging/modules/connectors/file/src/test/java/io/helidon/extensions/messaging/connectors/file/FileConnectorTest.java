@@ -130,13 +130,62 @@ class FileConnectorTest {
                 ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "audit",
                 ConnectorConfig.CONNECTOR_ATTRIBUTE, FileConnectorProvider.CONNECTOR_TYPE,
                 FileConnectorConfig.PATH_PROPERTY, auditLog.toString(),
-                FileConnectorConfig.LINE_SEPARATOR_PROPERTY, "|"))));
+                FileConnectorConfig.LINE_SEPARATOR_PROPERTY, "|",
+                FileConnectorConfig.MAX_LINE_BYTES_PROPERTY, "2048",
+                FileConnectorConfig.MAX_BATCH_BYTES_PROPERTY, "4096"))));
 
         assertThat(config.direction(), is(ConnectorConfig.Direction.OUTGOING));
         assertThat(config.channel(), is("audit"));
         assertThat(config.connector(), is(FileConnectorProvider.CONNECTOR_TYPE));
         assertThat(config.path(), is(auditLog));
         assertThat(config.lineSeparator(), is("|"));
+        assertThat(config.maxLineBytes(), is(2048));
+        assertThat(config.maxBatchBytes(), is(4096L));
+        assertThat(config(auditLog).maxLineBytes(), is(FileConnectorConfig.DEFAULT_MAX_LINE_BYTES));
+        assertThat(config(auditLog).maxBatchBytes(), is(FileConnectorConfig.DEFAULT_MAX_BATCH_BYTES));
+    }
+
+    @Test
+    void testMaxLineBytesMustBePositive(@TempDir Path tempDir) {
+        for (String value : List.of("0", "-1")) {
+            RuntimeException failure = assertThrows(RuntimeException.class,
+                                                    () -> new FileConnectorProvider().createConfig(
+                                                            Config.just(ConfigSources.create(Map.of(
+                                                                    "direction", "INCOMING",
+                                                                    ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "events",
+                                                                    ConnectorConfig.CONNECTOR_ATTRIBUTE,
+                                                                    FileConnectorProvider.CONNECTOR_TYPE,
+                                                                    FileConnectorConfig.PATH_PROPERTY,
+                                                                    tempDir.resolve("events.log").toString(),
+                                                                    FileConnectorConfig.MAX_LINE_BYTES_PROPERTY, value)))));
+            assertThat(failure.getMessage(), is("max-line-bytes must be greater than zero"));
+        }
+    }
+
+    @Test
+    void testMaxBatchBytesMustBePositive(@TempDir Path tempDir) {
+        for (String value : List.of("0", "-1")) {
+            RuntimeException failure = assertThrows(RuntimeException.class,
+                                                    () -> new FileConnectorProvider().createConfig(
+                                                            Config.just(ConfigSources.create(Map.of(
+                                                                    "direction", "INCOMING",
+                                                                    ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "events",
+                                                                    ConnectorConfig.CONNECTOR_ATTRIBUTE,
+                                                                    FileConnectorProvider.CONNECTOR_TYPE,
+                                                                    FileConnectorConfig.PATH_PROPERTY,
+                                                                    tempDir.resolve("events.log").toString(),
+                                                                    FileConnectorConfig.MAX_BATCH_BYTES_PROPERTY, value)))));
+            assertThat(failure.getMessage(), is("max-batch-bytes must be greater than zero"));
+        }
+    }
+
+    @Test
+    void testMaxLineBytesMustNotExceedMaxBatchBytes(@TempDir Path tempDir) {
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> incomingConfig(tempDir.resolve("events.log"), FileConnectorConfig.DEFAULT_LINE_SEPARATOR, 5, 4));
+
+        assertThat(failure.getMessage(), is("max-line-bytes must not exceed max-batch-bytes"));
     }
 
     @Test
@@ -750,7 +799,6 @@ class FileConnectorTest {
         assertThat(handled.getFirst(), sameInstance(attempts.get(1)));
         assertThat(attempts.getFirst().subset(List.of(1)).sameDelivery(attempts.get(1)), is(true));
         assertThat(attempts.getFirst().subset(List.of(2)).sameDelivery(attempts.get(2)), is(true));
-        assertThat(attempts.get(1).admissionBytes().isPresent(), is(true));
         assertThat(offset, is(Math.toIntExact(Files.size(input))));
     }
 
@@ -1038,24 +1086,26 @@ class FileConnectorTest {
     void testIncompleteTrailingUtf8SequenceWaitsForRemainingBytes(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         byte[] emoji = "\uD83D\uDE00".getBytes(StandardCharsets.UTF_8);
-        Files.writeString(input, "first\n");
+        Files.writeString(input, "one\n");
         Files.write(input, Arrays.copyOf(emoji, 2), StandardOpenOption.APPEND);
         List<List<String>> deliveries = new ArrayList<>();
         ConnectorSourceContext context = retryingContext(messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input, emoji.length),
+                                                          context,
+                                                          new AtomicBoolean());
         FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
 
         cursor = source.emitAppendedLines(input, cursor);
 
-        assertThat(deliveries, is(List.of(List.of("first"))));
-        assertThat(cursor.offset(), is((long) "first\n".getBytes(StandardCharsets.UTF_8).length));
+        assertThat(deliveries, is(List.of(List.of("one"))));
+        assertThat(cursor.offset(), is((long) "one\n".getBytes(StandardCharsets.UTF_8).length));
 
         Files.write(input,
                     new byte[] {emoji[2], emoji[3], '\n'},
                     StandardOpenOption.APPEND);
         cursor = source.emitAppendedLines(input, cursor);
 
-        assertThat(deliveries, is(List.of(List.of("first"), List.of("\uD83D\uDE00"))));
+        assertThat(deliveries, is(List.of(List.of("one"), List.of("\uD83D\uDE00"))));
         assertThat(cursor.offset(), is(Files.size(input)));
     }
 
@@ -1064,9 +1114,7 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "first\nsecond\nthird\nfourth\nfifth\n");
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(2,
-                                                        1024,
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
         var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
 
         int offset = source.emitAppendedLines(input, 0);
@@ -1084,7 +1132,7 @@ class FileConnectorTest {
         Files.writeString(input, "good\nx\n");
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean rewritten = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(10, 4, messages -> {
+        ConnectorSourceContext context = boundedContext(1, messages -> {
             deliveries.add(entities(messages));
             if (rewritten.compareAndSet(false, true)) {
                 try {
@@ -1110,9 +1158,7 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "good\n");
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(10,
-                                                        32,
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
         var source = new FileIncomingConnector.FileSource(incomingConfig(input),
                                                           context,
                                                           new AtomicBoolean());
@@ -1133,9 +1179,7 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "good\nlong-tail");
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(10,
-                                                        32,
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
         var source = new FileIncomingConnector.FileSource(incomingConfig(input),
                                                           context,
                                                           new AtomicBoolean());
@@ -1156,7 +1200,7 @@ class FileConnectorTest {
     void testChunkReadStartsAfterPendingReservation(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "first\n");
-        TrackingReservationContext context = new TrackingReservationContext(4, 64, ignored -> {
+        TrackingReservationContext context = new TrackingReservationContext(4, ignored -> {
         });
         AtomicBoolean readObserved = new AtomicBoolean();
         var source = new FileIncomingConnector.FileSource(
@@ -1174,14 +1218,13 @@ class FileConnectorTest {
 
         assertThat(readObserved.get(), is(true));
         assertThat(context.reservations().getFirst().reservedMessages(), is(4));
-        assertThat(context.reservations().getFirst().reservedBytes(), is(64L));
     }
 
     @Test
     void testEmptyChunkReadReleasesPendingReservation(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "");
-        TrackingReservationContext context = new TrackingReservationContext(4, 64, ignored -> {
+        TrackingReservationContext context = new TrackingReservationContext(4, ignored -> {
         });
         var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
 
@@ -1198,7 +1241,7 @@ class FileConnectorTest {
     void testActualChunkShrinksPendingReservationBeforeStart(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "one\n");
-        TrackingReservationContext context = new TrackingReservationContext(10, 100, ignored -> {
+        TrackingReservationContext context = new TrackingReservationContext(10, ignored -> {
         });
         var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
 
@@ -1207,9 +1250,7 @@ class FileConnectorTest {
         assertThat(offset, is((int) Files.size(input)));
         TrackingReservation started = context.reservations().getFirst();
         assertThat(started.reservedMessages(), is(10));
-        assertThat(started.reservedBytes(), is(100L));
         assertThat(started.actualMessages(), is(1));
-        assertThat(started.actualBytes(), is(3L));
         assertThat(started.delivery().closed(), is(true));
         TrackingReservation empty = context.reservations().get(1);
         assertThat(empty.started(), is(false));
@@ -1222,7 +1263,7 @@ class FileConnectorTest {
         Files.writeString(input, "one\n");
         AtomicInteger attempts = new AtomicInteger();
         AtomicBoolean leaseRetainedDuringFailureHandling = new AtomicBoolean();
-        TrackingReservationContext context = new TrackingReservationContext(10, 100, ignored -> {
+        TrackingReservationContext context = new TrackingReservationContext(10, ignored -> {
             if (attempts.getAndIncrement() == 0) {
                 throw new IllegalStateException("expected downstream failure");
             }
@@ -1255,7 +1296,7 @@ class FileConnectorTest {
         Files.writeString(input, original);
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean replaced = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(1, 1024, messages -> {
+        ConnectorSourceContext context = boundedContext(1, messages -> {
             deliveries.add(entities(messages));
             if (replaced.compareAndSet(false, true)) {
                 replace(input, replacement);
@@ -1278,7 +1319,7 @@ class FileConnectorTest {
         Files.writeString(input, "old-one\nold-two\n");
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean truncated = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(1, 1024, messages -> {
+        ConnectorSourceContext context = boundedContext(1, messages -> {
             deliveries.add(entities(messages));
             if (truncated.compareAndSet(false, true)) {
                 try {
@@ -1307,9 +1348,7 @@ class FileConnectorTest {
         assertThat(replacement.length(), is((int) Files.size(input)));
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean rewritten = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(2,
-                                                        100_000,
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1352,9 +1391,7 @@ class FileConnectorTest {
         List<List<String>> deliveries = new ArrayList<>();
         AtomicLong validationBytes = new AtomicLong();
         AtomicBoolean rewritten = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(2,
-                                                        originalPayload.length() + "later".length(),
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1392,9 +1429,7 @@ class FileConnectorTest {
         List<List<String>> deliveries = new ArrayList<>();
         AtomicInteger validationReads = new AtomicInteger();
         AtomicInteger appends = new AtomicInteger();
-        ConnectorSourceContext context = boundedContext(1,
-                                                        64,
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1440,9 +1475,7 @@ class FileConnectorTest {
         var lastModified = Files.getLastModifiedTime(input);
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean rewritten = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(1,
-                                                        20_000,
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1488,9 +1521,7 @@ class FileConnectorTest {
         var lastModified = Files.getLastModifiedTime(input);
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean rewritten = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(2,
-                                                        100_000,
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1526,7 +1557,7 @@ class FileConnectorTest {
         Files.write(input, new byte[guardBytes * 4]);
         AtomicLong cursorBytes = new AtomicLong();
         AtomicLong validationBytes = new AtomicLong();
-        ConnectorSourceContext context = boundedContext(1, 1, messages -> {
+        ConnectorSourceContext context = boundedContext(1, messages -> {
         });
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
@@ -1567,9 +1598,7 @@ class FileConnectorTest {
         Files.writeString(input, payload + "\n");
         List<List<String>> deliveries = new ArrayList<>();
         AtomicLong validationBytes = new AtomicLong();
-        ConnectorSourceContext context = boundedContext(1,
-                                                        payload.length(),
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1610,9 +1639,7 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, originalPayload + "\n");
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(10,
-                                                        100_000,
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
         var source = new FileIncomingConnector.FileSource(incomingConfig(input),
                                                           context,
                                                           new AtomicBoolean());
@@ -1643,9 +1670,7 @@ class FileConnectorTest {
         Files.writeString(input, "old");
         var lastModified = Files.getLastModifiedTime(input);
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(1,
-                                                        32,
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
         var source = new FileIncomingConnector.FileSource(incomingConfig(input),
                                                           context,
                                                           new AtomicBoolean());
@@ -1669,9 +1694,7 @@ class FileConnectorTest {
         Files.writeString(input, "old-" + "a".repeat(16_384) + "\n");
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean truncated = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(2,
-                                                        100_000,
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1706,9 +1729,7 @@ class FileConnectorTest {
         Files.writeString(input, initialPayload + "\n");
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean appended = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(2,
-                                                        100_000,
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1737,18 +1758,71 @@ class FileConnectorTest {
     }
 
     @Test
-    void testIncomingLinesAreChunkedByUtf8ByteLimit(@TempDir Path tempDir) throws Exception {
+    void testIncomingLinesAreChunkedByAggregateUtf8PayloadBytes(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "one\n\u00E9\u00E9\nx\n");
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(10,
-                                                        5,
-                                                        messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+        ConnectorSourceContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input, FileConnectorConfig.DEFAULT_LINE_SEPARATOR, 4, 5),
+                context,
+                new AtomicBoolean());
 
         int offset = source.emitAppendedLines(input, 0);
 
         assertThat(deliveries, is(List.of(List.of("one"), List.of("\u00E9\u00E9", "x"))));
+        assertThat(offset, is((int) Files.size(input)));
+    }
+
+    @Test
+    void testIncompleteLineReceivesFreshAggregateBudgetAfterPriorDelivery(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "aa\nbb");
+        List<List<String>> deliveries = new ArrayList<>();
+        ConnectorSourceContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input, FileConnectorConfig.DEFAULT_LINE_SEPARATOR, 4, 4),
+                context,
+                new AtomicBoolean());
+        FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
+
+        cursor = source.emitAppendedLines(input, cursor);
+
+        assertThat(deliveries, is(List.of(List.of("aa"))));
+        assertThat(cursor.offset(), is(3L));
+
+        append(input, "\ncc\n");
+        cursor = source.emitAppendedLines(input, cursor);
+
+        assertThat(deliveries, is(List.of(List.of("aa"), List.of("bb", "cc"))));
+        assertThat(cursor.offset(), is(Files.size(input)));
+    }
+
+    @Test
+    void testOverBudgetTailRewriteDoesNotReplayCommittedLine(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "aa\nbbb\n");
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicBoolean rewritten = new AtomicBoolean();
+        ConnectorSourceContext context = boundedContext(10, messages -> {
+            deliveries.add(entities(messages));
+            if (rewritten.compareAndSet(false, true)) {
+                try {
+                    Files.writeString(input, "aa\nccc\n");
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+        });
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input, FileConnectorConfig.DEFAULT_LINE_SEPARATOR, 3, 4),
+                context,
+                new AtomicBoolean());
+
+        int offset = source.emitAppendedLines(input, 0);
+
+        assertThat(rewritten.get(), is(true));
+        assertThat(deliveries, is(List.of(List.of("aa"), List.of("ccc"))));
         assertThat(offset, is((int) Files.size(input)));
     }
 
@@ -1759,10 +1833,11 @@ class FileConnectorTest {
         String separator = "\u2028";
         Files.writeString(input, payload + separator);
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(1,
-                                                        payload.length(),
-                                                        messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input, separator),
+        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input,
+                                                                         separator,
+                                                                         payload.length(),
+                                                                         payload.length()),
                                                           context,
                                                           new AtomicBoolean());
 
@@ -1782,10 +1857,11 @@ class FileConnectorTest {
         System.arraycopy(separator, 0, initial, payload.getBytes(StandardCharsets.UTF_8).length, 2);
         Files.write(input, initial);
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(1,
-                                                        payload.length(),
-                                                        messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input, "\u2028"),
+        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input,
+                                                                         "\u2028",
+                                                                         payload.length(),
+                                                                         payload.length()),
                                                           context,
                                                           new AtomicBoolean());
 
@@ -1806,10 +1882,8 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "xaba");
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(1,
-                                                        1,
-                                                        messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input, "abab"),
+        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input, "abab", 1, 1),
                                                           context,
                                                           new AtomicBoolean());
 
@@ -1831,9 +1905,7 @@ class FileConnectorTest {
         Files.writeString(input, "x".repeat(32_768));
         List<List<String>> deliveries = new ArrayList<>();
         AtomicInteger reads = new AtomicInteger();
-        ConnectorSourceContext context = boundedContext(10,
-                                                        4,
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1845,7 +1917,7 @@ class FileConnectorTest {
             }
         };
         var source = new FileIncomingConnector.FileSource(
-                incomingConfig(input),
+                incomingConfig(input, 4),
                 context,
                 new AtomicBoolean(),
                 new FileIncomingConnector.WatchRegistrationListener() {
@@ -1857,9 +1929,39 @@ class FileConnectorTest {
         assertThat(failure.channel(), is("events"));
         assertThat(failure.reason(), is(MessagingRejectedException.Reason.OVERSIZED));
         assertThat(failure.getMessage(),
-                   is("File line at byte offset 0 requires 5 admission bytes, exceeding the channel limit of 4"));
+                   is("File line at byte offset 0 exceeds max-line-bytes 4"));
         assertThat(reads.get(), is(1));
         assertThat(deliveries, is(List.of()));
+    }
+
+    @Test
+    void testMaxLineBytesCountsUtf8Bytes(@TempDir Path tempDir) throws Exception {
+        Path accepted = tempDir.resolve("accepted.log");
+        Files.writeString(accepted, "\u00E9\n");
+        List<List<String>> deliveries = new ArrayList<>();
+        var acceptedSource = new FileIncomingConnector.FileSource(
+                incomingConfig(accepted, 2),
+                boundedContext(1, messages -> deliveries.add(entities(messages))),
+                new AtomicBoolean());
+
+        int offset = acceptedSource.emitAppendedLines(accepted, 0);
+
+        assertThat(deliveries, is(List.of(List.of("\u00E9"))));
+        assertThat(offset, is((int) Files.size(accepted)));
+
+        Path rejected = tempDir.resolve("rejected.log");
+        Files.writeString(rejected, "\u00E9\n");
+        var rejectedSource = new FileIncomingConnector.FileSource(
+                incomingConfig(rejected, 1),
+                boundedContext(1, ignored -> { }),
+                new AtomicBoolean());
+
+        MessagingRejectedException failure = assertThrows(
+                MessagingRejectedException.class,
+                () -> rejectedSource.emitAppendedLines(rejected, 0));
+
+        assertThat(failure.reason(), is(MessagingRejectedException.Reason.OVERSIZED));
+        assertThat(failure.getMessage(), is("File line at byte offset 0 exceeds max-line-bytes 1"));
     }
 
     @Test
@@ -1869,21 +1971,18 @@ class FileConnectorTest {
         content[first.length] = (byte) 0xFF;
         content[first.length + 1] = '\n';
 
-        for (int maxBytes : List.of(4, 5)) {
-            Path input = tempDir.resolve("events-" + maxBytes + ".log");
-            Files.write(input, content);
-            List<List<String>> deliveries = new ArrayList<>();
-            ConnectorSourceContext context = boundedContext(2,
-                                                            maxBytes,
-                                                            messages -> deliveries.add(entities(messages)));
-            var source = new FileIncomingConnector.FileSource(incomingConfig(input),
-                                                              context,
-                                                              new AtomicBoolean());
+        Path input = tempDir.resolve("events.log");
+        Files.write(input, content);
+        List<List<String>> deliveries = new ArrayList<>();
+        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileSource(
+                incomingConfig(input, FileConnectorConfig.DEFAULT_LINE_SEPARATOR, 4, 4),
+                context,
+                new AtomicBoolean());
 
-            assertThrows(IOException.class, () -> source.emitAppendedLines(input, 0));
+        assertThrows(IOException.class, () -> source.emitAppendedLines(input, 0));
 
-            assertThat(deliveries, is(List.of(List.of("good"))));
-        }
+        assertThat(deliveries, is(List.of(List.of("good"))));
     }
 
     @Test
@@ -1893,9 +1992,7 @@ class FileConnectorTest {
         List<List<String>> deliveries = new ArrayList<>();
         AtomicLong scannedBytes = new AtomicLong();
         AtomicLong validatedBytes = new AtomicLong();
-        ConnectorSourceContext context = boundedContext(1,
-                                                        1_024,
-                                                        messages -> deliveries.add(entities(messages)));
+        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -2151,10 +2248,10 @@ class FileConnectorTest {
         Files.writeString(input, "");
         CountDownLatch reservationWait = new CountDownLatch(1);
         CountDownLatch neverReleased = new CountDownLatch(1);
-        ConnectorSourceContext context = new TrackingReservationContext(1, 64, ignored -> {
+        ConnectorSourceContext context = new TrackingReservationContext(1, ignored -> {
         }) {
             @Override
-            public ConnectorDeliveryReservation reserveDelivery(int maxMessages, long maxAdmissionBytes) {
+            public ConnectorDeliveryReservation reserveDelivery(int maxMessages) {
                 reservationWait.countDown();
                 try {
                     neverReleased.await();
@@ -2198,10 +2295,10 @@ class FileConnectorTest {
         CountDownLatch neverReleased = new CountDownLatch(1);
         AtomicInteger reservationCount = new AtomicInteger();
         AtomicBoolean blockedReservationClosed = new AtomicBoolean();
-        ConnectorSourceContext context = new TrackingReservationContext(1, 64, ignored -> {
+        ConnectorSourceContext context = new TrackingReservationContext(1, ignored -> {
         }) {
             @Override
-            public ConnectorDeliveryReservation reserveDelivery(int maxMessages, long maxAdmissionBytes) {
+            public ConnectorDeliveryReservation reserveDelivery(int maxMessages) {
                 if (reservationCount.incrementAndGet() == 1) {
                     return new ConnectorDeliveryReservation() {
                         @Override
@@ -2282,7 +2379,7 @@ class FileConnectorTest {
         Files.writeString(input, "");
         CountDownLatch readStarted = new CountDownLatch(1);
         CountDownLatch neverReleased = new CountDownLatch(1);
-        TrackingReservationContext context = new TrackingReservationContext(1, 64, ignored -> {
+        TrackingReservationContext context = new TrackingReservationContext(1, ignored -> {
         });
         var source = new FileIncomingConnector.FileSource(
                 incomingConfig(input),
@@ -2469,7 +2566,7 @@ class FileConnectorTest {
         FileConnectorProvider provider = new FileConnectorProvider();
         IncomingEndpoint source = provider.createIncomingEndpoint(
                 incomingConfig(input),
-                new TrackingReservationContext(1, 64, ignored -> {
+                new TrackingReservationContext(1, ignored -> {
                 }));
         source.prepareForGraph();
         AtomicReference<Throwable> failure = new AtomicReference<>();
@@ -2529,13 +2626,33 @@ class FileConnectorTest {
         return incomingConfig(path, FileConnectorConfig.DEFAULT_LINE_SEPARATOR);
     }
 
+    private static FileConnectorConfig incomingConfig(Path path, int maxLineBytes) {
+        return incomingConfig(path, FileConnectorConfig.DEFAULT_LINE_SEPARATOR, maxLineBytes);
+    }
+
     private static FileConnectorConfig incomingConfig(Path path, String lineSeparator) {
+        return incomingConfig(path, lineSeparator, FileConnectorConfig.DEFAULT_MAX_LINE_BYTES);
+    }
+
+    private static FileConnectorConfig incomingConfig(Path path, String lineSeparator, int maxLineBytes) {
+        return incomingConfig(path,
+                              lineSeparator,
+                              maxLineBytes,
+                              FileConnectorConfig.DEFAULT_MAX_BATCH_BYTES);
+    }
+
+    private static FileConnectorConfig incomingConfig(Path path,
+                                                      String lineSeparator,
+                                                      int maxLineBytes,
+                                                      long maxBatchBytes) {
         return FileConnectorConfig.builder()
                 .direction(ConnectorConfig.Direction.INCOMING)
                 .channel("events")
                 .connector(FileConnectorProvider.CONNECTOR_TYPE)
                 .path(path)
                 .lineSeparator(lineSeparator)
+                .maxLineBytes(maxLineBytes)
+                .maxBatchBytes(maxBatchBytes)
                 .build();
     }
 
@@ -2610,9 +2727,7 @@ class FileConnectorTest {
         };
     }
 
-    private static ConnectorSourceContext boundedContext(int maxMessages,
-                                                         long maxBytes,
-                                                         BatchConsumer consumer) {
+    private static ConnectorSourceContext boundedContext(int maxMessages, BatchConsumer consumer) {
         return new ConnectorSourceContext() {
             @Override
             public String channelName() {
@@ -2622,11 +2737,6 @@ class FileConnectorTest {
             @Override
             public int maxDeliveryMessages() {
                 return maxMessages;
-            }
-
-            @Override
-            public long maxDeliveryBytes() {
-                return maxBytes;
             }
 
             @Override
@@ -2665,13 +2775,11 @@ class FileConnectorTest {
 
     private static class TrackingReservationContext implements ConnectorSourceContext {
         private final int maxMessages;
-        private final long maxBytes;
         private final BatchConsumer consumer;
         private final List<TrackingReservation> reservations = new ArrayList<>();
 
-        private TrackingReservationContext(int maxMessages, long maxBytes, BatchConsumer consumer) {
+        private TrackingReservationContext(int maxMessages, BatchConsumer consumer) {
             this.maxMessages = maxMessages;
-            this.maxBytes = maxBytes;
             this.consumer = consumer;
         }
 
@@ -2686,13 +2794,8 @@ class FileConnectorTest {
         }
 
         @Override
-        public long maxDeliveryBytes() {
-            return maxBytes;
-        }
-
-        @Override
-        public ConnectorDeliveryReservation reserveDelivery(int maxMessages, long maxAdmissionBytes) {
-            TrackingReservation reservation = new TrackingReservation(maxMessages, maxAdmissionBytes);
+        public ConnectorDeliveryReservation reserveDelivery(int maxMessages) {
+            TrackingReservation reservation = new TrackingReservation(maxMessages);
             reservations.add(reservation);
             return reservation;
         }
@@ -2718,31 +2821,26 @@ class FileConnectorTest {
 
     private static final class TrackingReservation implements ConnectorDeliveryReservation {
         private final int reservedMessages;
-        private final long reservedBytes;
         private boolean started;
         private boolean closed;
         private int actualMessages;
-        private long actualBytes;
         private TrackingDelivery delivery;
 
-        private TrackingReservation(int reservedMessages, long reservedBytes) {
+        private TrackingReservation(int reservedMessages) {
             this.reservedMessages = reservedMessages;
-            this.reservedBytes = reservedBytes;
         }
 
         @Override
         public <T> ConnectorDelivery start(MessageBatch<T> messages,
                                            Runnable action) {
-            long admissionBytes = messages.admissionBytes().orElseThrow();
             if (!open()) {
                 throw new IllegalStateException("Reservation is not open");
             }
-            if (messages.size() > reservedMessages || admissionBytes > reservedBytes) {
+            if (messages.size() > reservedMessages) {
                 throw new IllegalArgumentException("Actual delivery exceeds reservation");
             }
             started = true;
             actualMessages = messages.size();
-            actualBytes = admissionBytes;
             delivery = new TrackingDelivery(action);
             delivery.run();
             return delivery;
@@ -2769,10 +2867,6 @@ class FileConnectorTest {
             return reservedMessages;
         }
 
-        private long reservedBytes() {
-            return reservedBytes;
-        }
-
         private boolean started() {
             return started;
         }
@@ -2783,10 +2877,6 @@ class FileConnectorTest {
 
         private int actualMessages() {
             return actualMessages;
-        }
-
-        private long actualBytes() {
-            return actualBytes;
         }
 
         private TrackingDelivery delivery() {

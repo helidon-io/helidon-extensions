@@ -175,7 +175,6 @@ public interface KafkaMessage<K, V> extends Message<V> {
         private final K key;
         private final V entity;
         private final List<Header> headers = new ArrayList<>();
-        private OptionalLong admissionBytes = OptionalLong.empty();
 
         private Builder(K key, V entity) {
             this.key = key;
@@ -208,32 +207,12 @@ public interface KafkaMessage<K, V> extends Message<V> {
         }
 
         /**
-         * Set the logical byte weight of this complete Kafka message for admission control.
-         * <p>
-         * The supplied value must conservatively account for the key, value, native and portable header views, and
-         * any other logical content retained while the message occupies admission. The built-in Kafka message
-         * implementation uses the larger of the supplied value and the conservative lower bound it can calculate for
-         * known key, value, and header content.
-         *
-         * @param admissionBytes full message admission weight
-         * @return updated builder
-         * @throws IllegalArgumentException if the size is negative
-         */
-        public Builder<K, V> admissionBytes(long admissionBytes) {
-            if (admissionBytes < 0) {
-                throw new IllegalArgumentException("Message admission bytes must be zero or greater");
-            }
-            this.admissionBytes = OptionalLong.of(admissionBytes);
-            return this;
-        }
-
-        /**
          * Build an immutable Kafka message.
          *
          * @return immutable Kafka message
          */
         public KafkaMessage<K, V> build() {
-            return KafkaMessageImpl.create(key, entity, headers, admissionBytes);
+            return KafkaMessageImpl.create(key, entity, headers);
         }
     }
 }

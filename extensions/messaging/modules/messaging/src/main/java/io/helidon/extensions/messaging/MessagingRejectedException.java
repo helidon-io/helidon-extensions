@@ -97,14 +97,9 @@ public class MessagingRejectedException extends MessagingException {
         SATURATED,
 
         /**
-         * The delivery exceeds a configured message-count, byte, or connector-reservation limit.
+         * The delivery exceeds a configured message-count or connector-reservation limit.
          */
         OVERSIZED,
-
-        /**
-         * No conservative message admission weight was available.
-         */
-        UNKNOWN_SIZE,
 
         /**
          * The messaging runtime is shutting down.

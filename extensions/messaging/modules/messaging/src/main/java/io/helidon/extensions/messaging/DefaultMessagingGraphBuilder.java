@@ -32,7 +32,6 @@ import java.util.stream.Stream;
 import io.helidon.common.GenericType;
 
 final class DefaultMessagingGraphBuilder implements MessagingGraph.Builder {
-    private final List<MessageSizeEstimator> messageSizeEstimators = new ArrayList<>();
     private final List<SourceDefinition> sources = new ArrayList<>();
     private final Set<Stream<?>> sourceIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<ConnectorSink> connectorIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -50,13 +49,6 @@ final class DefaultMessagingGraphBuilder implements MessagingGraph.Builder {
     public MessagingGraph.Builder executionConfig(MessagingExecutionConfig config) {
         requireUninitialized();
         executionConfig = Objects.requireNonNull(config);
-        return this;
-    }
-
-    @Override
-    public MessagingGraph.Builder addMessageSizeEstimator(MessageSizeEstimator estimator) {
-        requireUninitialized();
-        messageSizeEstimators.add(Objects.requireNonNull(estimator));
         return this;
     }
 
@@ -310,7 +302,7 @@ final class DefaultMessagingGraphBuilder implements MessagingGraph.Builder {
 
     private DefaultMessagingGraph graph() {
         if (graph == null) {
-            graph = new DefaultMessagingGraph(new DeliveryEngine(executionConfig, messageSizeEstimators));
+            graph = new DefaultMessagingGraph(new DeliveryEngine(executionConfig));
         }
         return graph;
     }

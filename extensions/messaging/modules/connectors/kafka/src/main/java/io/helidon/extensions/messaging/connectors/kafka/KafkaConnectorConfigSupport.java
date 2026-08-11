@@ -175,12 +175,11 @@ final class KafkaConnectorConfigSupport {
     }
 
     static Map<String, Object> consumerProperties(KafkaConnectorConfig config) {
-        return consumerProperties(config, Integer.MAX_VALUE, Long.MAX_VALUE);
+        return consumerProperties(config, Integer.MAX_VALUE);
     }
 
     static Map<String, Object> consumerProperties(KafkaConnectorConfig config,
-                                                  int maxDeliveryMessages,
-                                                  long maxDeliveryBytes) {
+                                                  int maxDeliveryMessages) {
         Map<String, Object> properties = kafkaProperties(config);
         properties.put(BOOTSTRAP_SERVERS_PROPERTY, config.bootstrapServers());
         properties.put(GROUP_ID_PROPERTY, config.groupId().orElse(config.channel()));
@@ -192,15 +191,6 @@ final class KafkaConnectorConfigSupport {
               ConsumerConfig.MAX_POLL_RECORDS_CONFIG,
               maxDeliveryMessages,
               ConsumerConfig.DEFAULT_MAX_POLL_RECORDS);
-        int byteLimit = (int) Math.min(Integer.MAX_VALUE, maxDeliveryBytes);
-        bound(properties,
-              ConsumerConfig.FETCH_MAX_BYTES_CONFIG,
-              byteLimit,
-              ConsumerConfig.DEFAULT_FETCH_MAX_BYTES);
-        bound(properties,
-              ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG,
-              byteLimit,
-              ConsumerConfig.DEFAULT_MAX_PARTITION_FETCH_BYTES);
         return Map.copyOf(properties);
     }
 

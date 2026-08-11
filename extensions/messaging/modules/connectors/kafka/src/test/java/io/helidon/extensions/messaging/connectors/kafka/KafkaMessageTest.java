@@ -16,159 +16,30 @@
 
 package io.helidon.extensions.messaging.connectors.kafka;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Optional;
-
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.common.header.internals.RecordHeaders;
-import org.apache.kafka.common.record.TimestampType;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class KafkaMessageTest {
     @Test
-    void testProgrammaticMessageReportsKnownAdmissionWeight() {
-        KafkaMessage<String, String> message = KafkaMessage.<String, String>builder("κ", "payload")
+    void testProgrammaticMessageContainsOnlyOutgoingMetadata() {
+        byte[] binary = {1, 2};
+        KafkaMessage<String, String> message = KafkaMessage.<String, String>builder("key", "payload")
                 .header("trace", "abc")
-                .rawHeader("binary", new byte[] {1, 2})
-                .rawHeader("null", null)
+                .rawHeader("binary", binary)
                 .build();
+        binary[0] = 9;
 
-        assertThat(message.admissionBytes().orElseThrow(), is(34L));
-    }
-
-    @Test
-    void testIncomingMessageAccountsForRecordMetadataAndPortableHeaderView() {
-        ConsumerRecord<String, String> record = new ConsumerRecord<>(
-                "events",
-                3,
-                19,
-                1234,
-                TimestampType.CREATE_TIME,
-                2,
-                7,
-                "κ",
-                "payload",
-                new RecordHeaders().add("trace", "abc".getBytes(StandardCharsets.UTF_8)),
-                Optional.of(11));
-
-        KafkaMessage<String, String> message = KafkaMessageImpl.create(record);
-
-        assertThat(message.admissionBytes().orElseThrow(), is(51L));
-    }
-
-    @Test
-    void testIncomingMessageCannotUnderstateRetainedStringContent() {
-        ConsumerRecord<String, String> record = new ConsumerRecord<>(
-                "events",
-                3,
-                19,
-                1234,
-                TimestampType.CREATE_TIME,
-                1,
-                1,
-                "expanded-key",
-                "\uFFFD-expanded-value",
-                new RecordHeaders(),
-                Optional.empty());
-
-        KafkaMessage<String, String> message = KafkaMessageImpl.create(record);
-
-        assertThat(message.admissionBytes().orElseThrow(), is(57L));
-    }
-
-    @Test
-    void testIncomingMessageCannotUnderstateRetainedBinaryContent() {
-        ConsumerRecord<byte[], byte[]> record = new ConsumerRecord<>(
-                "events",
-                3,
-                19,
-                1234,
-                TimestampType.CREATE_TIME,
-                1,
-                1,
-                new byte[8],
-                new byte[32],
-                new RecordHeaders(),
-                Optional.empty());
-
-        KafkaMessage<byte[], byte[]> message = KafkaMessageImpl.create(record);
-
-        assertThat(message.admissionBytes().orElseThrow(), is(67L));
-    }
-
-    @Test
-    void testIncomingMessageKeepsUnsupportedRetainedContentUnknownDespiteWireSize() {
-        ConsumerRecord<UnsupportedPayload, UnsupportedPayload> record = new ConsumerRecord<>(
-                "events",
-                3,
-                19,
-                1234,
-                TimestampType.CREATE_TIME,
-                1,
-                1,
-                new UnsupportedPayload("key"),
-                new UnsupportedPayload("payload"),
-                new RecordHeaders(),
-                Optional.empty());
-
-        KafkaMessage<UnsupportedPayload, UnsupportedPayload> message = KafkaMessageImpl.create(record);
-
-        assertThat(message.admissionBytes().isEmpty(), is(true));
-    }
-
-    @Test
-    void testProgrammaticMessageKeepsUnknownAdmissionWeightExplicit() {
-        KafkaMessage<String, UnsupportedPayload> message =
-                KafkaMessage.create("key", new UnsupportedPayload("payload"));
-
-        assertThat(message.admissionBytes().isEmpty(), is(true));
-    }
-
-    @Test
-    void testProgrammaticMessageAcceptsExplicitAdmissionWeightForCustomTypes() {
-        KafkaMessage<UnsupportedPayload, UnsupportedPayload> message =
-                KafkaMessage.builder(new UnsupportedPayload("key"), new UnsupportedPayload("payload"))
-                        .rawHeader("binary", new byte[] {1, 2})
-                        .admissionBytes(128)
-                        .build();
-
-        assertThat(message.admissionBytes().orElseThrow(), is(128L));
-    }
-
-    @Test
-    void testExplicitAdmissionWeightCannotUnderstateKnownKafkaContent() {
-        KafkaMessage<String, String> message = KafkaMessage.<String, String>builder("κ", "payload")
-                .header("trace", "abc")
-                .admissionBytes(1)
-                .build();
-
-        assertThat(message.admissionBytes().orElseThrow(), is(20L));
-    }
-
-    @Test
-    void testExplicitAdmissionWeightCannotUnderstateKnownPartsOfCustomMessage() {
-        KafkaMessage<String, UnsupportedPayload> message =
-                KafkaMessage.<String, UnsupportedPayload>builder("key", new UnsupportedPayload("payload"))
-                        .rawHeader("binary", new byte[] {1, 2})
-                        .admissionBytes(1)
-                        .build();
-
-        assertThat(message.admissionBytes().orElseThrow(), is(13L));
-    }
-
-    @Test
-    void testProgrammaticMessageRejectsNegativeAdmissionWeight() {
-        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
-                                                       () -> KafkaMessage.builder("key", "payload")
-                                                               .admissionBytes(-1));
-
-        assertThat(thrown.getMessage(), is("Message admission bytes must be zero or greater"));
-    }
-
-    private record UnsupportedPayload(String value) {
+        assertThat(message.key().orElseThrow(), is("key"));
+        assertThat(message.entity(), is("payload"));
+        assertThat(message.headers().get("trace"), is("abc"));
+        assertThat(message.kafkaHeaders().get(1).value().orElseThrow()[0], is((byte) 1));
+        assertThat(message.topic().isEmpty(), is(true));
+        assertThat(message.partition().isEmpty(), is(true));
+        assertThat(message.offset().isEmpty(), is(true));
+        assertThat(message.timestamp().isEmpty(), is(true));
+        assertThat(message.timestampType().isEmpty(), is(true));
+        assertThat(message.leaderEpoch().isEmpty(), is(true));
     }
 }

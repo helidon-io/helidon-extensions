@@ -46,4 +46,24 @@ interface FileConnectorConfigBlueprint extends ConnectorConfig {
     @Option.Configured(FileConnectorConfigSupport.LINE_SEPARATOR_PROPERTY)
     @Option.DefaultCode("\"\\n\"")
     String lineSeparator();
+
+    /**
+     * Maximum UTF-8 payload bytes accepted for one incoming line. The configured line separator is not included. This
+     * value must not exceed {@link #maxBatchBytes()}.
+     *
+     * @return maximum incoming line payload size in bytes
+     */
+    @Option.Configured(FileConnectorConfigSupport.MAX_LINE_BYTES_PROPERTY)
+    @Option.DefaultCode("FileConnectorConfigSupport.DEFAULT_MAX_LINE_BYTES")
+    int maxLineBytes();
+
+    /**
+     * Maximum total UTF-8 payload bytes retained in one incoming delivery batch. Configured line separators are not
+     * included. This value must be at least {@link #maxLineBytes()}.
+     *
+     * @return maximum incoming batch payload size in bytes
+     */
+    @Option.Configured(FileConnectorConfigSupport.MAX_BATCH_BYTES_PROPERTY)
+    @Option.DefaultCode("FileConnectorConfigSupport.DEFAULT_MAX_BATCH_BYTES")
+    long maxBatchBytes();
 }
