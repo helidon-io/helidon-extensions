@@ -16,12 +16,8 @@
 
 package io.helidon.extensions.messaging;
 
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.OptionalLong;
-import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -30,16 +26,13 @@ import java.util.concurrent.locks.ReentrantLock;
 final class IndependentConnectorDeliveryReservation implements ConnectorDeliveryReservation {
     private final ConnectorSourceContext context;
     private final int maxMessages;
-    private final long maxAdmissionBytes;
     private final ReentrantLock stateLock = new ReentrantLock();
     private State state = State.OPEN;
 
     IndependentConnectorDeliveryReservation(ConnectorSourceContext context,
-                                            int maxMessages,
-                                            long maxAdmissionBytes) {
+                                            int maxMessages) {
         this.context = Objects.requireNonNull(context);
         this.maxMessages = maxMessages;
-        this.maxAdmissionBytes = maxAdmissionBytes;
     }
 
     @Override
@@ -107,76 +100,16 @@ final class IndependentConnectorDeliveryReservation implements ConnectorDelivery
     private void validateActual(MessageBatch<?> batch, Runnable delivery) {
         Objects.requireNonNull(batch);
         Objects.requireNonNull(delivery);
-        if (batch.size() <= 0) {
-            state = State.CLOSED;
-            throw new IllegalArgumentException("Connector delivery must contain at least one message");
-        }
-        OptionalLong declaredBatchBytes = Objects.requireNonNull(batch.admissionBytes());
-        if (declaredBatchBytes.isEmpty()) {
-            state = State.CLOSED;
-            throw new IllegalArgumentException("Connector delivery admission bytes must be declared");
-        }
-        if (declaredBatchBytes.getAsLong() < 0) {
-            state = State.CLOSED;
-            throw new IllegalArgumentException("Connector delivery admission bytes must be zero or greater");
-        }
-        long knownBytes = 0;
-        try {
-            for (Message<?> message : batch.messages()) {
-                OptionalLong declared = declaredAdmissionBytes(
-                        Objects.requireNonNull(message),
-                        Collections.newSetFromMap(new IdentityHashMap<>()));
-                if (declared.isPresent()) {
-                    knownBytes = Math.addExact(knownBytes, declared.getAsLong());
-                }
-            }
-        } catch (ArithmeticException e) {
-            rejectOversized("Connector delivery admission size exceeds the supported range", e);
-        }
-        long actualBytes = Math.max(declaredBatchBytes.getAsLong(), knownBytes);
-        if (batch.size() > maxMessages || actualBytes > maxAdmissionBytes) {
-            rejectOversized("Connector delivery exceeds its pending reservation", null);
+        if (batch.size() > maxMessages) {
+            rejectOversized("Connector delivery exceeds its pending reservation");
         }
     }
 
-    private OptionalLong declaredAdmissionBytes(Message<?> message, Set<Message<?>> path) {
-        if (!path.add(message)) {
-            throw new IllegalArgumentException("Dead-letter message original-message chain must not be cyclic");
-        }
-        try {
-            OptionalLong result = Objects.requireNonNull(message.admissionBytes());
-            if (result.isPresent() && result.getAsLong() < 0) {
-                state = State.CLOSED;
-                throw new IllegalArgumentException("Message admission byte size must be zero or greater");
-            }
-            if (message instanceof DeadLetterMessage<?> deadLetterMessage
-                    && deadLetterMessage.originalMessage() != message) {
-                OptionalLong originalBytes = declaredAdmissionBytes(deadLetterMessage.originalMessage(), path);
-                if (originalBytes.isPresent()) {
-                    long deadLetterBytes = Math.addExact(originalBytes.getAsLong(),
-                                                        MessageSizes.headersBytes(message.headers()));
-                    if (result.isEmpty() || deadLetterBytes > result.getAsLong()) {
-                        result = OptionalLong.of(deadLetterBytes);
-                    }
-                }
-            }
-            return result;
-        } finally {
-            path.remove(message);
-        }
-    }
-
-    private void rejectOversized(String message, Throwable cause) {
+    private void rejectOversized(String message) {
         state = State.CLOSED;
-        if (cause == null) {
-            throw new MessagingRejectedException(context.channelName(),
-                                                 MessagingRejectedException.Reason.OVERSIZED,
-                                                 message + " on channel " + context.channelName());
-        }
         throw new MessagingRejectedException(context.channelName(),
                                              MessagingRejectedException.Reason.OVERSIZED,
-                                             message + " on channel " + context.channelName(),
-                                             cause);
+                                             message + " on channel " + context.channelName());
     }
 
     private enum State {

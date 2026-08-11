@@ -20,7 +20,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.OptionalLong;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -116,8 +115,7 @@ class MessagingGraphBuilderTest {
 
     @Test
     void subtypeMessagesRemainEnvelopesOnSupertypeChannelsAndProcessorTargets() {
-        MessagingGraph.Builder builder = MessagingGraph.builder()
-                .addMessageSizeEstimator(message -> OptionalLong.of(1));
+        MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<Object> directChannel = builder.channel("direct-objects", Object.class);
         MessagingChannel<String> processorInput = builder.channel("processor-strings", String.class);
         MessagingChannel<Object> processorOutput = builder.channel("processor-objects", Object.class);
@@ -152,8 +150,7 @@ class MessagingGraphBuilderTest {
 
     @Test
     void messageImplementationCanBeUsedAsPayload() throws InterruptedException {
-        MessagingGraph.Builder builder = MessagingGraph.builder()
-                .addMessageSizeEstimator(message -> OptionalLong.of(1));
+        MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<MessagePayload> input = builder.channel("message-payload-input", MessagePayload.class);
         MessagingChannel<MessagePayload> output = builder.channel("message-payload-output", MessagePayload.class);
         AtomicReference<MessagePayload> delivered = new AtomicReference<>();

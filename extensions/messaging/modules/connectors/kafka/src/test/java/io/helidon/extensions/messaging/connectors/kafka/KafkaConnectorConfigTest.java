@@ -123,7 +123,7 @@ class KafkaConnectorConfigTest {
     }
 
     @Test
-    void testConsumerAcquisitionIsCappedByRuntimeDeliveryLimits() {
+    void testConsumerRecordAcquisitionIsCappedByRuntimeMessageLimit() {
         KafkaConnectorConfig config = builder()
                 .direction(ConnectorConfig.Direction.INCOMING)
                 .bootstrapServers("broker:9092")
@@ -133,11 +133,11 @@ class KafkaConnectorConfigTest {
                                    ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, "1048576"))
                 .build();
 
-        Map<String, Object> properties = KafkaConnectorConfigSupport.consumerProperties(config, 7, 2_048);
+        Map<String, Object> properties = KafkaConnectorConfigSupport.consumerProperties(config, 7);
 
         assertThat(properties.get(ConsumerConfig.MAX_POLL_RECORDS_CONFIG), is(7));
-        assertThat(properties.get(ConsumerConfig.FETCH_MAX_BYTES_CONFIG), is(2_048));
-        assertThat(properties.get(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG), is(2_048));
+        assertThat(properties.get(ConsumerConfig.FETCH_MAX_BYTES_CONFIG), is("52428800"));
+        assertThat(properties.get(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG), is("1048576"));
     }
 
     private static KafkaConnectorConfig.Builder builder() {

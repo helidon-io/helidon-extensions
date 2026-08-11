@@ -77,8 +77,8 @@ import static java.nio.file.StandardWatchEventKinds.OVERFLOW;
  * until the attempted failure retries or settles. The cursor advances only after the entire captured range is
  * settled, so replacing the source before then can redeliver messages which had already succeeded. An unstructured
  * failure retries the complete batch.
- * Each retained batch and in-progress line scan is bounded by the source context's message-count and logical-byte
- * admission limits.
+ * Each retained batch is bounded by the source context's message-count limit and the connector's
+ * {@code max-batch-bytes} configuration. An in-progress line is bounded by {@code max-line-bytes}.
  * <p>
  * The file offset is not persisted. A replacement source starts at the file's current end and does not recover an
  * unsettled batch from an earlier source lifetime.
@@ -398,17 +398,19 @@ final class FileIncomingConnector {
         }
 
         FileCursor emitAppendedLines(Path path, FileCursor cursor) throws IOException, InterruptedException {
-            DeliveryLimits limits = deliveryLimits();
+            FileReadLimits limits = new FileReadLimits(context.maxDeliveryMessages(),
+                                                       config.maxLineBytes(),
+                                                       config.maxBatchBytes());
+            if (limits.maxMessages() <= 0) {
+                throw new MessagingException("File delivery message limit must be greater than zero");
+            }
             while (!closed.get() && !draining.get()) {
                 try (ConnectorDeliveryReservation reservation =
-                             context.reserveDelivery(limits.maxMessages(), limits.maxBytes())) {
+                             context.reserveDelivery(limits.maxMessages())) {
                     if (closed.get() || draining.get()) {
                         break;
                     }
-                    AppendedDelivery delivery = readAppendedLines(path,
-                                                                  cursor,
-                                                                  limits.maxMessages(),
-                                                                  limits.maxBytes());
+                    AppendedDelivery delivery = readAppendedLines(path, cursor, limits);
                     if (delivery.messages().isEmpty()) {
                         cursor = delivery.nextCursor();
                         break;
@@ -419,7 +421,6 @@ final class FileIncomingConnector {
 
                     MessageBatch<String> batch = MessageBatch.<String>builder()
                             .messages(delivery.messages())
-                            .admissionBytes(admissionBytes(delivery.messages()))
                             .build();
                     AtomicBoolean settled = new AtomicBoolean();
                     try (ConnectorDelivery deliveryLease =
@@ -436,22 +437,9 @@ final class FileIncomingConnector {
             return cursor;
         }
 
-        private DeliveryLimits deliveryLimits() {
-            int maxMessages = context.maxDeliveryMessages();
-            long maxBytes = context.maxDeliveryBytes();
-            if (maxMessages <= 0) {
-                throw new MessagingException("File delivery message limit must be greater than zero");
-            }
-            if (maxBytes < 0) {
-                throw new MessagingException("File delivery byte limit must be zero or greater");
-            }
-            return new DeliveryLimits(maxMessages, maxBytes);
-        }
-
         private AppendedDelivery readAppendedLines(Path path,
                                                    FileCursor cursor,
-                                                   int maxMessages,
-                                                   long maxBytes) throws IOException {
+                                                   FileReadLimits limits) throws IOException {
             for (int attempt = 0; attempt < SNAPSHOT_ATTEMPTS; attempt++) {
                 fileReadListener.beforeRead(path);
                 FileState before = fileState(path);
@@ -470,8 +458,7 @@ final class FileIncomingConnector {
                                                 cursorState,
                                                 readTracker,
                                                 opened,
-                                                maxMessages,
-                                                maxBytes);
+                                                limits);
                     } catch (IOException | RuntimeException e) {
                         if (e instanceof FileSnapshotChangedException) {
                             cursor = new FileCursor(cursor.offset(),
@@ -631,8 +618,8 @@ final class FileIncomingConnector {
                                               CursorState cursorState,
                                               FileReadTracker readTracker,
                                               FileState state,
-                                              int maxMessages,
-                                              long maxBytes) throws IOException {
+                                              FileReadLimits limits) throws IOException {
+            int maxMessages = limits.maxMessages();
             byte[] separator = config.lineSeparator().getBytes(StandardCharsets.UTF_8);
             int[] separatorPrefixes = separatorPrefixes(separator);
             IncompleteLineState incompleteLine = cursorState.incompleteLine();
@@ -640,7 +627,7 @@ final class FileIncomingConnector {
             ByteBuffer readBuffer = ByteBuffer.allocate(READ_BUFFER_SIZE);
             long lineBytes = incompleteLine == null ? 0 : incompleteLine.lineBytes();
             long acceptedFileBytes = 0;
-            long acceptedMessageBytes = 0;
+            long acceptedPayloadBytes = 0;
             int separatorMatch = incompleteLine == null ? 0 : incompleteLine.separatorMatch();
             boolean rescanTrailingLine = false;
             Utf8Validator utf8 = new Utf8Validator(incompleteLine == null ? null : incompleteLine.utf8State());
@@ -672,7 +659,8 @@ final class FileIncomingConnector {
                             separatorMatch(separator, separatorPrefixes, separatorMatch, value);
                     if (nextSeparatorMatch != separator.length) {
                         long definitePayloadBytes = nextLineBytes - nextSeparatorMatch;
-                        if (definitePayloadBytes > maxBytes - acceptedMessageBytes) {
+                        if (definitePayloadBytes > limits.maxLineBytes()
+                                || definitePayloadBytes > limits.maxBatchBytes() - acceptedPayloadBytes) {
                             if (messages.isEmpty()) {
                                 lineDigest.update(value);
                                 validateLineSnapshot(path,
@@ -682,8 +670,7 @@ final class FileIncomingConnector {
                                                      lineDigest);
                                 throw oversizedLine(context.channelName(),
                                                     cursorState.offset(),
-                                                    definitePayloadBytes,
-                                                    maxBytes);
+                                                    limits.maxLineBytes());
                             }
                             rescanTrailingLine = true;
                             break readLoop;
@@ -705,7 +692,9 @@ final class FileIncomingConnector {
 
                     long payloadBytes = nextLineBytes - separator.length;
                     if (messages.isEmpty()
-                            && (payloadBytes > maxBytes || nextLineBytes > Integer.MAX_VALUE - 8L)) {
+                            && (payloadBytes > limits.maxLineBytes()
+                                    || payloadBytes > limits.maxBatchBytes()
+                                    || nextLineBytes > Integer.MAX_VALUE - 8L)) {
                         lineDigest.update(value);
                         validateLineSnapshot(path,
                                              channel,
@@ -714,11 +703,10 @@ final class FileIncomingConnector {
                                              lineDigest);
                         throw oversizedLine(context.channelName(),
                                             cursorState.offset() + acceptedFileBytes,
-                                            payloadBytes,
-                                            maxBytes);
+                                            limits.maxLineBytes());
                     }
-                    if (payloadBytes > maxBytes
-                            || payloadBytes > maxBytes - acceptedMessageBytes
+                    if (payloadBytes > limits.maxLineBytes()
+                            || payloadBytes > limits.maxBatchBytes() - acceptedPayloadBytes
                             || nextLineBytes > Integer.MAX_VALUE - 8L) {
                         rescanTrailingLine = true;
                         break readLoop;
@@ -745,13 +733,13 @@ final class FileIncomingConnector {
                     messages.add(Message.create(decodeCompleteLine(framedLine, Math.toIntExact(payloadBytes))));
                     acceptedDigest.update(framedLine);
                     acceptedFileBytes += lineBytes;
-                    acceptedMessageBytes += payloadBytes;
+                    acceptedPayloadBytes += payloadBytes;
 
                     lineBytes = 0;
                     separatorMatch = 0;
                     utf8 = new Utf8Validator(null);
                     lineDigest = newDigest();
-                    if (messages.size() == maxMessages) {
+                    if (messages.size() == maxMessages || acceptedPayloadBytes == limits.maxBatchBytes()) {
                         break readLoop;
                     }
                 }
@@ -1032,20 +1020,6 @@ final class FileIncomingConnector {
             return batch.subset(localIndexes);
         }
 
-        private long admissionBytes(List<Message<String>> messages) {
-            long result = 0;
-            for (Message<String> message : messages) {
-                long messageBytes = message.admissionBytes()
-                        .orElseThrow(() -> new MessagingException("File message admission size is unknown"));
-                try {
-                    result = Math.addExact(result, messageBytes);
-                } catch (ArithmeticException e) {
-                    throw new MessagingException("File delivery admission size exceeds the supported range", e);
-                }
-            }
-            return result;
-        }
-
         private boolean awaitRetryDelay() throws InterruptedException {
             long remainingNanos = TimeUnit.NANOSECONDS.convert(context.failurePolicy().retryDelay());
             while (!closed.get() && remainingNanos > 0) {
@@ -1145,10 +1119,10 @@ final class FileIncomingConnector {
         }
     }
 
-    private record DeliveryLimits(int maxMessages, long maxBytes) {
+    private record LineReadContext(Path path, FileChannel channel) {
     }
 
-    private record LineReadContext(Path path, FileChannel channel) {
+    private record FileReadLimits(int maxMessages, int maxLineBytes, long maxBatchBytes) {
     }
 
     private record CursorState(long offset,
@@ -1404,12 +1378,11 @@ final class FileIncomingConnector {
 
     private static MessagingRejectedException oversizedLine(String channel,
                                                              long offset,
-                                                             long lineBytes,
-                                                             long maxBytes) {
+                                                             int maxLineBytes) {
         return new MessagingRejectedException(channel,
                                               MessagingRejectedException.Reason.OVERSIZED,
-                                              "File line at byte offset " + offset + " requires " + lineBytes
-                                                      + " admission bytes, exceeding the channel limit of " + maxBytes);
+                                              "File line at byte offset " + offset
+                                                      + " exceeds max-line-bytes " + maxLineBytes);
     }
 
     private static boolean isCancellation(MessagingRejectedException rejection) {

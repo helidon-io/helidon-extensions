@@ -19,7 +19,6 @@ package io.helidon.extensions.messaging;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -758,11 +757,6 @@ class DeclarativeRegistrationTest {
         @Override
         public Map<String, String> headers() {
             return Map.of();
-        }
-
-        @Override
-        public OptionalLong admissionBytes() {
-            return OptionalLong.of(0);
         }
     }
 }

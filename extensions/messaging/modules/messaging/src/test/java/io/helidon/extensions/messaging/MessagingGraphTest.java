@@ -1151,11 +1151,11 @@ class MessagingGraphTest {
     }
 
     private static DefaultMessagingGraph graph(MessagingExecutionConfig config) {
-        return new DefaultMessagingGraph(new DeliveryEngine(config, List.of()));
+        return new DefaultMessagingGraph(new DeliveryEngine(config));
     }
 
     private static DeliveryEngine engine(MessagingExecutionConfig config, String... channels) {
-        DeliveryEngine engine = new DeliveryEngine(config, List.of());
+        DeliveryEngine engine = new DeliveryEngine(config);
         for (String channel : channels) {
             engine.registerChannel(channel, config);
         }
@@ -1167,15 +1167,12 @@ class MessagingGraphTest {
                 .concurrency(1)
                 .queueCapacity(0)
                 .maxInFlightMessages(10)
-                .maxInFlightBytes(1024)
                 .shutdownTimeout(shutdownTimeout)
                 .build();
     }
 
     private static Message<String> message(String value) {
-        return Message.builder(value)
-                .admissionBytes(value.length())
-                .build();
+        return Message.create(value);
     }
 
     private static List<String> lifecycleEvents(List<String> events) {

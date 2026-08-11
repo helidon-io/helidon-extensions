@@ -67,7 +67,7 @@ public interface ConnectorDelivery extends AutoCloseable {
     void cancel();
 
     /**
-     * Release the delivery's message-count and byte admission after transport settlement.
+     * Release the delivery's message-count admission after transport settlement.
      * <p>
      * Connectors must retain this lease until the source record has been acknowledged, committed, negatively
      * acknowledged, or otherwise abandoned. Calling this method before processing terminates also requests

@@ -19,7 +19,6 @@ package io.helidon.extensions.messaging;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.OptionalLong;
 
 /**
  * Default immutable dead-letter message implementation.
@@ -92,19 +91,5 @@ final class DefaultDeadLetterMessage<T> implements DeadLetterMessage<T> {
     @Override
     public Map<String, String> headers() {
         return headers;
-    }
-
-    @Override
-    public OptionalLong admissionBytes() {
-        OptionalLong originalBytes = originalMessage.admissionBytes();
-        if (originalBytes.isEmpty()) {
-            return OptionalLong.empty();
-        }
-        try {
-            return OptionalLong.of(Math.addExact(originalBytes.getAsLong(),
-                                                 MessageSizes.headersBytes(headers)));
-        } catch (ArithmeticException e) {
-            return OptionalLong.empty();
-        }
     }
 }

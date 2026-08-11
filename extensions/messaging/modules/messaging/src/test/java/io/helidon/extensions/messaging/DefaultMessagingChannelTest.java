@@ -18,7 +18,6 @@ package io.helidon.extensions.messaging;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.OptionalLong;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -38,11 +37,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class DefaultMessagingChannelTest {
     @Test
-    void customPayloadUsesRegisteredEstimators() {
+    void customPayloadIsDelivered() {
         List<CustomPayload> delivered = new ArrayList<>();
-        MessagingGraph.Builder builder = MessagingGraph.builder()
-                .addMessageSizeEstimator(message -> OptionalLong.empty())
-                .addMessageSizeEstimator(message -> OptionalLong.of(message.entity().toString().length()));
+        MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<CustomPayload> channel = builder.channel("custom", CustomPayload.class);
         builder.messageSink(channel, message -> delivered.add(message.entity()));
 
@@ -53,21 +50,6 @@ class DefaultMessagingChannelTest {
             graph.emitter(channel).emit(payload);
 
             assertThat(delivered, is(List.of(payload)));
-        }
-    }
-
-    @Test
-    void customPayloadWithoutEstimatorIsRejected() {
-        MessagingGraph.Builder builder = MessagingGraph.builder();
-        MessagingChannel<CustomPayload> channel = builder.channel("custom", CustomPayload.class);
-        builder.payloadSink(channel, ignored -> { });
-        try (MessagingGraph graph = builder.build()) {
-            graph.start();
-            MessagingRejectedException thrown = assertThrows(MessagingRejectedException.class,
-                                                              () -> graph.emitter(channel)
-                                                                      .emit(new CustomPayload("payload")));
-
-            assertThat(thrown.reason(), is(MessagingRejectedException.Reason.UNKNOWN_SIZE));
         }
     }
 

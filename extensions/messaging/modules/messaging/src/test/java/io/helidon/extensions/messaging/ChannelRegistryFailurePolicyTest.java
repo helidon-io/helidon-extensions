@@ -52,9 +52,7 @@ class ChannelRegistryFailurePolicyTest {
                       queue-capacity: 3
                       max-pending-admissions: 4
                       max-pending-messages: 5
-                      max-pending-bytes: 6
                       max-in-flight-messages: 7
-                      max-in-flight-bytes: 8
                       admission-timeout: PT0.009S
                       shutdown-timeout: PT0.01S
                     channel:
@@ -63,7 +61,6 @@ class ChannelRegistryFailurePolicyTest {
                           concurrency: 11
                           queue-capacity: 12
                           max-pending-messages: 14
-                          max-in-flight-bytes: 17
                           admission-timeout: PT0.018S
                 """);
 
@@ -72,9 +69,7 @@ class ChannelRegistryFailurePolicyTest {
         assertThat(global.queueCapacity(), is(3));
         assertThat(global.maxPendingAdmissions(), is(4));
         assertThat(global.maxPendingMessages(), is(5));
-        assertThat(global.maxPendingBytes(), is(6L));
         assertThat(global.maxInFlightMessages(), is(7));
-        assertThat(global.maxInFlightBytes(), is(8L));
         assertThat(global.admissionTimeout(), is(java.util.Optional.of(Duration.ofMillis(9))));
         assertThat(global.shutdownTimeout(), is(Duration.ofMillis(10)));
 
@@ -83,9 +78,7 @@ class ChannelRegistryFailurePolicyTest {
         assertThat(orders.queueCapacity(), is(12));
         assertThat(orders.maxPendingAdmissions(), is(4));
         assertThat(orders.maxPendingMessages(), is(14));
-        assertThat(orders.maxPendingBytes(), is(6L));
         assertThat(orders.maxInFlightMessages(), is(7));
-        assertThat(orders.maxInFlightBytes(), is(17L));
         assertThat(orders.admissionTimeout(), is(java.util.Optional.of(Duration.ofMillis(18))));
         assertThat(orders.shutdownTimeout(), is(Duration.ofMillis(10)));
     }
@@ -163,7 +156,7 @@ class ChannelRegistryFailurePolicyTest {
     }
 
     @Test
-    void testDeadLetterPreservesAggregateAdmissionForUnknownMessageSizes() {
+    void testDeadLetterRoutesCustomMessageImplementations() {
         TestIncomingConnector incoming = new TestIncomingConnector();
         TestOutgoingConnector outgoing = new TestOutgoingConnector();
         new ChannelRegistry(List.of(registration("orders", ignored -> { })),
@@ -185,8 +178,7 @@ class ChannelRegistryFailurePolicyTest {
                                     """),
                             List.of(incoming, outgoing));
         MessageBatch<String> batch = MessageBatch.<String>builder()
-                .messages(List.of(unknownMessage("order-1"), unknownMessage("order-2")))
-                .admissionBytes(512)
+                .messages(List.of(customMessage("order-1"), customMessage("order-2")))
                 .build();
 
         ConnectorSourceContext.FailureResult result = incoming.context("orders")
@@ -252,7 +244,7 @@ class ChannelRegistryFailurePolicyTest {
     }
 
     @Test
-    void testDeadLetterAdmissionUsesOnlySelectedFailureSubset() {
+    void testDeadLetterUsesOnlySelectedFailureSubset() {
         TestIncomingConnector incoming = new TestIncomingConnector();
         TestOutgoingConnector outgoing = new TestOutgoingConnector();
         new ChannelRegistry(List.of(registration("orders", ignored -> { })),
@@ -262,7 +254,7 @@ class ChannelRegistryFailurePolicyTest {
                                         channel:
                                           orders-dlq:
                                             execution:
-                                              max-in-flight-bytes: 10000
+                                              max-in-flight-messages: 1
                                         incoming:
                                           orders:
                                             connector: test-in
@@ -277,21 +269,23 @@ class ChannelRegistryFailurePolicyTest {
                                             connector: test-out
                                     """),
                             List.of(incoming, outgoing));
-        Message<String> healthy = Message.builder("healthy").admissionBytes(10).build();
-        Message<String> poison = Message.builder("poison").admissionBytes(10).build();
+        Message<String> healthy = Message.create("healthy");
+        Message<String> poison = Message.create("poison");
         MessageBatch<String> retained = MessageBatch.<String>builder()
                 .messages(List.of(healthy, poison))
-                .admissionBytes(100_000)
                 .build();
         MessageBatch<String> failedSubset = retained.subset(List.of(1));
 
         ConnectorSourceContext.FailureResult result = incoming.context("orders")
                 .handleFailure(failedSubset, 1, new IllegalStateException("handler failed"));
 
-        assertThat(failedSubset.admissionBytes().orElseThrow(), is(10L));
+        assertThat(failedSubset.size(), is(1));
+        assertThat(failedSubset.isRetainedSubsetOf(retained), is(true));
+        assertThat(failedSubset.get(0), sameInstance(poison));
         assertThat(result, is(ConnectorSourceContext.FailureResult.SETTLED));
         assertThat(outgoing.messages().size(), is(1));
-        assertThat(outgoing.messages().getFirst().entity(), is("poison"));
+        DeadLetterMessage<?> deadLetter = (DeadLetterMessage<?>) outgoing.messages().getFirst();
+        assertThat(deadLetter.originalMessage(), sameInstance(poison));
     }
 
     @Test
@@ -960,7 +954,7 @@ class ChannelRegistryFailurePolicyTest {
         return Config.just(yaml, MediaTypes.APPLICATION_YAML);
     }
 
-    private static Message<String> unknownMessage(String entity) {
+    private static Message<String> customMessage(String entity) {
         return new Message<>() {
             @Override
             public String entity() {

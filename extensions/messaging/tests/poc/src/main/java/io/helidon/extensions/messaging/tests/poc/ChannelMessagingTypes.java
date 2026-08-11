@@ -17,13 +17,10 @@
 package io.helidon.extensions.messaging.tests.poc;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalLong;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
@@ -40,7 +37,6 @@ import io.helidon.extensions.messaging.IncomingConnectorProvider;
 import io.helidon.extensions.messaging.IncomingEndpoint;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageBatch;
-import io.helidon.extensions.messaging.MessageSizeEstimator;
 import io.helidon.extensions.messaging.Messaging;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.service.registry.Interception;
@@ -243,9 +239,7 @@ class ChannelMessagingTypes {
         @Messaging.SendTo(ARRAY_PROCESSOR_OUTPUT_CHANNEL)
         ArrayMessage<String> process(String payload) {
             String processed = "processed: " + payload;
-            long admissionBytes = payload.getBytes(StandardCharsets.UTF_8).length
-                    + processed.getBytes(StandardCharsets.UTF_8).length;
-            return new ImmutableArrayMessage<>(new String[][] {{payload}, {processed}}, Map.of(), admissionBytes);
+            return new ImmutableArrayMessage<>(new String[][] {{payload}, {processed}}, Map.of());
         }
     }
 
@@ -620,83 +614,6 @@ class ChannelMessagingTypes {
         }
     }
 
-    @Service.Singleton
-    static class CustomMessageSizeEstimator implements MessageSizeEstimator {
-        @Override
-        public OptionalLong estimate(Message<?> message) {
-            Object key;
-            if (message instanceof CustomMessage<?, ?> customMessage) {
-                key = customMessage.key();
-            } else if (message instanceof IntermediateMessage<?, ?> intermediateMessage) {
-                key = intermediateMessage.key();
-            } else {
-                return OptionalLong.empty();
-            }
-            OptionalLong keyBytes = contentBytes(key);
-            OptionalLong payloadBytes = contentBytes(message.entity());
-            if (keyBytes.isEmpty() || payloadBytes.isEmpty()) {
-                return OptionalLong.empty();
-            }
-            try {
-                long result = Math.addExact(keyBytes.getAsLong(), payloadBytes.getAsLong());
-                for (Map.Entry<String, String> header : message.headers().entrySet()) {
-                    result = Math.addExact(result, utf8Bytes(header.getKey()));
-                    result = Math.addExact(result, utf8Bytes(header.getValue()));
-                }
-                return OptionalLong.of(result);
-            } catch (ArithmeticException e) {
-                return OptionalLong.empty();
-            }
-        }
-
-        private OptionalLong contentBytes(Object value) {
-            if (value == null) {
-                return OptionalLong.of(0);
-            }
-            if (value instanceof byte[] bytes) {
-                return OptionalLong.of(bytes.length);
-            }
-            if (value instanceof ByteBuffer buffer) {
-                return OptionalLong.of(buffer.capacity());
-            }
-            if (value instanceof String text) {
-                return OptionalLong.of(utf8Bytes(text));
-            }
-            if (value instanceof Byte || value instanceof Boolean) {
-                return OptionalLong.of(Byte.BYTES);
-            }
-            if (value instanceof Short || value instanceof Character) {
-                return OptionalLong.of(Short.BYTES);
-            }
-            if (value instanceof Integer || value instanceof Float) {
-                return OptionalLong.of(Integer.BYTES);
-            }
-            if (value instanceof Long || value instanceof Double) {
-                return OptionalLong.of(Long.BYTES);
-            }
-            if (value instanceof List<?> values) {
-                long result = 0;
-                for (Object element : values) {
-                    OptionalLong elementBytes = contentBytes(element);
-                    if (elementBytes.isEmpty()) {
-                        return OptionalLong.empty();
-                    }
-                    try {
-                        result = Math.addExact(result, elementBytes.getAsLong());
-                    } catch (ArithmeticException e) {
-                        return OptionalLong.empty();
-                    }
-                }
-                return OptionalLong.of(result);
-            }
-            return OptionalLong.empty();
-        }
-
-        private int utf8Bytes(String value) {
-            return value.getBytes(StandardCharsets.UTF_8).length;
-        }
-    }
-
     abstract static class MessageConsumer {
         private final List<Message<String>> messages = new CopyOnWriteArrayList<>();
 
@@ -719,15 +636,9 @@ class ChannelMessagingTypes {
     }
 
     record ImmutableArrayMessage<T>(T[][] entity,
-                                    Map<String, String> headers,
-                                    long declaredAdmissionBytes) implements ArrayMessage<T> {
+                                    Map<String, String> headers) implements ArrayMessage<T> {
         ImmutableArrayMessage {
             headers = Map.copyOf(headers);
-        }
-
-        @Override
-        public OptionalLong admissionBytes() {
-            return OptionalLong.of(declaredAdmissionBytes);
         }
     }
 

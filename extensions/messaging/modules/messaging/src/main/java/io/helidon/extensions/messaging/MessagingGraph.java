@@ -77,16 +77,6 @@ public interface MessagingGraph extends AutoCloseable {
         Builder executionConfig(MessagingExecutionConfig config);
 
         /**
-         * Add a message size estimator used by the graph admission controller.
-         * <p>
-         * Estimators must be configured before the first channel is declared.
-         *
-         * @param estimator message size estimator
-         * @return updated builder
-         */
-        Builder addMessageSizeEstimator(MessageSizeEstimator estimator);
-
-        /**
          * Declare a channel.
          *
          * @param name channel name

@@ -20,7 +20,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.OptionalLong;
 
 /**
  * Synchronous runtime context exposed to incoming connector sources.
@@ -63,37 +62,6 @@ public interface ConnectorSourceContext {
     }
 
     /**
-     * Maximum declared admission byte weight the runtime can admit in one retained connector delivery.
-     * <p>
-     * Sources should use this limit to bound polling or reading before submitting a delivery.
-     *
-     * @return maximum admission bytes per delivery
-     */
-    default long maxDeliveryBytes() {
-        return Long.MAX_VALUE;
-    }
-
-    /**
-     * Runtime-conservative admission byte estimate for one complete message.
-     * <p>
-     * Runtime-provided contexts include all applicable {@link MessageSizeEstimator} services. The compatibility
-     * default validates and returns the estimate declared by {@link Message#admissionBytes()}.
-     *
-     * @param message message to estimate
-     * @return complete message admission weight, or empty when its size is unknown
-     * @throws IllegalArgumentException if the message declares a negative size
-     */
-    default OptionalLong messageAdmissionBytes(Message<?> message) {
-        OptionalLong result = Objects.requireNonNull(
-                Objects.requireNonNull(message).admissionBytes(),
-                "Message admission byte size");
-        if (result.isPresent() && result.getAsLong() < 0) {
-            throw new IllegalArgumentException("Message admission byte size must be zero or greater");
-        }
-        return result;
-    }
-
-    /**
      * Maximum time a connector should wait for retained-delivery admission.
      *
      * @return configured admission timeout, or empty to wait while the source remains active
@@ -109,14 +77,13 @@ public interface ConnectorSourceContext {
      * reservation and delegates its eventual start to {@link #submitDelivery(MessageBatch, Runnable)}.
      *
      * @param maxMessages maximum messages the connector may acquire
-     * @param maxAdmissionBytes maximum admission bytes the connector may acquire
      * @return pending delivery reservation
      * @throws MessagingRejectedException if capacity cannot be reserved
-     * @throws IllegalArgumentException if {@code maxMessages} is not positive or {@code maxAdmissionBytes} is negative
+     * @throws IllegalArgumentException if {@code maxMessages} is not positive
      */
-    default ConnectorDeliveryReservation reserveDelivery(int maxMessages, long maxAdmissionBytes) {
-        validateReservation(maxMessages, maxAdmissionBytes);
-        return new IndependentConnectorDeliveryReservation(this, maxMessages, maxAdmissionBytes);
+    default ConnectorDeliveryReservation reserveDelivery(int maxMessages) {
+        validateReservation(maxMessages);
+        return new IndependentConnectorDeliveryReservation(this, maxMessages);
     }
 
     /**
@@ -126,13 +93,12 @@ public interface ConnectorSourceContext {
      * empty. The compatibility default has no runtime admission layer and always returns a local reservation.
      *
      * @param maxMessages maximum messages the connector may acquire
-     * @param maxAdmissionBytes maximum admission bytes the connector may acquire
      * @return reservation, or empty when pending capacity is currently unavailable
      * @throws MessagingRejectedException if the request can never fit or the runtime is shutting down
-     * @throws IllegalArgumentException if {@code maxMessages} is not positive or {@code maxAdmissionBytes} is negative
+     * @throws IllegalArgumentException if {@code maxMessages} is not positive
      */
-    default Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages, long maxAdmissionBytes) {
-        return Optional.of(reserveDelivery(maxMessages, maxAdmissionBytes));
+    default Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
+        return Optional.of(reserveDelivery(maxMessages));
     }
 
     /**
@@ -174,7 +140,7 @@ public interface ConnectorSourceContext {
     /**
      * Submit one retained connector delivery to the messaging runtime.
      * <p>
-     * The runtime holds message-count and byte admission for the complete task, including retries and terminal
+     * The runtime holds message-count admission for the complete task, including retries and terminal
      * failure handling. This asynchronous connector-only facility allows a transport owner thread to continue
      * maintenance work, such as Kafka consumer-group polling, while application-facing dispatch remains synchronous.
      * Connector implementations must not acknowledge or commit the retained delivery until the returned task
@@ -187,15 +153,14 @@ public interface ConnectorSourceContext {
      * Runtime-provided contexts override this method and own the task virtual thread. The default preserves
      * compatibility for independently implemented contexts.
      *
-     * @param batch complete retained delivery with declared admission weight
+     * @param batch complete retained delivery
      * @param delivery delivery logic, including retry and terminal failure handling
      * @param <T> payload type
      * @return delivery task
      * @throws MessagingRejectedException if the delivery cannot be admitted
-     * @throws IllegalArgumentException if the batch is empty or has no valid declared admission weight
      */
     default <T> ConnectorDelivery submitDelivery(MessageBatch<T> batch, Runnable delivery) {
-        validateBatch(batch);
+        Objects.requireNonNull(batch);
         Objects.requireNonNull(delivery);
         return IndependentConnectorDelivery.start(channelName(), delivery);
     }
@@ -211,12 +176,11 @@ public interface ConnectorSourceContext {
      * The retained lease covers the supplied batch and subsets created through {@link MessageBatch#subset(List)}.
      * Rebuilt batches and replacement envelopes require separate admission, even when they reuse the public batch ID.
      *
-     * @param batch complete retained delivery with declared admission weight
+     * @param batch complete retained delivery
      * @param delivery delivery logic, including retry and terminal failure handling
      * @param <T> payload type
      * @return the admitted delivery task, or empty when capacity is currently unavailable
      * @throws MessagingRejectedException if the delivery can never be admitted or the runtime is shutting down
-     * @throws IllegalArgumentException if the batch is empty or has no valid declared admission weight
      */
     default <T> Optional<ConnectorDelivery> trySubmitDelivery(MessageBatch<T> batch, Runnable delivery) {
         return Optional.of(submitDelivery(batch, delivery));
@@ -264,31 +228,9 @@ public interface ConnectorSourceContext {
         SETTLED
     }
 
-    private static void validateReservation(int maxMessages, long maxAdmissionBytes) {
+    private static void validateReservation(int maxMessages) {
         if (maxMessages <= 0) {
             throw new IllegalArgumentException("maxMessages must be greater than zero");
-        }
-        if (maxAdmissionBytes < 0) {
-            throw new IllegalArgumentException("maxAdmissionBytes must be zero or greater");
-        }
-    }
-
-    private static void validateBatch(MessageBatch<?> batch) {
-        MessageBatch<?> actualBatch = Objects.requireNonNull(batch);
-        String batchId = Objects.requireNonNull(actualBatch.id(), "Message batch identity");
-        if (batchId.isBlank() || batchId.length() > MessageBatch.MAX_ID_LENGTH) {
-            throw new IllegalArgumentException("Message batch identity must be non-blank and no longer than "
-                                                       + MessageBatch.MAX_ID_LENGTH + " characters");
-        }
-        if (actualBatch.size() <= 0) {
-            throw new IllegalArgumentException("Connector delivery must contain at least one message");
-        }
-        OptionalLong admissionBytes = Objects.requireNonNull(actualBatch.admissionBytes());
-        if (admissionBytes.isEmpty()) {
-            throw new IllegalArgumentException("Connector delivery admission bytes must be declared");
-        }
-        if (admissionBytes.getAsLong() < 0) {
-            throw new IllegalArgumentException("Connector delivery admission bytes must be zero or greater");
         }
     }
 }

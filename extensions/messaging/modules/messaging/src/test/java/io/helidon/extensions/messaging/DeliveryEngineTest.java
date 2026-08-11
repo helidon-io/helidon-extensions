@@ -16,10 +16,8 @@
 
 package io.helidon.extensions.messaging;
 
-import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -83,7 +81,6 @@ class DeliveryEngineTest {
                 .concurrency(2)
                 .queueCapacity(1)
                 .maxInFlightMessages(3)
-                .maxInFlightBytes(3)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(2);
@@ -104,17 +101,14 @@ class DeliveryEngineTest {
             };
             ConnectorDelivery first = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
-                                                                      1,
                                                                       blockingAction);
             ConnectorDelivery second = submitConnectorDelivery(engine, "orders",
                                                                        List.of(message(1)),
-                                                                       1,
                                                                        blockingAction);
 
             await(activeStarted);
             ConnectorDelivery third = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
-                                                                      1,
                                                                       thirdStarted::countDown);
 
             assertEquals(2, maximumActive.get());
@@ -131,10 +125,9 @@ class DeliveryEngineTest {
     }
 
     @Test
-    void admitsExactMessageAndByteLimitsAndRejectsOversizedBatchAtomically() {
+    void admitsExactMessageLimitAndRejectsOversizedBatchAtomically() {
         MessagingExecutionConfig config = configBuilder()
                 .maxInFlightMessages(2)
-                .maxInFlightBytes(10)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             AtomicInteger invocations = new AtomicInteger();
@@ -147,14 +140,7 @@ class DeliveryEngineTest {
                     () -> dispatch(engine, "orders",
                                           List.of(message(1), message(1), message(1)),
                                           invocations::incrementAndGet));
-            MessagingRejectedException byteLimit = assertThrows(
-                    MessagingRejectedException.class,
-                    () -> dispatch(engine, "orders",
-                                          List.of(message(5), message(6)),
-                                          invocations::incrementAndGet));
-
             assertEquals(MessagingRejectedException.Reason.OVERSIZED, messageLimit.reason());
-            assertEquals(MessagingRejectedException.Reason.OVERSIZED, byteLimit.reason());
             assertEquals(1, invocations.get());
 
             dispatch(engine, "orders", exact, invocations::incrementAndGet);
@@ -167,7 +153,6 @@ class DeliveryEngineTest {
         MessagingExecutionConfig blockingConfig = configBuilder()
                 .queueCapacity(0)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(blockingConfig, "orders")) {
             CountDownLatch firstStarted = new CountDownLatch(1);
@@ -175,7 +160,6 @@ class DeliveryEngineTest {
             CountDownLatch secondStarted = new CountDownLatch(1);
             ConnectorDelivery first = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
-                                                                      1,
                                                                       () -> {
                                                                           firstStarted.countDown();
                                                                           await(releaseFirst);
@@ -198,7 +182,6 @@ class DeliveryEngineTest {
         MessagingExecutionConfig timeoutConfig = configBuilder()
                 .queueCapacity(0)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .admissionTimeout(Duration.ofMillis(50))
                 .build();
         try (DeliveryEngine engine = engine(timeoutConfig, "orders")) {
@@ -206,7 +189,6 @@ class DeliveryEngineTest {
             CountDownLatch releaseFirst = new CountDownLatch(1);
             ConnectorDelivery first = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
-                                                                      1,
                                                                       () -> {
                                                                           firstStarted.countDown();
                                                                           await(releaseFirst);
@@ -225,13 +207,11 @@ class DeliveryEngineTest {
     }
 
     @Test
-    void boundsAggregatePendingMessageAndByteRetention() throws Exception {
+    void boundsAggregatePendingMessageRetention() throws Exception {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingAdmissions(3)
                 .maxPendingMessages(2)
-                .maxPendingBytes(2)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(1);
@@ -239,7 +219,6 @@ class DeliveryEngineTest {
             ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
-                    1,
                     () -> {
                         activeStarted.countDown();
                         await(releaseActive);
@@ -269,12 +248,10 @@ class DeliveryEngineTest {
                 .concurrency(2)
                 .maxPendingAdmissions(1)
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .maxInFlightMessages(2)
-                .maxInFlightBytes(2)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders");
-             ConnectorDeliveryReservation ignored = engine.reserveConnectorDelivery("orders", 1, 1)) {
+             ConnectorDeliveryReservation ignored = engine.reserveConnectorDelivery("orders", 1)) {
             AtomicBoolean delivered = new AtomicBoolean();
             dispatch(engine, "orders", List.of(message(1)), () -> delivered.set(true));
             assertTrue(delivered.get());
@@ -286,9 +263,7 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingAdmissions(1)
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch lockHeld = new CountDownLatch(1);
@@ -319,9 +294,7 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingAdmissions(1)
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch lockHeld = new CountDownLatch(1);
@@ -334,16 +307,16 @@ class DeliveryEngineTest {
             try {
                 MessagingRejectedException rejection = assertThrows(
                         MessagingRejectedException.class,
-                        () -> engine.reserveConnectorDelivery("orders", 1, 1));
+                        () -> engine.reserveConnectorDelivery("orders", 1));
                 assertEquals(MessagingRejectedException.Reason.SATURATED, rejection.reason());
             } finally {
                 releaseLock.countDown();
                 await(lockHolder);
             }
 
-            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1);
             reservation.close();
-            engine.reserveConnectorDelivery("orders", 1, 1).close();
+            engine.reserveConnectorDelivery("orders", 1).close();
         }
     }
 
@@ -352,14 +325,13 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingAdmissions(2)
                 .maxPendingMessages(2)
-                .maxPendingBytes(2)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDeliveryReservation full = engine.reserveConnectorDelivery("orders", 2, 2);
-            assertTrue(engine.tryReserveConnectorDelivery("orders", 1, 1).isEmpty());
+            ConnectorDeliveryReservation full = engine.reserveConnectorDelivery("orders", 2);
+            assertTrue(engine.tryReserveConnectorDelivery("orders", 1).isEmpty());
 
             full.close();
-            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 2, 2)
+            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 2)
                     .orElseThrow();
             recovered.close();
         }
@@ -370,12 +342,11 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingAdmissions(2)
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDeliveryReservation first = engine.reserveConnectorDelivery("orders", 1, 1);
+            ConnectorDeliveryReservation first = engine.reserveConnectorDelivery("orders", 1);
             AtomicReference<ConnectorDeliveryReservation> second = new AtomicReference<>();
-            AsyncTask waiting = async(() -> second.set(engine.reserveConnectorDelivery("orders", 1, 1)));
+            AsyncTask waiting = async(() -> second.set(engine.reserveConnectorDelivery("orders", 1)));
             awaitWaiting(waiting);
 
             first.close();
@@ -389,25 +360,24 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingAdmissions(2)
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .admissionTimeout(Duration.ofMillis(50))
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDeliveryReservation first = engine.reserveConnectorDelivery("orders", 1, 1);
+            ConnectorDeliveryReservation first = engine.reserveConnectorDelivery("orders", 1);
             MessagingRejectedException timeout = assertThrows(
                     MessagingRejectedException.class,
-                    () -> engine.reserveConnectorDelivery("orders", 1, 1));
+                    () -> engine.reserveConnectorDelivery("orders", 1));
             assertEquals(MessagingRejectedException.Reason.TIMEOUT, timeout.reason());
 
             first.close();
-            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1, 1)
+            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1)
                     .orElseThrow();
             recovered.close();
         }
     }
 
     @Test
-    void compatibilityReservationEnforcesItsDeclaredBounds() {
+    void compatibilityReservationEnforcesItsMessageBound() {
         ConnectorSourceContext context = new ConnectorSourceContext() {
             @Override
             public String channelName() {
@@ -418,81 +388,14 @@ class DeliveryEngineTest {
             public <T> void emitBatch(MessageBatch<T> message) {
             }
         };
-        ConnectorDeliveryReservation reservation = context.reserveDelivery(1, 1);
+        ConnectorDeliveryReservation reservation = context.reserveDelivery(1);
         MessagingRejectedException oversized = assertThrows(
                 MessagingRejectedException.class,
-                () -> start(reservation, List.of(message(1), message(1)), 1, () -> { }));
+                () -> start(reservation, List.of(message(1), message(1)), () -> { }));
         assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
         assertThrows(IllegalStateException.class,
-                     () -> start(reservation, List.of(message(1)), 1, () -> { }));
+                     () -> start(reservation, List.of(message(1)), () -> { }));
 
-        ConnectorDeliveryReservation empty = context.reserveDelivery(1, 1);
-        assertThrows(IllegalArgumentException.class,
-                     () -> start(empty, List.of(), 0, () -> { }));
-        assertThrows(IllegalArgumentException.class,
-                     () -> context.submitDelivery(MessageBatch.create(List.of()), () -> { }));
-
-        Message<Object> negative = new Message<>() {
-            @Override
-            public Object entity() {
-                return new Object();
-            }
-
-            @Override
-            public Map<String, String> headers() {
-                return Map.of();
-            }
-
-            @Override
-            public java.util.OptionalLong admissionBytes() {
-                return java.util.OptionalLong.of(-1);
-            }
-        };
-        ConnectorDeliveryReservation invalid = context.reserveDelivery(1, 1);
-        assertThrows(IllegalArgumentException.class,
-                     () -> start(invalid, List.of(negative), 0, () -> { }));
-    }
-
-    @Test
-    void compatibilityReservationCountsKnownBytesInMixedSizeBatch() {
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public String channelName() {
-                return "orders";
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> message) {
-            }
-        };
-        ConnectorDeliveryReservation reservation = context.reserveDelivery(2, 5);
-
-        MessagingRejectedException oversized = assertThrows(
-                MessagingRejectedException.class,
-                () -> start(reservation, List.of(unknownMessage(), message(6)), 1, () -> { }));
-
-        assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
-    }
-
-    @Test
-    void compatibilityReservationRejectsOverflowingDeadLetterSize() {
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public String channelName() {
-                return "orders-dlq";
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> message) {
-            }
-        };
-        ConnectorDeliveryReservation reservation = context.reserveDelivery(1, 1);
-
-        MessagingRejectedException oversized = assertThrows(
-                MessagingRejectedException.class,
-                () -> start(reservation, List.of(overflowingDeadLetter()), 1, () -> { }));
-
-        assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
     }
 
     @Test
@@ -513,71 +416,32 @@ class DeliveryEngineTest {
                 return null;
             }
         };
-        ConnectorDeliveryReservation reservation = context.reserveDelivery(1, 1);
+        ConnectorDeliveryReservation reservation = context.reserveDelivery(1);
         assertThrows(NullPointerException.class,
-                     () -> start(reservation, List.of(message(1)), 1, () -> { }));
+                     () -> start(reservation, List.of(message(1)), () -> { }));
         assertThrows(IllegalStateException.class,
-                     () -> start(reservation, List.of(message(1)), 1, () -> { }));
+                     () -> start(reservation, List.of(message(1)), () -> { }));
     }
 
     @Test
-    void runtimeReservationRejectsActualCostBeyondReservedDimensionsAndCloses() {
+    void runtimeReservationRejectsActualMessageCountBeyondReservationAndCloses() {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingMessages(2)
-                .maxPendingBytes(2)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1);
             MessagingRejectedException oversized = assertThrows(
                     MessagingRejectedException.class,
-                    () -> start(reservation, List.of(message(2)), 2, () -> { }));
+                    () -> start(reservation, List.of(message(1), message(1)), () -> { }));
             assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
             MessagingRejectedException closed = assertThrows(
                     MessagingRejectedException.class,
-                    () -> start(reservation, List.of(message(1)), 1, () -> { }));
+                    () -> start(reservation, List.of(message(1)), () -> { }));
             assertEquals(MessagingRejectedException.Reason.CANCELLED, closed.reason());
 
-            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1, 1)
+            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1)
                     .orElseThrow();
             recovered.close();
-        }
-    }
-
-    @Test
-    void runtimeReservationCountsKnownBytesInMixedSizeBatch() {
-        MessagingExecutionConfig config = configBuilder()
-                .maxPendingMessages(2)
-                .maxPendingBytes(5)
-                .build();
-        try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 2, 5);
-
-            MessagingRejectedException oversized = assertThrows(
-                    MessagingRejectedException.class,
-                    () -> start(reservation, List.of(unknownMessage(), message(6)), 1, () -> { }));
-
-            assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
-            engine.reserveConnectorDelivery("orders", 2, 5).close();
-        }
-    }
-
-    @Test
-    void runtimeReservationRejectsNegativeDeclaredBytes() {
-        MessagingExecutionConfig config = configBuilder().build();
-        try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDeliveryReservation blocking = engine.reserveConnectorDelivery("orders", 1, 1);
-            IllegalArgumentException blockingFailure = assertThrows(
-                    IllegalArgumentException.class,
-                    () -> start(blocking, List.of(message(1)), -1, () -> { }));
-            assertEquals("Message batch admission bytes must be zero or greater", blockingFailure.getMessage());
-
-            ConnectorDeliveryReservation nonBlocking = engine.reserveConnectorDelivery("orders", 1, 1);
-            IllegalArgumentException nonBlockingFailure = assertThrows(
-                    IllegalArgumentException.class,
-                    () -> tryStart(nonBlocking, List.of(message(1)), -1, () -> { }));
-            assertEquals("Message batch admission bytes must be zero or greater", nonBlockingFailure.getMessage());
-
-            engine.reserveConnectorDelivery("orders", 1, 1).close();
         }
     }
 
@@ -585,27 +449,23 @@ class DeliveryEngineTest {
     void reservationStartAtomicallyShrinksAndTransfersToSettlementLease() throws Exception {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingMessages(2)
-                .maxPendingBytes(2)
                 .maxInFlightMessages(2)
-                .maxInFlightBytes(2)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 2, 2);
-            ConnectorDelivery delivery = start(reservation, List.of(message(1)), 1, () -> { });
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 2);
+            ConnectorDelivery delivery = start(reservation, List.of(message(1)), () -> { });
             assertTrue(delivery.await(WAIT));
 
-            ConnectorDeliveryReservation pendingCapacity = engine.tryReserveConnectorDelivery("orders", 2, 2)
+            ConnectorDeliveryReservation pendingCapacity = engine.tryReserveConnectorDelivery("orders", 2)
                     .orElseThrow();
             pendingCapacity.close();
             assertTrue(trySubmitConnectorDelivery(engine, "orders",
-                                                         List.of(message(2)),
-                                                         2,
+                                                         List.of(message(2), message(2)),
                                                          () -> { }).isEmpty());
 
             delivery.close();
             ConnectorDelivery fullDelivery = trySubmitConnectorDelivery(engine, "orders",
-                                                                                 List.of(message(2)),
-                                                                                 2,
+                                                                                 List.of(message(2), message(2)),
                                                                                  () -> { })
                     .orElseThrow();
             await(fullDelivery);
@@ -617,13 +477,11 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingAdmissions(1)
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .admissionTimeout(Duration.ofMillis(50))
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1);
             CountDownLatch lockHeld = new CountDownLatch(1);
             CountDownLatch releaseLock = new CountDownLatch(1);
             AsyncTask lockHolder = async(() -> engine.runWithChannelAdmissionLock("orders", () -> {
@@ -633,7 +491,7 @@ class DeliveryEngineTest {
             await(lockHeld);
 
             AsyncTask waiting = async(() -> {
-                ConnectorDelivery delivery = start(reservation, List.of(message(1)), 1, () -> { });
+                ConnectorDelivery delivery = start(reservation, List.of(message(1)), () -> { });
                 delivery.close();
             });
             try {
@@ -653,7 +511,7 @@ class DeliveryEngineTest {
             ConnectorDeliveryReservation recovered = null;
             long deadline = System.nanoTime() + WAIT.toNanos();
             while (recovered == null && System.nanoTime() < deadline) {
-                recovered = engine.tryReserveConnectorDelivery("orders", 1, 1).orElse(null);
+                recovered = engine.tryReserveConnectorDelivery("orders", 1).orElse(null);
                 Thread.onSpinWait();
             }
             assertTrue(recovered != null, "deferred reservation cleanup did not restore capacity");
@@ -705,9 +563,7 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingAdmissions(1)
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .admissionTimeout(Duration.ofMillis(50))
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
@@ -716,19 +572,18 @@ class DeliveryEngineTest {
             ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
-                    1,
                     () -> {
                         activeStarted.countDown();
                         await(releaseActive);
                     });
             await(activeStarted);
-            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1);
 
             MessagingRejectedException timeout = assertThrows(
                     MessagingRejectedException.class,
-                    () -> start(reservation, List.of(message(1)), 1, () -> { }));
+                    () -> start(reservation, List.of(message(1)), () -> { }));
             assertEquals(MessagingRejectedException.Reason.TIMEOUT, timeout.reason());
-            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1, 1)
+            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1)
                     .orElseThrow();
             recovered.close();
 
@@ -741,30 +596,27 @@ class DeliveryEngineTest {
     void reservationTryStartRetainsPendingCapacityUntilInFlightIsAvailable() throws Exception {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1);
             CountDownLatch activeStarted = new CountDownLatch(1);
             CountDownLatch releaseActive = new CountDownLatch(1);
             ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
-                    1,
                     () -> {
                         activeStarted.countDown();
                         await(releaseActive);
                     });
             await(activeStarted);
 
-            assertTrue(tryStart(reservation, List.of(message(1)), 1, () -> { }).isEmpty());
-            assertTrue(engine.tryReserveConnectorDelivery("orders", 1, 1).isEmpty());
+            assertTrue(tryStart(reservation, List.of(message(1)), () -> { }).isEmpty());
+            assertTrue(engine.tryReserveConnectorDelivery("orders", 1).isEmpty());
 
             releaseActive.countDown();
             await(active);
-            ConnectorDelivery delivery = tryStart(reservation, List.of(message(1)), 1, () -> { })
+            ConnectorDelivery delivery = tryStart(reservation, List.of(message(1)), () -> { })
                     .orElseThrow();
             await(delivery);
         }
@@ -775,9 +627,7 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingAdmissions(1)
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(1);
@@ -785,14 +635,13 @@ class DeliveryEngineTest {
             ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
-                    1,
                     () -> {
                         activeStarted.countDown();
                         await(releaseActive);
                     });
             await(activeStarted);
-            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
-            AsyncTask waiting = async(() -> start(reservation, List.of(message(1)), 1, () -> { }));
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1);
+            AsyncTask waiting = async(() -> start(reservation, List.of(message(1)), () -> { }));
             awaitWaiting(waiting);
 
             waiting.thread().interrupt();
@@ -800,7 +649,7 @@ class DeliveryEngineTest {
                     MessagingRejectedException.class,
                     failure(waiting));
             assertEquals(MessagingRejectedException.Reason.CANCELLED, cancelled.reason());
-            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1, 1)
+            ConnectorDeliveryReservation recovered = engine.tryReserveConnectorDelivery("orders", 1)
                     .orElseThrow();
             recovered.close();
 
@@ -813,9 +662,7 @@ class DeliveryEngineTest {
     void reservationAllowsOnlyOneConcurrentStartAttempt() throws Exception {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(1);
@@ -823,18 +670,17 @@ class DeliveryEngineTest {
             ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
-                    1,
                     () -> {
                         activeStarted.countDown();
                         await(releaseActive);
                     });
             await(activeStarted);
-            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
-            AsyncTask firstStart = async(() -> start(reservation, List.of(message(1)), 1, () -> { }));
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1);
+            AsyncTask firstStart = async(() -> start(reservation, List.of(message(1)), () -> { }));
             awaitWaiting(firstStart);
 
             assertThrows(IllegalStateException.class,
-                         () -> start(reservation, List.of(message(1)), 1, () -> { }));
+                         () -> start(reservation, List.of(message(1)), () -> { }));
             reservation.close();
             MessagingRejectedException cancelled = assertInstanceOf(
                     MessagingRejectedException.class,
@@ -850,9 +696,7 @@ class DeliveryEngineTest {
     void invalidSecondConcurrentStartCannotCancelFirstStart() throws Exception {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(1);
@@ -860,20 +704,19 @@ class DeliveryEngineTest {
             ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
-                    1,
                     () -> {
                         activeStarted.countDown();
                         await(releaseActive);
                     });
             await(activeStarted);
-            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1);
             AtomicReference<ConnectorDelivery> firstDelivery = new AtomicReference<>();
             AsyncTask firstStart = async(() -> firstDelivery.set(
-                    start(reservation, List.of(message(1)), 1, () -> { })));
+                    start(reservation, List.of(message(1)), () -> { })));
             awaitWaiting(firstStart);
 
             assertThrows(IllegalStateException.class,
-                         () -> start(reservation, List.of(message(2)), 2, () -> { }));
+                         () -> start(reservation, List.of(message(2)), () -> { }));
 
             releaseActive.countDown();
             await(active);
@@ -886,15 +729,13 @@ class DeliveryEngineTest {
     void reservationAcquisitionTimeDoesNotConsumeCapacityWaitBudget() throws Exception {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .admissionTimeout(Duration.ofMillis(20))
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1, 1);
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1);
             Thread.sleep(50);
-            ConnectorDelivery delivery = start(reservation, List.of(message(1)), 1, () -> { });
+            ConnectorDelivery delivery = start(reservation, List.of(message(1)), () -> { });
             await(delivery);
         }
     }
@@ -905,9 +746,7 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingAdmissions(2)
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .admissionTimeout(timeout)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
@@ -916,17 +755,16 @@ class DeliveryEngineTest {
             ConnectorDelivery active = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
-                    1,
                     () -> {
                         activeStarted.countDown();
                         await(releaseActive);
                     });
             await(activeStarted);
-            ConnectorDeliveryReservation first = engine.reserveConnectorDelivery("orders", 1, 1);
+            ConnectorDeliveryReservation first = engine.reserveConnectorDelivery("orders", 1);
             long started = System.nanoTime();
             AsyncTask waiting = async(() -> {
-                ConnectorDeliveryReservation second = engine.reserveConnectorDelivery("orders", 1, 1);
-                start(second, List.of(message(1)), 1, () -> { });
+                ConnectorDeliveryReservation second = engine.reserveConnectorDelivery("orders", 1);
+                start(second, List.of(message(1)), () -> { });
             });
             awaitWaiting(waiting);
             Thread.sleep(300);
@@ -950,36 +788,32 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingAdmissions(1)
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .build();
         DeliveryEngine engine = engine(config, "orders");
-        ConnectorDeliveryReservation closedReservation = engine.reserveConnectorDelivery("orders", 1, 1);
+        ConnectorDeliveryReservation closedReservation = engine.reserveConnectorDelivery("orders", 1);
         closedReservation.close();
         closedReservation.close();
         MessagingRejectedException cancelled = assertThrows(
                 MessagingRejectedException.class,
-                () -> start(closedReservation, List.of(message(1)), 1, () -> { }));
+                () -> start(closedReservation, List.of(message(1)), () -> { }));
         assertEquals(MessagingRejectedException.Reason.CANCELLED, cancelled.reason());
 
-        ConnectorDeliveryReservation shutdownReservation = engine.reserveConnectorDelivery("orders", 1, 1);
+        ConnectorDeliveryReservation shutdownReservation = engine.reserveConnectorDelivery("orders", 1);
         engine.close();
         MessagingRejectedException shutdown = assertThrows(
                 MessagingRejectedException.class,
-                () -> start(shutdownReservation, List.of(message(1)), 1, () -> { }));
+                () -> start(shutdownReservation, List.of(message(1)), () -> { }));
         assertEquals(MessagingRejectedException.Reason.SHUTDOWN, shutdown.reason());
     }
 
     @Test
-    void runtimeDeliveryLimitFitsBothInFlightAndPendingBudgets() {
+    void runtimeDeliveryLimitFitsBothMessageBudgets() {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingMessages(3)
-                .maxPendingBytes(4)
                 .maxInFlightMessages(5)
-                .maxInFlightBytes(6)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             assertEquals(3, engine.maxDeliveryMessages("orders"));
-            assertEquals(4, engine.maxDeliveryBytes("orders"));
         }
     }
 
@@ -994,11 +828,7 @@ class DeliveryEngineTest {
         assertThrows(IllegalArgumentException.class,
                      () -> MessagingExecutionConfig.builder().maxPendingMessages(0).build());
         assertThrows(IllegalArgumentException.class,
-                     () -> MessagingExecutionConfig.builder().maxPendingBytes(0).build());
-        assertThrows(IllegalArgumentException.class,
                      () -> MessagingExecutionConfig.builder().maxInFlightMessages(0).build());
-        assertThrows(IllegalArgumentException.class,
-                     () -> MessagingExecutionConfig.builder().maxInFlightBytes(0).build());
         assertThrows(IllegalArgumentException.class,
                      () -> MessagingExecutionConfig.builder().admissionTimeout(Duration.ZERO).build());
         assertThrows(IllegalArgumentException.class,
@@ -1021,9 +851,7 @@ class DeliveryEngineTest {
                 .queueCapacity(0)
                 .maxPendingAdmissions(1)
                 .maxPendingMessages(1)
-                .maxPendingBytes(1)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .admissionTimeout(Duration.ofNanos(1))
                 .shutdownTimeout(Duration.ofNanos(1))
                 .build();
@@ -1031,9 +859,7 @@ class DeliveryEngineTest {
         assertEquals(0, minimums.queueCapacity());
         assertEquals(1, minimums.maxPendingAdmissions());
         assertEquals(1, minimums.maxPendingMessages());
-        assertEquals(1, minimums.maxPendingBytes());
         assertEquals(1, minimums.maxInFlightMessages());
-        assertEquals(1, minimums.maxInFlightBytes());
         assertEquals(Duration.ofNanos(1), minimums.admissionTimeout().orElseThrow());
         assertEquals(Duration.ofNanos(1), minimums.shutdownTimeout());
 
@@ -1042,9 +868,7 @@ class DeliveryEngineTest {
         assertEquals(0, defaults.queueCapacity());
         assertEquals(64, defaults.maxPendingAdmissions());
         assertEquals(1024, defaults.maxPendingMessages());
-        assertEquals(67_108_864, defaults.maxPendingBytes());
         assertEquals(1024, defaults.maxInFlightMessages());
-        assertEquals(67_108_864, defaults.maxInFlightBytes());
         assertTrue(defaults.admissionTimeout().isEmpty());
         assertEquals(Duration.ofSeconds(10), defaults.shutdownTimeout());
     }
@@ -1054,7 +878,6 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .queueCapacity(2)
                 .maxInFlightMessages(3)
-                .maxInFlightBytes(3)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch firstStarted = new CountDownLatch(1);
@@ -1063,7 +886,6 @@ class DeliveryEngineTest {
 
             ConnectorDelivery first = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
-                                                                      1,
                                                                       () -> {
                                                                           order.add(1);
                                                                           firstStarted.countDown();
@@ -1072,11 +894,9 @@ class DeliveryEngineTest {
             await(firstStarted);
             ConnectorDelivery second = submitConnectorDelivery(engine, "orders",
                                                                        List.of(message(1)),
-                                                                       1,
                                                                        () -> order.add(2));
             ConnectorDelivery third = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
-                                                                      1,
                                                                       () -> order.add(3));
 
             assertEquals(List.of(1), order);
@@ -1093,7 +913,6 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .queueCapacity(0)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch firstStarted = new CountDownLatch(1);
@@ -1101,7 +920,6 @@ class DeliveryEngineTest {
             AtomicBoolean rejectedActionRan = new AtomicBoolean();
             ConnectorDelivery first = submitConnectorDelivery(engine, "orders",
                                                                       List.of(message(1)),
-                                                                      1,
                                                                       () -> {
                                                                           firstStarted.countDown();
                                                                           await(releaseFirst);
@@ -1131,7 +949,6 @@ class DeliveryEngineTest {
             CountDownLatch interrupted = new CountDownLatch(1);
             ConnectorDelivery active = submitConnectorDelivery(engine, "orders",
                                                                        List.of(message(1)),
-                                                                       1,
                                                                        () -> {
                                                                            activeStarted.countDown();
                                                                            awaitInterruption(interrupted);
@@ -1147,7 +964,6 @@ class DeliveryEngineTest {
 
             assertTrue(trySubmitConnectorDelivery(engine, "orders",
                                                          List.of(message(1)),
-                                                         1,
                                                          () -> { }).isEmpty());
             active.close();
             AtomicBoolean nextRan = new AtomicBoolean();
@@ -1161,7 +977,6 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .queueCapacity(0)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             IllegalStateException expected = new IllegalStateException("failed");
@@ -1184,7 +999,6 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .queueCapacity(0)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch firstAttemptStarted = new CountDownLatch(1);
@@ -1192,7 +1006,7 @@ class DeliveryEngineTest {
             CountDownLatch competitorStarted = new CountDownLatch(1);
             List<String> order = new CopyOnWriteArrayList<>();
             Message<?> retained = message(1);
-            MessageBatch<?> retainedBatch = batch(List.of(retained), 1);
+            MessageBatch<?> retainedBatch = batch(List.of(retained));
             Runnable retryWork = () -> {
                 dispatch(engine, "orders", retainedBatch, () -> {
                     order.add("attempt-1");
@@ -1225,7 +1039,6 @@ class DeliveryEngineTest {
     void connectorLeaseAcceptsLineageSubsetAndRejectsReplacementEnvelopes() throws Exception {
         MessagingExecutionConfig config = configBuilder()
                 .maxInFlightMessages(3)
-                .maxInFlightBytes(3)
                 .build();
         MessageBatch<String> retainedBatch = MessageBatch.<String>builder()
                 .id("retained-batch")
@@ -1261,37 +1074,13 @@ class DeliveryEngineTest {
     }
 
     @Test
-    void connectorLeaseAcceptsUnknownSizeLineageSubsetCoveredByRetainedParent() throws Exception {
-        MessagingExecutionConfig config = configBuilder()
-                .maxInFlightMessages(2)
-                .maxInFlightBytes(2)
-                .build();
-        MessageBatch<Object> retainedBatch = batch(List.of(unknownMessage(), message(1)), 2);
-        MessageBatch<Object> retryBatch = retainedBatch.subset(List.of(0));
-        assertTrue(retryBatch.admissionBytes().isEmpty());
-
-        try (DeliveryEngine engine = engine(config, "orders")) {
-            AtomicBoolean subsetEmitted = new AtomicBoolean();
-            ConnectorDelivery delivery = engine.submitConnectorDelivery(
-                    "orders",
-                    retainedBatch,
-                    () -> dispatch(engine, "orders", retryBatch, () -> subsetEmitted.set(true)));
-
-            await(delivery);
-            assertTrue(subsetEmitted.get());
-        }
-    }
-
-    @Test
     void connectorDeliveryRetainsAdmissionThroughSettlementLease() throws Exception {
         MessagingExecutionConfig config = configBuilder()
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             ConnectorDelivery delivery = submitConnectorDelivery(engine, "orders",
                                                                          List.of(message(1)),
-                                                                         1,
                                                                          () -> { });
             assertTrue(delivery.await(WAIT));
 
@@ -1313,14 +1102,12 @@ class DeliveryEngineTest {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingAdmissions(1)
                 .maxInFlightMessages(1)
-                .maxInFlightBytes(1)
                 .build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             CountDownLatch activeStarted = new CountDownLatch(1);
             CountDownLatch releaseActive = new CountDownLatch(1);
             ConnectorDelivery active = submitConnectorDelivery(engine, "orders",
                                                                        List.of(message(1)),
-                                                                       1,
                                                                        () -> {
                                                                            activeStarted.countDown();
                                                                            await(releaseActive);
@@ -1336,7 +1123,6 @@ class DeliveryEngineTest {
             assertEquals(MessagingRejectedException.Reason.SATURATED, saturated.reason());
             assertTrue(trySubmitConnectorDelivery(engine, "orders",
                                                          List.of(message(1)),
-                                                         1,
                                                          () -> { }).isEmpty());
 
             releaseActive.countDown();
@@ -1415,140 +1201,12 @@ class DeliveryEngineTest {
     }
 
     @Test
-    void usesLargestDeclaredOrEstimatedAdmissionWeight() {
-        MessagingExecutionConfig config = configBuilder()
-                .maxInFlightBytes(5)
-                .build();
-        try (DeliveryEngine engine = new DeliveryEngine(config, List.of(message -> java.util.OptionalLong.of(10)))) {
-            engine.registerChannel("orders", config);
-            MessagingRejectedException failure = assertThrows(
-                    MessagingRejectedException.class,
-                    () -> dispatch(engine, "orders", List.of(message(1)), () -> { }));
-            assertEquals(MessagingRejectedException.Reason.OVERSIZED, failure.reason());
-        }
-    }
-
-    @Test
-    void dispatchStillRejectsUnknownSizeInMixedBatch() {
-        MessagingExecutionConfig config = configBuilder().build();
-        try (DeliveryEngine engine = engine(config, "orders")) {
-            MessagingRejectedException failure = assertThrows(
-                    MessagingRejectedException.class,
-                    () -> dispatch(engine, "orders",
-                                          List.of(unknownMessage(), message(1)),
-                                          () -> { }));
-
-            assertEquals(MessagingRejectedException.Reason.UNKNOWN_SIZE, failure.reason());
-        }
-    }
-
-    @Test
-    void deliverySizeInspectionContinuesAfterUnknownMessage() {
-        Message<String> invalidEstimatorResult = message(1);
-        MessageSizeEstimator estimator = message -> message == invalidEstimatorResult
-                ? null
-                : java.util.OptionalLong.empty();
-        MessagingExecutionConfig config = configBuilder().build();
-        try (DeliveryEngine engine = new DeliveryEngine(config, List.of(estimator))) {
-            engine.registerChannel("orders", config);
-
-            NullPointerException failure = assertThrows(
-                    NullPointerException.class,
-                    () -> dispatch(engine, "orders",
-                                          List.of(unknownMessage(), invalidEstimatorResult),
-                                          () -> { }));
-
-            assertEquals("Message size estimator result", failure.getMessage());
-        }
-    }
-
-    @Test
-    void carriesOriginalEstimatorWeightIntoDeadLetterEnvelope() {
-        MessagingExecutionConfig config = configBuilder()
-                .maxInFlightBytes(1024)
-                .build();
-        Message<Object> original = new Message<>() {
-            @Override
-            public Object entity() {
-                return new Object();
-            }
-
-            @Override
-            public Map<String, String> headers() {
-                return Map.of();
-            }
-        };
-        MessageSizeEstimator estimator = message -> message == original
-                ? java.util.OptionalLong.of(5)
-                : java.util.OptionalLong.empty();
-        try (DeliveryEngine engine = new DeliveryEngine(config, List.of(estimator))) {
-            engine.registerChannel("orders-dlq", config);
-            AtomicBoolean delivered = new AtomicBoolean();
-
-            dispatch(engine, "orders-dlq",
-                            List.of(DeadLetterMessage.create(original,
-                                                            "orders",
-                                                            1,
-                                                            new IllegalStateException("failed"))),
-                            () -> delivered.set(true));
-
-            assertTrue(delivered.get());
-        }
-    }
-
-    @Test
-    void rejectsOverflowingDeadLetterSizeForConnectorDeliveries() {
-        DeadLetterMessage<Object> deadLetter = overflowingDeadLetter();
-        MessagingExecutionConfig config = configBuilder()
-                .maxInFlightBytes(10)
-                .build();
-        try (DeliveryEngine engine = engine(config, "orders-dlq")) {
-            MessagingRejectedException direct = assertThrows(
-                    MessagingRejectedException.class,
-                    () -> submitConnectorDelivery(engine, "orders-dlq",
-                                                         List.of(deadLetter),
-                                                         1,
-                                                         () -> { }));
-            assertEquals(MessagingRejectedException.Reason.OVERSIZED, direct.reason());
-
-            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders-dlq", 1, 1);
-            MessagingRejectedException reserved = assertThrows(
-                    MessagingRejectedException.class,
-                    () -> start(reservation, List.of(deadLetter), 1, () -> { }));
-            assertEquals(MessagingRejectedException.Reason.OVERSIZED, reserved.reason());
-
-            engine.reserveConnectorDelivery("orders-dlq", 1, 1).close();
-        }
-    }
-
-    @Test
-    void connectorLeaseRejectsEmissionBeyondItsReservation() throws Exception {
-        MessagingExecutionConfig config = configBuilder().build();
-        try (DeliveryEngine engine = engine(config, "orders")) {
-            ConnectorDelivery delivery = submitConnectorDelivery(engine,
-                    "orders",
-                    List.of(message(1)),
-                    1,
-                    () -> dispatch(engine, "orders", List.of(message(2)), () -> { }));
-            try {
-                MessagingRejectedException failure = assertThrows(
-                        MessagingRejectedException.class,
-                        () -> delivery.await(WAIT));
-                assertEquals(MessagingRejectedException.Reason.OVERSIZED, failure.reason());
-            } finally {
-                delivery.close();
-            }
-        }
-    }
-
-    @Test
     void connectorLeaseRejectsDifferentMessageWithinItsReservation() throws Exception {
         MessagingExecutionConfig config = configBuilder().build();
         try (DeliveryEngine engine = engine(config, "orders")) {
             ConnectorDelivery delivery = submitConnectorDelivery(engine,
                     "orders",
                     List.of(message(1)),
-                    1,
                     () -> dispatch(engine, "orders", List.of(message(1)), () -> { }));
             try {
                 MessagingRejectedException failure = assertThrows(
@@ -1562,10 +1220,10 @@ class DeliveryEngineTest {
     }
 
     @Test
-    void connectorLeaseAcceptsItsRetainedUnknownSizeEnvelope() throws Exception {
+    void connectorLeaseAcceptsItsRetainedEnvelope() throws Exception {
         MessagingExecutionConfig config = configBuilder().build();
-        List<Message<String>> retained = List.of(unknownMessage());
-        MessageBatch<?> retainedBatch = batch(retained, 5);
+        List<Message<String>> retained = List.of(message(1));
+        MessageBatch<?> retainedBatch = batch(retained);
         try (DeliveryEngine engine = engine(config, "orders")) {
             AtomicBoolean emitted = new AtomicBoolean();
             ConnectorDelivery delivery = engine.submitConnectorDelivery(
@@ -1578,50 +1236,10 @@ class DeliveryEngineTest {
     }
 
     @Test
-    void rejectsEmptyConnectorDeliveryAndUsesStableByteBufferCapacity() {
-        MessagingExecutionConfig config = configBuilder().build();
-        try (DeliveryEngine engine = engine(config, "orders")) {
-            assertThrows(IllegalArgumentException.class,
-                         () -> submitConnectorDelivery(engine, "orders", List.of(), 0, () -> { }));
-
-            ByteBuffer mutable = ByteBuffer.allocate(8);
-            mutable.limit(1);
-            Message<ByteBuffer> message = Message.create(mutable);
-            assertEquals(8, message.admissionBytes().orElseThrow());
-        }
-    }
-
-    @Test
-    void explicitAdmissionBytesCannotUnderdeclareKnownPayloadSize() {
-        byte[] payload = new byte[1_000_000];
-        Message<byte[]> message = Message.builder(payload)
-                .admissionBytes(1)
-                .build();
-        assertEquals(payload.length, message.admissionBytes().orElseThrow());
-
-        MessagingExecutionConfig config = configBuilder()
-                .maxInFlightBytes(payload.length - 1)
-                .build();
-        try (DeliveryEngine engine = engine(config, "orders")) {
-            MessagingRejectedException oversized = assertThrows(
-                    MessagingRejectedException.class,
-                    () -> dispatch(engine, "orders", List.of(message), () -> { }));
-            assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
-        }
-
-        assertEquals(1, Message.builder(new Object())
-                .admissionBytes(1)
-                .build()
-                .admissionBytes()
-                .orElseThrow());
-    }
-
-    @Test
     void shutdownRejectsQueuedAndNewWorkAndInterruptsActiveAndSourceTasks() throws Exception {
         MessagingExecutionConfig config = configBuilder()
                 .queueCapacity(1)
                 .maxInFlightMessages(2)
-                .maxInFlightBytes(2)
                 .shutdownTimeout(WAIT)
                 .build();
         DeliveryEngine engine = engine(config, "orders");
@@ -1633,7 +1251,6 @@ class DeliveryEngineTest {
 
         ConnectorDelivery active = submitConnectorDelivery(engine, "orders",
                                                                    List.of(message(1)),
-                                                                   1,
                                                                    () -> {
                                                                        activeStarted.countDown();
                                                                        awaitInterruption(activeInterrupted);
@@ -1641,7 +1258,6 @@ class DeliveryEngineTest {
         await(activeStarted);
         ConnectorDelivery queued = submitConnectorDelivery(engine, "orders",
                                                                    List.of(message(1)),
-                                                                   1,
                                                                    () -> queuedRan.set(true));
         engine.startSource("orders-source", () -> {
             sourceStarted.countDown();
@@ -1708,7 +1324,6 @@ class DeliveryEngineTest {
                             List.of(message(1)),
                             () -> submitConnectorDelivery(engine, "b",
                                                                  List.of(message(1)),
-                                                                 1,
                                                                  () -> { })));
             assertThat(failure.getMessage(), containsString("cannot be submitted from messaging dispatch"));
         }
@@ -1747,12 +1362,11 @@ class DeliveryEngineTest {
                 .concurrency(1)
                 .queueCapacity(0)
                 .maxInFlightMessages(10)
-                .maxInFlightBytes(10)
                 .shutdownTimeout(WAIT);
     }
 
     private static DeliveryEngine engine(MessagingExecutionConfig config, String... channels) {
-        DeliveryEngine engine = new DeliveryEngine(config, List.of());
+        DeliveryEngine engine = new DeliveryEngine(config);
         for (String channel : channels) {
             engine.registerChannel(channel, config);
         }
@@ -1776,83 +1390,38 @@ class DeliveryEngineTest {
     private static ConnectorDelivery submitConnectorDelivery(DeliveryEngine engine,
                                                               String channel,
                                                               List<? extends Message<?>> messages,
-                                                              long admissionBytes,
                                                               Runnable action) {
-        return engine.submitConnectorDelivery(channel, batch(messages, admissionBytes), action);
+        return engine.submitConnectorDelivery(channel, batch(messages), action);
     }
 
     private static java.util.Optional<ConnectorDelivery> trySubmitConnectorDelivery(
             DeliveryEngine engine,
             String channel,
             List<? extends Message<?>> messages,
-            long admissionBytes,
             Runnable action) {
-        return engine.trySubmitConnectorDelivery(channel, batch(messages, admissionBytes), action);
+        return engine.trySubmitConnectorDelivery(channel, batch(messages), action);
     }
 
     private static ConnectorDelivery start(ConnectorDeliveryReservation reservation,
                                            List<? extends Message<?>> messages,
-                                           long admissionBytes,
                                            Runnable action) {
-        return reservation.start(batch(messages, admissionBytes), action);
+        return reservation.start(batch(messages), action);
     }
 
     private static java.util.Optional<ConnectorDelivery> tryStart(ConnectorDeliveryReservation reservation,
                                                                  List<? extends Message<?>> messages,
-                                                                 long admissionBytes,
                                                                  Runnable action) {
-        return reservation.tryStart(batch(messages, admissionBytes), action);
+        return reservation.tryStart(batch(messages), action);
     }
 
-    private static MessageBatch<Object> batch(List<? extends Message<?>> messages, long admissionBytes) {
+    private static MessageBatch<Object> batch(List<? extends Message<?>> messages) {
         return MessageBatch.builder()
                 .messages(messages)
-                .admissionBytes(admissionBytes)
                 .build();
     }
 
-    private static Message<String> message(long bytes) {
-        return Message.builder("")
-                .admissionBytes(bytes)
-                .build();
-    }
-
-    private static Message<String> unknownMessage() {
-        return new Message<>() {
-            @Override
-            public String entity() {
-                return "";
-            }
-
-            @Override
-            public Map<String, String> headers() {
-                return Map.of();
-            }
-        };
-    }
-
-    private static DeadLetterMessage<Object> overflowingDeadLetter() {
-        Message<Object> original = new Message<>() {
-            @Override
-            public Object entity() {
-                return new Object();
-            }
-
-            @Override
-            public Map<String, String> headers() {
-                return Map.of();
-            }
-
-            @Override
-            public java.util.OptionalLong admissionBytes() {
-                return java.util.OptionalLong.of(Long.MAX_VALUE);
-            }
-        };
-        return DeadLetterMessage.create(
-                original,
-                "orders",
-                1,
-                new IllegalStateException("failed"));
+    private static Message<String> message(long id) {
+        return Message.create(Long.toString(id));
     }
 
     private static AsyncTask async(Runnable runnable) {

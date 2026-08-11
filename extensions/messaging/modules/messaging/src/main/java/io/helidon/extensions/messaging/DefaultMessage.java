@@ -17,7 +17,6 @@
 package io.helidon.extensions.messaging;
 
 import java.util.Map;
-import java.util.OptionalLong;
 
 /**
  * Default immutable message implementation.
@@ -27,17 +26,10 @@ import java.util.OptionalLong;
 final class DefaultMessage<T> implements Message<T> {
     private final T entity;
     private final Map<String, String> headers;
-    private final OptionalLong admissionBytes;
 
-    DefaultMessage(T entity, Map<String, String> headers, OptionalLong admissionBytes) {
+    DefaultMessage(T entity, Map<String, String> headers) {
         this.entity = entity;
         this.headers = Map.copyOf(headers);
-        OptionalLong knownBytes = MessageSizes.logicalBytes(entity, this.headers);
-        if (admissionBytes.isPresent() && knownBytes.isPresent()) {
-            this.admissionBytes = OptionalLong.of(Math.max(admissionBytes.getAsLong(), knownBytes.getAsLong()));
-        } else {
-            this.admissionBytes = admissionBytes.isPresent() ? admissionBytes : knownBytes;
-        }
     }
 
     @Override
@@ -48,10 +40,5 @@ final class DefaultMessage<T> implements Message<T> {
     @Override
     public Map<String, String> headers() {
         return headers;
-    }
-
-    @Override
-    public OptionalLong admissionBytes() {
-        return admissionBytes;
     }
 }
