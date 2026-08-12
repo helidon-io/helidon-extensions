@@ -17,10 +17,8 @@
 package io.helidon.extensions.messaging.connectors.kafka;
 
 import java.time.Duration;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,8 +39,8 @@ import io.helidon.extensions.messaging.BatchItemStatus;
 import io.helidon.extensions.messaging.ConnectorConfig;
 import io.helidon.extensions.messaging.ConnectorDelivery;
 import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
-import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.IncomingConnector;
+import io.helidon.extensions.messaging.IncomingConnectorContext;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingException;
@@ -65,12 +63,10 @@ import org.apache.kafka.common.errors.WakeupException;
  * Kafka incoming connector.
  * <p>
  * Each consumer poll is one retained delivery batch. Its exact immutable messages and opaque batch identity remain in
- * flight while the consumer owner thread continues polling with all assigned partitions paused. A structured partial
- * failure retries only attempted failures in a lineage-preserving sub-batch; messages not attempted because an earlier
- * item failed are deferred until that subset retries or settles. Offsets do not advance between these
- * in-memory retries while the original poll lease remains retained, so a crash can conservatively redeliver an
- * uncommitted successful prefix. If a structured failure propagates, each partition advances only through its
- * contiguous settled prefix; successful records behind an unresolved offset remain eligible for redelivery.
+ * flight while the runtime dispatches it and applies its delivery policy. The consumer owner thread keeps polling with
+ * all assigned partitions paused. Normal runtime completion settles and commits the complete poll. If runtime delivery
+ * terminates with a structured failure, each partition advances only through its contiguous successful prefix;
+ * successful records behind an unresolved offset remain eligible for redelivery.
  * <p>
  * The connector caps Kafka's {@code max.poll.records} with the channel delivery limit. Before every normal poll, the
  * source reserves that message capacity; while the reservation is unavailable, assigned partitions remain paused and
@@ -101,7 +97,7 @@ final class KafkaIncomingConnector {
                                                        + " has direction " + config.direction()
                                                        + ", expected " + ConnectorConfig.Direction.INCOMING);
         }
-        return new KafkaSource(config);
+        return new IncomingKafkaConnector(config);
     }
 
     @FunctionalInterface
@@ -109,7 +105,7 @@ final class KafkaIncomingConnector {
         Consumer<Object, Object> create(Map<String, Object> properties);
     }
 
-    private final class KafkaSource implements IncomingConnector {
+    private final class IncomingKafkaConnector implements IncomingConnector {
         private final KafkaConnectorConfig config;
         private final AtomicBoolean closed = new AtomicBoolean();
         private final AtomicBoolean draining = new AtomicBoolean();
@@ -122,7 +118,6 @@ final class KafkaIncomingConnector {
         private final AtomicReference<Thread> commitInitiationOwner = new AtomicReference<>();
         private final AtomicReference<RuntimeException> connectorCloseFailure = new AtomicReference<>();
         private final CountDownLatch acquisitionStopSignal = new CountDownLatch(1);
-        private final CountDownLatch closeSignal = new CountDownLatch(1);
         private final CountDownLatch runCompletion = new CountDownLatch(1);
         private final ReentrantLock commitLock = new ReentrantLock();
         private final ReentrantLock deliveryLock = new ReentrantLock();
@@ -131,10 +126,10 @@ final class KafkaIncomingConnector {
         private final Duration maintenancePollTimeout;
         private final Duration commitTimeout;
         private final Duration commitRetryBackoff;
-        private volatile ConnectorSourceContext context;
+        private volatile IncomingConnectorContext context;
         private boolean deliveryStarting;
 
-        private KafkaSource(KafkaConnectorConfig config) {
+        private IncomingKafkaConnector(KafkaConnectorConfig config) {
             this.config = config;
             this.maintenancePollTimeout = maintenancePollTimeout(config);
             this.commitTimeout = durationProperty(config,
@@ -146,10 +141,10 @@ final class KafkaIncomingConnector {
         }
 
         @Override
-        public void run(ConnectorSourceContext context) {
+        public void run(IncomingConnectorContext context) {
             Objects.requireNonNull(context);
             if (!runStarted.compareAndSet(false, true)) {
-                throw new IllegalStateException("Kafka source can only be run once");
+                throw new IllegalStateException("Kafka incoming connector can only be run once");
             }
             this.context = context;
             Thread owner = Thread.currentThread();
@@ -244,10 +239,8 @@ final class KafkaIncomingConnector {
         private void consume(Consumer<Object, Object> consumer, SourceRebalanceListener rebalanceListener) {
             boolean hasPolled = false;
             while (!closed.get() && !draining.get()) {
-                AdmissionBudget admissionBudget = new AdmissionBudget();
                 ConnectorDeliveryReservation reservation = awaitPollReservation(consumer,
                                                                                  rebalanceListener,
-                                                                                 admissionBudget,
                                                                                  hasPolled);
                 if (reservation == null) {
                     return;
@@ -273,8 +266,7 @@ final class KafkaIncomingConnector {
                     if (!processPoll(consumer,
                                      rebalanceListener,
                                      pendingPoll,
-                                     reservation,
-                                     admissionBudget)) {
+                                     reservation)) {
                         return;
                     }
                 }
@@ -283,7 +275,6 @@ final class KafkaIncomingConnector {
 
         private ConnectorDeliveryReservation awaitPollReservation(Consumer<Object, Object> consumer,
                                                                    SourceRebalanceListener rebalanceListener,
-                                                                   AdmissionBudget admissionBudget,
                                                                    boolean hasPolled) {
             rebalanceListener.capacityWaiting(true);
             try {
@@ -292,9 +283,7 @@ final class KafkaIncomingConnector {
                     if (!assignment.isEmpty()) {
                         consumer.pause(assignment);
                     }
-                    admissionBudget.requireAvailable();
-                    Optional<ConnectorDeliveryReservation> reservation = context.tryReserveDelivery(
-                            context.maxDeliveryMessages());
+                    Optional<ConnectorDeliveryReservation> reservation = context.tryReserveDelivery();
                     if (reservation.isPresent()) {
                         return reservation.get();
                     }
@@ -304,12 +293,12 @@ final class KafkaIncomingConnector {
 
                     assignment = consumer.assignment();
                     if (assignment.isEmpty() && !hasPolled) {
-                        if (!awaitReservationRetry(admissionBudget)) {
+                        if (!awaitReservationRetry()) {
                             return null;
                         }
                     } else {
                         consumer.pause(assignment);
-                        maintenancePoll(consumer, admissionBudget);
+                        maintenancePoll(consumer);
                     }
                 }
                 return null;
@@ -321,16 +310,14 @@ final class KafkaIncomingConnector {
         private boolean processPoll(Consumer<Object, Object> consumer,
                                     SourceRebalanceListener rebalanceListener,
                                     PendingPoll pendingPoll,
-                                    ConnectorDeliveryReservation reservation,
-                                    AdmissionBudget admissionBudget) {
+                                    ConnectorDeliveryReservation reservation) {
             rebalanceListener.pending(pendingPoll);
             consumer.pause(consumer.assignment());
             ActiveDelivery deliveryTask = null;
             try {
                 deliveryTask = awaitDeliveryAdmission(consumer,
                                                       pendingPoll,
-                                                      reservation,
-                                                      admissionBudget);
+                                                      reservation);
                 if (deliveryTask == null) {
                     if (pendingPoll.stale() && !closed.get()) {
                         recoverStalePoll(consumer, pendingPoll);
@@ -362,8 +349,8 @@ final class KafkaIncomingConnector {
                     return true;
                 }
                 try {
-                    rethrowDeliveryFailure(deliveryTask);
-                } catch (RuntimeException e) {
+                    awaitDeliveryResult(deliveryTask, pendingPoll);
+                } catch (BatchDeliveryException e) {
                     try {
                         settlePartialPoll(consumer, pendingPoll);
                     } catch (RuntimeException settlementFailure) {
@@ -387,15 +374,13 @@ final class KafkaIncomingConnector {
 
         private ActiveDelivery awaitDeliveryAdmission(Consumer<Object, Object> consumer,
                                                       PendingPoll pendingPoll,
-                                                      ConnectorDeliveryReservation reservation,
-                                                      AdmissionBudget admissionBudget) {
+                                                      ConnectorDeliveryReservation reservation) {
             while (!closed.get() && !draining.get() && !pendingPoll.stale()) {
-                admissionBudget.requireAvailable();
                 ActiveDelivery deliveryTask = tryStartDelivery(pendingPoll, reservation);
                 if (deliveryTask != null) {
                     return deliveryTask;
                 }
-                maintenancePoll(consumer, admissionBudget);
+                maintenancePoll(consumer);
             }
             return null;
         }
@@ -405,7 +390,7 @@ final class KafkaIncomingConnector {
             if (closed.get()) {
                 return null;
             }
-            ActiveDelivery active = new ActiveDelivery(pendingPoll);
+            ActiveDelivery active = new ActiveDelivery();
             deliveryLock.lock();
             try {
                 if (closed.get() || draining.get()) {
@@ -418,7 +403,7 @@ final class KafkaIncomingConnector {
 
             Optional<ConnectorDelivery> admitted;
             try {
-                admitted = reservation.tryStart(pendingPoll.batch(), active::run);
+                admitted = reservation.tryStart(pendingPoll.batch());
                 admitted.ifPresent(active::attach);
             } catch (RuntimeException | Error e) {
                 finishDeliveryStart();
@@ -451,7 +436,7 @@ final class KafkaIncomingConnector {
                     active.releaseWhenFinished();
                 }
                 if (duplicate) {
-                    throw new IllegalStateException("Kafka source already has an active delivery");
+                    throw new IllegalStateException("Kafka incoming connector already has an active delivery");
                 }
                 return null;
             }
@@ -465,92 +450,6 @@ final class KafkaIncomingConnector {
                 deliveryStateChanged.signalAll();
             } finally {
                 deliveryLock.unlock();
-            }
-        }
-
-        private void deliver(PendingPoll pendingPoll) {
-            int attempts = 0;
-            DeliveryBatch deliveryBatch = DeliveryBatch.initial(pendingPoll.batch());
-            Deque<DeferredDelivery> deferred = new ArrayDeque<>();
-            while (!closed.get() && !pendingPoll.stale()) {
-                try {
-                    context.emitBatch(deliveryBatch.batch());
-                    pendingPoll.settle(deliveryBatch.originalIndexes());
-                    DeferredDelivery next = deferred.pollFirst();
-                    if (next == null) {
-                        return;
-                    }
-                    deliveryBatch = next.batch();
-                    attempts = next.failedAttempts();
-                    continue;
-                } catch (RuntimeException e) {
-                    if (closed.get() || pendingPoll.stale()) {
-                        return;
-                    }
-                    DeliverySplit split = deliveryBatch.processingFailure(e, pendingPoll);
-                    if (split.deferred() != null) {
-                        deferred.addFirst(new DeferredDelivery(split.deferred(), attempts));
-                    }
-                    deliveryBatch = split.attempted();
-                    if (deliveryBatch == null) {
-                        DeferredDelivery next = deferred.pollFirst();
-                        if (next == null) {
-                            return;
-                        }
-                        deliveryBatch = next.batch();
-                        attempts = next.failedAttempts();
-                        continue;
-                    }
-                    attempts++;
-                    ConnectorSourceContext.FailureResult result;
-                    try {
-                        result = Objects.requireNonNull(
-                                context.handleFailure(deliveryBatch.batch(),
-                                                      attempts,
-                                                      BatchDeliveryException.align(deliveryBatch.batch(), e)),
-                                "Connector source failure result");
-                    } catch (RuntimeException failureHandlingFailure) {
-                        if (closed.get() || pendingPoll.stale()) {
-                            return;
-                        }
-                        deliveryBatch = deliveryBatch.terminalFailure(failureHandlingFailure, pendingPoll);
-                        if (deliveryBatch == null) {
-                            return;
-                        }
-                        throw failureHandlingFailure;
-                    }
-                    if (closed.get() || pendingPoll.stale()) {
-                        return;
-                    }
-                    switch (result) {
-                    case RETRY:
-                        try {
-                            if (!prepareRedelivery(deliveryBatch.batch().size(), attempts, e)) {
-                                return;
-                            }
-                        } catch (RuntimeException redeliveryFailure) {
-                            if (closed.get() || pendingPoll.stale()) {
-                                return;
-                            }
-                            throw redeliveryFailure;
-                        }
-                        if (pendingPoll.stale()) {
-                            return;
-                        }
-                        continue;
-                    case SETTLED:
-                        pendingPoll.settle(deliveryBatch.originalIndexes());
-                        DeferredDelivery next = deferred.pollFirst();
-                        if (next == null) {
-                            return;
-                        }
-                        deliveryBatch = next.batch();
-                        attempts = next.failedAttempts();
-                        continue;
-                    default:
-                        throw new IllegalStateException("Unsupported connector source failure result: " + result);
-                    }
-                }
             }
         }
 
@@ -690,16 +589,6 @@ final class KafkaIncomingConnector {
             maintenancePoll(consumer, maintenancePollTimeout);
         }
 
-        private void maintenancePoll(Consumer<Object, Object> consumer, AdmissionBudget admissionBudget) {
-            Duration timeout = admissionBudget.waitTimeout();
-            long waitStarted = System.nanoTime();
-            try {
-                maintenancePoll(consumer, timeout);
-            } finally {
-                admissionBudget.spentSince(waitStarted);
-            }
-        }
-
         private void maintenancePoll(Consumer<Object, Object> consumer, Duration timeout) {
             ConsumerRecords<Object, Object> records = consumer.poll(timeout);
             for (TopicPartition partition : records.partitions()) {
@@ -730,7 +619,7 @@ final class KafkaIncomingConnector {
                     deliveryTask.releaseWhenFinished();
                     throw new MessagingException("Kafka stale delivery did not stop after "
                                                          + config.closeTimeout() + " on channel "
-                                                         + context.channelName());
+                                                         + context.channel());
                 }
                 Duration timeout = Duration.ofNanos(Math.min(remainingNanos, maintenancePollTimeout.toNanos()));
                 long pollStarted = System.nanoTime();
@@ -739,14 +628,22 @@ final class KafkaIncomingConnector {
             }
         }
 
-        private void rethrowDeliveryFailure(ActiveDelivery deliveryTask) {
+        private void awaitDeliveryResult(ActiveDelivery deliveryTask, PendingPoll pendingPoll) {
             try {
                 deliveryTask.await();
+                pendingPoll.settleAll();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 if (!closed.get()) {
                     throw new MessagingException("Kafka incoming message processing was interrupted", e);
                 }
+            } catch (BatchDeliveryException e) {
+                RuntimeException aligned = BatchDeliveryException.align(pendingPoll.batch(), e);
+                if (!(aligned instanceof BatchDeliveryException batchFailure)) {
+                    throw aligned;
+                }
+                pendingPoll.settleSucceeded(batchFailure);
+                throw batchFailure;
             }
         }
 
@@ -761,7 +658,7 @@ final class KafkaIncomingConnector {
                 try {
                     stopped = deliveryTask.await(config.closeTimeout());
                 } catch (RuntimeException e) {
-                    // Processing is quiescent; its failure belongs to the already-closing source.
+                    // Processing is quiescent; its failure belongs to the already-closing connector.
                     stopped = true;
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
@@ -782,34 +679,20 @@ final class KafkaIncomingConnector {
             deliveryTask.close();
         }
 
-        private boolean awaitReservationRetry(AdmissionBudget admissionBudget) {
-            Duration timeout = admissionBudget.waitTimeout();
-            long waitStarted = System.nanoTime();
+        private boolean awaitReservationRetry() {
             try {
-                return !acquisitionStopSignal.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+                return !acquisitionStopSignal.await(maintenancePollTimeout.toNanos(), TimeUnit.NANOSECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 if (closed.get()) {
                     return false;
                 }
                 throw new MessagingRejectedException(
-                        context.channelName(),
+                        context.channel(),
                         MessagingRejectedException.Reason.CANCELLED,
-                        "Kafka delivery reservation wait was interrupted on channel " + context.channelName(),
+                        "Kafka delivery reservation wait was interrupted on channel " + context.channel(),
                         e);
-            } finally {
-                admissionBudget.spentSince(waitStarted);
             }
-        }
-
-        private boolean prepareRedelivery(int recordCount,
-                                          int attempts,
-                                          RuntimeException failure) {
-            LOGGER.log(System.Logger.Level.WARNING,
-                       "Kafka incoming message processing failed on attempt "
-                               + attempts + "; redelivering retained poll of " + recordCount + " record(s)",
-                       failure);
-            return awaitRedeliveryDelay();
         }
 
         private RuntimeException appendCleanupFailure(RuntimeException current, RuntimeException additional) {
@@ -818,19 +701,6 @@ final class KafkaIncomingConnector {
             }
             current.addSuppressed(additional);
             return current;
-        }
-
-        private boolean awaitRedeliveryDelay() {
-            try {
-                long delayNanos = TimeUnit.NANOSECONDS.convert(context.failurePolicy().retryDelay());
-                return !closeSignal.await(delayNanos, TimeUnit.NANOSECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                if (closed.get()) {
-                    return false;
-                }
-                throw new MessagingException("Kafka incoming connector redelivery wait interrupted", e);
-            }
         }
 
         private KafkaMessage<Object, Object> toMessage(ConsumerRecord<Object, Object> record) {
@@ -897,7 +767,6 @@ final class KafkaIncomingConnector {
         private void signalClose() {
             draining.set(true);
             acquisitionStopSignal.countDown();
-            closeSignal.countDown();
             ActiveDelivery deliveryTask;
             deliveryLock.lock();
             try {
@@ -923,7 +792,7 @@ final class KafkaIncomingConnector {
                         throw new MessagingException("Kafka incoming connector close timed out after "
                                                              + config.closeTimeout()
                                                              + " while waiting for delivery admission on channel "
-                                                             + context.channelName());
+                                                             + context.channel());
                     }
                     try {
                         deliveryStateChanged.awaitNanos(remaining);
@@ -931,7 +800,7 @@ final class KafkaIncomingConnector {
                         Thread.currentThread().interrupt();
                         throw new MessagingException(
                                 "Interrupted while waiting for Kafka delivery admission on channel "
-                                        + context.channelName(),
+                                        + context.channel(),
                                 e);
                     }
                 }
@@ -950,14 +819,14 @@ final class KafkaIncomingConnector {
             try {
                 stopped = deliveryTask.await(timeout);
             } catch (RuntimeException e) {
-                // The delivery is quiescent. Its processing failure belongs to the source owner thread.
+                // The delivery is quiescent. Its processing failure belongs to the connector owner thread.
                 activeDelivery.compareAndSet(deliveryTask, null);
                 return;
             } catch (InterruptedException e) {
                 deliveryTask.releaseWhenFinished();
                 Thread.currentThread().interrupt();
                 throw new MessagingException("Interrupted while waiting for active Kafka delivery on channel "
-                                                     + context.channelName() + " to finish",
+                                                     + context.channel() + " to finish",
                                              e);
             }
             if (stopped) {
@@ -967,7 +836,7 @@ final class KafkaIncomingConnector {
             deliveryTask.releaseWhenFinished();
             String message = "Kafka incoming connector close timed out after "
                     + config.closeTimeout() + " while waiting for active delivery on channel "
-                    + context.channelName() + "; the delivery remains tracked until it finishes";
+                    + context.channel() + "; the delivery remains tracked until it finishes";
             LOGGER.log(System.Logger.Level.ERROR, message);
             throw new MessagingException(message);
         }
@@ -984,12 +853,12 @@ final class KafkaIncomingConnector {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new MessagingException("Interrupted while waiting for Kafka consumer owner on channel "
-                                                     + context.channelName() + " to finish",
+                                                     + context.channel() + " to finish",
                                              e);
             }
             throw new MessagingException("Kafka incoming connector close timed out after "
                                                  + config.closeTimeout() + " while waiting for consumer owner on channel "
-                                                 + context.channelName() + " to finish");
+                                                 + context.channel() + " to finish");
         }
 
         private long closeDeadline() {
@@ -1004,7 +873,7 @@ final class KafkaIncomingConnector {
             if (remaining <= 0) {
                 throw new MessagingException("Kafka incoming connector close timed out after "
                                                      + config.closeTimeout() + " while waiting for " + operation
-                                                     + " on channel " + context.channelName());
+                                                     + " on channel " + context.channel());
             }
             return Duration.ofNanos(remaining);
         }
@@ -1044,14 +913,14 @@ final class KafkaIncomingConnector {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new MessagingException("Interrupted while waiting to close Kafka consumer on channel "
-                                                     + context.channelName(),
+                                                     + context.channel(),
                                              e);
             }
             if (!acquired) {
                 throw new MessagingException("Kafka incoming connector close timed out after "
                                                      + config.closeTimeout()
                                                      + " while waiting for consumer close on channel "
-                                                     + context.channelName());
+                                                     + context.channel());
             }
             try {
                 if (activeConsumer.get() != consumer) {
@@ -1076,47 +945,12 @@ final class KafkaIncomingConnector {
             consumer.committed(topicPartitions, commitTimeout);
         }
 
-        private final class AdmissionBudget {
-            private final Optional<Duration> configuredTimeout = context.admissionTimeout();
-            private long remainingNanos = configuredTimeout
-                    .map(TimeUnit.NANOSECONDS::convert)
-                    .orElse(Long.MAX_VALUE);
-
-            private void requireAvailable() {
-                if (remainingNanos <= 0) {
-                    throw new MessagingRejectedException(
-                            context.channelName(),
-                            MessagingRejectedException.Reason.TIMEOUT,
-                            "Kafka delivery admission timed out after " + configuredTimeout.orElseThrow()
-                                    + " on channel " + context.channelName());
-                }
-            }
-
-            private Duration waitTimeout() {
-                requireAvailable();
-                return remainingNanos == Long.MAX_VALUE
-                        ? maintenancePollTimeout
-                        : Duration.ofNanos(Math.min(remainingNanos, maintenancePollTimeout.toNanos()));
-            }
-
-            private void spentSince(long started) {
-                if (remainingNanos != Long.MAX_VALUE) {
-                    remainingNanos = Math.max(0, remainingNanos - (System.nanoTime() - started));
-                }
-            }
-        }
-
         private final class ActiveDelivery implements ConnectorDelivery {
-            private final PendingPoll pendingPoll;
             private final AtomicReference<ConnectorDelivery> delegate = new AtomicReference<>();
             private final AtomicBoolean delegateClosed = new AtomicBoolean();
             private final AtomicBoolean releaseWhenFinished = new AtomicBoolean();
             private final AtomicBoolean completionWatcherStarted = new AtomicBoolean();
             private final AtomicBoolean releasedFromSource = new AtomicBoolean();
-
-            private ActiveDelivery(PendingPoll pendingPoll) {
-                this.pendingPoll = pendingPoll;
-            }
 
             @Override
             public boolean isDone() {
@@ -1150,10 +984,6 @@ final class KafkaIncomingConnector {
                 }
             }
 
-            private void run() {
-                deliver(pendingPoll);
-            }
-
             private void attach(ConnectorDelivery delivery) {
                 if (!delegate.compareAndSet(null, Objects.requireNonNull(delivery))) {
                     throw new IllegalStateException("Kafka delivery delegate was already attached");
@@ -1175,7 +1005,7 @@ final class KafkaIncomingConnector {
                         && delegate.get() != null
                         && completionWatcherStarted.compareAndSet(false, true)) {
                     Thread.ofVirtual()
-                            .name("helidon-messaging-kafka-delivery-release-" + context.channelName())
+                            .name("helidon-messaging-kafka-delivery-release-" + context.channel())
                             .inheritInheritableThreadLocals(false)
                             .start(this::releaseAfterCompletion);
                 }
@@ -1275,96 +1105,6 @@ final class KafkaIncomingConnector {
         }
     }
 
-    private record DeliveryBatch(MessageBatch<Object> batch, List<Integer> originalIndexes) {
-        private DeliveryBatch {
-            Objects.requireNonNull(batch);
-            originalIndexes = List.copyOf(originalIndexes);
-            if (batch.size() != originalIndexes.size()) {
-                throw new IllegalArgumentException("Kafka delivery batch index count does not match its message count");
-            }
-        }
-
-        private static DeliveryBatch initial(MessageBatch<Object> batch) {
-            List<Integer> originalIndexes = new ArrayList<>(batch.size());
-            for (int i = 0; i < batch.size(); i++) {
-                originalIndexes.add(i);
-            }
-            return new DeliveryBatch(batch, originalIndexes);
-        }
-
-        private DeliverySplit processingFailure(RuntimeException failure, PendingPoll pendingPoll) {
-            if (!(failure instanceof BatchDeliveryException batchFailure)
-                    || !batch.sameDelivery(batchFailure.batch())) {
-                return new DeliverySplit(this, null);
-            }
-
-            List<Integer> attemptedLocalIndexes = new ArrayList<>();
-            List<Integer> deferredLocalIndexes = new ArrayList<>();
-            for (int i = 0; i < batch.size(); i++) {
-                int originalIndex = originalIndexes.get(i);
-                BatchItemStatus status = batchFailure.outcome(i).status();
-                if (status == BatchItemStatus.SUCCEEDED) {
-                    pendingPoll.settle(originalIndex);
-                } else if (status == BatchItemStatus.NOT_ATTEMPTED) {
-                    deferredLocalIndexes.add(i);
-                } else {
-                    attemptedLocalIndexes.add(i);
-                }
-            }
-            DeliveryBatch attempted = select(attemptedLocalIndexes);
-            DeliveryBatch deferred = select(deferredLocalIndexes);
-            if (attempted == null) {
-                // With no attempted failure there is no earlier poison item from which to defer this work. Apply the
-                // delivery failure policy to the not-attempted items so a permanently unavailable route cannot spin.
-                attempted = deferred;
-                deferred = null;
-            }
-            return new DeliverySplit(attempted, deferred);
-        }
-
-        private DeliveryBatch terminalFailure(RuntimeException failure, PendingPoll pendingPoll) {
-            if (!(failure instanceof BatchDeliveryException batchFailure)
-                    || !batch.sameDelivery(batchFailure.batch())) {
-                return this;
-            }
-
-            List<Integer> unresolvedLocalIndexes = new ArrayList<>();
-            for (int i = 0; i < batch.size(); i++) {
-                if (batchFailure.outcome(i).status() == BatchItemStatus.SUCCEEDED) {
-                    pendingPoll.settle(originalIndexes.get(i));
-                } else {
-                    // These items already failed source processing. NOT_ATTEMPTED here describes the terminal route,
-                    // so it must remain unresolved rather than returning to application processing.
-                    unresolvedLocalIndexes.add(i);
-                }
-            }
-            return select(unresolvedLocalIndexes);
-        }
-
-        private DeliveryBatch select(List<Integer> localIndexes) {
-            if (localIndexes.isEmpty()) {
-                return null;
-            }
-            if (localIndexes.size() == batch.size()) {
-                return this;
-            }
-            List<Integer> selectedOriginalIndexes = localIndexes.stream().map(originalIndexes::get).toList();
-            return new DeliveryBatch(batch.subset(localIndexes), selectedOriginalIndexes);
-        }
-    }
-
-    private record DeliverySplit(DeliveryBatch attempted, DeliveryBatch deferred) {
-    }
-
-    private record DeferredDelivery(DeliveryBatch batch, int failedAttempts) {
-        private DeferredDelivery {
-            Objects.requireNonNull(batch);
-            if (failedAttempts < 0) {
-                throw new IllegalArgumentException("Deferred delivery failed attempts must be zero or greater");
-            }
-        }
-    }
-
     private static final class PendingPoll {
         private final MessageBatch<Object> batch;
         private final Map<TopicPartition, OffsetAndMetadata> nextOffsets;
@@ -1387,8 +1127,8 @@ final class KafkaIncomingConnector {
 
         private static PendingPoll create(ConsumerRecords<Object, Object> records,
                                           List<Message<Object>> messages,
-                                          ConnectorSourceContext context) {
-            String channel = context.channelName();
+                                          IncomingConnectorContext context) {
+            String channel = context.channel();
             int maxDeliveryMessages = context.maxDeliveryMessages();
             if (messages.size() > maxDeliveryMessages) {
                 throw new MessagingRejectedException(
@@ -1441,12 +1181,22 @@ final class KafkaIncomingConnector {
             return invalidatedPartitions;
         }
 
-        private void settle(List<Integer> originalIndexes) {
-            originalIndexes.forEach(this::settle);
-        }
-
         private void settle(int originalIndex) {
             settled.set(originalIndex, 1);
+        }
+
+        private void settleAll() {
+            for (int i = 0; i < batch.size(); i++) {
+                settle(i);
+            }
+        }
+
+        private void settleSucceeded(BatchDeliveryException failure) {
+            for (int i = 0; i < batch.size(); i++) {
+                if (failure.outcome(i).status() == BatchItemStatus.SUCCEEDED) {
+                    settle(i);
+                }
+            }
         }
 
         private Map<TopicPartition, OffsetAndMetadata> contiguousSettledOffsets() {

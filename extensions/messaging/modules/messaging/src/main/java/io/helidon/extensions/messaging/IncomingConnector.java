@@ -19,8 +19,8 @@ package io.helidon.extensions.messaging;
 /**
  * Incoming connector for one configured binding.
  * <p>
- * The messaging runtime invokes {@link #run(ConnectorSourceContext)} on an owned virtual thread. The connector
- * establishes its transport resources, calls {@link ConnectorSourceContext#awaitRunning()}, and starts acquiring
+ * The messaging runtime invokes {@link #run(IncomingConnectorContext)} on an owned virtual thread. The connector
+ * establishes its transport resources, calls {@link IncomingConnectorContext#awaitRunning()}, and starts acquiring
  * deliveries only when that method returns {@code true}.
  */
 public interface IncomingConnector extends Connector {
@@ -28,17 +28,17 @@ public interface IncomingConnector extends Connector {
      * Run this connector until it is drained or closed.
      * <p>
      * Before acquiring the first delivery, the connector must synchronously establish the transport resources needed
-     * to run and call {@link ConnectorSourceContext#awaitRunning()}. It must return without acquiring deliveries when
+     * to run and call {@link IncomingConnectorContext#awaitRunning()}. It must return without acquiring deliveries when
      * that method returns {@code false}. Normal return after {@link #drain()} must include final transport settlement
      * and checkpointing.
      *
-     * @param context connector source context
+     * @param context incoming connector context
      */
-    void run(ConnectorSourceContext context);
+    void run(IncomingConnectorContext context);
 
     /**
      * Stop acquiring new transport deliveries while allowing already acquired deliveries to settle. Once those
-     * delivery handoffs finish, {@link #run(ConnectorSourceContext)} must finish its transport checkpoint and return.
+     * delivery handoffs finish, {@link #run(IncomingConnectorContext)} must finish its transport checkpoint and return.
      */
     void drain();
 }

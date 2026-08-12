@@ -37,6 +37,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -49,15 +51,13 @@ import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.extensions.messaging.BatchAtomicity;
 import io.helidon.extensions.messaging.BatchDeliveryException;
-import io.helidon.extensions.messaging.BatchItemOutcome;
 import io.helidon.extensions.messaging.BatchItemStatus;
 import io.helidon.extensions.messaging.ConnectorConfig;
 import io.helidon.extensions.messaging.ConnectorDelivery;
 import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
 import io.helidon.extensions.messaging.ConnectorProvider;
-import io.helidon.extensions.messaging.ConnectorSourceContext;
-import io.helidon.extensions.messaging.FailurePolicy;
 import io.helidon.extensions.messaging.IncomingConnector;
+import io.helidon.extensions.messaging.IncomingConnectorContext;
 import io.helidon.extensions.messaging.IncomingConnectorProvider;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageBatch;
@@ -347,8 +347,8 @@ class FileConnectorTest {
         CountDownLatch secondReady = new CountDownLatch(1);
         AtomicReference<Throwable> firstFailure = new AtomicReference<>();
         AtomicReference<Throwable> secondFailure = new AtomicReference<>();
-        ConnectorSourceContext firstContext = incomingContext(ignored -> { }, firstReady);
-        ConnectorSourceContext secondContext = incomingContext(ignored -> secondDelivered.countDown(), secondReady);
+        IncomingConnectorContext firstContext = incomingContext(ignored -> { }, firstReady);
+        IncomingConnectorContext secondContext = incomingContext(ignored -> secondDelivered.countDown(), secondReady);
         IncomingConnector first = provider.createIncomingConnector(incomingConfig(firstPath));
         IncomingConnector second = provider.createIncomingConnector(incomingConfig(secondPath));
 
@@ -620,458 +620,93 @@ class FileConnectorTest {
     }
 
     @Test
-    void testFailedAppendIsRedeliveredBeforeLaterLines(@TempDir Path tempDir) throws Exception {
+    void testRuntimeCompletionAdvancesBeforeLaterLinesAreRead(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "first\nsecond\n");
-        List<List<String>> attempts = new ArrayList<>();
-        List<List<String>> handledBatches = new ArrayList<>();
-        List<Integer> failedAttempts = new ArrayList<>();
-        List<RuntimeException> handledFailures = new ArrayList<>();
-        AtomicInteger attempt = new AtomicInteger();
-        RuntimeException expectedFailure = new IllegalStateException("expected downstream failure");
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public FailurePolicy failurePolicy() {
-                return FailurePolicy.builder()
-                        .retryDelay(Duration.ofMillis(1))
-                        .build();
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicInteger delivery = new AtomicInteger();
+        IncomingConnectorContext context = new TrackingReservationContext(10, messages -> {
+            deliveries.add(entities(messages));
+            if (delivery.getAndIncrement() == 0) {
+                append(input, "third\n");
             }
-
-            @Override
-            public String channelName() {
-                return "events";
-            }
-
-            @Override
-            public <T> void emit(Message<T> message) {
-                throw new AssertionError("File source must emit appended lines as a batch");
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> messages) {
-                attempts.add(entities(messages));
-                int currentAttempt = attempt.getAndIncrement();
-                if (currentAttempt == 0) {
-                    append(input, "third\n");
-                }
-                if (currentAttempt < 2) {
-                    throw expectedFailure;
-                }
-            }
-
-            @Override
-            public <T> FailureResult handleFailure(MessageBatch<T> messages,
-                                                   int failedAttempt,
-                                                   RuntimeException failure) {
-                handledBatches.add(entities(messages));
-                failedAttempts.add(failedAttempt);
-                handledFailures.add(failure);
-                return FailureResult.RETRY;
-            }
-        };
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+        });
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input), context, new AtomicBoolean());
 
         int offset = source.emitAppendedLines(input, 0);
 
-        assertThat(attempts,
-                   is(List.of(List.of("first", "second"),
-                              List.of("first", "second"),
-                              List.of("first", "second"),
-                              List.of("third"))));
-        assertThat(handledBatches,
-                   is(List.of(List.of("first", "second"),
-                              List.of("first", "second"))));
-        assertThat(failedAttempts, is(List.of(1, 2)));
-        assertThat(handledFailures, is(List.of(expectedFailure, expectedFailure)));
-        assertThat(offset, is(Files.readString(input).length()));
+        assertThat(deliveries, is(List.of(List.of("first", "second"), List.of("third"))));
+        assertThat(offset, is(Math.toIntExact(Files.size(input))));
     }
 
     @Test
-    void testAllNotAttemptedDeliveryInvokesFailurePolicy(@TempDir Path tempDir) throws Exception {
+    void testFailedRuntimeDeliveryLeavesBatchAvailableForRedelivery(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "first\nsecond\n");
-        AtomicInteger deliveries = new AtomicInteger();
-        AtomicInteger handled = new AtomicInteger();
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public String channelName() {
-                return "events";
+        RuntimeException expected = new IllegalStateException("expected runtime delivery failure");
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicBoolean fail = new AtomicBoolean(true);
+        IncomingConnectorContext context = new TrackingReservationContext(10, messages -> {
+            deliveries.add(entities(messages));
+            if (fail.getAndSet(false)) {
+                throw expected;
             }
+        });
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input), context, new AtomicBoolean());
 
-            @Override
-            public <T> void emitBatch(MessageBatch<T> batch) {
-                deliveries.incrementAndGet();
-                throw BatchDeliveryException.notAttempted(
-                        "Expected pre-dispatch rejection",
-                        batch,
-                        new MessagingRejectedException("target", MessagingRejectedException.Reason.OVERSIZED));
-            }
-
-            @Override
-            public <T> FailureResult handleFailure(MessageBatch<T> batch,
-                                                   int failedAttempt,
-                                                   RuntimeException failure) {
-                handled.incrementAndGet();
-                assertThat(failedAttempt, is(1));
-                assertThat(failure, instanceOf(BatchDeliveryException.class));
-                BatchDeliveryException batchFailure = (BatchDeliveryException) failure;
-                assertThat(batchFailure.batch(), sameInstance(batch));
-                assertThat(batchFailure.outcomes().stream().map(BatchItemOutcome::status).toList(),
-                           is(List.of(BatchItemStatus.NOT_ATTEMPTED, BatchItemStatus.NOT_ATTEMPTED)));
-                return FailureResult.SETTLED;
-            }
-        };
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
-
+        RuntimeException failure = assertThrows(RuntimeException.class, () -> source.emitAppendedLines(input, 0));
         int offset = source.emitAppendedLines(input, 0);
 
-        assertThat(deliveries.get(), is(1));
-        assertThat(handled.get(), is(1));
+        assertThat(failure, sameInstance(expected));
+        assertThat(deliveries,
+                   is(List.of(List.of("first", "second"), List.of("first", "second"))));
         assertThat(offset, is(Math.toIntExact(Files.size(input))));
     }
 
     @Test
-    void testStructuredPartialFailureRetriesAttemptedBeforeNotAttempted(@TempDir Path tempDir)
-            throws Exception {
-        Path input = tempDir.resolve("events.log");
-        Files.writeString(input, "first\nsecond\nthird\n");
-        RuntimeException expectedFailure = new IllegalStateException("expected downstream failure");
-        List<MessageBatch<?>> attempts = new ArrayList<>();
-        List<MessageBatch<?>> handled = new ArrayList<>();
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public FailurePolicy failurePolicy() {
-                return FailurePolicy.builder()
-                        .retryDelay(Duration.ofMillis(1))
-                        .build();
-            }
-
-            @Override
-            public String channelName() {
-                return "events";
-            }
-
-            @Override
-            public <T> void emit(Message<T> message) {
-                throw new AssertionError("File source must emit appended lines as a batch");
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> batch) {
-                attempts.add(batch);
-                if (attempts.size() == 1) {
-                    throw BatchDeliveryException.sequential("Expected partial delivery", batch, 1, expectedFailure);
-                }
-            }
-
-            @Override
-            public <T> FailureResult handleFailure(MessageBatch<T> batch,
-                                                   int failedAttempt,
-                                                   RuntimeException failure) {
-                handled.add(batch);
-                assertThat(failedAttempt, is(1));
-                assertThat(failure, instanceOf(BatchDeliveryException.class));
-                BatchDeliveryException batchFailure = (BatchDeliveryException) failure;
-                assertThat(batchFailure.batch(), sameInstance(batch));
-                assertThat(batchFailure.outcomes().size(), is(1));
-                assertThat(batchFailure.outcome(0).index(), is(0));
-                assertThat(batchFailure.outcome(0).status(), is(BatchItemStatus.INDETERMINATE));
-                assertThat(batchFailure.outcome(0).failure().orElseThrow(), sameInstance(expectedFailure));
-                return FailureResult.RETRY;
-            }
-        };
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
-
-        int offset = source.emitAppendedLines(input, 0);
-
-        assertThat(attempts.stream().map(FileConnectorTest::entities).toList(),
-                   is(List.of(List.of("first", "second", "third"), List.of("second"), List.of("third"))));
-        assertThat(handled.size(), is(1));
-        assertThat(handled.getFirst(), sameInstance(attempts.get(1)));
-        assertThat(attempts.getFirst().subset(List.of(1)).sameDelivery(attempts.get(1)), is(true));
-        assertThat(attempts.getFirst().subset(List.of(2)).sameDelivery(attempts.get(2)), is(true));
-        assertThat(offset, is(Math.toIntExact(Files.size(input))));
-    }
-
-    @Test
-    void testDeferredSubsetRetainsEarlierFailedAttemptCount(@TempDir Path tempDir) throws Exception {
-        Path input = tempDir.resolve("events.log");
-        Files.writeString(input, "first\nsecond\n");
-        RuntimeException expectedFailure = new IllegalStateException("expected downstream failure");
-        List<MessageBatch<?>> deliveries = new ArrayList<>();
-        List<MessageBatch<?>> handled = new ArrayList<>();
-        List<Integer> failedAttempts = new ArrayList<>();
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public FailurePolicy failurePolicy() {
-                return FailurePolicy.builder()
-                        .retryDelay(Duration.ofNanos(1))
-                        .build();
-            }
-
-            @Override
-            public String channelName() {
-                return "events";
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> batch) {
-                deliveries.add(batch);
-                if (deliveries.size() == 1) {
-                    throw BatchDeliveryException.indeterminate("Expected initial failure", batch, expectedFailure);
-                }
-                if (deliveries.size() == 2) {
-                    throw BatchDeliveryException.sequential("Expected deferred second item",
-                                                            batch,
-                                                            0,
-                                                            expectedFailure);
-                }
-                throw expectedFailure;
-            }
-
-            @Override
-            public <T> FailureResult handleFailure(MessageBatch<T> batch,
-                                                   int failedAttempt,
-                                                   RuntimeException failure) {
-                handled.add(batch);
-                failedAttempts.add(failedAttempt);
-                return handled.size() == 1 ? FailureResult.RETRY : FailureResult.SETTLED;
-            }
-        };
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
-
-        int offset = source.emitAppendedLines(input, 0);
-
-        assertThat(deliveries.stream().map(FileConnectorTest::entities).toList(),
-                   is(List.of(List.of("first", "second"), List.of("first", "second"), List.of("second"))));
-        assertThat(handled.stream().map(FileConnectorTest::entities).toList(),
-                   is(List.of(List.of("first", "second"), List.of("first"), List.of("second"))));
-        assertThat(failedAttempts, is(List.of(1, 2, 2)));
-        assertThat(offset, is(Math.toIntExact(Files.size(input))));
-    }
-
-    @Test
-    void testStructuredPartialTerminalHandlingDefersNotAttemptedMessages(@TempDir Path tempDir)
-            throws Exception {
-        Path input = tempDir.resolve("events.log");
-        Files.writeString(input, "first\nsecond\nthird\n");
-        RuntimeException expectedFailure = new IllegalStateException("expected downstream failure");
-        List<MessageBatch<?>> attempts = new ArrayList<>();
-        AtomicReference<MessageBatch<?>> handled = new AtomicReference<>();
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public String channelName() {
-                return "events";
-            }
-
-            @Override
-            public <T> void emit(Message<T> message) {
-                throw new AssertionError("File source must emit appended lines as a batch");
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> batch) {
-                attempts.add(batch);
-                if (attempts.size() == 1) {
-                    throw BatchDeliveryException.sequential("Expected partial delivery", batch, 1, expectedFailure);
-                }
-            }
-
-            @Override
-            public <T> FailureResult handleFailure(MessageBatch<T> batch,
-                                                   int failedAttempt,
-                                                   RuntimeException failure) {
-                handled.set(batch);
-                return FailureResult.SETTLED;
-            }
-        };
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
-
-        int offset = source.emitAppendedLines(input, 0);
-
-        assertThat(entities(handled.get()), is(List.of("second")));
-        assertThat(attempts.stream().map(FileConnectorTest::entities).toList(),
-                   is(List.of(List.of("first", "second", "third"), List.of("third"))));
-        assertThat(attempts.getFirst().subset(List.of(1)).sameDelivery(handled.get()), is(true));
-        assertThat(attempts.getFirst().subset(List.of(2)).sameDelivery(attempts.get(1)), is(true));
-        assertThat(offset, is(Math.toIntExact(Files.size(input))));
-    }
-
-    @Test
-    void testStructuredPartialTerminalFailureRetriesOnlyUnresolvedLineage(@TempDir Path tempDir)
-            throws Exception {
-        Path input = tempDir.resolve("events.log");
-        Files.writeString(input, "first\nsecond\nthird\n");
-        RuntimeException processingFailure = new IllegalStateException("expected downstream failure");
-        RuntimeException routeFailure = new IllegalStateException("expected terminal route failure");
-        List<MessageBatch<?>> handled = new ArrayList<>();
-        List<RuntimeException> handledFailures = new ArrayList<>();
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public String channelName() {
-                return "events";
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> batch) {
-                throw processingFailure;
-            }
-
-            @Override
-            public <T> FailureResult handleFailure(MessageBatch<T> batch,
-                                                   int failedAttempt,
-                                                   RuntimeException failure) {
-                handled.add(batch);
-                handledFailures.add(failure);
-                assertThat(failedAttempt, is(1));
-                if (handled.size() == 1) {
-                    List<Message<T>> routedMessages = batch.messages()
-                            .stream()
-                            .map(message -> Message.create(message.entity()))
-                            .toList();
-                    MessageBatch<T> routedBatch = batch.derive(routedMessages);
-                    throw BatchDeliveryException.sequential("Expected partial terminal delivery",
-                                                            routedBatch,
-                                                            1,
-                                                            routeFailure);
-                }
-                return FailureResult.SETTLED;
-            }
-        };
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
-
-        int offset = source.emitAppendedLines(input, 0);
-
-        assertThat(handled.stream().map(FileConnectorTest::entities).toList(),
-                   is(List.of(List.of("first", "second", "third"), List.of("second", "third"))));
-        assertThat(handled.getFirst().subset(List.of(1, 2)).sameDelivery(handled.get(1)), is(true));
-        assertThat(handledFailures, is(List.of(processingFailure, processingFailure)));
-        assertThat(offset, is(Math.toIntExact(Files.size(input))));
-    }
-
-    @Test
-    void testSettledFailureAdvancesPastCapturedBatch(@TempDir Path tempDir) throws Exception {
-        Path input = tempDir.resolve("events.log");
-        Files.writeString(input, "first\nsecond\n");
-        List<List<String>> attempts = new ArrayList<>();
-        List<List<String>> handledBatches = new ArrayList<>();
-        List<Integer> failedAttempts = new ArrayList<>();
-        List<RuntimeException> handledFailures = new ArrayList<>();
-        AtomicInteger attempt = new AtomicInteger();
-        RuntimeException expectedFailure = new IllegalStateException("expected downstream failure");
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public String channelName() {
-                return "events";
-            }
-
-            @Override
-            public <T> void emit(Message<T> message) {
-                throw new AssertionError("File source must emit appended lines as a batch");
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> messages) {
-                attempts.add(entities(messages));
-                if (attempt.getAndIncrement() == 0) {
-                    append(input, "third\n");
-                    throw expectedFailure;
-                }
-            }
-
-            @Override
-            public <T> FailureResult handleFailure(MessageBatch<T> messages,
-                                                   int failedAttempt,
-                                                   RuntimeException failure) {
-                handledBatches.add(entities(messages));
-                failedAttempts.add(failedAttempt);
-                handledFailures.add(failure);
-                return FailureResult.SETTLED;
-            }
-        };
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
-
-        int offset = source.emitAppendedLines(input, 0);
-
-        assertThat(attempts, is(List.of(List.of("first", "second"), List.of("third"))));
-        assertThat(handledBatches, is(List.of(List.of("first", "second"))));
-        assertThat(failedAttempts, is(List.of(1)));
-        assertThat(handledFailures, is(List.of(expectedFailure)));
-        assertThat(offset, is(Files.readString(input).length()));
-    }
-
-    @Test
-    void testRetryDoesNotApplyCapturedOffsetToSameLengthReplacement(@TempDir Path tempDir) throws Exception {
+    void testSuccessfulRuntimeDeliveryRevalidatesSameLengthReplacement(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         String original = "old-one\nold-two\n";
         String replacement = "new-one\nnew-two\n";
-        assertThat(replacement.length(), is(original.length()));
         Files.writeString(input, original);
-        List<List<String>> attempts = new ArrayList<>();
-        AtomicInteger attempt = new AtomicInteger();
-        ConnectorSourceContext context = retryingContext(messages -> {
-            attempts.add(entities(messages));
-            if (attempt.getAndIncrement() == 0) {
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicBoolean replaced = new AtomicBoolean();
+        IncomingConnectorContext context = new TrackingReservationContext(10, messages -> {
+            deliveries.add(entities(messages));
+            if (replaced.compareAndSet(false, true)) {
                 replace(input, replacement);
-                throw new IllegalStateException("expected downstream failure");
             }
         });
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input), context, new AtomicBoolean());
 
         int offset = source.emitAppendedLines(input, 0);
 
-        assertThat(attempts,
-                   is(List.of(List.of("old-one", "old-two"),
-                              List.of("old-one", "old-two"),
-                              List.of("new-one", "new-two"))));
+        assertThat(deliveries, is(List.of(List.of("old-one", "old-two"), List.of("new-one", "new-two"))));
         assertThat(offset, is(replacement.length()));
     }
 
     @Test
-    void testSettlementDoesNotApplyCapturedOffsetToLargerReplacement(@TempDir Path tempDir) throws Exception {
+    void testSuccessfulRuntimeDeliveryRevalidatesLargerReplacement(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
-        String original = "old\n";
         String replacement = "replacement-first\nreplacement-second\n";
-        assertThat(replacement.length() > original.length(), is(true));
-        Files.writeString(input, original);
-        List<List<String>> attempts = new ArrayList<>();
-        AtomicInteger attempt = new AtomicInteger();
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public String channelName() {
-                return "events";
+        Files.writeString(input, "old\n");
+        List<List<String>> deliveries = new ArrayList<>();
+        AtomicBoolean replaced = new AtomicBoolean();
+        IncomingConnectorContext context = new TrackingReservationContext(10, messages -> {
+            deliveries.add(entities(messages));
+            if (replaced.compareAndSet(false, true)) {
+                replace(input, replacement);
             }
-
-            @Override
-            public <T> void emit(Message<T> message) {
-                throw new AssertionError("File source must emit appended lines as a batch");
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> messages) {
-                attempts.add(entities(messages));
-                if (attempt.getAndIncrement() == 0) {
-                    replace(input, replacement);
-                    throw new IllegalStateException("expected downstream failure");
-                }
-            }
-
-            @Override
-            public <T> FailureResult handleFailure(MessageBatch<T> messages,
-                                                   int failedAttempt,
-                                                   RuntimeException failure) {
-                return FailureResult.SETTLED;
-            }
-        };
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+        });
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input), context, new AtomicBoolean());
 
         int offset = source.emitAppendedLines(input, 0);
 
-        assertThat(attempts,
-                   is(List.of(List.of("old"),
-                              List.of("replacement-first", "replacement-second"))));
+        assertThat(deliveries,
+                   is(List.of(List.of("old"), List.of("replacement-first", "replacement-second"))));
         assertThat(offset, is(replacement.length()));
     }
+
 
     @Test
     void testIncompleteTrailingUtf8SequenceWaitsForRemainingBytes(@TempDir Path tempDir) throws Exception {
@@ -1080,8 +715,8 @@ class FileConnectorTest {
         Files.writeString(input, "one\n");
         Files.write(input, Arrays.copyOf(emoji, 2), StandardOpenOption.APPEND);
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = retryingContext(messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input, emoji.length),
+        IncomingConnectorContext context = incomingContext(messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input, emoji.length),
                                                           context,
                                                           new AtomicBoolean());
         FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
@@ -1105,8 +740,8 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "first\nsecond\nthird\nfourth\nfifth\n");
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+        IncomingConnectorContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input), context, new AtomicBoolean());
 
         int offset = source.emitAppendedLines(input, 0);
 
@@ -1123,7 +758,7 @@ class FileConnectorTest {
         Files.writeString(input, "good\nx\n");
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean rewritten = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(1, messages -> {
+        IncomingConnectorContext context = boundedContext(1, messages -> {
             deliveries.add(entities(messages));
             if (rewritten.compareAndSet(false, true)) {
                 try {
@@ -1133,7 +768,7 @@ class FileConnectorTest {
                 }
             }
         });
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input),
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input),
                                                           context,
                                                           new AtomicBoolean());
 
@@ -1149,8 +784,8 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "good\n");
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input),
+        IncomingConnectorContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input),
                                                           context,
                                                           new AtomicBoolean());
         FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
@@ -1170,8 +805,8 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "good\nlong-tail");
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input),
+        IncomingConnectorContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input),
                                                           context,
                                                           new AtomicBoolean());
         FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
@@ -1194,7 +829,7 @@ class FileConnectorTest {
         TrackingReservationContext context = new TrackingReservationContext(4, ignored -> {
         });
         AtomicBoolean readObserved = new AtomicBoolean();
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input),
                 context,
                 new AtomicBoolean(),
@@ -1217,7 +852,7 @@ class FileConnectorTest {
         Files.writeString(input, "");
         TrackingReservationContext context = new TrackingReservationContext(4, ignored -> {
         });
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input), context, new AtomicBoolean());
 
         int offset = source.emitAppendedLines(input, 0);
 
@@ -1234,7 +869,7 @@ class FileConnectorTest {
         Files.writeString(input, "one\n");
         TrackingReservationContext context = new TrackingReservationContext(10, ignored -> {
         });
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input), context, new AtomicBoolean());
 
         int offset = source.emitAppendedLines(input, 0);
 
@@ -1249,32 +884,22 @@ class FileConnectorTest {
     }
 
     @Test
-    void testRetryAndSettlementRetainStartedDeliveryLease(@TempDir Path tempDir) throws Exception {
+    void testStartedDeliveryLeaseIsRetainedUntilRuntimeCompletion(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "one\n");
-        AtomicInteger attempts = new AtomicInteger();
-        AtomicBoolean leaseRetainedDuringFailureHandling = new AtomicBoolean();
+        AtomicReference<TrackingReservationContext> contextRef = new AtomicReference<>();
+        AtomicBoolean leaseRetainedDuringDelivery = new AtomicBoolean();
         TrackingReservationContext context = new TrackingReservationContext(10, ignored -> {
-            if (attempts.getAndIncrement() == 0) {
-                throw new IllegalStateException("expected downstream failure");
-            }
-        }) {
-            @Override
-            public <T> FailureResult handleFailure(MessageBatch<T> messages,
-                                                   int failedAttempt,
-                                                   RuntimeException failure) {
-                TrackingDelivery delivery = reservations().getFirst().delivery();
-                leaseRetainedDuringFailureHandling.set(delivery != null && !delivery.closed());
-                return FailureResult.RETRY;
-            }
-        };
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+            TrackingDelivery delivery = contextRef.get().reservations().getFirst().delivery();
+            leaseRetainedDuringDelivery.set(delivery != null && !delivery.closed());
+        });
+        contextRef.set(context);
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input), context, new AtomicBoolean());
 
         int offset = source.emitAppendedLines(input, 0);
 
         assertThat(offset, is((int) Files.size(input)));
-        assertThat(attempts.get(), is(2));
-        assertThat(leaseRetainedDuringFailureHandling.get(), is(true));
+        assertThat(leaseRetainedDuringDelivery.get(), is(true));
         assertThat(context.reservations().getFirst().delivery().closed(), is(true));
     }
 
@@ -1287,13 +912,13 @@ class FileConnectorTest {
         Files.writeString(input, original);
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean replaced = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(1, messages -> {
+        IncomingConnectorContext context = boundedContext(1, messages -> {
             deliveries.add(entities(messages));
             if (replaced.compareAndSet(false, true)) {
                 replace(input, replacement);
             }
         });
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input), context, new AtomicBoolean());
 
         int offset = source.emitAppendedLines(input, 0);
 
@@ -1310,7 +935,7 @@ class FileConnectorTest {
         Files.writeString(input, "old-one\nold-two\n");
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean truncated = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(1, messages -> {
+        IncomingConnectorContext context = boundedContext(1, messages -> {
             deliveries.add(entities(messages));
             if (truncated.compareAndSet(false, true)) {
                 try {
@@ -1320,7 +945,7 @@ class FileConnectorTest {
                 }
             }
         });
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input), context, new AtomicBoolean());
 
         int offset = source.emitAppendedLines(input, 0);
 
@@ -1339,7 +964,7 @@ class FileConnectorTest {
         assertThat(replacement.length(), is((int) Files.size(input)));
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean rewritten = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
+        IncomingConnectorContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1353,7 +978,7 @@ class FileConnectorTest {
                 }
             }
         };
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input),
                 context,
                 new AtomicBoolean(),
@@ -1382,7 +1007,7 @@ class FileConnectorTest {
         List<List<String>> deliveries = new ArrayList<>();
         AtomicLong validationBytes = new AtomicLong();
         AtomicBoolean rewritten = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
+        IncomingConnectorContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1398,7 +1023,7 @@ class FileConnectorTest {
                 }
             }
         };
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input),
                 context,
                 new AtomicBoolean(),
@@ -1420,7 +1045,7 @@ class FileConnectorTest {
         List<List<String>> deliveries = new ArrayList<>();
         AtomicInteger validationReads = new AtomicInteger();
         AtomicInteger appends = new AtomicInteger();
-        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
+        IncomingConnectorContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1435,7 +1060,7 @@ class FileConnectorTest {
                 }
             }
         };
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input),
                 context,
                 new AtomicBoolean(),
@@ -1466,7 +1091,7 @@ class FileConnectorTest {
         var lastModified = Files.getLastModifiedTime(input);
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean rewritten = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
+        IncomingConnectorContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1482,7 +1107,7 @@ class FileConnectorTest {
                 }
             }
         };
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input),
                 context,
                 new AtomicBoolean(),
@@ -1512,7 +1137,7 @@ class FileConnectorTest {
         var lastModified = Files.getLastModifiedTime(input);
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean rewritten = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
+        IncomingConnectorContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1526,7 +1151,7 @@ class FileConnectorTest {
                 }
             }
         };
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input),
                 context,
                 new AtomicBoolean(),
@@ -1548,7 +1173,7 @@ class FileConnectorTest {
         Files.write(input, new byte[guardBytes * 4]);
         AtomicLong cursorBytes = new AtomicLong();
         AtomicLong validationBytes = new AtomicLong();
-        ConnectorSourceContext context = boundedContext(1, messages -> {
+        IncomingConnectorContext context = boundedContext(1, messages -> {
         });
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
@@ -1565,7 +1190,7 @@ class FileConnectorTest {
                 validationBytes.addAndGet(bytes);
             }
         };
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input),
                 context,
                 new AtomicBoolean(),
@@ -1589,7 +1214,7 @@ class FileConnectorTest {
         Files.writeString(input, payload + "\n");
         List<List<String>> deliveries = new ArrayList<>();
         AtomicLong validationBytes = new AtomicLong();
-        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
+        IncomingConnectorContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1600,7 +1225,7 @@ class FileConnectorTest {
                 validationBytes.addAndGet(bytes);
             }
         };
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input),
                 context,
                 new AtomicBoolean(),
@@ -1630,8 +1255,8 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, originalPayload + "\n");
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input),
+        IncomingConnectorContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input),
                                                           context,
                                                           new AtomicBoolean());
         FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
@@ -1661,8 +1286,8 @@ class FileConnectorTest {
         Files.writeString(input, "old");
         var lastModified = Files.getLastModifiedTime(input);
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input),
+        IncomingConnectorContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input),
                                                           context,
                                                           new AtomicBoolean());
         FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
@@ -1685,7 +1310,7 @@ class FileConnectorTest {
         Files.writeString(input, "old-" + "a".repeat(16_384) + "\n");
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean truncated = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
+        IncomingConnectorContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1698,7 +1323,7 @@ class FileConnectorTest {
                 }
             }
         };
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input),
                 context,
                 new AtomicBoolean(),
@@ -1720,7 +1345,7 @@ class FileConnectorTest {
         Files.writeString(input, initialPayload + "\n");
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean appended = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
+        IncomingConnectorContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1733,7 +1358,7 @@ class FileConnectorTest {
                 }
             }
         };
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input),
                 context,
                 new AtomicBoolean(),
@@ -1753,8 +1378,8 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "one\n\u00E9\u00E9\nx\n");
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(
+        IncomingConnectorContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input, FileConnectorConfig.DEFAULT_LINE_SEPARATOR, 4, 5),
                 context,
                 new AtomicBoolean());
@@ -1770,8 +1395,8 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "aa\nbb");
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(
+        IncomingConnectorContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input, FileConnectorConfig.DEFAULT_LINE_SEPARATOR, 4, 4),
                 context,
                 new AtomicBoolean());
@@ -1795,7 +1420,7 @@ class FileConnectorTest {
         Files.writeString(input, "aa\nbbb\n");
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean rewritten = new AtomicBoolean();
-        ConnectorSourceContext context = boundedContext(10, messages -> {
+        IncomingConnectorContext context = boundedContext(10, messages -> {
             deliveries.add(entities(messages));
             if (rewritten.compareAndSet(false, true)) {
                 try {
@@ -1805,7 +1430,7 @@ class FileConnectorTest {
                 }
             }
         });
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input, FileConnectorConfig.DEFAULT_LINE_SEPARATOR, 3, 4),
                 context,
                 new AtomicBoolean());
@@ -1824,8 +1449,8 @@ class FileConnectorTest {
         String separator = "\u2028";
         Files.writeString(input, payload + separator);
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input,
+        IncomingConnectorContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input,
                                                                          separator,
                                                                          payload.length(),
                                                                          payload.length()),
@@ -1848,8 +1473,8 @@ class FileConnectorTest {
         System.arraycopy(separator, 0, initial, payload.getBytes(StandardCharsets.UTF_8).length, 2);
         Files.write(input, initial);
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input,
+        IncomingConnectorContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input,
                                                                          "\u2028",
                                                                          payload.length(),
                                                                          payload.length()),
@@ -1873,8 +1498,8 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "xaba");
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input, "abab", 1, 1),
+        IncomingConnectorContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input, "abab", 1, 1),
                                                           context,
                                                           new AtomicBoolean());
 
@@ -1896,7 +1521,7 @@ class FileConnectorTest {
         Files.writeString(input, "x".repeat(32_768));
         List<List<String>> deliveries = new ArrayList<>();
         AtomicInteger reads = new AtomicInteger();
-        ConnectorSourceContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
+        IncomingConnectorContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1907,7 +1532,7 @@ class FileConnectorTest {
                 reads.incrementAndGet();
             }
         };
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input, 4),
                 context,
                 new AtomicBoolean(),
@@ -1930,7 +1555,7 @@ class FileConnectorTest {
         Path accepted = tempDir.resolve("accepted.log");
         Files.writeString(accepted, "\u00E9\n");
         List<List<String>> deliveries = new ArrayList<>();
-        var acceptedSource = new FileIncomingConnector.FileSource(
+        var acceptedSource = new FileIncomingConnector.FileConnector(
                 incomingConfig(accepted, 2),
                 boundedContext(1, messages -> deliveries.add(entities(messages))),
                 new AtomicBoolean());
@@ -1942,7 +1567,7 @@ class FileConnectorTest {
 
         Path rejected = tempDir.resolve("rejected.log");
         Files.writeString(rejected, "\u00E9\n");
-        var rejectedSource = new FileIncomingConnector.FileSource(
+        var rejectedSource = new FileIncomingConnector.FileConnector(
                 incomingConfig(rejected, 1),
                 boundedContext(1, ignored -> { }),
                 new AtomicBoolean());
@@ -1965,8 +1590,8 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.write(input, content);
         List<List<String>> deliveries = new ArrayList<>();
-        ConnectorSourceContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
-        var source = new FileIncomingConnector.FileSource(
+        IncomingConnectorContext context = boundedContext(2, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input, FileConnectorConfig.DEFAULT_LINE_SEPARATOR, 4, 4),
                 context,
                 new AtomicBoolean());
@@ -1983,7 +1608,7 @@ class FileConnectorTest {
         List<List<String>> deliveries = new ArrayList<>();
         AtomicLong scannedBytes = new AtomicLong();
         AtomicLong validatedBytes = new AtomicLong();
-        ConnectorSourceContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
+        IncomingConnectorContext context = boundedContext(1, messages -> deliveries.add(entities(messages)));
         var readListener = new FileIncomingConnector.FileReadListener() {
             @Override
             public void beforeRead(Path path) {
@@ -1999,7 +1624,7 @@ class FileConnectorTest {
                 validatedBytes.addAndGet(bytes);
             }
         };
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input),
                 context,
                 new AtomicBoolean(),
@@ -2035,7 +1660,7 @@ class FileConnectorTest {
         List<List<String>> deliveries = new ArrayList<>();
         AtomicBoolean closed = new AtomicBoolean();
         AtomicBoolean registered = new AtomicBoolean();
-        ConnectorSourceContext context = retryingContext(messages -> {
+        IncomingConnectorContext context = incomingContext(messages -> {
             assertThat(registered.get(), is(true));
             deliveries.add(entities(messages));
         });
@@ -2055,7 +1680,7 @@ class FileConnectorTest {
                 closed.set(true);
             }
         };
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input),
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input),
                                                           context,
                                                           closed,
                                                           registrationListener);
@@ -2066,169 +1691,109 @@ class FileConnectorTest {
     }
 
     @Test
-    void testTerminalFailureFromPolicyStopsDelivery(@TempDir Path tempDir) throws Exception {
-        Path input = tempDir.resolve("events.log");
-        Files.writeString(input, "first\nsecond\n");
-        List<List<String>> attempts = new ArrayList<>();
-        List<Integer> failedAttempts = new ArrayList<>();
-        RuntimeException deliveryFailure = new IllegalStateException("expected downstream failure");
-        RuntimeException terminalFailure = new IllegalStateException("delivery attempts exhausted", deliveryFailure);
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public String channelName() {
-                return "events";
-            }
-
-            @Override
-            public <T> void emit(Message<T> message) {
-                throw new AssertionError("File source must emit appended lines as a batch");
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> messages) {
-                attempts.add(entities(messages));
-                append(input, "third\n");
-                throw deliveryFailure;
-            }
-
-            @Override
-            public <T> FailureResult handleFailure(MessageBatch<T> messages,
-                                                   int failedAttempt,
-                                                   RuntimeException failure) {
-                failedAttempts.add(failedAttempt);
-                assertThat(entities(messages), is(List.of("first", "second")));
-                assertThat(failure, sameInstance(deliveryFailure));
-                throw terminalFailure;
-            }
-        };
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
-
-        RuntimeException thrown = assertThrows(RuntimeException.class, () -> source.emitAppendedLines(input, 0));
-
-        assertThat(thrown, sameInstance(terminalFailure));
-        assertThat(attempts, is(List.of(List.of("first", "second"))));
-        assertThat(failedAttempts, is(List.of(1)));
-    }
-
-    @Test
     @Timeout(value = 5)
-    void testCloseStopsFailedDeliveryWithoutAdvancingOffset(@TempDir Path tempDir) throws Exception {
+    void testCloseCancelsRuntimeDeliveryBeforeCursorAdvances(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "first\n");
-        CountDownLatch retryScheduled = new CountDownLatch(1);
-        ConnectorSourceContext context = new ConnectorSourceContext() {
+        CountDownLatch awaitingDelivery = new CountDownLatch(1);
+        AtomicBoolean cancelled = new AtomicBoolean();
+        ConnectorDelivery blockingDelivery = new ConnectorDelivery() {
             @Override
-            public FailurePolicy failurePolicy() {
-                return FailurePolicy.builder()
-                        .retryDelay(Duration.ofSeconds(30))
-                        .build();
+            public boolean isDone() {
+                return false;
             }
 
             @Override
-            public String channelName() {
+            public boolean isCurrentThread() {
+                return false;
+            }
+
+            @Override
+            public void await() throws InterruptedException {
+                awaitingDelivery.countDown();
+                new CountDownLatch(1).await();
+            }
+
+            @Override
+            public boolean await(Duration timeout) throws InterruptedException {
+                await();
+                return false;
+            }
+
+            @Override
+            public void cancel() {
+                cancelled.set(true);
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        IncomingConnectorContext context = new IncomingConnectorContext() {
+            @Override
+            public String channel() {
                 return "events";
             }
 
             @Override
-            public <T> void emit(Message<T> message) {
-                throw new AssertionError("File source must emit appended lines as a batch");
+            public int maxDeliveryMessages() {
+                return 1;
             }
 
             @Override
-            public <T> void emitBatch(MessageBatch<T> messages) {
-                throw new IllegalStateException("expected downstream failure");
+            public ConnectorDeliveryReservation reserveDelivery() {
+                return new ConnectorDeliveryReservation() {
+                    @Override
+                    public ConnectorDelivery start(MessageBatch<?> batch) {
+                        return blockingDelivery;
+                    }
+
+                    @Override
+                    public Optional<ConnectorDelivery> tryStart(MessageBatch<?> batch) {
+                        return Optional.of(blockingDelivery);
+                    }
+
+                    @Override
+                    public void close() {
+                    }
+                };
             }
 
             @Override
-            public <T> FailureResult handleFailure(MessageBatch<T> messages,
-                                                   int failedAttempt,
-                                                   RuntimeException failure) {
-                retryScheduled.countDown();
-                return FailureResult.RETRY;
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery() {
+                return Optional.of(reserveDelivery());
             }
         };
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
+        Set<Thread> sourceThreads = ConcurrentHashMap.newKeySet();
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input),
+                                                              context,
+                                                              new AtomicBoolean(),
+                                                              sourceThreads);
         AtomicInteger offset = new AtomicInteger(-1);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual().start(() -> {
+            sourceThreads.add(Thread.currentThread());
             try {
                 offset.set(source.emitAppendedLines(input, 0));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             } catch (Throwable t) {
                 failure.set(t);
+            } finally {
+                sourceThreads.remove(Thread.currentThread());
             }
         });
-        assertThat(retryScheduled.await(1, TimeUnit.SECONDS), is(true));
+        assertThat(awaitingDelivery.await(1, TimeUnit.SECONDS), is(true));
 
         source.close();
         thread.join(TimeUnit.SECONDS.toMillis(1));
 
         assertThat(thread.isAlive(), is(false));
         assertThat(failure.get(), nullValue());
-        assertThat(offset.get(), is(0));
+        assertThat(cancelled.get(), is(true));
+        assertThat(offset.get(), is(-1));
     }
 
-    @Test
-    @Timeout(value = 5)
-    void testCloseStopsPartialTerminalRouteWithoutInvokingUnresolvedSubset(@TempDir Path tempDir) throws Exception {
-        Path input = tempDir.resolve("events.log");
-        Files.writeString(input, "first\nsecond\nthird\n");
-        RuntimeException processingFailure = new IllegalStateException("expected downstream failure");
-        RuntimeException routeFailure = new IllegalStateException("expected terminal route failure");
-        CountDownLatch terminalRouteStarted = new CountDownLatch(1);
-        CountDownLatch releaseTerminalRoute = new CountDownLatch(1);
-        AtomicInteger terminalRouteInvocations = new AtomicInteger();
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public String channelName() {
-                return "events";
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> batch) {
-                throw processingFailure;
-            }
-
-            @Override
-            public <T> FailureResult handleFailure(MessageBatch<T> batch,
-                                                   int failedAttempt,
-                                                   RuntimeException failure) {
-                terminalRouteInvocations.incrementAndGet();
-                terminalRouteStarted.countDown();
-                try {
-                    releaseTerminalRoute.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new MessagingException("Terminal route interrupted", e);
-                }
-                throw BatchDeliveryException.sequential("Expected partial terminal delivery",
-                                                        batch,
-                                                        1,
-                                                        routeFailure);
-            }
-        };
-        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
-        AtomicInteger offset = new AtomicInteger(-1);
-        AtomicReference<Throwable> failure = new AtomicReference<>();
-        Thread thread = Thread.ofVirtual().start(() -> {
-            try {
-                offset.set(source.emitAppendedLines(input, 0));
-            } catch (Throwable t) {
-                failure.set(t);
-            }
-        });
-        assertThat(terminalRouteStarted.await(1, TimeUnit.SECONDS), is(true));
-
-        source.close();
-        releaseTerminalRoute.countDown();
-        thread.join(TimeUnit.SECONDS.toMillis(1));
-
-        assertThat(thread.isAlive(), is(false));
-        assertThat(failure.get(), nullValue());
-        assertThat(offset.get(), is(0));
-        assertThat("closure must not invoke the terminal route for the unresolved subset",
-                   terminalRouteInvocations.get(),
-                   is(1));
-    }
 
     @Test
     @Timeout(value = 5)
@@ -2237,10 +1802,10 @@ class FileConnectorTest {
         Files.writeString(input, "");
         CountDownLatch reservationWait = new CountDownLatch(1);
         CountDownLatch neverReleased = new CountDownLatch(1);
-        ConnectorSourceContext context = new TrackingReservationContext(1, ignored -> {
+        IncomingConnectorContext context = new TrackingReservationContext(1, ignored -> {
         }) {
             @Override
-            public ConnectorDeliveryReservation reserveDelivery(int maxMessages) {
+            public ConnectorDeliveryReservation reserveDelivery() {
                 reservationWait.countDown();
                 try {
                     neverReleased.await();
@@ -2284,21 +1849,19 @@ class FileConnectorTest {
         CountDownLatch neverReleased = new CountDownLatch(1);
         AtomicInteger reservationCount = new AtomicInteger();
         AtomicBoolean blockedReservationClosed = new AtomicBoolean();
-        ConnectorSourceContext context = new TrackingReservationContext(1, ignored -> {
+        IncomingConnectorContext context = new TrackingReservationContext(1, ignored -> {
         }) {
             @Override
-            public ConnectorDeliveryReservation reserveDelivery(int maxMessages) {
+            public ConnectorDeliveryReservation reserveDelivery() {
                 if (reservationCount.incrementAndGet() == 1) {
                     return new ConnectorDeliveryReservation() {
                         @Override
-                        public <T> ConnectorDelivery start(MessageBatch<T> messages,
-                                                           Runnable delivery) {
+                        public ConnectorDelivery start(MessageBatch<?> messages) {
                             throw new AssertionError("Initial empty read must not start a delivery");
                         }
 
                         @Override
-                        public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> messages,
-                                                                       Runnable delivery) {
+                        public Optional<ConnectorDelivery> tryStart(MessageBatch<?> messages) {
                             throw new AssertionError("Initial empty read must not start a delivery");
                         }
 
@@ -2310,8 +1873,7 @@ class FileConnectorTest {
                 }
                 return new ConnectorDeliveryReservation() {
                     @Override
-                    public <T> ConnectorDelivery start(MessageBatch<T> messages,
-                                                       Runnable delivery) {
+                    public ConnectorDelivery start(MessageBatch<?> messages) {
                         startWait.countDown();
                         try {
                             neverReleased.await();
@@ -2326,9 +1888,8 @@ class FileConnectorTest {
                     }
 
                     @Override
-                    public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> messages,
-                                                                   Runnable delivery) {
-                        return Optional.of(start(messages, delivery));
+                    public Optional<ConnectorDelivery> tryStart(MessageBatch<?> messages) {
+                        return Optional.of(start(messages));
                     }
 
                     @Override
@@ -2370,7 +1931,7 @@ class FileConnectorTest {
         CountDownLatch neverReleased = new CountDownLatch(1);
         TrackingReservationContext context = new TrackingReservationContext(1, ignored -> {
         });
-        var source = new FileIncomingConnector.FileSource(
+        var source = new FileIncomingConnector.FileConnector(
                 incomingConfig(input),
                 context,
                 new AtomicBoolean(),
@@ -2419,17 +1980,9 @@ class FileConnectorTest {
             assertThat(manager.registry().get(IncomingConnectorProvider.class), sameInstance(discovered));
             assertThat(manager.registry().get(OutgoingConnectorProvider.class), sameInstance(discovered));
             IncomingConnectorProvider provider = (IncomingConnectorProvider) discovered;
-            ConnectorSourceContext context = new ConnectorSourceContext() {
-                @Override
-                public String channelName() {
-                    return "events";
-                }
-
-                @Override
-                public <T> void emitBatch(MessageBatch<T> batch) {
-                    throw new AssertionError("No existing file content should be emitted");
-                }
-            };
+            IncomingConnectorContext context = incomingContext(ignored -> {
+                throw new AssertionError("No existing file content should be emitted");
+            });
             IncomingConnector createdSource = provider.createIncomingConnector(incomingConfigSource(input));
             source = createdSource;
             sourceThread = Thread.ofVirtual()
@@ -2460,23 +2013,10 @@ class FileConnectorTest {
         Files.writeString(input, "existing content is tailed\n");
         List<List<String>> deliveries = new CopyOnWriteArrayList<>();
         CountDownLatch delivered = new CountDownLatch(2);
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public String channelName() {
-                return "events";
-            }
-
-            @Override
-            public <T> void emit(Message<T> message) {
-                throw new AssertionError("File source must emit appended lines as a batch");
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> messages) {
-                deliveries.add(entities(messages));
-                delivered.countDown();
-            }
-        };
+        IncomingConnectorContext context = incomingContext(messages -> {
+            deliveries.add(entities(messages));
+            delivered.countDown();
+        });
         FileConnectorProvider provider = new FileConnectorProvider();
         IncomingConnector source = provider.createIncomingConnector(incomingConfig(input));
         AtomicReference<Throwable> failure = new AtomicReference<>();
@@ -2509,9 +2049,9 @@ class FileConnectorTest {
         CountDownLatch delivered = new CountDownLatch(1);
         CountDownLatch ready = new CountDownLatch(1);
         CountDownLatch running = new CountDownLatch(1);
-        ConnectorSourceContext context = new ConnectorSourceContext() {
+        IncomingConnectorContext context = new IncomingConnectorContext() {
             @Override
-            public String channelName() {
+            public String channel() {
                 return "events";
             }
 
@@ -2528,14 +2068,16 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> void emit(Message<T> message) {
-                throw new AssertionError("File source must emit appended lines as a batch");
+            public ConnectorDeliveryReservation reserveDelivery() {
+                return reservation(maxDeliveryMessages(), messages -> {
+                    deliveries.add(entities(messages));
+                    delivered.countDown();
+                });
             }
 
             @Override
-            public <T> void emitBatch(MessageBatch<T> messages) {
-                deliveries.add(entities(messages));
-                delivered.countDown();
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery() {
+                return Optional.of(reserveDelivery());
             }
         };
         FileConnectorProvider provider = new FileConnectorProvider();
@@ -2567,7 +2109,7 @@ class FileConnectorTest {
         Files.writeString(input, "");
         FileConnectorProvider provider = new FileConnectorProvider();
         CountDownLatch ready = new CountDownLatch(1);
-        ConnectorSourceContext context = new TrackingReservationContext(1, ignored -> {
+        IncomingConnectorContext context = new TrackingReservationContext(1, ignored -> {
         }) {
             @Override
             public boolean awaitRunning() {
@@ -2597,13 +2139,13 @@ class FileConnectorTest {
                 List.of(new TestWatchEvent(target), new TestWatchEvent(Path.of("unrelated.log"))),
                 true);
 
-        assertThat(FileIncomingConnector.FileSource.consumeWatchKey(valid, target), is(true));
+        assertThat(FileIncomingConnector.FileConnector.consumeWatchKey(valid, target), is(true));
         assertThat(valid.pollCount(), is(1));
         assertThat(valid.resetCount(), is(1));
 
         TestWatchKey invalid = new TestWatchKey(List.of(), false);
         IOException failure = assertThrows(IOException.class,
-                                           () -> FileIncomingConnector.FileSource.consumeWatchKey(invalid, target));
+                                           () -> FileIncomingConnector.FileConnector.consumeWatchKey(invalid, target));
         assertThat(failure.getMessage(), is("File watch registration is no longer valid for events.log"));
         assertThat(invalid.pollCount(), is(1));
         assertThat(invalid.resetCount(), is(1));
@@ -2690,14 +2232,14 @@ class FileConnectorTest {
         }
     }
 
-    private static ConnectorSourceContext incomingContext(BatchConsumer consumer) {
+    private static IncomingConnectorContext incomingContext(BatchConsumer consumer) {
         return incomingContext(consumer, null);
     }
 
-    private static ConnectorSourceContext incomingContext(BatchConsumer consumer, CountDownLatch ready) {
-        return new ConnectorSourceContext() {
+    private static IncomingConnectorContext incomingContext(BatchConsumer consumer, CountDownLatch ready) {
+        return new IncomingConnectorContext() {
             @Override
-            public String channelName() {
+            public String channel() {
                 return "events";
             }
 
@@ -2710,54 +2252,21 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> void emit(Message<T> message) {
-                throw new AssertionError("File source must emit appended lines as a batch");
+            public ConnectorDeliveryReservation reserveDelivery() {
+                return reservation(maxDeliveryMessages(), consumer);
             }
 
             @Override
-            public <T> void emitBatch(MessageBatch<T> messages) {
-                consumer.accept(messages);
-            }
-        };
-    }
-
-    private static ConnectorSourceContext retryingContext(BatchConsumer consumer) {
-        return new ConnectorSourceContext() {
-            @Override
-            public FailurePolicy failurePolicy() {
-                return FailurePolicy.builder()
-                        .retryDelay(Duration.ofMillis(1))
-                        .build();
-            }
-
-            @Override
-            public String channelName() {
-                return "events";
-            }
-
-            @Override
-            public <T> void emit(Message<T> message) {
-                throw new AssertionError("File source must emit appended lines as a batch");
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> messages) {
-                consumer.accept(messages);
-            }
-
-            @Override
-            public <T> FailureResult handleFailure(MessageBatch<T> messages,
-                                                   int failedAttempt,
-                                                   RuntimeException failure) {
-                return FailureResult.RETRY;
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery() {
+                return Optional.of(reserveDelivery());
             }
         };
     }
 
-    private static ConnectorSourceContext boundedContext(int maxMessages, BatchConsumer consumer) {
-        return new ConnectorSourceContext() {
+    private static IncomingConnectorContext boundedContext(int maxMessages, BatchConsumer consumer) {
+        return new IncomingConnectorContext() {
             @Override
-            public String channelName() {
+            public String channel() {
                 return "events";
             }
 
@@ -2767,15 +2276,19 @@ class FileConnectorTest {
             }
 
             @Override
-            public <T> void emit(Message<T> message) {
-                throw new AssertionError("File source must emit appended lines as a batch");
+            public ConnectorDeliveryReservation reserveDelivery() {
+                return reservation(maxMessages, consumer);
             }
 
             @Override
-            public <T> void emitBatch(MessageBatch<T> messages) {
-                consumer.accept(messages);
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery() {
+                return Optional.of(reserveDelivery());
             }
         };
+    }
+
+    private static ConnectorDeliveryReservation reservation(int maxMessages, BatchConsumer consumer) {
+        return new TrackingReservation(maxMessages, consumer);
     }
 
     private static List<String> entities(MessageBatch<?> messages) {
@@ -2800,7 +2313,7 @@ class FileConnectorTest {
         assertThat(deliveries.size(), is(expectedCount));
     }
 
-    private static class TrackingReservationContext implements ConnectorSourceContext {
+    private static class TrackingReservationContext implements IncomingConnectorContext {
         private final int maxMessages;
         private final BatchConsumer consumer;
         private final List<TrackingReservation> reservations = new ArrayList<>();
@@ -2811,7 +2324,7 @@ class FileConnectorTest {
         }
 
         @Override
-        public String channelName() {
+        public String channel() {
             return "events";
         }
 
@@ -2821,20 +2334,15 @@ class FileConnectorTest {
         }
 
         @Override
-        public ConnectorDeliveryReservation reserveDelivery(int maxMessages) {
-            TrackingReservation reservation = new TrackingReservation(maxMessages);
+        public ConnectorDeliveryReservation reserveDelivery() {
+            TrackingReservation reservation = new TrackingReservation(maxMessages, consumer);
             reservations.add(reservation);
             return reservation;
         }
 
         @Override
-        public <T> void emit(Message<T> message) {
-            throw new AssertionError("File source must emit appended lines as a batch");
-        }
-
-        @Override
-        public <T> void emitBatch(MessageBatch<T> messages) {
-            consumer.accept(messages);
+        public Optional<ConnectorDeliveryReservation> tryReserveDelivery() {
+            return Optional.of(reserveDelivery());
         }
 
         private boolean hasOpenReservation() {
@@ -2848,18 +2356,23 @@ class FileConnectorTest {
 
     private static final class TrackingReservation implements ConnectorDeliveryReservation {
         private final int reservedMessages;
+        private final BatchConsumer consumer;
         private boolean started;
         private boolean closed;
         private int actualMessages;
         private TrackingDelivery delivery;
 
         private TrackingReservation(int reservedMessages) {
+            this(reservedMessages, ignored -> { });
+        }
+
+        private TrackingReservation(int reservedMessages, BatchConsumer consumer) {
             this.reservedMessages = reservedMessages;
+            this.consumer = consumer;
         }
 
         @Override
-        public <T> ConnectorDelivery start(MessageBatch<T> messages,
-                                           Runnable action) {
+        public ConnectorDelivery start(MessageBatch<?> messages) {
             if (!open()) {
                 throw new IllegalStateException("Reservation is not open");
             }
@@ -2868,15 +2381,14 @@ class FileConnectorTest {
             }
             started = true;
             actualMessages = messages.size();
-            delivery = new TrackingDelivery(action);
+            delivery = new TrackingDelivery(() -> consumer.accept(messages));
             delivery.run();
             return delivery;
         }
 
         @Override
-        public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> messages,
-                                                        Runnable action) {
-            return Optional.of(start(messages, action));
+        public Optional<ConnectorDelivery> tryStart(MessageBatch<?> messages) {
+            return Optional.of(start(messages));
         }
 
         @Override

@@ -156,19 +156,42 @@ final class DeliveryEngine implements AutoCloseable {
     }
 
     ConnectorDeliveryReservation reserveConnectorDelivery(String channel,
-                                                           int maxMessages) {
+                                                           int maxMessages,
+                                                           Consumer<MessageBatch<?>> processor) {
         rejectConnectorReservationFromDispatch();
         return dispatcher(channel).reserveConnectorDelivery(
                 connectorReservationMessages(channel, maxMessages),
-                AdmissionMode.WAIT);
+                AdmissionMode.WAIT,
+                -1,
+                Objects.requireNonNull(processor));
+    }
+
+    Optional<ConnectorDeliveryReservation> tryReserveConnectorDelivery(String channel,
+                                                                       int maxMessages,
+                                                                       long remainingCapacityWaitNanos,
+                                                                       Consumer<MessageBatch<?>> processor) {
+        rejectConnectorReservationFromDispatch();
+        if (remainingCapacityWaitNanos < 0) {
+            throw new IllegalArgumentException("remainingCapacityWaitNanos must be zero or greater");
+        }
+        return Optional.ofNullable(dispatcher(channel).reserveConnectorDelivery(
+                connectorReservationMessages(channel, maxMessages),
+                AdmissionMode.TRY,
+                remainingCapacityWaitNanos,
+                Objects.requireNonNull(processor)));
+    }
+
+    ConnectorDeliveryReservation reserveConnectorDelivery(String channel,
+                                                           int maxMessages) {
+        return reserveConnectorDelivery(channel, maxMessages, ignored -> { });
     }
 
     Optional<ConnectorDeliveryReservation> tryReserveConnectorDelivery(String channel,
                                                                        int maxMessages) {
-        rejectConnectorReservationFromDispatch();
-        return Optional.ofNullable(dispatcher(channel).reserveConnectorDelivery(
-                connectorReservationMessages(channel, maxMessages),
-                AdmissionMode.TRY));
+        return tryReserveConnectorDelivery(channel,
+                                           maxMessages,
+                                           dispatcher(channel).timeoutNanos(),
+                                           ignored -> { });
     }
 
     int maxDeliveryMessages(String channel) {
@@ -464,6 +487,13 @@ final class DeliveryEngine implements AutoCloseable {
         return failure instanceof PreDispatchRejectedException;
     }
 
+    static void ensureCurrentDeliveryActive() {
+        DeliveryContext context = CURRENT_DELIVERY.get();
+        if (context != null) {
+            context.ensureActive();
+        }
+    }
+
     private static boolean canMarkNotAttempted(MessagingRejectedException failure) {
         return switch (failure.reason()) {
         case OVERSIZED, SATURATED -> true;
@@ -631,7 +661,10 @@ final class DeliveryEngine implements AutoCloseable {
             }
         }
 
-        private DeliveryReservation reserveConnectorDelivery(int messageCount, AdmissionMode admissionMode) {
+        private DeliveryReservation reserveConnectorDelivery(int messageCount,
+                                                             AdmissionMode admissionMode,
+                                                             long initialCapacityWaitNanos,
+                                                             Consumer<MessageBatch<?>> processor) {
             validatePendingMessageCount(messageCount);
             if (!pendingAdmissions.tryAcquire()) {
                 if (admissionMode == AdmissionMode.TRY) {
@@ -659,20 +692,22 @@ final class DeliveryEngine implements AutoCloseable {
                         if (!pendingReservationOrder.isEmpty() || !canReservePending(messageCount)) {
                             return null;
                         }
-                        DeliveryReservation result = createReservation(messageCount, timeoutNanos());
+                        DeliveryReservation result = createReservation(messageCount,
+                                                                       initialCapacityWaitNanos,
+                                                                       processor);
                         transferPermit = true;
                         return result;
                     }
 
                     reservationToken = new Object();
                     pendingReservationOrder.addLast(reservationToken);
-                    long remaining = timeoutNanos();
+                    long remaining = initialCapacityWaitNanos < 0 ? timeoutNanos() : initialCapacityWaitNanos;
                     while (true) {
                         rejectIfNotAccepting();
                         if (pendingReservationOrder.peekFirst() == reservationToken
                                 && canReservePending(messageCount)) {
                             pendingReservationOrder.removeFirst();
-                            DeliveryReservation result = createReservation(messageCount, remaining);
+                            DeliveryReservation result = createReservation(messageCount, remaining, processor);
                             transferPermit = true;
                             changed.signalAll();
                             return result;
@@ -700,9 +735,14 @@ final class DeliveryEngine implements AutoCloseable {
             }
         }
 
-        private DeliveryReservation createReservation(int messageCount, long remainingCapacityWaitNanos) {
+        private DeliveryReservation createReservation(int messageCount,
+                                                      long remainingCapacityWaitNanos,
+                                                      Consumer<MessageBatch<?>> processor) {
             reservePending(messageCount);
-            DeliveryReservation result = new DeliveryReservation(this, messageCount, remainingCapacityWaitNanos);
+            DeliveryReservation result = new DeliveryReservation(this,
+                                                                 messageCount,
+                                                                 remainingCapacityWaitNanos,
+                                                                 processor);
             reservations.add(result);
             return result;
         }
@@ -1275,29 +1315,33 @@ final class DeliveryEngine implements AutoCloseable {
     private final class DeliveryReservation implements ConnectorDeliveryReservation {
         private final ChannelDispatcher dispatcher;
         private final int reservedMessages;
+        private final Consumer<MessageBatch<?>> processor;
         private final AtomicBoolean startClaimed = new AtomicBoolean();
         private final AtomicReference<ReservationState> state = new AtomicReference<>(ReservationState.OPEN);
         private long remainingCapacityWaitNanos;
+        private long tryStartDeadline = Long.MIN_VALUE;
         private Object waitingToken;
 
         private DeliveryReservation(ChannelDispatcher dispatcher,
                                     int reservedMessages,
-                                    long remainingCapacityWaitNanos) {
+                                    long remainingCapacityWaitNanos,
+                                    Consumer<MessageBatch<?>> processor) {
             this.dispatcher = dispatcher;
             this.reservedMessages = reservedMessages;
             this.remainingCapacityWaitNanos = remainingCapacityWaitNanos;
+            this.processor = processor;
         }
 
         @Override
-        public <T> ConnectorDelivery start(MessageBatch<T> batch, Runnable delivery) {
+        public ConnectorDelivery start(MessageBatch<?> batch) {
             claimStart();
             try {
                 Objects.requireNonNull(batch);
-                Objects.requireNonNull(delivery);
+                updateTryStartBudget();
                 return dispatcher.startReservation(this,
                                                    batch.size(),
                                                    batch,
-                                                   delivery,
+                                                   () -> processor.accept(batch),
                                                    AdmissionMode.WAIT);
             } catch (RuntimeException | Error e) {
                 dispatcher.closeReservation(this, ReservationState.CLOSED);
@@ -1306,17 +1350,20 @@ final class DeliveryEngine implements AutoCloseable {
         }
 
         @Override
-        public <T> Optional<ConnectorDelivery> tryStart(MessageBatch<T> batch, Runnable delivery) {
+        public Optional<ConnectorDelivery> tryStart(MessageBatch<?> batch) {
             claimStart();
             try {
                 Objects.requireNonNull(batch);
-                Objects.requireNonNull(delivery);
+                long attemptStarted = System.nanoTime();
+                updateTryStartBudget();
                 DeliveryTask task = dispatcher.startReservation(this,
                                                                 batch.size(),
                                                                 batch,
-                                                                delivery,
+                                                                () -> processor.accept(batch),
                                                                 AdmissionMode.TRY);
                 if (task == null) {
+                    beginTryStartBudget(attemptStarted);
+                    updateTryStartBudget();
                     startClaimed.set(false);
                 }
                 return Optional.ofNullable(task);
@@ -1363,6 +1410,27 @@ final class DeliveryEngine implements AutoCloseable {
             } catch (RuntimeException | Error e) {
                 startClaimed.set(false);
                 throw e;
+            }
+        }
+
+        private synchronized void updateTryStartBudget() {
+            if (tryStartDeadline == Long.MIN_VALUE || remainingCapacityWaitNanos == Long.MAX_VALUE) {
+                return;
+            }
+            long remaining = tryStartDeadline - System.nanoTime();
+            if (remaining <= 0) {
+                remainingCapacityWaitNanos = 0;
+                throw rejected(dispatcher.channel,
+                               MessagingRejectedException.Reason.TIMEOUT,
+                               "Messaging delivery reservation start timed out on channel " + dispatcher.channel);
+            }
+            remainingCapacityWaitNanos = remaining;
+        }
+
+        private synchronized void beginTryStartBudget(long attemptStarted) {
+            if (tryStartDeadline == Long.MIN_VALUE && remainingCapacityWaitNanos != Long.MAX_VALUE) {
+                tryStartDeadline = saturatedAdd(attemptStarted, remainingCapacityWaitNanos);
+                remainingCapacityWaitNanos = Math.max(0, tryStartDeadline - System.nanoTime());
             }
         }
 
@@ -1480,6 +1548,7 @@ final class DeliveryEngine implements AutoCloseable {
         private void requestCancellation(MessagingRejectedException.Reason reason, String message) {
             if (cancellationFailure == null) {
                 cancellationFailure = rejected(channel(), reason, message);
+                context.cancel(cancellationFailure);
             }
         }
 
@@ -1525,6 +1594,7 @@ final class DeliveryEngine implements AutoCloseable {
         private final List<DeliveryNode> path;
         private final boolean connectorLease;
         private final MessageBatch<?> retainedBatch;
+        private final AtomicReference<MessagingRejectedException> cancellationFailure = new AtomicReference<>();
         private int dispatchDepth;
 
         private DeliveryContext(DeliveryEngine owner,
@@ -1549,6 +1619,17 @@ final class DeliveryEngine implements AutoCloseable {
                     && dispatchDepth == 0;
         }
 
+        private void cancel(MessagingRejectedException failure) {
+            cancellationFailure.compareAndSet(null, failure);
+        }
+
+        private void ensureActive() {
+            MessagingRejectedException failure = cancellationFailure.get();
+            if (failure != null) {
+                throw failure;
+            }
+        }
+
         private void dispatchWithinLease(MessageBatch<?> batch, Runnable action) {
             if (dispatchDepth != 0) {
                 throw new MessagingException("Cyclic synchronous messaging emission: "
@@ -1562,6 +1643,7 @@ final class DeliveryEngine implements AutoCloseable {
             }
             dispatchDepth++;
             try {
+                ensureActive();
                 action.run();
             } finally {
                 dispatchDepth--;

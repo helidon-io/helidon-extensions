@@ -19,7 +19,7 @@ package io.helidon.extensions.messaging;
 import java.time.Duration;
 
 /**
- * Runtime-owned asynchronous task used by a connector source while its owner thread performs transport maintenance.
+ * Runtime-owned asynchronous task used by an incoming connector while its owner thread performs transport maintenance.
  * <p>
  * Application-facing emission remains synchronous. This handle exists so a connector such as Kafka can keep polling
  * for group heartbeats while one retained delivery executes on a messaging-runtime virtual thread.

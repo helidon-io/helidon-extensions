@@ -29,9 +29,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.config.Config;
-import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.Emitter;
 import io.helidon.extensions.messaging.IncomingConnector;
+import io.helidon.extensions.messaging.IncomingConnectorContext;
 import io.helidon.extensions.messaging.IncomingConnectorProvider;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageBatch;
@@ -435,15 +435,21 @@ class ChannelMessagingTypes {
             }
 
             @Override
-            public void run(ConnectorSourceContext context) {
+            public void run(IncomingConnectorContext context) {
                 if (!context.awaitRunning() || stopped.get()) {
                     return;
                 }
                 RuntimeException failure = null;
-                try {
-                    context.emit(Message.builder("connector message")
-                                         .header("key", "connector")
-                                         .build());
+                MessageBatch<String> batch = MessageBatch.create(
+                        Message.builder("connector message")
+                                .header("key", "connector")
+                                .build());
+                try (var reservation = context.reserveDelivery();
+                     var delivery = reservation.start(batch)) {
+                    delivery.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    failure = new MessagingException("Test connector delivery was interrupted", e);
                 } catch (RuntimeException e) {
                     failure = e;
                 } finally {
@@ -504,7 +510,7 @@ class ChannelMessagingTypes {
             private final CountDownLatch stop = new CountDownLatch(1);
 
             @Override
-            public void run(ConnectorSourceContext context) {
+            public void run(IncomingConnectorContext context) {
                 if (context.awaitRunning()) {
                     ShutdownConsumer.events().add("source-start");
                     await(stop);

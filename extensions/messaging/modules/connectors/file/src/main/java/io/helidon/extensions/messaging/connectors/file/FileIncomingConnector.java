@@ -33,9 +33,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -44,12 +42,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
-import io.helidon.extensions.messaging.BatchDeliveryException;
-import io.helidon.extensions.messaging.BatchItemStatus;
 import io.helidon.extensions.messaging.ConnectorDelivery;
 import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
-import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.IncomingConnector;
+import io.helidon.extensions.messaging.IncomingConnectorContext;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingException;
@@ -65,21 +61,16 @@ import static java.nio.file.StandardWatchEventKinds.OVERFLOW;
 /**
  * File incoming connector implementation.
  * <p>
- * Within an active source lifetime, a complete appended-line batch remains pending until delivery succeeds or the
- * portable failure policy settles it. The connector does not advance its in-memory file offset or deliver later
- * appends while a batch is pending. A structured partial failure retries only unresolved messages, preserving their
- * delivery lineage and exact message envelopes. Messages not attempted because an earlier item failed are deferred
- * until the attempted failure retries or settles. The cursor advances only after the entire captured range is
- * settled, so replacing the source before then can redeliver messages which had already succeeded. An unstructured
- * failure retries the complete batch.
- * Each retained batch is bounded by the source context's message-count limit and the connector's
+ * Within an active connector lifetime, a complete appended-line batch remains pending until its runtime-owned
+ * delivery completes normally. The runtime owns retries and failure disposition. The connector does not advance its
+ * in-memory file offset or read later appends while a batch is pending, and leaves the cursor unchanged when runtime
+ * delivery fails. Each retained batch is bounded by the incoming context's message-count limit and the connector's
  * {@code max-batch-bytes} configuration. An in-progress line is bounded by {@code max-line-bytes}.
  * <p>
- * The file offset is not persisted. A replacement source starts at the file's current end and does not recover an
- * unsettled batch from an earlier source lifetime.
+ * The file offset is not persisted. A replacement connector starts at the file's current end and does not recover an
+ * unsettled batch from an earlier connector lifetime.
  */
 final class FileIncomingConnector {
-    private static final long CLOSE_CHECK_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(100);
     private static final int READ_BUFFER_SIZE = 8192;
     private static final int SNAPSHOT_ATTEMPTS = 3;
 
@@ -87,37 +78,37 @@ final class FileIncomingConnector {
     }
 
     static IncomingConnector createConnector(FileConnectorConfig config) {
-        return FileSource.managed(Objects.requireNonNull(config));
+        return FileConnector.managed(Objects.requireNonNull(config));
     }
 
-    static final class FileSource implements IncomingConnector {
+    static final class FileConnector implements IncomingConnector {
         private final FileConnectorConfig config;
         private final AtomicBoolean closed;
         private final AtomicBoolean runStarted;
-        private final Set<Thread> sourceThreads;
-        private final ReentrantLock sourceThreadsLock;
+        private final Set<Thread> connectorThreads;
+        private final ReentrantLock connectorThreadsLock;
         private final WatchRegistrationListener watchRegistrationListener;
         private final FileReadListener fileReadListener;
         private final AtomicBoolean draining;
-        private volatile ConnectorSourceContext context;
+        private volatile IncomingConnectorContext context;
 
-        private static FileSource managed(FileConnectorConfig config) {
-            return new FileSource(config,
-                                  null,
-                                  new AtomicBoolean(),
-                                  new AtomicBoolean(),
-                                  ConcurrentHashMap.newKeySet(),
-                                  new ReentrantLock(),
-                                  new WatchRegistrationListener() {
-                                  },
-                                  path -> {
-                                  },
-                                  new AtomicBoolean());
+        private static FileConnector managed(FileConnectorConfig config) {
+            return new FileConnector(config,
+                                     null,
+                                     new AtomicBoolean(),
+                                     new AtomicBoolean(),
+                                     ConcurrentHashMap.newKeySet(),
+                                     new ReentrantLock(),
+                                     new WatchRegistrationListener() {
+                                     },
+                                     path -> {
+                                     },
+                                     new AtomicBoolean());
         }
 
-        FileSource(FileConnectorConfig config,
-                   ConnectorSourceContext context,
-                   AtomicBoolean closed) {
+        FileConnector(FileConnectorConfig config,
+                      IncomingConnectorContext context,
+                      AtomicBoolean closed) {
             this(config,
                  context,
                  closed,
@@ -131,15 +122,15 @@ final class FileIncomingConnector {
                  new AtomicBoolean());
         }
 
-        FileSource(FileConnectorConfig config,
-                   ConnectorSourceContext context,
-                   AtomicBoolean closed,
-                   Set<Thread> sourceThreads) {
+        FileConnector(FileConnectorConfig config,
+                      IncomingConnectorContext context,
+                      AtomicBoolean closed,
+                      Set<Thread> connectorThreads) {
             this(config,
                  context,
                  closed,
                  new AtomicBoolean(),
-                 sourceThreads,
+                 connectorThreads,
                  new ReentrantLock(),
                  new WatchRegistrationListener() {
                  },
@@ -148,10 +139,10 @@ final class FileIncomingConnector {
                  new AtomicBoolean());
         }
 
-        FileSource(FileConnectorConfig config,
-                   ConnectorSourceContext context,
-                   AtomicBoolean closed,
-                   WatchRegistrationListener watchRegistrationListener) {
+        FileConnector(FileConnectorConfig config,
+                      IncomingConnectorContext context,
+                      AtomicBoolean closed,
+                      WatchRegistrationListener watchRegistrationListener) {
             this(config,
                  context,
                  closed,
@@ -164,11 +155,11 @@ final class FileIncomingConnector {
                  new AtomicBoolean());
         }
 
-        FileSource(FileConnectorConfig config,
-                   ConnectorSourceContext context,
-                   AtomicBoolean closed,
-                   WatchRegistrationListener watchRegistrationListener,
-                   FileReadListener fileReadListener) {
+        FileConnector(FileConnectorConfig config,
+                      IncomingConnectorContext context,
+                      AtomicBoolean closed,
+                      WatchRegistrationListener watchRegistrationListener,
+                      FileReadListener fileReadListener) {
             this(config,
                  context,
                  closed,
@@ -180,47 +171,47 @@ final class FileIncomingConnector {
                  new AtomicBoolean());
         }
 
-        private FileSource(FileConnectorConfig config,
-                           ConnectorSourceContext context,
-                           AtomicBoolean closed,
-                           AtomicBoolean runStarted,
-                           Set<Thread> sourceThreads,
-                           ReentrantLock sourceThreadsLock,
-                           WatchRegistrationListener watchRegistrationListener,
-                           FileReadListener fileReadListener,
-                           AtomicBoolean draining) {
+        private FileConnector(FileConnectorConfig config,
+                              IncomingConnectorContext context,
+                              AtomicBoolean closed,
+                              AtomicBoolean runStarted,
+                              Set<Thread> connectorThreads,
+                              ReentrantLock connectorThreadsLock,
+                              WatchRegistrationListener watchRegistrationListener,
+                              FileReadListener fileReadListener,
+                              AtomicBoolean draining) {
             this.config = Objects.requireNonNull(config);
             this.context = context;
             this.closed = Objects.requireNonNull(closed);
             this.runStarted = Objects.requireNonNull(runStarted);
-            this.sourceThreads = Objects.requireNonNull(sourceThreads);
-            this.sourceThreadsLock = Objects.requireNonNull(sourceThreadsLock);
+            this.connectorThreads = Objects.requireNonNull(connectorThreads);
+            this.connectorThreadsLock = Objects.requireNonNull(connectorThreadsLock);
             this.watchRegistrationListener = Objects.requireNonNull(watchRegistrationListener);
             this.fileReadListener = Objects.requireNonNull(fileReadListener);
             this.draining = Objects.requireNonNull(draining);
         }
 
         @Override
-        public void run(ConnectorSourceContext context) {
+        public void run(IncomingConnectorContext context) {
             if (!runStarted.compareAndSet(false, true)) {
-                throw new IllegalStateException("File source can only be run once");
+                throw new IllegalStateException("File incoming connector can only be run once");
             }
-            ConnectorSourceContext runContext = Objects.requireNonNull(context);
-            ConnectorSourceContext configuredContext = this.context;
+            IncomingConnectorContext runContext = Objects.requireNonNull(context);
+            IncomingConnectorContext configuredContext = this.context;
             if (configuredContext != null && configuredContext != runContext) {
-                throw new IllegalStateException("File source was run with a different source context");
+                throw new IllegalStateException("File incoming connector was run with a different context");
             }
             this.context = runContext;
-            Thread sourceThread = Thread.currentThread();
+            Thread connectorThread = Thread.currentThread();
             boolean closedBeforeStartup;
-            sourceThreadsLock.lock();
+            connectorThreadsLock.lock();
             try {
                 closedBeforeStartup = closed.get();
                 if (!closedBeforeStartup) {
-                    sourceThreads.add(sourceThread);
+                    connectorThreads.add(connectorThread);
                 }
             } finally {
-                sourceThreadsLock.unlock();
+                connectorThreadsLock.unlock();
             }
             if (closedBeforeStartup) {
                 return;
@@ -249,11 +240,11 @@ final class FileIncomingConnector {
                 }
             } finally {
                 closed.set(true);
-                sourceThreadsLock.lock();
+                connectorThreadsLock.lock();
                 try {
-                    sourceThreads.remove(sourceThread);
+                    connectorThreads.remove(connectorThread);
                 } finally {
-                    sourceThreadsLock.unlock();
+                    connectorThreadsLock.unlock();
                 }
             }
         }
@@ -267,11 +258,11 @@ final class FileIncomingConnector {
         public void forceClose() {
             closed.set(true);
             draining.set(true);
-            sourceThreadsLock.lock();
+            connectorThreadsLock.lock();
             try {
-                sourceThreads.forEach(Thread::interrupt);
+                connectorThreads.forEach(Thread::interrupt);
             } finally {
-                sourceThreadsLock.unlock();
+                connectorThreadsLock.unlock();
             }
         }
 
@@ -337,7 +328,7 @@ final class FileIncomingConnector {
             }
             while (!closed.get() && !draining.get()) {
                 try (ConnectorDeliveryReservation reservation =
-                             context.reserveDelivery(limits.maxMessages())) {
+                             context.reserveDelivery()) {
                     if (closed.get() || draining.get()) {
                         break;
                     }
@@ -353,14 +344,8 @@ final class FileIncomingConnector {
                     MessageBatch<String> batch = MessageBatch.<String>builder()
                             .messages(delivery.messages())
                             .build();
-                    AtomicBoolean settled = new AtomicBoolean();
-                    try (ConnectorDelivery deliveryLease =
-                                 reservation.start(batch,
-                                                   () -> settled.set(deliverRetained(batch)))) {
+                    try (ConnectorDelivery deliveryLease = reservation.start(batch)) {
                         awaitDelivery(deliveryLease);
-                        if (!settled.get()) {
-                            break;
-                        }
                         cursor = delivery.nextCursor();
                     }
                 }
@@ -599,7 +584,7 @@ final class FileIncomingConnector {
                                                      cursorState.offset() + acceptedFileBytes,
                                                      nextLineBytes,
                                                      lineDigest);
-                                throw oversizedLine(context.channelName(),
+                                throw oversizedLine(context.channel(),
                                                     cursorState.offset(),
                                                     limits.maxLineBytes());
                             }
@@ -632,7 +617,7 @@ final class FileIncomingConnector {
                                              cursorState.offset() + acceptedFileBytes,
                                              nextLineBytes,
                                              lineDigest);
-                        throw oversizedLine(context.channelName(),
+                        throw oversizedLine(context.channel(),
                                             cursorState.offset() + acceptedFileBytes,
                                             limits.maxLineBytes());
                     }
@@ -809,170 +794,6 @@ final class FileIncomingConnector {
             }
         }
 
-        private boolean deliverRetained(MessageBatch<String> batch) {
-            MessageBatch<String> attemptBatch = batch;
-            Deque<DeferredBatch<String>> deferred = new ArrayDeque<>();
-            int failedAttempt = 0;
-            deliveryLoop:
-            while (!closed.get()) {
-                try {
-                    context.emitBatch(attemptBatch);
-                    DeferredBatch<String> next = deferred.pollFirst();
-                    if (next == null) {
-                        return true;
-                    }
-                    attemptBatch = next.batch();
-                    failedAttempt = next.failedAttempts();
-                    continue;
-                } catch (RuntimeException failure) {
-                    if (closed.get()) {
-                        return false;
-                    }
-                    BatchSplit<String> split = processingFailure(attemptBatch, failure);
-                    if (split.deferred() != null) {
-                        deferred.addFirst(new DeferredBatch<>(split.deferred(), failedAttempt));
-                    }
-                    attemptBatch = split.attempted();
-                    if (attemptBatch == null) {
-                        DeferredBatch<String> next = deferred.pollFirst();
-                        if (next == null) {
-                            return true;
-                        }
-                        attemptBatch = next.batch();
-                        failedAttempt = next.failedAttempts();
-                        continue;
-                    }
-                    failedAttempt++;
-                    ConnectorSourceContext.FailureResult result;
-                    while (true) {
-                        if (closed.get()) {
-                            return false;
-                        }
-                        try {
-                            result = context.handleFailure(attemptBatch,
-                                                           failedAttempt,
-                                                           BatchDeliveryException.align(attemptBatch, failure));
-                            break;
-                        } catch (RuntimeException failureHandlingFailure) {
-                            if (closed.get()) {
-                                return false;
-                            }
-                            MessageBatch<String> terminalUnresolved =
-                                    terminalFailure(attemptBatch, failureHandlingFailure);
-                            if (terminalUnresolved == null) {
-                                DeferredBatch<String> next = deferred.pollFirst();
-                                if (next == null) {
-                                    return true;
-                                }
-                                attemptBatch = next.batch();
-                                failedAttempt = next.failedAttempts();
-                                continue deliveryLoop;
-                            }
-                            if (terminalUnresolved == attemptBatch) {
-                                throw failureHandlingFailure;
-                            }
-                            // A structured terminal route (for example a DLQ channel) settled part of the batch.
-                            // Retry the same failure policy only for the remaining source-message lineage. Keeping
-                            // the original processing failure also keeps dead-letter metadata stable.
-                            attemptBatch = terminalUnresolved;
-                        }
-                    }
-                    if (result == ConnectorSourceContext.FailureResult.RETRY) {
-                        try {
-                            if (!awaitRetryDelay()) {
-                                return false;
-                            }
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            if (closed.get()) {
-                                return false;
-                            }
-                            throw new MessagingException("File incoming connector retry wait interrupted", e);
-                        }
-                    } else if (result == ConnectorSourceContext.FailureResult.SETTLED) {
-                        DeferredBatch<String> next = deferred.pollFirst();
-                        if (next == null) {
-                            return true;
-                        }
-                        attemptBatch = next.batch();
-                        failedAttempt = next.failedAttempts();
-                    } else {
-                        throw new MessagingException("Unsupported file failure result: " + result);
-                    }
-                }
-            }
-            return false;
-        }
-
-        private <T> BatchSplit<T> processingFailure(MessageBatch<T> attemptedBatch, RuntimeException failure) {
-            if (!(failure instanceof BatchDeliveryException batchFailure)
-                    || !attemptedBatch.sameDelivery(batchFailure.batch())) {
-                return new BatchSplit<>(attemptedBatch, null);
-            }
-            List<Integer> attempted = new ArrayList<>();
-            List<Integer> deferred = new ArrayList<>();
-            for (int i = 0; i < attemptedBatch.size(); i++) {
-                BatchItemStatus status = batchFailure.outcome(i).status();
-                if (status == BatchItemStatus.NOT_ATTEMPTED) {
-                    deferred.add(i);
-                } else if (status != BatchItemStatus.SUCCEEDED) {
-                    attempted.add(i);
-                }
-            }
-            MessageBatch<T> attemptedFailure = select(attemptedBatch, attempted);
-            MessageBatch<T> deferredBatch = select(attemptedBatch, deferred);
-            if (attemptedFailure == null) {
-                attemptedFailure = deferredBatch;
-                deferredBatch = null;
-            }
-            return new BatchSplit<>(attemptedFailure, deferredBatch);
-        }
-
-        private <T> MessageBatch<T> terminalFailure(MessageBatch<T> attemptedBatch, RuntimeException failure) {
-            if (!(failure instanceof BatchDeliveryException batchFailure)
-                    || !attemptedBatch.sameDelivery(batchFailure.batch())) {
-                return attemptedBatch;
-            }
-            List<Integer> unresolved = batchFailure.outcomes()
-                    .stream()
-                    .filter(outcome -> outcome.status() != BatchItemStatus.SUCCEEDED)
-                    .map(outcome -> outcome.index())
-                    .toList();
-            return select(attemptedBatch, unresolved);
-        }
-
-        private <T> MessageBatch<T> select(MessageBatch<T> batch, List<Integer> localIndexes) {
-            if (localIndexes.isEmpty()) {
-                return null;
-            }
-            if (localIndexes.size() == batch.size()) {
-                return batch;
-            }
-            return batch.subset(localIndexes);
-        }
-
-        private boolean awaitRetryDelay() throws InterruptedException {
-            long remainingNanos = TimeUnit.NANOSECONDS.convert(context.failurePolicy().retryDelay());
-            while (!closed.get() && remainingNanos > 0) {
-                long waitNanos = Math.min(remainingNanos, CLOSE_CHECK_INTERVAL_NANOS);
-                long beforeWait = System.nanoTime();
-                TimeUnit.NANOSECONDS.sleep(waitNanos);
-                remainingNanos -= Math.max(1, System.nanoTime() - beforeWait);
-            }
-            return !closed.get();
-        }
-    }
-
-    private record BatchSplit<T>(MessageBatch<T> attempted, MessageBatch<T> deferred) {
-    }
-
-    private record DeferredBatch<T>(MessageBatch<T> batch, int failedAttempts) {
-        private DeferredBatch {
-            Objects.requireNonNull(batch);
-            if (failedAttempts < 0) {
-                throw new IllegalArgumentException("Deferred batch failed attempts must be zero or greater");
-            }
-        }
     }
 
     interface WatchRegistrationListener {

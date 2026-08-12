@@ -503,8 +503,9 @@ class DeclarativeMessagingPocTest {
 
     @Test
     void testIncomingConnectorSourcePreservesHandlerFailure() throws InterruptedException {
-        useConfig(Map.of("helidon.messaging.incoming." + ChannelMessagingTypes.FAILING_CHANNEL + ".connector",
-                         ChannelMessagingTypes.TEST_CONNECTOR));
+        String channelConfig = "helidon.messaging.incoming." + ChannelMessagingTypes.FAILING_CHANNEL;
+        useConfig(Map.of(channelConfig + ".connector", ChannelMessagingTypes.TEST_CONNECTOR,
+                         channelConfig + ".failure.retry.max-attempts", "1"));
         registry.get(MessagingRuntime.class);
         var observer = registry.get(TestConnectorObserver.class);
         var consumer = registry.get(FailingConsumer.class);
