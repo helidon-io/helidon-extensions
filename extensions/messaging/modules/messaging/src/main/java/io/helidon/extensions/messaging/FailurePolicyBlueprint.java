@@ -63,8 +63,8 @@ interface FailurePolicyBlueprint {
      * Logical channel used for dead-letter delivery.
      * <p>
      * Runtime validation covers the logical channel graph. It cannot detect when distinct connector bindings resolve
-     * to the same transport endpoint, such as two Kafka channels configured with the same topic. A dead-letter target
-     * must not resolve back to the source endpoint.
+     * to the same transport destination, such as two Kafka channels configured with the same topic. A dead-letter
+     * target must not resolve back to the source connector.
      *
      * @return dead-letter channel
      */

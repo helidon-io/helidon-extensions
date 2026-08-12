@@ -17,7 +17,6 @@
 package io.helidon.extensions.messaging.tests.poc;
 
 import java.io.IOException;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -30,11 +29,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.config.Config;
-import io.helidon.extensions.messaging.ConnectorConfig;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.Emitter;
+import io.helidon.extensions.messaging.IncomingConnector;
 import io.helidon.extensions.messaging.IncomingConnectorProvider;
-import io.helidon.extensions.messaging.IncomingEndpoint;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.Messaging;
@@ -409,11 +407,11 @@ class ChannelMessagingTypes {
     }
 
     @Service.Singleton
-    static class TestIncomingConnector implements IncomingConnectorProvider<ConnectorConfig> {
+    static class TestIncomingConnectorProvider implements IncomingConnectorProvider {
         private final TestConnectorObserver observer;
 
         @Service.Inject
-        TestIncomingConnector(TestConnectorObserver observer) {
+        TestIncomingConnectorProvider(TestConnectorObserver observer) {
             this.observer = observer;
         }
 
@@ -423,37 +421,22 @@ class ChannelMessagingTypes {
         }
 
         @Override
-        public ConnectorConfig createConfig(Config config) {
-            return ConnectorConfig.create(config);
+        public IncomingConnector createIncomingConnector(Config config) {
+            return new TestIncomingConnector(observer);
         }
 
-        @Override
-        public IncomingEndpoint createIncomingEndpoint(ConnectorConfig config, ConnectorSourceContext context) {
-            return new TestIncomingEndpoint(context, observer);
-        }
-
-        private static final class TestIncomingEndpoint implements IncomingEndpoint {
-            private final ConnectorSourceContext context;
+        private static final class TestIncomingConnector implements IncomingConnector {
             private final TestConnectorObserver observer;
-            private final CountDownLatch ready = new CountDownLatch(1);
-            private final CountDownLatch admission = new CountDownLatch(1);
             private final CountDownLatch stop = new CountDownLatch(1);
             private final AtomicBoolean stopped = new AtomicBoolean();
 
-            private TestIncomingEndpoint(ConnectorSourceContext context, TestConnectorObserver observer) {
-                this.context = context;
+            private TestIncomingConnector(TestConnectorObserver observer) {
                 this.observer = observer;
             }
 
             @Override
-            public void prepareForGraph() {
-            }
-
-            @Override
-            public void run() {
-                ready.countDown();
-                await(admission);
-                if (stopped.get()) {
+            public void run(ConnectorSourceContext context) {
+                if (!context.awaitRunning() || stopped.get()) {
                     return;
                 }
                 RuntimeException failure = null;
@@ -470,29 +453,14 @@ class ChannelMessagingTypes {
             }
 
             @Override
-            public void awaitReady(Duration timeout) {
-                await(ready, timeout, "Test connector source readiness");
-            }
-
-            @Override
-            public void startAdmission() {
-                admission.countDown();
-            }
-
-            @Override
-            public void stopAdmission() {
+            public void drain() {
                 stopped.set(true);
-                admission.countDown();
                 stop.countDown();
             }
 
             @Override
-            public void checkpoint() {
-            }
-
-            @Override
             public void forceClose() {
-                stopAdmission();
+                drain();
             }
 
             @Override
@@ -521,70 +489,36 @@ class ChannelMessagingTypes {
     }
 
     @Service.Singleton
-    static class ShutdownIncomingConnector implements IncomingConnectorProvider<ConnectorConfig> {
+    static class ShutdownIncomingConnectorProvider implements IncomingConnectorProvider {
         @Override
         public String connectorType() {
             return SHUTDOWN_CONNECTOR;
         }
 
         @Override
-        public ConnectorConfig createConfig(Config config) {
-            return ConnectorConfig.create(config);
+        public IncomingConnector createIncomingConnector(Config config) {
+            return new ShutdownConnector();
         }
 
-        @Override
-        public IncomingEndpoint createIncomingEndpoint(ConnectorConfig config, ConnectorSourceContext context) {
-            return new ShutdownSource();
-        }
-
-        private static final class ShutdownSource implements IncomingEndpoint {
-            private final CountDownLatch ready = new CountDownLatch(1);
-            private final CountDownLatch admission = new CountDownLatch(1);
+        private static final class ShutdownConnector implements IncomingConnector {
             private final CountDownLatch stop = new CountDownLatch(1);
 
             @Override
-            public void prepareForGraph() {
-            }
-
-            @Override
-            public void run() {
-                ready.countDown();
-                await(admission);
-                await(stop);
-            }
-
-            @Override
-            public void awaitReady(Duration timeout) {
-                try {
-                    if (!ready.await(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
-                        throw new MessagingException("Shutdown test source readiness timed out");
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new MessagingException("Shutdown test source readiness was interrupted", e);
+            public void run(ConnectorSourceContext context) {
+                if (context.awaitRunning()) {
+                    ShutdownConsumer.events().add("source-start");
+                    await(stop);
                 }
             }
 
             @Override
-            public void startAdmission() {
-                ShutdownConsumer.events().add("source-start");
-                admission.countDown();
-            }
-
-            @Override
-            public void stopAdmission() {
+            public void drain() {
                 ShutdownConsumer.events().add("source-stop");
-                admission.countDown();
                 stop.countDown();
             }
 
             @Override
-            public void checkpoint() {
-            }
-
-            @Override
             public void forceClose() {
-                admission.countDown();
                 stop.countDown();
             }
 
@@ -600,17 +534,6 @@ class ChannelMessagingTypes {
             latch.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-        }
-    }
-
-    private static void await(CountDownLatch latch, Duration timeout, String operation) {
-        try {
-            if (!latch.await(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
-                throw new MessagingException(operation + " timed out");
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new MessagingException(operation + " was interrupted", e);
         }
     }
 

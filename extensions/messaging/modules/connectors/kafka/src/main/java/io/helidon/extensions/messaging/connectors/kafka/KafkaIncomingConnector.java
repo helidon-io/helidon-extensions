@@ -28,11 +28,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicReference;
@@ -45,7 +42,7 @@ import io.helidon.extensions.messaging.ConnectorConfig;
 import io.helidon.extensions.messaging.ConnectorDelivery;
 import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
-import io.helidon.extensions.messaging.IncomingEndpoint;
+import io.helidon.extensions.messaging.IncomingConnector;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingException;
@@ -97,15 +94,14 @@ final class KafkaIncomingConnector {
         this.consumerFactory = Objects.requireNonNull(consumerFactory);
     }
 
-    IncomingEndpoint createIncomingEndpoint(KafkaConnectorConfig config, ConnectorSourceContext context) {
+    IncomingConnector createIncomingConnector(KafkaConnectorConfig config) {
         Objects.requireNonNull(config);
-        Objects.requireNonNull(context);
         if (config.direction() != ConnectorConfig.Direction.INCOMING) {
             throw new IllegalArgumentException("Kafka connector configuration for channel " + config.channel()
                                                        + " has direction " + config.direction()
                                                        + ", expected " + ConnectorConfig.Direction.INCOMING);
         }
-        return new KafkaSource(config, context);
+        return new KafkaSource(config);
     }
 
     @FunctionalInterface
@@ -113,12 +109,10 @@ final class KafkaIncomingConnector {
         Consumer<Object, Object> create(Map<String, Object> properties);
     }
 
-    private final class KafkaSource implements IncomingEndpoint {
+    private final class KafkaSource implements IncomingConnector {
         private final KafkaConnectorConfig config;
-        private final ConnectorSourceContext context;
         private final AtomicBoolean closed = new AtomicBoolean();
         private final AtomicBoolean draining = new AtomicBoolean();
-        private final AtomicBoolean graphManaged = new AtomicBoolean();
         private final AtomicBoolean runStarted = new AtomicBoolean();
         private final AtomicBoolean runFinished = new AtomicBoolean();
         private final AtomicReference<Thread> sourceOwner = new AtomicReference<>();
@@ -126,12 +120,10 @@ final class KafkaIncomingConnector {
         private final AtomicReference<Consumer<Object, Object>> activeConsumer = new AtomicReference<>();
         private final AtomicReference<ActiveDelivery> activeDelivery = new AtomicReference<>();
         private final AtomicReference<Thread> commitInitiationOwner = new AtomicReference<>();
-        private final AtomicReference<RuntimeException> endpointCloseFailure = new AtomicReference<>();
-        private final CountDownLatch admissionSignal = new CountDownLatch(1);
+        private final AtomicReference<RuntimeException> connectorCloseFailure = new AtomicReference<>();
         private final CountDownLatch acquisitionStopSignal = new CountDownLatch(1);
         private final CountDownLatch closeSignal = new CountDownLatch(1);
         private final CountDownLatch runCompletion = new CountDownLatch(1);
-        private final CompletableFuture<Void> ready = new CompletableFuture<>();
         private final ReentrantLock commitLock = new ReentrantLock();
         private final ReentrantLock deliveryLock = new ReentrantLock();
         private final Condition deliveryStateChanged = deliveryLock.newCondition();
@@ -139,11 +131,11 @@ final class KafkaIncomingConnector {
         private final Duration maintenancePollTimeout;
         private final Duration commitTimeout;
         private final Duration commitRetryBackoff;
+        private volatile ConnectorSourceContext context;
         private boolean deliveryStarting;
 
-        private KafkaSource(KafkaConnectorConfig config, ConnectorSourceContext context) {
+        private KafkaSource(KafkaConnectorConfig config) {
             this.config = config;
-            this.context = context;
             this.maintenancePollTimeout = maintenancePollTimeout(config);
             this.commitTimeout = durationProperty(config,
                                                    ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG,
@@ -154,10 +146,12 @@ final class KafkaIncomingConnector {
         }
 
         @Override
-        public void run() {
+        public void run(ConnectorSourceContext context) {
+            Objects.requireNonNull(context);
             if (!runStarted.compareAndSet(false, true)) {
                 throw new IllegalStateException("Kafka source can only be run once");
             }
+            this.context = context;
             Thread owner = Thread.currentThread();
             sourceOwner.set(owner);
             startupOwner.set(owner);
@@ -166,7 +160,6 @@ final class KafkaIncomingConnector {
             Throwable primaryFailure = null;
             try {
                 if (closed.get()) {
-                    ready.completeExceptionally(new MessagingException("Kafka source was closed before startup"));
                     return;
                 }
                 consumer = consumerFactory.create(KafkaConnectorConfigSupport.consumerProperties(
@@ -176,12 +169,10 @@ final class KafkaIncomingConnector {
                 if (!closed.get()) {
                     SourceRebalanceListener rebalanceListener = new SourceRebalanceListener(consumer);
                     consumer.subscribe(List.of(config.topic()), rebalanceListener);
-                    if (graphManaged.get()) {
-                        verifyBrokerReadiness(consumer);
-                    }
-                    ready.complete(null);
+                    verifyBrokerReadiness(consumer);
+                    boolean running = context.awaitRunning();
                     startupOwner.compareAndSet(owner, null);
-                    if (awaitAdmission()) {
+                    if (running && !closed.get() && !draining.get()) {
                         consume(consumer, rebalanceListener);
                     }
                 }
@@ -203,19 +194,13 @@ final class KafkaIncomingConnector {
                 primaryFailure = e;
                 throw e;
             } finally {
-                if (!ready.isDone()) {
-                    Throwable startupFailure = primaryFailure == null
-                            ? new MessagingException("Kafka source stopped before startup completed")
-                            : primaryFailure;
-                    ready.completeExceptionally(startupFailure);
-                }
                 try {
                     RuntimeException cleanupFailure = null;
                     if (consumer != null) {
                         try {
                             closeOwnedConsumer(consumer);
                         } catch (RuntimeException e) {
-                            endpointCloseFailure.compareAndSet(null, e);
+                            connectorCloseFailure.compareAndSet(null, e);
                             cleanupFailure = appendCleanupFailure(cleanupFailure, e);
                         }
                     }
@@ -239,45 +224,7 @@ final class KafkaIncomingConnector {
         }
 
         @Override
-        public void prepareForGraph() {
-            if (ready.isDone()) {
-                throw new IllegalStateException("Kafka source has already been started");
-            }
-            graphManaged.set(true);
-        }
-
-        @Override
-        public void awaitReady(Duration timeout) {
-            try {
-                ready.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new MessagingException("Interrupted while starting Kafka source for channel "
-                                                     + context.channelName(),
-                                             e);
-            } catch (ExecutionException e) {
-                Throwable cause = e.getCause();
-                if (cause instanceof RuntimeException runtimeException) {
-                    throw runtimeException;
-                }
-                if (cause instanceof Error error) {
-                    throw error;
-                }
-                throw new MessagingException("Cannot start Kafka source for channel " + context.channelName(), cause);
-            } catch (TimeoutException e) {
-                throw new MessagingException("Kafka source startup timed out after " + timeout
-                                                     + " on channel " + context.channelName(),
-                                             e);
-            }
-        }
-
-        @Override
-        public void startAdmission() {
-            admissionSignal.countDown();
-        }
-
-        @Override
-        public void stopAdmission() {
+        public void drain() {
             Consumer<Object, Object> consumer = null;
             deliveryLock.lock();
             try {
@@ -288,26 +235,9 @@ final class KafkaIncomingConnector {
             } finally {
                 deliveryLock.unlock();
             }
-            admissionSignal.countDown();
             acquisitionStopSignal.countDown();
             if (consumer != null) {
                 consumer.wakeup();
-            }
-        }
-
-        @Override
-        public void checkpoint() {
-            if (!draining.get()) {
-                throw new IllegalStateException("Kafka endpoint must stop admission before checkpointing");
-            }
-            if (!runStarted.get()) {
-                return;
-            }
-            long deadline = closeDeadline();
-            awaitRunCompletion(deadline);
-            RuntimeException failure = endpointCloseFailure.get();
-            if (failure != null) {
-                throw failure;
             }
         }
 
@@ -928,7 +858,7 @@ final class KafkaIncomingConnector {
             awaitDelivery(deliveryTask, deadline);
             awaitRunCompletion(deadline);
             retryConsumerClose(deadline);
-            RuntimeException failure = endpointCloseFailure.get();
+            RuntimeException failure = connectorCloseFailure.get();
             if (failure != null) {
                 throw failure;
             }
@@ -938,7 +868,6 @@ final class KafkaIncomingConnector {
             if (!runStarted.compareAndSet(false, true)) {
                 return;
             }
-            ready.completeExceptionally(new MessagingException("Kafka source was closed before startup"));
             runFinished.set(true);
             runCompletion.countDown();
         }
@@ -967,7 +896,6 @@ final class KafkaIncomingConnector {
 
         private void signalClose() {
             draining.set(true);
-            admissionSignal.countDown();
             acquisitionStopSignal.countDown();
             closeSignal.countDown();
             ActiveDelivery deliveryTask;
@@ -983,24 +911,6 @@ final class KafkaIncomingConnector {
             Consumer<Object, Object> consumer = activeConsumer.get();
             if (consumer != null) {
                 consumer.wakeup();
-            }
-        }
-
-        private boolean awaitAdmission() {
-            if (!graphManaged.get()) {
-                return !closed.get() && !draining.get();
-            }
-            try {
-                admissionSignal.await();
-                return !closed.get() && !draining.get();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                if (closed.get()) {
-                    return false;
-                }
-                throw new MessagingException("Kafka source startup was interrupted on channel "
-                                                     + context.channelName(),
-                                             e);
             }
         }
 
@@ -1104,12 +1014,12 @@ final class KafkaIncomingConnector {
             if (consumer == null || !runFinished.get()) {
                 return;
             }
-            RuntimeException previousFailure = endpointCloseFailure.get();
+            RuntimeException previousFailure = connectorCloseFailure.get();
             try {
                 closeOwnedConsumer(consumer, deadline);
-                endpointCloseFailure.compareAndSet(previousFailure, null);
+                connectorCloseFailure.compareAndSet(previousFailure, null);
             } catch (RuntimeException e) {
-                endpointCloseFailure.compareAndSet(null, e);
+                connectorCloseFailure.compareAndSet(null, e);
             }
         }
 

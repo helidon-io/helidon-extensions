@@ -20,22 +20,21 @@ import java.util.Objects;
 
 import io.helidon.config.Config;
 import io.helidon.extensions.messaging.ConnectorConfig;
-import io.helidon.extensions.messaging.ConnectorSourceContext;
+import io.helidon.extensions.messaging.IncomingConnector;
 import io.helidon.extensions.messaging.IncomingConnectorProvider;
-import io.helidon.extensions.messaging.IncomingEndpoint;
+import io.helidon.extensions.messaging.OutgoingConnector;
 import io.helidon.extensions.messaging.OutgoingConnectorProvider;
-import io.helidon.extensions.messaging.OutgoingEndpoint;
 import io.helidon.service.registry.Service;
 
 /**
  * Stateless file connector provider.
  * <p>
- * Each factory invocation returns an independent endpoint. The provider does not retain endpoints, threads, files,
+ * Each factory invocation returns an independent connector. The provider does not retain connectors, threads, files,
  * or lifecycle state.
  */
 @Service.Singleton
 public final class FileConnectorProvider
-        implements IncomingConnectorProvider<FileConnectorConfig>, OutgoingConnectorProvider<FileConnectorConfig> {
+        implements IncomingConnectorProvider, OutgoingConnectorProvider {
     /**
      * Connector type used in messaging configuration.
      */
@@ -47,20 +46,35 @@ public final class FileConnectorProvider
     }
 
     @Override
-    public FileConnectorConfig createConfig(Config config) {
-        return FileConnectorConfig.create(Objects.requireNonNull(config));
+    public IncomingConnector createIncomingConnector(Config config) {
+        return createIncomingConnector(FileConnectorConfig.create(Objects.requireNonNull(config)));
     }
 
-    @Override
-    public IncomingEndpoint createIncomingEndpoint(FileConnectorConfig config, ConnectorSourceContext context) {
+    /**
+     * Create an incoming connector from typed file configuration.
+     *
+     * @param config file connector configuration
+     * @return incoming connector
+     */
+    public IncomingConnector createIncomingConnector(FileConnectorConfig config) {
         requireDirection(config, ConnectorConfig.Direction.INCOMING);
-        return FileIncomingConnector.createEndpoint(config, context);
+        return FileIncomingConnector.createConnector(config);
     }
 
     @Override
-    public OutgoingEndpoint createOutgoingEndpoint(FileConnectorConfig config) {
+    public OutgoingConnector createOutgoingConnector(Config config) {
+        return createOutgoingConnector(FileConnectorConfig.create(Objects.requireNonNull(config)));
+    }
+
+    /**
+     * Create an outgoing connector from typed file configuration.
+     *
+     * @param config file connector configuration
+     * @return outgoing connector
+     */
+    public OutgoingConnector createOutgoingConnector(FileConnectorConfig config) {
         requireDirection(config, ConnectorConfig.Direction.OUTGOING);
-        return FileOutgoingConnector.createEndpoint(config);
+        return FileOutgoingConnector.createConnector(config);
     }
 
     private static void requireDirection(FileConnectorConfig config, ConnectorConfig.Direction expected) {

@@ -16,20 +16,21 @@
 
 package io.helidon.extensions.messaging;
 
+import io.helidon.config.Config;
+
 /**
  * Outgoing capability of a connector provider.
  *
- * @param <C> connector configuration type
  */
-public interface OutgoingConnectorProvider<C extends ConnectorConfig> extends ConnectorProvider<C> {
+public interface OutgoingConnectorProvider extends ConnectorProvider {
     /**
-     * Create one unstarted outgoing binding endpoint.
+     * Create one unstarted outgoing connector.
      * <p>
-     * The endpoint factory may validate and snapshot configuration, but must not acquire transport resources or
-     * create threads. The messaging graph owns the returned endpoint and invokes its lifecycle.
+     * The connector factory may validate and snapshot configuration, but must not acquire transport resources or
+     * create threads. The messaging graph owns the returned connector and invokes its lifecycle.
      *
-     * @param config typed binding configuration
-     * @return outgoing endpoint
+     * @param config effective binding configuration
+     * @return outgoing connector
      */
-    OutgoingEndpoint createOutgoingEndpoint(C config);
+    OutgoingConnector createOutgoingConnector(Config config);
 }

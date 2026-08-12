@@ -17,13 +17,23 @@
 package io.helidon.extensions.messaging;
 
 /**
- * Synchronous outgoing connector sink.
+ * Synchronous outgoing connector for one configured binding.
  * <p>
  * Each implementation defines and documents its external send-completion point. A send method must not return before
  * that success point is reached. It must throw if sending failed or its outcome is indeterminate, preserving the
  * underlying cause when one is available.
  */
-public interface ConnectorSink {
+public interface OutgoingConnector extends Connector {
+    /**
+     * Establish transport resources for this binding.
+     * <p>
+     * A successful return means the connector is ready to send. Implementations must not create their own runtime
+     * delivery threads and must remain interruptible while starting.
+     *
+     * @throws RuntimeException if startup or readiness verification fails
+     */
+    void start();
+
     /**
      * Batch completion capability of this connector binding.
      *
@@ -35,36 +45,29 @@ public interface ConnectorSink {
 
     /**
      * Send a payload-only message.
-     * <p>
-     * A successful return means the connector-specific send-completion point was reached.
      *
      * @param entity payload
-     * @param <T> payload type
      * @throws RuntimeException if sending fails or its outcome is indeterminate
      */
-    default <T> void send(T entity) {
+    default void send(Object entity) {
         sendBatch(MessageBatch.create(Message.create(entity)));
     }
 
     /**
      * Send a message to the connector target.
-     * <p>
-     * A successful return means the connector-specific send-completion point was reached.
      *
      * @param message message
-     * @param <T> payload type
      * @throws RuntimeException if sending fails or its outcome is indeterminate
      */
-    default <T> void send(Message<T> message) {
+    default void send(Message<?> message) {
         sendBatch(MessageBatch.create(message));
     }
 
     /**
      * Send a batch of messages to the connector target.
-     * <p>
+     *
      * @param batch immutable message batch
-     * @param <T> payload type
      * @throws BatchDeliveryException if sending completes partially or its outcome is indeterminate
      */
-    <T> void sendBatch(MessageBatch<T> batch);
+    void sendBatch(MessageBatch<?> batch);
 }

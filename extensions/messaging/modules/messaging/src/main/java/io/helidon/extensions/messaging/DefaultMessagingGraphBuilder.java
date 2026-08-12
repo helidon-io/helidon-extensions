@@ -34,7 +34,7 @@ import io.helidon.common.GenericType;
 final class DefaultMessagingGraphBuilder implements MessagingGraph.Builder {
     private final List<SourceDefinition> sources = new ArrayList<>();
     private final Set<Stream<?>> sourceIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
-    private final Set<ConnectorSink> connectorIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<OutgoingConnector> connectorIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Map<MessagingChannel<?>, DefaultMessagingChannel<?>> channels = new IdentityHashMap<>();
     private final Set<MessagingChannel<?>> outputChannels = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<DefaultMessagingChannel<?>> sourceChannels = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -196,19 +196,19 @@ final class DefaultMessagingGraphBuilder implements MessagingGraph.Builder {
     }
 
     @Override
-    public <T> MessagingGraph.Builder outgoingConnector(MessagingChannel<T> source, ConnectorSink sink) {
+    public <T> MessagingGraph.Builder outgoingConnector(MessagingChannel<T> source, OutgoingConnector connector) {
         DefaultMessagingChannel<T> actualSource = channel(source);
-        ConnectorSink actualSink = Objects.requireNonNull(sink);
-        if (!connectorIdentities.add(actualSink)) {
-            throw new IllegalArgumentException("Connector sink is already owned by this messaging graph builder");
+        OutgoingConnector actualConnector = Objects.requireNonNull(connector);
+        if (!connectorIdentities.add(actualConnector)) {
+            throw new IllegalArgumentException("Outgoing connector is already owned by this messaging graph builder");
         }
         try {
-            graph().addBinding(actualSink);
+            graph().addBinding(actualConnector);
         } catch (RuntimeException | Error e) {
-            connectorIdentities.remove(actualSink);
+            connectorIdentities.remove(actualConnector);
             throw e;
         }
-        actualSource.addOutgoingConnector(actualSink);
+        actualSource.addOutgoingConnector(actualConnector);
         outputChannels.add(source);
         return this;
     }
@@ -255,8 +255,8 @@ final class DefaultMessagingGraphBuilder implements MessagingGraph.Builder {
         Consumer<Object> consumer = messageSource
                 ? value -> actualChannel.emitMessageObject((Message<?>) value)
                 : actualChannel::emitPayloadObject;
-        ConnectorSource connectorSource = DefaultMessagingChannel.streamSource(actualSource, consumer);
-        graph().addSource(sourceName, connectorSource);
+        Runnable streamSource = DefaultMessagingChannel.streamSource(actualSource, consumer);
+        graph().addSource(sourceName, streamSource);
         sourceIdentities.add(actualSource);
         sourceChannels.add(actualChannel);
         sources.add(new SourceDefinition(sourceName, actualChannel));

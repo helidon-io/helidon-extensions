@@ -340,7 +340,7 @@ class DefaultMessagingChannelTest {
         MessagingRejectedException rejection = new MessagingRejectedException(
                 "downstream",
                 MessagingRejectedException.Reason.SHUTDOWN);
-        ConnectorSource source = DefaultMessagingChannel.streamSource(Stream.of("first", "second"), ignored -> {
+        Runnable source = DefaultMessagingChannel.streamSource(Stream.of("first", "second"), ignored -> {
             throw rejection;
         });
 
@@ -375,7 +375,7 @@ class DefaultMessagingChannelTest {
             closeStarted.countDown();
             awaitUninterruptibly(releaseClose);
         });
-        ConnectorSource source = DefaultMessagingChannel.streamSource(stream, ignored -> { });
+        Runnable source = DefaultMessagingChannel.streamSource(stream, ignored -> { });
         Thread sourceThread = Thread.ofVirtual().start(() -> {
             try {
                 source.run();
@@ -385,12 +385,12 @@ class DefaultMessagingChannelTest {
         });
         assertThat(ownerStarted.await(1, TimeUnit.SECONDS), is(true));
 
-        ConnectorEndpoint endpoint = (ConnectorEndpoint) source;
-        endpoint.forceClose();
+        Connector connector = (Connector) source;
+        connector.forceClose();
         assertThat(closeStarted.getCount(), is(1L));
         assertThat(ownerInterrupted.await(1, TimeUnit.SECONDS), is(true));
 
-        Thread closeThread = Thread.ofVirtual().start(endpoint::close);
+        Thread closeThread = Thread.ofVirtual().start(connector::close);
         assertThat(closeStarted.await(1, TimeUnit.SECONDS), is(true));
         releaseClose.countDown();
         sourceThread.join(TimeUnit.SECONDS.toMillis(1));

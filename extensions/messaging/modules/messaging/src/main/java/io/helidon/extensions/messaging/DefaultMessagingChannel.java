@@ -78,7 +78,7 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T
         outputs.add(batch -> output.accept(castBatch(batch)));
     }
 
-    void addOutgoingConnector(ConnectorSink output) {
+    void addOutgoingConnector(OutgoingConnector output) {
         outputs.add(messages -> send(output, messages));
     }
 
@@ -147,7 +147,7 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T
     static final class Builder<T> {
         private final List<Consumer<MessageBatch<?>>> validators = new ArrayList<>();
         private final List<Consumer<MessageBatch<?>>> outputs = new ArrayList<>();
-        private final List<ConnectorSink> connectorOutputs = new ArrayList<>();
+        private final List<OutgoingConnector> connectorOutputs = new ArrayList<>();
         private GenericType<T> payloadType;
         private MessagingExecutionConfig executionConfig;
         private DefaultMessagingGraph messagingGraph;
@@ -177,8 +177,8 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T
             return this;
         }
 
-        Builder<T> addOutgoingConnector(ConnectorSink output) {
-            ConnectorSink connector = Objects.requireNonNull(output);
+        Builder<T> addOutgoingConnector(OutgoingConnector output) {
+            OutgoingConnector connector = Objects.requireNonNull(output);
             connectorOutputs.add(connector);
             outputs.add(messages -> DefaultMessagingChannel.send(connector, messages));
             return this;
@@ -225,7 +225,7 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T
 
     }
 
-    static ConnectorSource streamSource(Stream<?> stream, Consumer<Object> consumer) {
+    static Runnable streamSource(Stream<?> stream, Consumer<Object> consumer) {
         return new StreamSource(stream, consumer);
     }
 
@@ -240,9 +240,8 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T
         return (MessageBatch) messages;
     }
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static void send(ConnectorSink output, MessageBatch<?> messages) {
-        output.sendBatch((MessageBatch) messages);
+    private static void send(OutgoingConnector output, MessageBatch<?> messages) {
+        output.sendBatch(messages);
     }
 
     private static void dispatchMessages(MessageBatch<?> batch, Consumer<Message<?>> output) {
@@ -287,7 +286,7 @@ final class DefaultMessagingChannel<T> implements MessagingChannel<T>, Emitter<T
         return new BatchDeliveryException(batchFailure.getMessage(), batch, outcomes, batchFailure);
     }
 
-    private static final class StreamSource implements ConnectorSource, ConnectorEndpoint {
+    private static final class StreamSource implements Runnable, Connector {
         private final Stream<?> stream;
         private final Consumer<Object> consumer;
         private final AtomicBoolean runStarted = new AtomicBoolean();

@@ -39,7 +39,7 @@ import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingChannel;
 import io.helidon.extensions.messaging.MessagingGraph;
 import io.helidon.extensions.messaging.MessagingRuntime;
-import io.helidon.extensions.messaging.OutgoingEndpoint;
+import io.helidon.extensions.messaging.OutgoingConnector;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorConfig;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaMessage;
@@ -129,15 +129,15 @@ class KafkaConnectorIT {
         String topic = uniqueName("sink");
         createTopic(topic);
         KafkaConnectorProvider provider = new KafkaConnectorProvider();
-        OutgoingEndpoint endpoint = provider.createOutgoingEndpoint(outgoingConnectorConfig(topic));
+        OutgoingConnector connector = provider.createOutgoingConnector(outgoingConnectorConfig(topic));
 
         try {
-            endpoint.start();
-            endpoint.send("sink payload");
-            endpoint.send(Message.builder("sink message")
+            connector.start();
+            connector.send("sink payload");
+            connector.send(Message.builder("sink message")
                                   .header("trace-id", "Příliš žluťoučký")
                                   .build());
-            endpoint.sendBatch(MessageBatch.create(List.of(Message.builder("sink batch first")
+            connector.sendBatch(MessageBatch.create(List.of(Message.builder("sink batch first")
                                                                     .header("trace-id", "sink-batch-1")
                                                                     .build(),
                                                             Message.builder("sink batch second")
@@ -150,7 +150,7 @@ class KafkaConnectorIT {
                                   ExpectedRecord.create("sink batch first", "sink-batch-1"),
                                   ExpectedRecord.create("sink batch second", "sink-batch-2")));
         } finally {
-            endpoint.close();
+            connector.close();
         }
     }
 
@@ -200,10 +200,10 @@ class KafkaConnectorIT {
         String topic = uniqueName("channel");
         createTopic(topic);
         KafkaConnectorProvider provider = new KafkaConnectorProvider();
-        OutgoingEndpoint endpoint = provider.createOutgoingEndpoint(outgoingConnectorConfig(topic));
+        OutgoingConnector connector = provider.createOutgoingConnector(outgoingConnectorConfig(topic));
         MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<String> channel = builder.channel("kafka-output", String.class);
-        builder.outgoingConnector(channel, endpoint);
+        builder.outgoingConnector(channel, connector);
 
         try (MessagingGraph graph = builder.build()) {
             graph.start();

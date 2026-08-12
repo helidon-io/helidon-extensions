@@ -16,33 +16,19 @@
 
 package io.helidon.extensions.messaging;
 
-import io.helidon.config.Config;
-
 /**
  * Stateless factory for one connector type.
  * <p>
  * Providers are discovered through the service registry and may be shared by multiple messaging graphs. A provider
- * must not retain endpoint instances or transport resources. Each successful endpoint factory invocation returns a
+ * must not retain connector instances or transport resources. Each successful connector factory invocation returns a
  * new binding whose lifecycle is owned by its messaging graph.
  *
- * @param <C> connector configuration type
  */
-public interface ConnectorProvider<C extends ConnectorConfig> {
+public interface ConnectorProvider {
     /**
      * Connector type used to select this provider.
      *
      * @return connector type
      */
     String connectorType();
-
-    /**
-     * Create typed configuration for one binding.
-     * <p>
-     * The supplied config is the effective, binding-specific configuration resolved by the messaging runtime. This
-     * method may validate and snapshot configuration, but must not acquire transport resources or create threads.
-     *
-     * @param config effective binding configuration
-     * @return typed connector configuration
-     */
-    C createConfig(Config config);
 }

@@ -21,6 +21,8 @@ import java.util.Map;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.extensions.messaging.ConnectorConfig;
+import io.helidon.extensions.messaging.IncomingConnector;
+import io.helidon.extensions.messaging.OutgoingConnector;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.junit.jupiter.api.Test;
@@ -47,8 +49,7 @@ class KafkaConnectorConfigTest {
 
     @Test
     void testCreateFromConfigReadsNestedKafkaProperties() {
-        KafkaConnectorProvider provider = new KafkaConnectorProvider();
-        KafkaConnectorConfig config = provider.createConfig(Config.just(ConfigSources.create(Map.ofEntries(
+        KafkaConnectorConfig config = KafkaConnectorConfig.create(Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("direction", "OUTGOING"),
                 Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, CHANNEL),
                 Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, KafkaConnectorProvider.CONNECTOR_TYPE),
@@ -64,7 +65,7 @@ class KafkaConnectorConfigTest {
     }
 
     @Test
-    void testEndpointFactoriesRejectMismatchedDirection() {
+    void testConnectorFactoriesRejectMismatchedDirection() {
         KafkaConnectorProvider provider = new KafkaConnectorProvider();
         KafkaConnectorConfig outgoing = builder()
                 .bootstrapServers("broker:9092")
@@ -76,8 +77,18 @@ class KafkaConnectorConfigTest {
                 .topic(TOPIC)
                 .build();
 
-        assertThrows(IllegalArgumentException.class, () -> provider.createIncomingEndpoint(outgoing, null));
-        assertThrows(IllegalArgumentException.class, () -> provider.createOutgoingEndpoint(incoming));
+        assertThrows(IllegalArgumentException.class, () -> provider.createIncomingConnector(outgoing));
+        assertThrows(IllegalArgumentException.class, () -> provider.createOutgoingConnector(incoming));
+    }
+
+    @Test
+    void testProviderFactoriesParseRawConfiguration() {
+        KafkaConnectorProvider provider = new KafkaConnectorProvider();
+        IncomingConnector incoming = provider.createIncomingConnector(rawConfig(ConnectorConfig.Direction.INCOMING));
+        OutgoingConnector outgoing = provider.createOutgoingConnector(rawConfig(ConnectorConfig.Direction.OUTGOING));
+
+        incoming.close();
+        outgoing.close();
     }
 
     @Test
@@ -145,5 +156,14 @@ class KafkaConnectorConfigTest {
                 .direction(ConnectorConfig.Direction.OUTGOING)
                 .channel(CHANNEL)
                 .connector(KafkaConnectorProvider.CONNECTOR_TYPE);
+    }
+
+    private static Config rawConfig(ConnectorConfig.Direction direction) {
+        return Config.just(ConfigSources.create(Map.ofEntries(
+                Map.entry("direction", direction.name()),
+                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, CHANNEL),
+                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, KafkaConnectorProvider.CONNECTOR_TYPE),
+                Map.entry(KafkaConnectorConfig.BOOTSTRAP_SERVERS_PROPERTY, "broker:9092"),
+                Map.entry(KafkaConnectorConfig.TOPIC_PROPERTY, TOPIC))));
     }
 }

@@ -31,6 +31,19 @@ import java.util.Optional;
  */
 public interface ConnectorSourceContext {
     /**
+     * Report that transport resources are ready and wait until the owning graph is running.
+     * <p>
+     * An incoming connector must call this exactly once before acquiring its first delivery. Runtime-managed contexts
+     * block until every incoming connector is ready. They return {@code false} when startup is cancelled. The default
+     * permits independently run connectors to proceed immediately.
+     *
+     * @return {@code true} when delivery acquisition may start, {@code false} when startup was cancelled
+     */
+    default boolean awaitRunning() {
+        return true;
+    }
+
+    /**
      * Failure policy for this incoming channel.
      * <p>
      * The default is exposed for compatibility with third-party contexts. The default

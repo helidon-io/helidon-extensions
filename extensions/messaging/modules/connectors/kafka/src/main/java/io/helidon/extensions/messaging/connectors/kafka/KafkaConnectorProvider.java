@@ -20,11 +20,10 @@ import java.util.Objects;
 
 import io.helidon.config.Config;
 import io.helidon.extensions.messaging.ConnectorConfig;
-import io.helidon.extensions.messaging.ConnectorSourceContext;
+import io.helidon.extensions.messaging.IncomingConnector;
 import io.helidon.extensions.messaging.IncomingConnectorProvider;
-import io.helidon.extensions.messaging.IncomingEndpoint;
+import io.helidon.extensions.messaging.OutgoingConnector;
 import io.helidon.extensions.messaging.OutgoingConnectorProvider;
-import io.helidon.extensions.messaging.OutgoingEndpoint;
 import io.helidon.service.registry.Service;
 
 /**
@@ -32,7 +31,7 @@ import io.helidon.service.registry.Service;
  */
 @Service.Singleton
 public final class KafkaConnectorProvider
-        implements IncomingConnectorProvider<KafkaConnectorConfig>, OutgoingConnectorProvider<KafkaConnectorConfig> {
+        implements IncomingConnectorProvider, OutgoingConnectorProvider {
     /**
      * Kafka connector type used in messaging configuration.
      */
@@ -70,8 +69,8 @@ public final class KafkaConnectorProvider
      */
     public static final String DLQ_ORIGINAL_LEADER_EPOCH_HEADER = "dlq-orig-leader-epoch";
 
-    private final KafkaIncomingConnector incomingConnector;
-    private final KafkaOutgoingConnector outgoingConnector;
+    private final KafkaIncomingConnector incomingFactory;
+    private final KafkaOutgoingConnector outgoingFactory;
 
     /**
      * Create the Kafka connector provider.
@@ -86,10 +85,10 @@ public final class KafkaConnectorProvider
         this(new KafkaIncomingConnector(consumerFactory), new KafkaOutgoingConnector(producerFactory));
     }
 
-    private KafkaConnectorProvider(KafkaIncomingConnector incomingConnector,
-                                   KafkaOutgoingConnector outgoingConnector) {
-        this.incomingConnector = incomingConnector;
-        this.outgoingConnector = outgoingConnector;
+    private KafkaConnectorProvider(KafkaIncomingConnector incomingFactory,
+                                   KafkaOutgoingConnector outgoingFactory) {
+        this.incomingFactory = incomingFactory;
+        this.outgoingFactory = outgoingFactory;
     }
 
     @Override
@@ -98,20 +97,35 @@ public final class KafkaConnectorProvider
     }
 
     @Override
-    public KafkaConnectorConfig createConfig(Config config) {
-        return KafkaConnectorConfig.create(Objects.requireNonNull(config));
+    public IncomingConnector createIncomingConnector(Config config) {
+        return createIncomingConnector(KafkaConnectorConfig.create(Objects.requireNonNull(config)));
     }
 
-    @Override
-    public IncomingEndpoint createIncomingEndpoint(KafkaConnectorConfig config, ConnectorSourceContext context) {
+    /**
+     * Create one unstarted incoming Kafka connector from typed configuration.
+     *
+     * @param config typed Kafka configuration
+     * @return incoming connector
+     */
+    public IncomingConnector createIncomingConnector(KafkaConnectorConfig config) {
         requireDirection(config, ConnectorConfig.Direction.INCOMING);
-        return incomingConnector.createIncomingEndpoint(config, context);
+        return incomingFactory.createIncomingConnector(config);
     }
 
     @Override
-    public OutgoingEndpoint createOutgoingEndpoint(KafkaConnectorConfig config) {
+    public OutgoingConnector createOutgoingConnector(Config config) {
+        return createOutgoingConnector(KafkaConnectorConfig.create(Objects.requireNonNull(config)));
+    }
+
+    /**
+     * Create one unstarted outgoing Kafka connector from typed configuration.
+     *
+     * @param config typed Kafka configuration
+     * @return outgoing connector
+     */
+    public OutgoingConnector createOutgoingConnector(KafkaConnectorConfig config) {
         requireDirection(config, ConnectorConfig.Direction.OUTGOING);
-        return outgoingConnector.createOutgoingEndpoint(config);
+        return outgoingFactory.createOutgoingConnector(config);
     }
 
     private static void requireDirection(KafkaConnectorConfig config, ConnectorConfig.Direction expected) {

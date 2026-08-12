@@ -19,15 +19,15 @@ package io.helidon.extensions.messaging;
 /**
  * Lifecycle owned by one messaging-graph binding.
  * <p>
- * Implementations are one-shot and must make forced and normal close idempotent. A closed endpoint cannot be
+ * Implementations are one-shot and must make forced and normal close idempotent. A closed connector cannot be
  * restarted or reused by another binding.
  */
-public interface ConnectorEndpoint extends AutoCloseable {
+public interface Connector extends AutoCloseable {
     /**
      * Force prompt shutdown without waiting for normal delivery settlement.
      * <p>
      * This method must promptly unblock every in-progress lifecycle, source, or transport operation owned by this
-     * endpoint, including preparation, startup, readiness, admission, and polling as applicable. It may be invoked
+     * connector, including preparation, startup, readiness, admission, and polling as applicable. It may be invoked
      * concurrently with those operations and must be idempotent.
      */
     void forceClose();
