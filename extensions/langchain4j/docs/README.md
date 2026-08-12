@@ -2,10 +2,11 @@
 site:
   title: "Helidon LangChain4j Integration"
   version: "27.0.0"
-  sourceUrl: "https://github.com/helidon-io/helidon-extensions/tree/main/extensions/langchain4j"
-  sourceIcon: "i-simple-icons-git"
+  sourceUrl: "https://github.com/helidon-io/helidon-extensions/\
+    tree/main/extensions/langchain4j"
   editRef: "main"
-  editUrlTemplate: "{sourceUrl}/tree/{editRef}/extensions/langchain4j/{repoPath}"
+  editUrlTemplate: "https://github.com/helidon-io/helidon-extensions/\
+    edit/{editRef}/{repoPath}"
   issueUrlTemplate: "https://github.com/helidon-io/helidon-extensions/issues"
 pages:
   - config/manifest.md
@@ -33,6 +34,4 @@ pages:
 ## Reference
 
 - [Config Reference](config/config_reference.md) <!--@icon i-lucide-cogs -->
-<!-- TODO Javadocs 
-- [Javadocs](https://helidon.io/docs/v27/apidocs/) <!--@icon i-lucide-book-open -->
--->
+<!-- TODO Add a Javadocs link when the API documentation is available. -->
