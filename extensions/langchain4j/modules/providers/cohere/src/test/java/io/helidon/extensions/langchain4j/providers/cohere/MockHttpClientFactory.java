@@ -16,15 +16,19 @@
 
 package io.helidon.extensions.langchain4j.providers.cohere;
 
+import java.time.Duration;
 import java.util.List;
 
 import io.helidon.common.Weight;
 import io.helidon.service.registry.Qualifier;
 import io.helidon.service.registry.Service;
 
+import dev.langchain4j.http.client.HttpClient;
 import dev.langchain4j.http.client.HttpClientBuilder;
-import dev.langchain4j.http.client.jdk.JdkHttpClient;
-import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
+import dev.langchain4j.http.client.HttpRequest;
+import dev.langchain4j.http.client.SuccessfulHttpResponse;
+import dev.langchain4j.http.client.sse.ServerSentEventListener;
+import dev.langchain4j.http.client.sse.ServerSentEventParser;
 
 @Service.Singleton
 @Service.Named("*")
@@ -36,17 +40,53 @@ public class MockHttpClientFactory implements Service.ServicesFactory<HttpClient
                                                         Qualifier.createNamed("customHttpClient")));
     }
 
-    static final class TrackingHttpClientBuilder extends JdkHttpClientBuilder {
-        private boolean built;
+    static final class TrackingHttpClientBuilder implements HttpClientBuilder {
+        private Duration connectTimeout;
+        private Duration readTimeout;
+        private int buildCount;
 
         @Override
-        public JdkHttpClient build() {
-            built = true;
-            return super.build();
+        public Duration connectTimeout() {
+            return connectTimeout;
         }
 
-        boolean built() {
-            return built;
+        @Override
+        public HttpClientBuilder connectTimeout(Duration connectTimeout) {
+            this.connectTimeout = connectTimeout;
+            return this;
+        }
+
+        @Override
+        public Duration readTimeout() {
+            return readTimeout;
+        }
+
+        @Override
+        public HttpClientBuilder readTimeout(Duration readTimeout) {
+            this.readTimeout = readTimeout;
+            return this;
+        }
+
+        @Override
+        public HttpClient build() {
+            buildCount++;
+            return new HttpClient() {
+                @Override
+                public SuccessfulHttpResponse execute(HttpRequest request) {
+                    throw new UnsupportedOperationException("Not used by configuration tests");
+                }
+
+                @Override
+                public void execute(HttpRequest request,
+                                    ServerSentEventParser parser,
+                                    ServerSentEventListener listener) {
+                    throw new UnsupportedOperationException("Not used by configuration tests");
+                }
+            };
+        }
+
+        int buildCount() {
+            return buildCount;
         }
     }
 }

@@ -26,15 +26,12 @@ import io.helidon.common.features.api.HelidonFlavor;
 @Features.Path({"Langchain4j", "Cohere"})
 @Features.Preview
 module io.helidon.extensions.langchain4j.providers.cohere {
-    requires java.net.http;
-
     requires static io.helidon.common.features.api;
     requires static io.helidon.config.metadata;
 
     requires langchain4j.cohere;
     requires langchain4j.core;
     requires langchain4j.http.client;
-    requires langchain4j.http.client.jdk;
 
     requires transitive io.helidon.service.registry;
     requires transitive io.helidon.extensions.langchain4j;
