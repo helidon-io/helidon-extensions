@@ -22,13 +22,13 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
-import io.helidon.config.MissingValueException;
 
 import org.junit.jupiter.api.Test;
 
@@ -58,9 +58,20 @@ class OciCertificatesTlsManagerConfigTest {
         assertThat(keyOcid, is(Optional.of("vault-key")));
         assertThat(keyPassword.isPresent(), is(true));
         assertThat(config.privateKeySource(), is(OciPrivateKeySource.VAULT));
-        assertThat(config.vaultCryptoEndpoint(), is(VAULT_ENDPOINT));
-        assertThat(config.keyOcid(), is("vault-key"));
-        assertThat(new String(config.keyPassword().get()), is("password"));
+        assertThat(config.vaultCryptoEndpoint(), is(Optional.of(VAULT_ENDPOINT)));
+        assertThat(config.keyOcid(), is(Optional.of("vault-key")));
+        assertThat(new String(config.keyPassword().orElseThrow().get()), is("password"));
+    }
+
+    @Test
+    void generatedBuilderRetainsVaultOptionSetters() throws NoSuchMethodException {
+        Class<?> builderType = OciCertificatesTlsManagerConfig.BuilderBase.class;
+
+        assertNotNull(builderType.getMethod("vaultCryptoEndpoint", URI.class));
+        assertNotNull(builderType.getMethod("keyOcid", String.class));
+        assertNotNull(builderType.getMethod("keyPassword", Supplier.class));
+        assertNotNull(builderType.getMethod("keyPassword", String.class));
+        assertNotNull(builderType.getMethod("keyPassword", char[].class));
     }
 
     @Test
@@ -78,24 +89,34 @@ class OciCertificatesTlsManagerConfigTest {
 
     @Test
     void thirdPartyConfigImplementationInheritsOptionalDefaults() {
-        OciCertificatesTlsManagerConfig config = new LegacyConfigImplementation();
+        OciCertificatesTlsManagerConfig config = new ThirdPartyConfigImplementation();
 
         assertThat(config.privateKeySource(), is(OciPrivateKeySource.VAULT));
         assertThat(config.alwaysReload(), is(Optional.empty()));
     }
 
     @Test
-    void generatedMetadataDescribesAlwaysReloadAsOptional() throws IOException {
+    void generatedMetadataDescribesModeDependentOptionsAsOptional() throws IOException {
         try (InputStream input = OciCertificatesTlsManagerConfig.class.getResourceAsStream(
                 "/META-INF/helidon/config-metadata.json")) {
             assertNotNull(input);
             String metadata = new String(input.readAllBytes(), StandardCharsets.UTF_8);
-            Matcher option = Pattern.compile("\\{\\\"key\\\":\\\"always-reload\\\"[^}]*}").matcher(metadata);
 
-            assertThat(option.find(), is(true));
-            assertThat(option.group(), containsString("\"type\":\"java.lang.Boolean\""));
-            assertThat(option.group(), not(containsString("\"required\":true")));
-            assertThat(option.group(), not(containsString("\"defaultValue\"")));
+            String alwaysReload = metadataOption(metadata, "always-reload");
+            assertThat(alwaysReload, containsString("\"type\":\"java.lang.Boolean\""));
+            assertThat(alwaysReload, not(containsString("\"required\":true")));
+            assertThat(alwaysReload, not(containsString("\"defaultValue\"")));
+
+            assertThat(metadataOption(metadata, "vault-crypto-endpoint"),
+                       not(containsString("\"required\":true")));
+            assertThat(metadataOption(metadata, "key-ocid"), not(containsString("\"required\":true")));
+            // The code generator currently reports the configured factory's helper type for this option.
+            String keyPassword = metadataOption(metadata, "key-password");
+            assertThat(keyPassword, not(containsString("\"required\":true")));
+
+            assertThat(metadataOption(metadata, "schedule"), containsString("\"required\":true"));
+            assertThat(metadataOption(metadata, "ca-ocid"), containsString("\"required\":true"));
+            assertThat(metadataOption(metadata, "cert-ocid"), containsString("\"required\":true"));
         }
     }
 
@@ -122,22 +143,11 @@ class OciCertificatesTlsManagerConfigTest {
         assertThat(copied.privateKeySource(), is(OciPrivateKeySource.CERTIFICATE_BUNDLE));
         assertThat(copiedFromBuilder.privateKeySource(), is(OciPrivateKeySource.CERTIFICATE_BUNDLE));
         assertThat(copied.certOcid(), is("certificate"));
-    }
-
-    @Test
-    void managedLegacyPasswordIsMissingAndConfigRemainsCopyable() {
-        OciCertificatesTlsManagerConfig managed = baseBuilder()
-                .privateKeySource(OciPrivateKeySource.CERTIFICATE_BUNDLE)
-                .buildPrototype();
-
-        MissingValueException missing = assertThrows(MissingValueException.class,
-                                                      () -> managed.keyPassword().get());
-        assertThat(missing.getMessage(), containsString("key-password"));
-
-        OciCertificatesTlsManagerConfig copied = OciCertificatesTlsManagerConfig.builder(managed).buildPrototype();
-
-        assertThat(copied.privateKeySource(), is(OciPrivateKeySource.CERTIFICATE_BUNDLE));
-        assertThrows(MissingValueException.class, () -> copied.keyPassword().get());
+        assertThat(first.vaultCryptoEndpoint(), is(Optional.empty()));
+        assertThat(first.keyOcid(), is(Optional.empty()));
+        assertThat(first.keyPassword(), is(Optional.empty()));
+        assertThat(first.toString(), not(containsString("urn:helidon:oci-certificates")));
+        assertThat(first.toString(), not(containsString("unused-key-ocid")));
     }
 
     @Test
@@ -161,9 +171,75 @@ class OciCertificatesTlsManagerConfigTest {
                 .buildPrototype();
 
         assertThat(vault.privateKeySource(), is(OciPrivateKeySource.VAULT));
-        assertThat(vault.vaultCryptoEndpoint(), is(VAULT_ENDPOINT));
-        assertThat(vault.keyOcid(), is("vault-key"));
-        assertThat(new String(vault.keyPassword().get()), is("password"));
+        assertThat(vault.vaultCryptoEndpoint(), is(Optional.of(VAULT_ENDPOINT)));
+        assertThat(vault.keyOcid(), is(Optional.of("vault-key")));
+        assertThat(new String(vault.keyPassword().orElseThrow().get()), is("password"));
+    }
+
+    @Test
+    void copiedVaultCanSwitchToCertificateBundleAfterClearingVaultOptions() {
+        OciCertificatesTlsManagerConfig vault = baseBuilder()
+                .vaultCryptoEndpoint(VAULT_ENDPOINT)
+                .vaultManagementEndpoint(VAULT_ENDPOINT)
+                .keyOcid("vault-key")
+                .keyPassword("password")
+                .buildPrototype();
+
+        OciCertificatesTlsManagerConfig certificateBundle = OciCertificatesTlsManagerConfig.builder(vault)
+                .privateKeySource(OciPrivateKeySource.CERTIFICATE_BUNDLE)
+                .clearVaultCryptoEndpoint()
+                .clearVaultManagementEndpoint()
+                .clearKeyOcid()
+                .clearKeyPassword()
+                .buildPrototype();
+
+        assertThat(certificateBundle.privateKeySource(), is(OciPrivateKeySource.CERTIFICATE_BUNDLE));
+        assertThat(certificateBundle.vaultCryptoEndpoint(), is(Optional.empty()));
+        assertThat(certificateBundle.vaultManagementEndpoint(), is(Optional.empty()));
+        assertThat(certificateBundle.keyOcid(), is(Optional.empty()));
+        assertThat(certificateBundle.keyPassword(), is(Optional.empty()));
+    }
+
+    @Test
+    void passwordSupplierIsNotConsumedByValidationOrCopying() {
+        AtomicInteger invocations = new AtomicInteger();
+        Supplier<char[]> password = () -> {
+            invocations.incrementAndGet();
+            return "password".toCharArray();
+        };
+        OciCertificatesTlsManagerConfig.Builder builder = baseBuilder()
+                .vaultCryptoEndpoint(VAULT_ENDPOINT)
+                .keyOcid("vault-key")
+                .keyPassword(password);
+
+        OciCertificatesTlsManagerConfig config = builder.buildPrototype();
+        OciCertificatesTlsManagerConfig copied = OciCertificatesTlsManagerConfig.builder(config).buildPrototype();
+        OciCertificatesTlsManagerConfig copiedFromBuilder = OciCertificatesTlsManagerConfig.builder()
+                .from(builder)
+                .buildPrototype();
+
+        assertThat(invocations.get(), is(0));
+        assertThat(new String(copied.keyPassword().orElseThrow().get()), is("password"));
+        assertThat(invocations.get(), is(1));
+        assertThat(copiedFromBuilder.keyPassword().isPresent(), is(true));
+    }
+
+    @Test
+    void certificateBundleRejectsPasswordSupplierWithoutConsumingIt() {
+        AtomicInteger invocations = new AtomicInteger();
+        Supplier<char[]> password = () -> {
+            invocations.incrementAndGet();
+            return "password".toCharArray();
+        };
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                                                           () -> baseBuilder()
+                                                                   .privateKeySource(OciPrivateKeySource.CERTIFICATE_BUNDLE)
+                                                                   .keyPassword(password)
+                                                                   .buildPrototype());
+
+        assertThat(exception.getMessage(), containsString("key-password"));
+        assertThat(invocations.get(), is(0));
     }
 
     @Test
@@ -177,6 +253,69 @@ class OciCertificatesTlsManagerConfigTest {
 
         assertThat(result.privateKeySource(), is(OciPrivateKeySource.CERTIFICATE_BUNDLE));
         assertThat(result.certOcid(), is("certificate"));
+        assertThat(result.vaultCryptoEndpoint(), is(Optional.empty()));
+        assertThat(result.keyOcid(), is(Optional.empty()));
+        assertThat(result.keyPassword(), is(Optional.empty()));
+    }
+
+    @Test
+    void vaultPasswordCanBeCreatedFromConfigAsLazySupplier() {
+        Config config = Config.just(ConfigSources.create(Map.of("schedule", "0 0 * * * ?",
+                                                                "vault-crypto-endpoint", VAULT_ENDPOINT.toString(),
+                                                                "ca-ocid", "certificate-authority",
+                                                                "cert-ocid", "certificate",
+                                                                "key-ocid", "vault-key",
+                                                                "key-password", "password")));
+
+        OciCertificatesTlsManagerConfig result = OciCertificatesTlsManagerConfig.create(config);
+
+        Supplier<char[]> password = result.keyPassword().orElseThrow();
+        assertThat(new String(password.get()), is("password"));
+    }
+
+    @Test
+    void configuredPasswordOverridesExistingBuilderValueAndCanBeUpdated() {
+        OciCertificatesTlsManagerConfig.Builder builder = baseBuilder()
+                .vaultCryptoEndpoint(VAULT_ENDPOINT)
+                .keyOcid("vault-key")
+                .keyPassword("programmatic");
+
+        builder.config(passwordConfig("first-configured"));
+        assertThat(new String(builder.keyPassword().orElseThrow().get()), is("first-configured"));
+
+        OciCertificatesTlsManagerConfig result = builder
+                .config(passwordConfig("second-configured"))
+                .buildPrototype();
+
+        assertThat(new String(result.keyPassword().orElseThrow().get()), is("second-configured"));
+    }
+
+    @Test
+    void configuredPasswordCanBeClearedBeforeSwitchingToCertificateBundle() {
+        OciCertificatesTlsManagerConfig result = baseBuilder()
+                .vaultCryptoEndpoint(VAULT_ENDPOINT)
+                .keyOcid("vault-key")
+                .config(passwordConfig("configured"))
+                .clearKeyPassword()
+                .clearKeyOcid()
+                .clearVaultCryptoEndpoint()
+                .privateKeySource(OciPrivateKeySource.CERTIFICATE_BUNDLE)
+                .buildPrototype();
+
+        assertThat(result.privateKeySource(), is(OciPrivateKeySource.CERTIFICATE_BUNDLE));
+        assertThat(result.keyPassword(), is(Optional.empty()));
+    }
+
+    @Test
+    void passwordIsRedactedFromConfigToString() {
+        OciCertificatesTlsManagerConfig result = baseBuilder()
+                .vaultCryptoEndpoint(VAULT_ENDPOINT)
+                .keyOcid("vault-key")
+                .keyPassword("secret-password")
+                .buildPrototype();
+
+        assertThat(result.toString(), containsString("keyPassword=****"));
+        assertThat(result.toString(), not(containsString("secret-password")));
     }
 
     @Test
@@ -215,15 +354,25 @@ class OciCertificatesTlsManagerConfigTest {
                 .certOcid("certificate");
     }
 
-    private static final class LegacyConfigImplementation implements OciCertificatesTlsManagerConfig {
+    private static Config passwordConfig(String password) {
+        return Config.just(ConfigSources.create(Map.of("key-password", password)));
+    }
+
+    private static String metadataOption(String metadata, String key) {
+        Matcher option = Pattern.compile("\\{\\\"key\\\":\\\"" + Pattern.quote(key) + "\\\"[^}]*}").matcher(metadata);
+        assertThat("metadata option " + key, option.find(), is(true));
+        return option.group();
+    }
+
+    private static final class ThirdPartyConfigImplementation implements OciCertificatesTlsManagerConfig {
         @Override
         public String schedule() {
             return "0 0 * * * ?";
         }
 
         @Override
-        public URI vaultCryptoEndpoint() {
-            return VAULT_ENDPOINT;
+        public Optional<URI> vaultCryptoEndpoint() {
+            return Optional.of(VAULT_ENDPOINT);
         }
 
         @Override
@@ -247,13 +396,13 @@ class OciCertificatesTlsManagerConfigTest {
         }
 
         @Override
-        public String keyOcid() {
-            return "vault-key";
+        public Optional<String> keyOcid() {
+            return Optional.of("vault-key");
         }
 
         @Override
-        public Supplier<char[]> keyPassword() {
-            return () -> "password".toCharArray();
+        public Optional<Supplier<char[]>> keyPassword() {
+            return Optional.of(() -> "password".toCharArray());
         }
 
         @Override

@@ -42,9 +42,10 @@ The manager requests the `CURRENT` bundle as `CERTIFICATE_CONTENT_WITH_PRIVATE_K
 private key matches the leaf certificate before installing the identity. Both RSA and EC PKCS#8 keys are supported,
 including passphrase-protected keys; an OCI-provided passphrase is used only while decoding that bundle.
 
-By default, polling this mode does not reload TLS when the certificate version is unchanged. A newer version is installed
-as one complete certificate/key identity. If download, parsing, validation, or reload fails, the last successfully
-installed identity remains active and the new version is retried on a later poll.
+By default, polling this mode does not reload TLS when both the certificate version and CA certificate are unchanged.
+A newer identity version or independently rotated CA is installed as one complete TLS update. If download, parsing,
+validation, or reload fails, the last successfully installed TLS material remains active and the candidate update is
+retried on a later poll.
 
 The leaf private key is materialized in application JVM memory. This mode does not provide non-exportable HSM-backed
 TLS signing; the CA signing key can remain separately HSM protected.
@@ -90,11 +91,12 @@ Do not combine `certificate-bundle` with `key-ocid`, `key-password`, `vault-cryp
 
 ## Reload policy
 
-`always-reload` controls whether an unchanged certificate version continues through CA/private-key retrieval and TLS
-rebuilding on every scheduled poll. When the option is absent, its effective default depends on the private-key source:
+`always-reload` controls whether TLS rebuilding continues when the downloaded identity and CA material are unchanged.
+Every scheduled poll downloads both the identity bundle and independently versioned CA bundle so either kind of rotation
+can be detected. When the option is absent, its effective default depends on the private-key source:
 
 - `vault`: `true`, preserving the original behavior for existing configurations;
-- `certificate-bundle`: `false`, avoiding a TLS reload until OCI publishes a new current certificate version.
+- `certificate-bundle`: `false`, avoiding a TLS reload until OCI publishes a new current identity or CA certificate.
 
 Set `always-reload: false` to opt Vault mode into version-gated reloads, or `always-reload: true` to force managed bundle
-reloads on every poll. Both settings still download the certificate bundle first so its current version can be observed.
+reloads on every poll.

@@ -29,6 +29,7 @@ import io.helidon.builder.api.Prototype;
 @Prototype.Blueprint(decorator = OciCertificatesTlsManagerConfigSupport.BuilderDecorator.class,
                      createEmptyPublic = false)
 @Prototype.Configured
+@Prototype.CustomMethods(OciCertificatesTlsManagerConfigSupport.CustomMethods.class)
 @Prototype.IncludeDefaultMethods({"privateKeySource", "alwaysReload"})
 interface OciCertificatesTlsManagerConfigBlueprint extends Prototype.Factory<OciCertificatesTlsManager> {
 
@@ -53,11 +54,12 @@ interface OciCertificatesTlsManagerConfigBlueprint extends Prototype.Factory<Oci
     }
 
     /**
-     * Whether to reload the TLS identity even when the downloaded certificate version has not changed.
-     * When not configured, Vault mode preserves its existing always-reload behavior, while certificate-bundle mode
-     * reloads only when its certificate version changes.
+     * Whether to reload the TLS identity even when the downloaded certificate version and CA certificate have not changed.
+     * The CA certificate is retrieved on every scheduled poll. When this option is {@code false}, rebuilding is skipped
+     * only when both the identity certificate version and the CA certificate are unchanged. When not configured, Vault
+     * mode preserves its existing always-reload behavior, while certificate-bundle mode uses this change detection.
      *
-     * @return whether unchanged certificate versions should still be reloaded, if explicitly configured
+     * @return whether unchanged certificate material should still be reloaded, if explicitly configured
      */
     @Option.Configured
     default Optional<Boolean> alwaysReload() {
@@ -74,7 +76,7 @@ interface OciCertificatesTlsManagerConfigBlueprint extends Prototype.Factory<Oci
      * @return the address for the key management service / vault crypto usage
      */
     @Option.Configured
-    URI vaultCryptoEndpoint();
+    Optional<URI> vaultCryptoEndpoint();
 
     /**
      * The address to use for the OCI Key Management Service / Vault management usage.
@@ -118,7 +120,7 @@ interface OciCertificatesTlsManagerConfigBlueprint extends Prototype.Factory<Oci
      * @return key OCID
      */
     @Option.Configured
-    String keyOcid();
+    Optional<String> keyOcid();
 
     /**
      * The Key password. This option is required when {@link #privateKeySource()} is {@link OciPrivateKeySource#VAULT} and
@@ -128,6 +130,7 @@ interface OciCertificatesTlsManagerConfigBlueprint extends Prototype.Factory<Oci
      * @return key password
      */
     @Option.Configured
-    Supplier<char[]> keyPassword();
+    @Option.Confidential
+    Optional<Supplier<char[]>> keyPassword();
 
 }

@@ -38,6 +38,7 @@ import io.helidon.service.registry.Service;
 @Weight(Weighted.DEFAULT_WEIGHT + 1)
 class TestOciCertificatesDownloader implements OciCertificatesDownloader {
     static String version = "1";
+    static String caCertificateResource = "test-keys/ca.pem";
 
     static volatile int callCount_loadCertificates;
     static volatile int callCount_loadCertificatesWithPrivateKey;
@@ -131,7 +132,7 @@ class TestOciCertificatesDownloader implements OciCertificatesDownloader {
                 TimeUnit.MILLISECONDS.sleep(1); // make sure metrics timestamp changes
                 Objects.requireNonNull(caCertOcid);
                 try (InputStream caCertIs =
-                        TestOciCertificatesDownloader.class.getClassLoader().getResourceAsStream("test-keys/ca.pem")) {
+                        TestOciCertificatesDownloader.class.getClassLoader().getResourceAsStream(caCertificateResource)) {
                     return DefaultOciCertificatesDownloader.toCertificate(caCertIs);
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);

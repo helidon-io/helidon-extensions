@@ -21,6 +21,7 @@ import java.security.KeyStoreException;
 import java.security.PrivateKey;
 import java.security.SecureRandom;
 import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
@@ -55,7 +56,7 @@ class DefaultOciCertificatesTlsManager extends ConfiguredTlsManager implements O
 
     private final OciCertificatesTlsManagerConfig cfg;
     private final boolean alwaysReload;
-    private final AtomicReference<String> lastVersionDownloaded = new AtomicReference<>("");
+    private final AtomicReference<ReloadToken> installedMaterial = new AtomicReference<>();
     private final ReentrantLock reloadLock = new ReentrantLock();
 
     private Supplier<OciPrivateKeyDownloader> pkDownloader;
@@ -74,19 +75,6 @@ class DefaultOciCertificatesTlsManager extends ConfiguredTlsManager implements O
         this.alwaysReload = cfg.alwaysReload().orElse(cfg.privateKeySource() == OciPrivateKeySource.VAULT);
 
         config.onChange(this::config);
-    }
-
-    static String refreshFailureCategory(RuntimeException failure) {
-        if (failure instanceof UnsupportedOperationException) {
-            return "unsupported-operation";
-        }
-        if (failure instanceof IllegalArgumentException) {
-            return "invalid-tls-material";
-        }
-        if (failure instanceof IllegalStateException) {
-            return "oci-download-or-tls-state";
-        }
-        return "runtime-failure";
     }
 
     @Override // TlsManager
@@ -130,9 +118,19 @@ class DefaultOciCertificatesTlsManager extends ConfiguredTlsManager implements O
                 LOGGER.log(System.Logger.Level.DEBUG, "Certificates were downloaded and dynamically updated");
             }
         } catch (RuntimeException e) {
+            String failureCategory;
+            if (e instanceof UnsupportedOperationException) {
+                failureCategory = "unsupported-operation";
+            } else if (e instanceof IllegalArgumentException) {
+                failureCategory = "invalid-tls-material";
+            } else if (e instanceof IllegalStateException) {
+                failureCategory = "oci-download-or-tls-state";
+            } else {
+                failureCategory = "runtime-failure";
+            }
             LOGGER.log(System.Logger.Level.WARNING,
                     "Failed to refresh OCI certificate " + cfg.certOcid()
-                            + " (failure category: " + refreshFailureCategory(e) + ")"
+                            + " (failure category: " + failureCategory + ")"
                             + "; the previously installed TLS identity remains active and the refresh will be retried");
         }
     }
@@ -160,31 +158,31 @@ class DefaultOciCertificatesTlsManager extends ConfiguredTlsManager implements O
         try {
             // download all of our security collateral from OCI
             OciCertificatesDownloader cd = certDownloader.get();
-            String version;
+            String identityVersion;
             Certificate[] certificates;
             PrivateKey privateKey = null;
             if (cfg.privateKeySource() == OciPrivateKeySource.CERTIFICATE_BUNDLE) {
                 OciCertificatesDownloader.CertificatesWithPrivateKey identity =
                         cd.loadCertificatesWithPrivateKey(cfg.certOcid());
-                version = identity.version();
+                identityVersion = identity.version();
                 certificates = identity.certificates();
                 privateKey = identity.privateKey();
             } else {
                 OciCertificatesDownloader.Certificates downloadedCertificates = cd.loadCertificates(cfg.certOcid());
-                version = downloadedCertificates.version();
+                identityVersion = downloadedCertificates.version();
                 certificates = downloadedCertificates.certificates();
             }
 
-            if (!alwaysReload && lastVersionDownloaded.get().equals(version)) {
+            X509Certificate ca = cd.loadCACertificate(cfg.caOcid());
+            ReloadToken candidate = new ReloadToken(identityVersion, ca);
+            if (!alwaysReload && candidate.equals(installedMaterial.get())) {
                 return false;
             }
 
-            // reset start time for the next update phase
-            Certificate ca = cd.loadCACertificate(cfg.caOcid());
-
             if (privateKey == null) {
                 OciPrivateKeyDownloader privateKeyDownloader = pkDownloader.get();
-                privateKey = privateKeyDownloader.loadKey(cfg.keyOcid(), cfg.vaultCryptoEndpoint());
+                privateKey = privateKeyDownloader.loadKey(cfg.keyOcid().orElseThrow(),
+                                                         cfg.vaultCryptoEndpoint().orElseThrow());
             }
 
             SecureRandom secureRandom = secureRandom(tlsConfig);
@@ -225,13 +223,16 @@ class DefaultOciCertificatesTlsManager extends ConfiguredTlsManager implements O
                 reload(keyManager, trustManager);
             }
 
-            lastVersionDownloaded.set(version);
+            installedMaterial.set(candidate);
             return true;
         } catch (KeyStoreException e) {
             throw new IllegalStateException("Error while loading context from OCI", e);
         } finally {
             reloadLock.unlock();
         }
+    }
+
+    private record ReloadToken(String identityVersion, X509Certificate caCertificate) {
     }
 
 }

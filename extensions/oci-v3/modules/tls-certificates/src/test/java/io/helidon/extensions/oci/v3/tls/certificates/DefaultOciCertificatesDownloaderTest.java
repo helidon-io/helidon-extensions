@@ -18,24 +18,35 @@ package io.helidon.extensions.oci.v3.tls.certificates;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.extensions.oci.v3.tls.certificates.spi.OciCertificatesDownloader.CertificatesWithPrivateKey;
 
+import com.oracle.bmc.Region;
+import com.oracle.bmc.auth.AuthCachingPolicy;
+import com.oracle.bmc.auth.BasicAuthenticationDetailsProvider;
+import com.oracle.bmc.auth.ProvidesClientConfigurators;
+import com.oracle.bmc.auth.RegionProvider;
 import com.oracle.bmc.certificates.model.CertificateBundlePublicOnly;
 import com.oracle.bmc.certificates.model.CertificateBundleWithPrivateKey;
-import com.oracle.bmc.certificates.requests.GetCertificateBundleRequest;
 import com.oracle.bmc.certificates.responses.GetCertificateBundleResponse;
+import com.oracle.bmc.http.ClientConfigurator;
+import com.oracle.bmc.http.Priorities;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
+import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class DefaultOciCertificatesDownloaderTest {
@@ -43,14 +54,22 @@ class DefaultOciCertificatesDownloaderTest {
     private static final String PASSPHRASE = "changeit";
 
     @Test
-    void createsExplicitCurrentPrivateKeyBundleRequest() {
-        GetCertificateBundleRequest request =
-                DefaultOciCertificatesDownloader.certificateBundleWithPrivateKeyRequest("certificate-ocid");
+    void requestsExplicitCurrentPrivateKeyBundle() {
+        AtomicReference<URI> capturedUri = new AtomicReference<>();
+        DefaultOciCertificatesDownloader downloader =
+                new DefaultOciCertificatesDownloader(new RequestCapturingAuthProvider(capturedUri));
 
-        assertThat(request.getCertificateId(), is("certificate-ocid"));
-        assertThat(request.getStage(), is(GetCertificateBundleRequest.Stage.Current));
-        assertThat(request.getCertificateBundleType(),
-                   is(GetCertificateBundleRequest.CertificateBundleType.CertificateContentWithPrivateKey));
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> downloader.loadCertificatesWithPrivateKey("certificate-ocid"));
+
+        assertThat(exceptionText(exception), containsString(RequestCapturedException.MESSAGE));
+        URI requestUri = capturedUri.get();
+        assertThat(requestUri, notNullValue());
+        assertThat(requestUri.getRawPath(), is("/20210224/certificateBundles/certificate-ocid"));
+        assertThat(Arrays.asList(requestUri.getRawQuery().split("&")),
+                   containsInAnyOrder("stage=CURRENT",
+                                      "certificateBundleType=CERTIFICATE_CONTENT_WITH_PRIVATE_KEY"));
     }
 
     @Test
@@ -253,5 +272,65 @@ class DefaultOciCertificatesDownloaderTest {
             throwable = throwable.getCause();
         }
         return result.toString();
+    }
+
+    @AuthCachingPolicy(cacheKeyId = false, cachePrivateKey = false)
+    private static final class RequestCapturingAuthProvider
+            implements BasicAuthenticationDetailsProvider, RegionProvider, ProvidesClientConfigurators {
+        private final AtomicReference<URI> capturedUri;
+
+        private RequestCapturingAuthProvider(AtomicReference<URI> capturedUri) {
+            this.capturedUri = capturedUri;
+        }
+
+        @Override
+        public Region getRegion() {
+            return Region.US_PHOENIX_1;
+        }
+
+        @Override
+        public List<ClientConfigurator> getClientConfigurators() {
+            return List.of(builder -> builder.registerRequestInterceptor(
+                    Priorities.AUTHENTICATION - 1,
+                    request -> {
+                        if (!capturedUri.compareAndSet(null, request.uri())) {
+                            throw new AssertionError("OCI request was attempted more than once");
+                        }
+                        throw new RequestCapturedException();
+                    }));
+        }
+
+        @Override
+        public String getKeyId() {
+            throw signingWasReached();
+        }
+
+        @Override
+        public InputStream getPrivateKey() {
+            throw signingWasReached();
+        }
+
+        @Deprecated
+        @Override
+        public String getPassPhrase() {
+            throw signingWasReached();
+        }
+
+        @Override
+        public char[] getPassphraseCharacters() {
+            throw signingWasReached();
+        }
+
+        private static AssertionError signingWasReached() {
+            return new AssertionError("OCI request signing ran before request capture");
+        }
+    }
+
+    private static final class RequestCapturedException extends RuntimeException {
+        private static final String MESSAGE = "OCI request captured before authentication and network access";
+
+        private RequestCapturedException() {
+            super(MESSAGE);
+        }
     }
 }

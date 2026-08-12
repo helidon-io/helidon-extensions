@@ -16,28 +16,58 @@
 
 package io.helidon.extensions.oci.v3.tls.certificates;
 
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
 
 import io.helidon.builder.api.Prototype;
 import io.helidon.config.Config;
-import io.helidon.config.MissingValueException;
 
 /**
  * Support for the OCI certificates TLS manager configuration prototype.
  */
 final class OciCertificatesTlsManagerConfigSupport {
-    private static final URI UNUSED_VAULT_CRYPTO_ENDPOINT =
-            URI.create("urn:helidon:oci-certificates:unused-vault-crypto-endpoint");
-    private static final String UNUSED_KEY_OCID = "helidon:oci-certificates:unused-key-ocid";
-    private static final Supplier<char[]> MISSING_KEY_PASSWORD =
-            () -> {
-                throw MissingValueException.create(Config.Key.create("key-password"));
-            };
-
     private OciCertificatesTlsManagerConfigSupport() {
+    }
+
+    static final class CustomMethods {
+        private CustomMethods() {
+        }
+
+        /**
+         * Sets the Vault key password from a string.
+         *
+         * @param builder builder to update
+         * @param keyPassword key password
+         */
+        @Prototype.BuilderMethod
+        static void keyPassword(OciCertificatesTlsManagerConfig.BuilderBase<?, ?> builder, String keyPassword) {
+            char[] password = keyPassword.toCharArray();
+            builder.keyPassword(() -> password);
+        }
+
+        /**
+         * Sets the Vault key password from a character array.
+         *
+         * @param builder builder to update
+         * @param keyPassword key password
+         */
+        @Prototype.BuilderMethod
+        static void keyPassword(OciCertificatesTlsManagerConfig.BuilderBase<?, ?> builder, char[] keyPassword) {
+            builder.keyPassword(() -> keyPassword);
+        }
+
+        /**
+         * Creates a lazy Vault key password supplier from configuration.
+         *
+         * @param config key password configuration
+         * @return lazy key password supplier
+         */
+        @Prototype.ConfigFactoryMethod("keyPassword")
+        static Supplier<char[]> createKeyPassword(Config config) {
+            return config.asString().as(String::toCharArray).supplier();
+        }
+
     }
 
     static final class BuilderDecorator
@@ -50,7 +80,6 @@ final class OciCertificatesTlsManagerConfigSupport {
         public void decorate(OciCertificatesTlsManagerConfig.BuilderBase<?, ?> builder) {
             if (builder.privateKeySource() == OciPrivateKeySource.CERTIFICATE_BUNDLE) {
                 validateCertificateBundleOptions(builder);
-                populateUnusedVaultOptions(builder);
             } else {
                 validateVaultOptions(builder);
             }
@@ -58,20 +87,16 @@ final class OciCertificatesTlsManagerConfigSupport {
 
         private static void validateCertificateBundleOptions(OciCertificatesTlsManagerConfig.BuilderBase<?, ?> builder) {
             List<String> configuredOptions = new ArrayList<>();
-            if (builder.vaultCryptoEndpoint()
-                    .filter(endpoint -> !UNUSED_VAULT_CRYPTO_ENDPOINT.equals(endpoint))
-                    .isPresent()) {
+            if (builder.vaultCryptoEndpoint().isPresent()) {
                 configuredOptions.add("vault-crypto-endpoint");
             }
             if (builder.vaultManagementEndpoint().isPresent()) {
                 configuredOptions.add("vault-management-endpoint");
             }
-            if (builder.keyOcid()
-                    .filter(keyOcid -> !UNUSED_KEY_OCID.equals(keyOcid))
-                    .isPresent()) {
+            if (builder.keyOcid().isPresent()) {
                 configuredOptions.add("key-ocid");
             }
-            if (hasConfiguredKeyPassword(builder)) {
+            if (builder.keyPassword().isPresent()) {
                 configuredOptions.add("key-password");
             }
             if (!configuredOptions.isEmpty()) {
@@ -81,51 +106,20 @@ final class OciCertificatesTlsManagerConfigSupport {
             }
         }
 
-        private static void populateUnusedVaultOptions(OciCertificatesTlsManagerConfig.BuilderBase<?, ?> builder) {
-            builder.vaultCryptoEndpoint(UNUSED_VAULT_CRYPTO_ENDPOINT);
-            builder.keyOcid(UNUSED_KEY_OCID);
-            builder.keyPassword(MISSING_KEY_PASSWORD);
-        }
-
         private static void validateVaultOptions(OciCertificatesTlsManagerConfig.BuilderBase<?, ?> builder) {
             List<String> missingOptions = new ArrayList<>();
-            if (builder.vaultCryptoEndpoint()
-                    .filter(endpoint -> !UNUSED_VAULT_CRYPTO_ENDPOINT.equals(endpoint))
-                    .isEmpty()) {
+            if (builder.vaultCryptoEndpoint().isEmpty()) {
                 missingOptions.add("vault-crypto-endpoint");
             }
-            if (builder.keyOcid()
-                    .filter(keyOcid -> !UNUSED_KEY_OCID.equals(keyOcid))
-                    .isEmpty()) {
+            if (builder.keyOcid().isEmpty()) {
                 missingOptions.add("key-ocid");
             }
-            if (!hasConfiguredKeyPassword(builder)) {
+            if (builder.keyPassword().isEmpty()) {
                 missingOptions.add("key-password");
             }
             if (!missingOptions.isEmpty()) {
                 throw new IllegalArgumentException("private-key-source=VAULT requires: "
                                                            + String.join(", ", missingOptions));
-            }
-        }
-
-        private static boolean hasConfiguredKeyPassword(OciCertificatesTlsManagerConfig.BuilderBase<?, ?> builder) {
-            if (builder.config()
-                    .map(config -> config.get("key-password").exists())
-                    .orElse(false)) {
-                return true;
-            }
-
-            return builder.keyPassword()
-                    .map(BuilderDecorator::isConfiguredKeyPassword)
-                    .orElse(false);
-        }
-
-        private static boolean isConfiguredKeyPassword(Supplier<char[]> supplier) {
-            try {
-                supplier.get();
-                return true;
-            } catch (MissingValueException e) {
-                return false;
             }
         }
     }

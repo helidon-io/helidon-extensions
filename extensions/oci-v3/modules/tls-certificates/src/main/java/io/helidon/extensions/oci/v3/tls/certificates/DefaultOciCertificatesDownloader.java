@@ -114,7 +114,13 @@ class DefaultOciCertificatesDownloader implements OciCertificatesDownloader {
         try (CertificatesClient client = CertificatesClient.builder()
                 .build(authProvider)) {
             GetCertificateBundleResponse response =
-                    client.getCertificateBundle(certificateBundleWithPrivateKeyRequest(certOcid));
+                    client.getCertificateBundle(GetCertificateBundleRequest.builder()
+                                                        .certificateId(Objects.requireNonNull(certOcid))
+                                                        .stage(GetCertificateBundleRequest.Stage.Current)
+                                                        .certificateBundleType(
+                                                                GetCertificateBundleRequest.CertificateBundleType
+                                                                        .CertificateContentWithPrivateKey)
+                                                        .build());
             return toCertificatesWithPrivateKey(response);
         }
     }
@@ -147,14 +153,6 @@ class DefaultOciCertificatesDownloader implements OciCertificatesDownloader {
             throw new IllegalStateException("Expected a single certificate in stream but found: " + certs.size());
         }
         return certs.getFirst();
-    }
-
-    static GetCertificateBundleRequest certificateBundleWithPrivateKeyRequest(String certOcid) {
-        return GetCertificateBundleRequest.builder()
-                .certificateId(Objects.requireNonNull(certOcid))
-                .stage(GetCertificateBundleRequest.Stage.Current)
-                .certificateBundleType(GetCertificateBundleRequest.CertificateBundleType.CertificateContentWithPrivateKey)
-                .build();
     }
 
     static CertificatesWithPrivateKey toCertificatesWithPrivateKey(GetCertificateBundleResponse response) {
