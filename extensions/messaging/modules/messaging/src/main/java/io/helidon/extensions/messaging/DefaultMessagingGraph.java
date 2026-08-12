@@ -47,11 +47,11 @@ final class DefaultMessagingGraph implements MessagingGraph {
     private final Map<MessagingChannel<?>, Emitter<?>> emitters = new IdentityHashMap<>();
     private final Map<String, Set<String>> routes = new LinkedHashMap<>();
     private final Map<String, SourceBinding> sources = new LinkedHashMap<>();
-    private final Set<ConnectorSource> sourceIdentities =
+    private final Set<Runnable> sourceIdentities =
             Collections.newSetFromMap(new IdentityHashMap<>());
-    private final List<ConnectorEndpoint> connectorBindings = new ArrayList<>();
-    private final List<OutgoingEndpoint> outgoingEndpoints = new ArrayList<>();
-    private final Set<ConnectorEndpoint> connectorEndpointIdentities =
+    private final List<Connector> connectorBindings = new ArrayList<>();
+    private final List<OutgoingConnector> outgoingConnectors = new ArrayList<>();
+    private final Set<Connector> connectorIdentities =
             Collections.newSetFromMap(new IdentityHashMap<>());
     private final AtomicBoolean shutdownOwner = new AtomicBoolean();
     private final CompletableFuture<Void> preparationCompletion = new CompletableFuture<>();
@@ -119,7 +119,7 @@ final class DefaultMessagingGraph implements MessagingGraph {
     void addChannelContribution(String name,
                                 MessagingChannel<?> channel,
                                 MessagingExecutionConfig executionConfig,
-                                Map<String, ConnectorSource> channelSources,
+                                Map<String, Runnable> channelSources,
                                 List<?> bindings,
                                 List<String> inputChannels) {
         addChannelContribution(name,
@@ -134,7 +134,7 @@ final class DefaultMessagingGraph implements MessagingGraph {
     void addChannelContribution(String name,
                                 MessagingChannel<?> channel,
                                 MessagingExecutionConfig executionConfig,
-                                Map<String, ConnectorSource> channelSources,
+                                Map<String, Runnable> channelSources,
                                 List<?> bindings,
                                 List<String> inputChannels,
                                 Runnable connectInputs) {
@@ -208,7 +208,7 @@ final class DefaultMessagingGraph implements MessagingGraph {
         }
     }
 
-    void addSource(String name, ConnectorSource source) {
+    void addSource(String name, Runnable source) {
         Objects.requireNonNull(name);
         Objects.requireNonNull(source);
         lifecycleLock.lock();
@@ -220,6 +220,42 @@ final class DefaultMessagingGraph implements MessagingGraph {
         } finally {
             lifecycleLock.unlock();
         }
+    }
+
+    void addIncomingConnector(String name,
+                              IncomingConnector connector,
+                              ConnectorSourceContext context) {
+        Objects.requireNonNull(name);
+        Objects.requireNonNull(connector);
+        Objects.requireNonNull(context);
+        lifecycleLock.lock();
+        try {
+            requireMutable();
+            if (sources.containsKey(name)) {
+                throw new IllegalArgumentException("Duplicate messaging source " + name);
+            }
+            if (connectorIdentities.contains(connector)) {
+                throw new IllegalArgumentException("Connector is already owned by this messaging graph");
+            }
+            sources.put(name, new SourceBinding(name, connector, context));
+            connectorIdentities.add(connector);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    void addIncomingConnector(String name, IncomingConnector connector) {
+        addIncomingConnector(name, connector, new ConnectorSourceContext() {
+            @Override
+            public String channelName() {
+                return name;
+            }
+
+            @Override
+            public <T> void emitBatch(MessageBatch<T> batch) {
+                throw new UnsupportedOperationException("Test incoming context does not emit messages");
+            }
+        });
     }
 
     void seal() {
@@ -263,7 +299,7 @@ final class DefaultMessagingGraph implements MessagingGraph {
 
         Throwable preparationFailure = null;
         try {
-            prepareGraph(deadline(deliveryEngine.shutdownTimeout()));
+            prepareGraph();
         } catch (RuntimeException | Error e) {
             preparationFailure = e;
         }
@@ -323,7 +359,7 @@ final class DefaultMessagingGraph implements MessagingGraph {
 
         long deadline = deadline(deliveryEngine.shutdownTimeout());
         try {
-            startOutgoingEndpoints(deadline);
+            startOutgoingConnectors(deadline);
             for (SourceBinding source : sources.values()) {
                 requireStarting();
                 source.start(deliveryEngine);
@@ -332,11 +368,11 @@ final class DefaultMessagingGraph implements MessagingGraph {
                 requireStarting();
                 source.awaitReady(remaining(deadline));
             }
-            startSourceAdmission(deadline);
             lifecycleLock.lock();
             try {
                 requireStarting();
                 state = State.RUNNING;
+                sources.values().forEach(SourceBinding::activate);
                 startupCompletion.complete(null);
             } finally {
                 lifecycleLock.unlock();
@@ -360,28 +396,13 @@ final class DefaultMessagingGraph implements MessagingGraph {
         }
     }
 
-    private void startOutgoingEndpoints(long deadline) {
-        for (OutgoingEndpoint outgoing : outgoingEndpoints) {
+    private void startOutgoingConnectors(long deadline) {
+        for (OutgoingConnector outgoing : outgoingConnectors) {
             requireStarting();
-            OperationResult result = invokeBounded("start outgoing connector endpoint "
+            OperationResult result = invokeBounded("start outgoing connector "
                                                            + outgoing.getClass().getName(),
                                                    deadline,
                                                    outgoing::start);
-            if (result.failure() != null) {
-                throw result.failure();
-            }
-        }
-    }
-
-    private void startSourceAdmission(long deadline) {
-        for (SourceBinding source : sources.values()) {
-            requireStarting();
-            OperationResult result = invokeBounded("start admission for source " + source.name(),
-                                                   deadline,
-                                                   () -> {
-                                                       requireStarting();
-                                                       source.startAdmission();
-                                                   });
             if (result.failure() != null) {
                 throw result.failure();
             }
@@ -484,54 +505,26 @@ final class DefaultMessagingGraph implements MessagingGraph {
         }
     }
 
-    private CleanupResult stopSourceAdmission(RuntimeException current, long deadline) {
+    private CleanupResult drainIncomingConnectors(RuntimeException current, long deadline) {
         boolean failed = false;
         for (SourceBinding source : sources.values()) {
-            if (source.incomingEndpoint() == null) {
+            if (source.incomingConnector() == null) {
                 continue;
             }
-            OperationResult result = invokeBounded("stop admission for source " + source.name(),
+            OperationResult result = invokeBounded("drain incoming connector " + source.name(),
                                                    deadline,
-                                                   source::stopAdmission);
+                                                   source::drain);
             current = append(current, result.failure());
             failed |= result.failure() != null;
         }
         return new CleanupResult(current, failed);
     }
 
-    private RuntimeException flushOutgoingEndpoints(RuntimeException current, long deadline) {
-        for (int i = outgoingEndpoints.size() - 1; i >= 0; i--) {
-            OutgoingEndpoint outgoing = outgoingEndpoints.get(i);
-            OperationResult result = invokeBounded("flush outgoing connector endpoint "
-                                                           + outgoing.getClass().getName(),
-                                                   deadline,
-                                                   outgoing::flush);
-            current = append(current, result.failure());
-        }
-        return current;
-    }
-
-    private RuntimeException checkpointIncomingEndpoints(RuntimeException current, long deadline) {
-        List<SourceBinding> sourceBindings = new ArrayList<>(sources.values());
-        for (int i = sourceBindings.size() - 1; i >= 0; i--) {
-            IncomingEndpoint incoming = sourceBindings.get(i).incomingEndpoint();
-            if (incoming == null) {
-                continue;
-            }
-            OperationResult result = invokeBounded("checkpoint incoming connector endpoint "
-                                                           + incoming.getClass().getName(),
-                                                   deadline,
-                                                   incoming::checkpoint);
-            current = append(current, result.failure());
-        }
-        return current;
-    }
-
     private RuntimeException forceBindings(RuntimeException current,
                                            long deadline,
                                            ForcedCleanupOrdering cleanupOrdering) {
         for (int i = connectorBindings.size() - 1; i >= 0; i--) {
-            ConnectorEndpoint binding = connectorBindings.get(i);
+            Connector binding = connectorBindings.get(i);
             CompletableFuture<Void> forceCompletion = cleanupOrdering.register(binding);
             OperationResult result = invokeCleanupBounded("force close connector binding "
                                                                   + binding.getClass().getName(),
@@ -551,7 +544,7 @@ final class DefaultMessagingGraph implements MessagingGraph {
                                            long deadline,
                                            ForcedCleanupOrdering cleanupOrdering) {
         for (int i = connectorBindings.size() - 1; i >= 0; i--) {
-            ConnectorEndpoint binding = connectorBindings.get(i);
+            Connector binding = connectorBindings.get(i);
             String operation = "close connector binding " + binding.getClass().getName();
             OperationResult result = cleanupOrdering == null
                     ? invokeCleanupBounded(operation, deadline, binding::close)
@@ -569,15 +562,15 @@ final class DefaultMessagingGraph implements MessagingGraph {
                                           ForcedCleanupOrdering cleanupOrdering) {
         List<SourceBinding> sourceBindings = new ArrayList<>(sources.values());
         for (int i = sourceBindings.size() - 1; i >= 0; i--) {
-            ConnectorEndpoint endpoint = sourceBindings.get(i).connectorEndpoint();
-            if (endpoint == null) {
+            Connector connector = sourceBindings.get(i).connector();
+            if (connector == null) {
                 continue;
             }
-            CompletableFuture<Void> forceCompletion = cleanupOrdering.register(endpoint);
+            CompletableFuture<Void> forceCompletion = cleanupOrdering.register(connector);
             OperationResult result = invokeCleanupBounded("force close connector source "
-                                                                  + endpoint.getClass().getName(),
+                                                                  + connector.getClass().getName(),
                                                           deadline,
-                                                          endpoint::forceClose,
+                                                          connector::forceClose,
                                                           forceCompletion);
             current = append(current, result.failure());
         }
@@ -593,17 +586,17 @@ final class DefaultMessagingGraph implements MessagingGraph {
                                           ForcedCleanupOrdering cleanupOrdering) {
         List<SourceBinding> sourceBindings = new ArrayList<>(sources.values());
         for (int i = sourceBindings.size() - 1; i >= 0; i--) {
-            ConnectorEndpoint endpoint = sourceBindings.get(i).connectorEndpoint();
-            if (endpoint == null) {
+            Connector connector = sourceBindings.get(i).connector();
+            if (connector == null) {
                 continue;
             }
-            String operation = "close connector source " + endpoint.getClass().getName();
+            String operation = "close connector source " + connector.getClass().getName();
             OperationResult result = cleanupOrdering == null
-                    ? invokeCleanupBounded(operation, deadline, endpoint::close)
+                    ? invokeCleanupBounded(operation, deadline, connector::close)
                     : invokeCleanupAfterForce(operation,
                                               deadline,
-                                              endpoint::close,
-                                              cleanupOrdering.forceCompletion(endpoint));
+                                              connector::close,
+                                              cleanupOrdering.forceCompletion(connector));
             current = append(current, result.failure());
         }
         return current;
@@ -657,11 +650,11 @@ final class DefaultMessagingGraph implements MessagingGraph {
         }
     }
 
-    private void validateContributionSources(Map<String, ConnectorSource> contributionSources) {
-        Set<ConnectorSource> newIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
-        for (Map.Entry<String, ConnectorSource> entry : contributionSources.entrySet()) {
+    private void validateContributionSources(Map<String, Runnable> contributionSources) {
+        Set<Runnable> newIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Map.Entry<String, Runnable> entry : contributionSources.entrySet()) {
             String sourceName = Objects.requireNonNull(entry.getKey());
-            ConnectorSource source = Objects.requireNonNull(entry.getValue());
+            Runnable source = Objects.requireNonNull(entry.getValue());
             if (sources.containsKey(sourceName)) {
                 throw new IllegalArgumentException("Duplicate messaging source " + sourceName);
             }
@@ -672,57 +665,45 @@ final class DefaultMessagingGraph implements MessagingGraph {
     }
 
     private void validateContributionBindings(List<?> bindings,
-                                              Iterable<? extends ConnectorSource> contributionSources) {
-        Set<ConnectorEndpoint> newIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
-        for (ConnectorSource source : contributionSources) {
-            if (source instanceof ConnectorEndpoint endpoint
-                    && (connectorEndpointIdentities.contains(endpoint) || !newIdentities.add(endpoint))) {
-                throw new IllegalArgumentException("Connector endpoint is already owned by this messaging graph");
+                                              Iterable<? extends Runnable> contributionSources) {
+        Set<Connector> newIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Runnable source : contributionSources) {
+            if (source instanceof Connector connector
+                    && (connectorIdentities.contains(connector) || !newIdentities.add(connector))) {
+                throw new IllegalArgumentException("Connector is already owned by this messaging graph");
             }
         }
         for (Object binding : bindings) {
             Objects.requireNonNull(binding);
-            if (binding instanceof ConnectorEndpoint endpoint
-                    && (connectorEndpointIdentities.contains(endpoint) || !newIdentities.add(endpoint))) {
-                throw new IllegalArgumentException("Connector endpoint is already owned by this messaging graph");
+            if (binding instanceof Connector connector
+                    && (connectorIdentities.contains(connector) || !newIdentities.add(connector))) {
+                throw new IllegalArgumentException("Connector is already owned by this messaging graph");
             }
         }
     }
 
-    private void addSourceLocked(String name, ConnectorSource source) {
-        ConnectorEndpoint connectorEndpoint = source instanceof ConnectorEndpoint endpoint ? endpoint : null;
-        IncomingEndpoint incomingEndpoint = source instanceof IncomingEndpoint endpoint ? endpoint : null;
-        sources.put(name, new SourceBinding(name, source, connectorEndpoint, incomingEndpoint));
+    private void addSourceLocked(String name, Runnable source) {
+        Connector connector = source instanceof Connector candidate ? candidate : null;
+        sources.put(name, new SourceBinding(name, source, connector));
         sourceIdentities.add(source);
-        if (connectorEndpoint != null) {
-            connectorEndpointIdentities.add(connectorEndpoint);
+        if (connector != null) {
+            connectorIdentities.add(connector);
         }
     }
 
     private void addBindingLocked(Object binding) {
-        if (binding instanceof ConnectorEndpoint endpoint) {
-            connectorEndpointIdentities.add(endpoint);
-            connectorBindings.add(endpoint);
-            if (endpoint instanceof OutgoingEndpoint outgoingEndpoint) {
-                outgoingEndpoints.add(outgoingEndpoint);
+        if (binding instanceof Connector connector) {
+            connectorIdentities.add(connector);
+            connectorBindings.add(connector);
+            if (connector instanceof OutgoingConnector outgoingConnector) {
+                outgoingConnectors.add(outgoingConnector);
             }
         }
     }
 
-    private void prepareGraph(long deadline) {
+    private void prepareGraph() {
         validateTopology();
-        for (SourceBinding source : sources.values()) {
-            requirePreparing();
-            OperationResult result = invokeBounded("prepare connector source " + source.name(),
-                                                   deadline,
-                                                   () -> {
-                                                       requirePreparing();
-                                                       source.prepare();
-                                                   });
-            if (result.failure() != null) {
-                throw result.failure();
-            }
-        }
+        requirePreparing();
     }
 
     private void visit(String channel,
@@ -806,14 +787,14 @@ final class DefaultMessagingGraph implements MessagingGraph {
     private RuntimeException closeGracefully() {
         RuntimeException closeFailure = null;
         long drainDeadline = deadline(deliveryEngine.shutdownTimeout());
-        CleanupResult admissionStop = stopSourceAdmission(closeFailure, drainDeadline);
-        closeFailure = admissionStop.failure();
-        boolean drained = !admissionStop.failed() && awaitDrained(drainDeadline);
+        CleanupResult connectorDrain = drainIncomingConnectors(closeFailure, drainDeadline);
+        closeFailure = connectorDrain.failure();
+        boolean drained = !connectorDrain.failed() && awaitDrained(drainDeadline);
         closeFailure = collectSourceFailures(closeFailure);
         if (!drained || closeFailure != null) {
             transitionToForcing();
-            String message = admissionStop.failed()
-                    ? "Messaging graph source admission could not be stopped; forced shutdown was requested"
+            String message = connectorDrain.failed()
+                    ? "Messaging graph incoming connector could not be drained; forced shutdown was requested"
                     : !drained
                             ? "Messaging graph drain timed out after " + deliveryEngine.shutdownTimeout()
                                     + "; forced shutdown was requested"
@@ -823,33 +804,23 @@ final class DefaultMessagingGraph implements MessagingGraph {
         }
 
         long cleanupDeadline = deadline(deliveryEngine.shutdownTimeout());
-        closeFailure = flushOutgoingEndpoints(closeFailure, cleanupDeadline);
-        if (closeFailure != null) {
-            transitionToForcing();
-            return closeForced(closeFailure, "Messaging graph endpoint flush failed");
-        }
-        closeFailure = checkpointIncomingEndpoints(closeFailure, cleanupDeadline);
-        if (closeFailure != null) {
-            transitionToForcing();
-            return closeForced(closeFailure, "Messaging graph endpoint checkpoint failed");
-        }
         closeFailure = closeSources(closeFailure, cleanupDeadline);
         if (closeFailure != null) {
             transitionToForcing();
-            return closeForced(closeFailure, "Messaging graph endpoint forced shutdown");
+            return closeForced(closeFailure, "Messaging graph connector forced shutdown");
         }
         deliveryEngine.forceShutdown();
         closeFailure = closeBindings(closeFailure, cleanupDeadline);
         if (closeFailure != null) {
             transitionToForcing();
-            return closeForced(closeFailure, "Messaging graph endpoint forced shutdown");
+            return closeForced(closeFailure, "Messaging graph connector forced shutdown");
         }
         if (!awaitTermination(cleanupDeadline)) {
             closeFailure = append(closeFailure,
-                                  new MessagingException("Messaging graph endpoint shutdown timed out after "
+                                  new MessagingException("Messaging graph connector shutdown timed out after "
                                                                  + deliveryEngine.shutdownTimeout()));
             transitionToForcing();
-            return closeForced(closeFailure, "Messaging graph endpoint forced shutdown");
+            return closeForced(closeFailure, "Messaging graph connector forced shutdown");
         }
         return closeFailure;
     }
@@ -1129,20 +1100,20 @@ final class DefaultMessagingGraph implements MessagingGraph {
     }
 
     private static final class ForcedCleanupOrdering {
-        private final Map<ConnectorEndpoint, CompletableFuture<Void>> forceCompletions = new IdentityHashMap<>();
+        private final Map<Connector, CompletableFuture<Void>> forceCompletions = new IdentityHashMap<>();
 
-        private CompletableFuture<Void> register(ConnectorEndpoint endpoint) {
+        private CompletableFuture<Void> register(Connector connector) {
             CompletableFuture<Void> completion = new CompletableFuture<>();
-            if (forceCompletions.put(Objects.requireNonNull(endpoint), completion) != null) {
-                throw new IllegalStateException("Connector endpoint force cleanup was registered more than once");
+            if (forceCompletions.put(Objects.requireNonNull(connector), completion) != null) {
+                throw new IllegalStateException("Connector force cleanup was registered more than once");
             }
             return completion;
         }
 
-        private CompletableFuture<Void> forceCompletion(ConnectorEndpoint endpoint) {
-            CompletableFuture<Void> forceCompletion = forceCompletions.get(Objects.requireNonNull(endpoint));
+        private CompletableFuture<Void> forceCompletion(Connector connector) {
+            CompletableFuture<Void> forceCompletion = forceCompletions.get(Objects.requireNonNull(connector));
             if (forceCompletion == null) {
-                throw new IllegalStateException("Connector endpoint close was registered before force cleanup");
+                throw new IllegalStateException("Connector close was registered before force cleanup");
             }
             return forceCompletion;
         }
@@ -1175,9 +1146,10 @@ final class DefaultMessagingGraph implements MessagingGraph {
 
     private final class SourceBinding {
         private final String name;
-        private final ConnectorSource source;
-        private final ConnectorEndpoint connectorEndpoint;
-        private final IncomingEndpoint incomingEndpoint;
+        private final Runnable source;
+        private final Connector connector;
+        private final IncomingConnector incomingConnector;
+        private final ManagedSourceContext incomingContext;
         private final CountDownLatch admissionSignal = new CountDownLatch(1);
         private final AtomicBoolean admissionCancelled = new AtomicBoolean();
         private final AtomicBoolean failureReported = new AtomicBoolean();
@@ -1185,33 +1157,55 @@ final class DefaultMessagingGraph implements MessagingGraph {
         private DeliveryEngine.SourceTask sourceTask;
 
         private SourceBinding(String name,
-                              ConnectorSource source,
-                              ConnectorEndpoint connectorEndpoint,
-                              IncomingEndpoint incomingEndpoint) {
+                              Runnable source,
+                              Connector connector) {
             this.name = name;
             this.source = source;
-            this.connectorEndpoint = connectorEndpoint;
-            this.incomingEndpoint = incomingEndpoint;
+            this.connector = connector;
+            this.incomingConnector = null;
+            this.incomingContext = null;
+        }
+
+        private SourceBinding(String name,
+                              IncomingConnector incomingConnector,
+                              ConnectorSourceContext incomingContext) {
+            this.name = name;
+            this.source = null;
+            this.connector = incomingConnector;
+            this.incomingConnector = incomingConnector;
+            this.incomingContext = new ManagedSourceContext(incomingContext);
         }
 
         private String name() {
             return name;
         }
 
-        private ConnectorEndpoint connectorEndpoint() {
-            return connectorEndpoint;
+        private Connector connector() {
+            return connector;
         }
 
-        private IncomingEndpoint incomingEndpoint() {
-            return incomingEndpoint;
+        private IncomingConnector incomingConnector() {
+            return incomingConnector;
         }
 
         private void start(DeliveryEngine deliveryEngine) {
             sourceTask = deliveryEngine.startSource(name, this::run);
             sourceTask.onCompletion(completionFailure -> {
+                if (incomingContext != null) {
+                    incomingContext.cancel();
+                }
                 if (completionFailure.isPresent()) {
-                    sourceFailed(name, completionFailure.get());
-                } else if (incomingEndpoint != null) {
+                    boolean report;
+                    lifecycleLock.lock();
+                    try {
+                        report = state != State.STARTING;
+                    } finally {
+                        lifecycleLock.unlock();
+                    }
+                    if (report) {
+                        sourceFailed(name, completionFailure.get());
+                    }
+                } else if (incomingConnector != null) {
                     normalCompletionPending.set(true);
                     reportNormalCompletion();
                 }
@@ -1231,43 +1225,43 @@ final class DefaultMessagingGraph implements MessagingGraph {
             }
         }
 
-        private void prepare() {
-            if (incomingEndpoint != null) {
-                incomingEndpoint.prepareForGraph();
-            }
-        }
-
         private void awaitReady(Duration timeout) {
-            if (incomingEndpoint != null) {
-                incomingEndpoint.awaitReady(timeout);
+            if (incomingContext != null && !incomingContext.awaitReady(timeout)) {
+                sourceTask.failure().ifPresent(SourceBinding::rethrow);
+                throw new MessagingException("Managed messaging source stopped before reporting readiness: " + name);
             }
             sourceTask.failure().ifPresent(SourceBinding::rethrow);
         }
 
-        private void startAdmission() {
-            if (incomingEndpoint != null) {
-                incomingEndpoint.startAdmission();
+        private void activate() {
+            if (incomingContext != null) {
+                incomingContext.activate();
             } else {
                 admissionSignal.countDown();
             }
         }
 
-        private void stopAdmission() {
-            if (incomingEndpoint != null) {
-                incomingEndpoint.stopAdmission();
-            }
+        private void drain() {
+            incomingConnector.drain();
         }
 
         private void cancelAdmission() {
             admissionCancelled.set(true);
             admissionSignal.countDown();
+            if (incomingContext != null) {
+                incomingContext.cancel();
+            }
         }
 
         private void run() {
-            if (incomingEndpoint == null && !awaitAdmission()) {
-                return;
+            if (incomingConnector != null) {
+                incomingConnector.run(incomingContext);
+            } else {
+                if (!awaitAdmission()) {
+                    return;
+                }
+                source.run();
             }
-            source.run();
         }
 
         private boolean awaitAdmission() {
@@ -1299,6 +1293,103 @@ final class DefaultMessagingGraph implements MessagingGraph {
                 throw error;
             }
             throw new MessagingException("Messaging source startup failed", failure);
+        }
+    }
+
+    private static final class ManagedSourceContext implements ConnectorSourceContext {
+        private final ConnectorSourceContext delegate;
+        private final CountDownLatch ready = new CountDownLatch(1);
+        private final CountDownLatch running = new CountDownLatch(1);
+        private final AtomicBoolean cancelled = new AtomicBoolean();
+
+        private ManagedSourceContext(ConnectorSourceContext delegate) {
+            this.delegate = Objects.requireNonNull(delegate);
+        }
+
+        @Override
+        public boolean awaitRunning() {
+            ready.countDown();
+            try {
+                running.await();
+                return !cancelled.get() && delegate.awaitRunning();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+
+        @Override
+        public FailurePolicy failurePolicy() {
+            return delegate.failurePolicy();
+        }
+
+        @Override
+        public String channelName() {
+            return delegate.channelName();
+        }
+
+        @Override
+        public int maxDeliveryMessages() {
+            return delegate.maxDeliveryMessages();
+        }
+
+        @Override
+        public Optional<Duration> admissionTimeout() {
+            return delegate.admissionTimeout();
+        }
+
+        @Override
+        public ConnectorDeliveryReservation reserveDelivery(int maxMessages) {
+            return delegate.reserveDelivery(maxMessages);
+        }
+
+        @Override
+        public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
+            return delegate.tryReserveDelivery(maxMessages);
+        }
+
+        @Override
+        public <T> void emitBatch(MessageBatch<T> batch) {
+            delegate.emitBatch(batch);
+        }
+
+        @Override
+        public <T> ConnectorDelivery submitDelivery(MessageBatch<T> batch, Runnable delivery) {
+            return delegate.submitDelivery(batch, delivery);
+        }
+
+        @Override
+        public <T> Optional<ConnectorDelivery> trySubmitDelivery(MessageBatch<T> batch, Runnable delivery) {
+            return delegate.trySubmitDelivery(batch, delivery);
+        }
+
+        @Override
+        public <T> FailureResult handleFailure(MessageBatch<T> batch,
+                                               int failedAttempt,
+                                               RuntimeException failure) {
+            return delegate.handleFailure(batch, failedAttempt, failure);
+        }
+
+        private boolean awaitReady(Duration timeout) {
+            try {
+                if (!ready.await(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
+                    throw new MessagingException("Messaging connector readiness timed out after " + timeout);
+                }
+                return !cancelled.get();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new MessagingException("Interrupted while waiting for messaging connector readiness", e);
+            }
+        }
+
+        private void activate() {
+            running.countDown();
+        }
+
+        private void cancel() {
+            cancelled.set(true);
+            ready.countDown();
+            running.countDown();
         }
     }
 }

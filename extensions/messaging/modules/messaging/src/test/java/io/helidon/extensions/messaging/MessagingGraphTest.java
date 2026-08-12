@@ -57,10 +57,11 @@ class MessagingGraphTest {
         ManagedSource first = ManagedSource.running("first", events, firstReady, allReady);
         ManagedSource second = ManagedSource.running("second", events, secondReady, allReady);
         DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
-        graph.addSource("first", first);
-        graph.addSource("second", second);
+        graph.addIncomingConnector("first", first);
+        graph.addIncomingConnector("second", second);
 
         graph.start();
+        awaitCondition(() -> events.contains("admit-first") && events.contains("admit-second"));
 
         assertEquals(DefaultMessagingGraph.State.RUNNING, graph.state());
         assertTrue(first.prepared());
@@ -76,7 +77,7 @@ class MessagingGraphTest {
     }
 
     @Test
-    void startsOutgoingBeforeIncomingAndFlushesThenCheckpointsAfterDrain() throws Exception {
+    void startsOutgoingBeforeIncomingAndWaitsForCheckpointBeforeClose() throws Exception {
         List<String> events = new CopyOnWriteArrayList<>();
         AtomicBoolean outgoingReady = new AtomicBoolean();
         CountDownLatch incomingRunning = new CountDownLatch(1);
@@ -84,7 +85,8 @@ class MessagingGraphTest {
         CountDownLatch admissionStopped = new CountDownLatch(1);
         CountDownLatch deliveryStarted = new CountDownLatch(1);
         CountDownLatch releaseDelivery = new CountDownLatch(1);
-        OutgoingEndpoint outgoing = new OutgoingEndpoint() {
+        CountDownLatch deliveryFinished = new CountDownLatch(1);
+        OutgoingConnector outgoing = new OutgoingConnector() {
             @Override
             public void start() {
                 events.add("start-outgoing");
@@ -92,12 +94,7 @@ class MessagingGraphTest {
             }
 
             @Override
-            public <T> void sendBatch(MessageBatch<T> batch) {
-            }
-
-            @Override
-            public void flush() {
-                events.add("flush-outgoing");
+            public void sendBatch(MessageBatch<?> batch) {
             }
 
             @Override
@@ -110,43 +107,29 @@ class MessagingGraphTest {
                 events.add("close-outgoing");
             }
         };
-        IncomingEndpoint incoming = new IncomingEndpoint() {
+        IncomingConnector incoming = new IncomingConnector() {
             @Override
-            public void prepareForGraph() {
-                events.add("prepare-incoming");
-            }
-
-            @Override
-            public void run() {
+            public void run(ConnectorSourceContext context) {
                 if (!outgoingReady.get()) {
-                    throw new AssertionError("Incoming endpoint ran before outgoing readiness");
+                    throw new AssertionError("Incoming connector ran before outgoing readiness");
                 }
                 events.add("run-incoming");
                 incomingRunning.countDown();
-                await(stopIncoming);
-            }
-
-            @Override
-            public void awaitReady(Duration timeout) {
-                ManagedSource.await(incomingRunning, timeout);
                 events.add("ready-incoming");
-            }
-
-            @Override
-            public void startAdmission() {
+                if (!context.awaitRunning()) {
+                    return;
+                }
                 events.add("admit-incoming");
+                await(stopIncoming);
+                await(deliveryFinished);
+                events.add("checkpoint-incoming");
             }
 
             @Override
-            public void stopAdmission() {
+            public void drain() {
                 events.add("stop-incoming");
                 admissionStopped.countDown();
                 stopIncoming.countDown();
-            }
-
-            @Override
-            public void checkpoint() {
-                events.add("checkpoint-incoming");
             }
 
             @Override
@@ -165,16 +148,16 @@ class MessagingGraphTest {
         DeliveryEngine engine = engine(config, "orders");
         DefaultMessagingGraph graph = new DefaultMessagingGraph(engine);
         graph.addBinding(outgoing);
-        graph.addSource("incoming", incoming);
+        graph.addIncomingConnector("incoming", incoming);
 
         graph.start();
+        awaitCondition(() -> events.contains("admit-incoming"));
 
-        assertEquals(List.of("prepare-incoming",
-                             "start-outgoing",
+        assertEquals(List.of("start-outgoing",
                              "run-incoming",
                              "ready-incoming",
                              "admit-incoming"),
-                     events);
+                     List.copyOf(events));
 
         AsyncTask delivery = async(() -> engine.dispatch("orders",
                                                          MessageBatch.create(List.of(message("order"))),
@@ -183,27 +166,25 @@ class MessagingGraphTest {
             deliveryStarted.countDown();
             await(releaseDelivery);
             events.add("delivery-end");
+            deliveryFinished.countDown();
         }));
         await(deliveryStarted);
         AsyncTask closing = async(graph::close);
         await(admissionStopped);
 
-        assertFalse(events.contains("flush-outgoing"), "Outgoing endpoint flushed before runtime drain");
-        assertFalse(events.contains("checkpoint-incoming"), "Incoming endpoint checkpointed before runtime drain");
+        assertFalse(events.contains("checkpoint-incoming"), "Incoming connector checkpointed before runtime drain");
 
         releaseDelivery.countDown();
         awaitSuccess(delivery);
         awaitSuccess(closing);
 
-        assertEquals(List.of("prepare-incoming",
-                             "start-outgoing",
+        assertEquals(List.of("start-outgoing",
                              "run-incoming",
                              "ready-incoming",
                              "admit-incoming",
                              "delivery-start",
                              "stop-incoming",
                              "delivery-end",
-                             "flush-outgoing",
                              "checkpoint-incoming",
                              "close-incoming",
                              "close-outgoing"),
@@ -212,31 +193,30 @@ class MessagingGraphTest {
     }
 
     @Test
-    void dualEndpointRegisteredAsOutgoingUsesOnlyOutgoingLifecycle() {
+    void dualConnectorRegisteredAsOutgoingUsesOnlyOutgoingLifecycle() {
         List<String> events = new CopyOnWriteArrayList<>();
-        DualEndpoint endpoint = new DualEndpoint(events);
+        DualConnector connector = new DualConnector(events);
         DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
-        graph.addBinding(endpoint);
+        graph.addBinding(connector);
 
         graph.start();
         graph.close();
 
-        assertEquals(List.of("outgoing-start", "outgoing-flush", "close"), events);
+        assertEquals(List.of("outgoing-start", "close"), events);
         assertEquals(DefaultMessagingGraph.State.CLOSED, graph.state());
     }
 
     @Test
-    void dualEndpointRegisteredAsIncomingUsesOnlyIncomingLifecycle() {
+    void dualConnectorRegisteredAsIncomingUsesOnlyIncomingLifecycle() {
         List<String> events = new CopyOnWriteArrayList<>();
-        DualEndpoint endpoint = new DualEndpoint(events);
+        DualConnector connector = new DualConnector(events);
         DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
-        graph.addSource("dual", endpoint);
+        graph.addIncomingConnector("dual", connector);
 
         graph.start();
         graph.close();
 
-        assertEquals(List.of("incoming-prepare",
-                             "incoming-run",
+        assertEquals(List.of("incoming-run",
                              "incoming-ready",
                              "incoming-admit",
                              "incoming-stop",
@@ -247,9 +227,9 @@ class MessagingGraphTest {
     }
 
     @Test
-    void forcedCleanupOfDualEndpointUsesItsRegistrationRole() {
+    void forcedCleanupOfDualConnectorUsesItsRegistrationRole() {
         List<String> outgoingEvents = new CopyOnWriteArrayList<>();
-        DualEndpoint outgoing = new DualEndpoint(outgoingEvents);
+        DualConnector outgoing = new DualConnector(outgoingEvents);
         DefaultMessagingGraph outgoingGraph = graph(config(SHUTDOWN_TIMEOUT));
         outgoingGraph.addBinding(outgoing);
 
@@ -258,9 +238,9 @@ class MessagingGraphTest {
         assertEquals(List.of("force-close", "close"), outgoingEvents);
 
         List<String> incomingEvents = new CopyOnWriteArrayList<>();
-        DualEndpoint incoming = new DualEndpoint(incomingEvents);
+        DualConnector incoming = new DualConnector(incomingEvents);
         DefaultMessagingGraph incomingGraph = graph(config(SHUTDOWN_TIMEOUT));
-        incomingGraph.addSource("dual", incoming);
+        incomingGraph.addIncomingConnector("dual", incoming);
 
         incomingGraph.close();
 
@@ -271,7 +251,7 @@ class MessagingGraphTest {
     void concurrentStartCallersShareOneSuccessfulStartup() throws Exception {
         DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         StartupBlockingSource source = new StartupBlockingSource();
-        graph.addSource("source", source);
+        graph.addIncomingConnector("source", source);
 
         AsyncTask owner = async(graph::start);
         await(source.running());
@@ -289,24 +269,18 @@ class MessagingGraphTest {
     }
 
     @Test
-    void outgoingStartFailurePreventsIncomingTasksAndRollsBackEndpoints() {
+    void outgoingStartFailurePreventsIncomingTasksAndRollsBackConnectors() {
         IllegalStateException startupFailure = new IllegalStateException("outgoing is not ready");
         AtomicInteger forceCalls = new AtomicInteger();
         AtomicInteger closeCalls = new AtomicInteger();
-        AtomicInteger flushCalls = new AtomicInteger();
-        OutgoingEndpoint outgoing = new OutgoingEndpoint() {
+        OutgoingConnector outgoing = new OutgoingConnector() {
             @Override
             public void start() {
                 throw startupFailure;
             }
 
             @Override
-            public <T> void sendBatch(MessageBatch<T> batch) {
-            }
-
-            @Override
-            public void flush() {
-                flushCalls.incrementAndGet();
+            public void sendBatch(MessageBatch<?> batch) {
             }
 
             @Override
@@ -322,7 +296,7 @@ class MessagingGraphTest {
         StartupBlockingSource incoming = new StartupBlockingSource();
         DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graph.addBinding(outgoing);
-        graph.addSource("incoming", incoming);
+        graph.addIncomingConnector("incoming", incoming);
 
         assertSame(startupFailure, assertThrows(IllegalStateException.class, graph::start));
 
@@ -330,93 +304,7 @@ class MessagingGraphTest {
         assertTrue(incoming.forced());
         assertEquals(1, forceCalls.get());
         assertEquals(1, closeCalls.get());
-        assertEquals(0, flushCalls.get());
         assertEquals(DefaultMessagingGraph.State.FAILED, graph.state());
-        graph.close();
-    }
-
-    @Test
-    void preparationWaitersObserveFailureOnlyAfterRollbackCompletes() throws Exception {
-        IllegalStateException preparationFailure = new IllegalStateException("source preparation failed");
-        IllegalStateException cleanupFailure = new IllegalStateException("source cleanup failed");
-        CountDownLatch preparationEntered = new CountDownLatch(1);
-        CountDownLatch releasePreparation = new CountDownLatch(1);
-        CountDownLatch forceStarted = new CountDownLatch(1);
-        CountDownLatch releaseForce = new CountDownLatch(1);
-        AtomicInteger forceCalls = new AtomicInteger();
-        AtomicReference<DefaultMessagingGraph> graphReference = new AtomicReference<>();
-        IncomingEndpoint source = new IncomingEndpoint() {
-            @Override
-            public void prepareForGraph() {
-                assertThrows(IllegalStateException.class,
-                             () -> graphReference.get().addRoute("late-source", "late-target"));
-                preparationEntered.countDown();
-                await(releasePreparation);
-                throw preparationFailure;
-            }
-
-            @Override
-            public void run() {
-            }
-
-            @Override
-            public void awaitReady(Duration timeout) {
-            }
-
-            @Override
-            public void startAdmission() {
-            }
-
-            @Override
-            public void stopAdmission() {
-            }
-
-            @Override
-            public void checkpoint() {
-            }
-
-            @Override
-            public void forceClose() {
-                forceCalls.incrementAndGet();
-                forceStarted.countDown();
-                await(releaseForce);
-                throw cleanupFailure;
-            }
-
-            @Override
-            public void close() {
-            }
-        };
-        DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
-        graphReference.set(graph);
-        graph.addSource("source", source);
-
-        AsyncTask owner = async(graph::start);
-        await(preparationEntered);
-        AsyncTask waiter = async(graph::start);
-        awaitWaiting(waiter);
-        releasePreparation.countDown();
-        await(forceStarted);
-        AsyncTask lateStartWaiter = async(graph::start);
-        AsyncTask latePrepareWaiter = async(graph::prepare);
-        awaitWaiting(lateStartWaiter);
-        awaitWaiting(latePrepareWaiter);
-
-        assertFalse(waiter.completion().isDone(), "preparation waiter returned before rollback completed");
-        assertFalse(lateStartWaiter.completion().isDone(),
-                    "late start waiter returned before rollback completed");
-        assertFalse(latePrepareWaiter.completion().isDone(),
-                    "late prepare waiter returned before rollback completed");
-        releaseForce.countDown();
-
-        assertSame(preparationFailure, failure(owner));
-        assertSame(preparationFailure, failure(waiter));
-        assertSame(preparationFailure, failure(lateStartWaiter));
-        assertSame(preparationFailure, failure(latePrepareWaiter));
-        assertSame(preparationFailure, graph.failure().orElseThrow());
-        assertEquals(1, forceCalls.get());
-        assertEquals(1, preparationFailure.getSuppressed().length);
-        assertSame(cleanupFailure, preparationFailure.getSuppressed()[0]);
         graph.close();
     }
 
@@ -431,39 +319,17 @@ class MessagingGraphTest {
         CountDownLatch releaseForce = new CountDownLatch(1);
         CountDownLatch stop = new CountDownLatch(1);
         AtomicInteger forceCalls = new AtomicInteger();
-        IncomingEndpoint source = new IncomingEndpoint() {
+        IncomingConnector source = new IncomingConnector() {
             @Override
-            public void prepareForGraph() {
-            }
-
-            @Override
-            public void run() {
+            public void run(ConnectorSourceContext context) {
                 running.countDown();
-                try {
-                    stop.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-
-            @Override
-            public void awaitReady(Duration timeout) {
-                ManagedSource.await(running, timeout);
                 readinessEntered.countDown();
                 await(releaseReadiness);
                 throw startupFailure;
             }
 
             @Override
-            public void startAdmission() {
-            }
-
-            @Override
-            public void stopAdmission() {
-            }
-
-            @Override
-            public void checkpoint() {
+            public void drain() {
             }
 
             @Override
@@ -481,7 +347,7 @@ class MessagingGraphTest {
             }
         };
         DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
-        graph.addSource("source", source);
+        graph.addIncomingConnector("source", source);
 
         AsyncTask owner = async(graph::start);
         await(readinessEntered);
@@ -507,7 +373,7 @@ class MessagingGraphTest {
         CountDownLatch closeStarted = new CountDownLatch(1);
         CountDownLatch releaseClose = new CountDownLatch(1);
         AtomicInteger closeCalls = new AtomicInteger();
-        ConnectorEndpoint binding = new ConnectorEndpoint() {
+        Connector binding = new Connector() {
             @Override
             public void forceClose() {
             }
@@ -528,7 +394,7 @@ class MessagingGraphTest {
         AsyncTask waiter = async(graph::close);
         awaitWaiting(waiter);
 
-        assertFalse(waiter.completion().isDone(), "close waiter returned before endpoint cleanup completed");
+        assertFalse(waiter.completion().isDone(), "close waiter returned before connector cleanup completed");
         releaseClose.countDown();
         awaitSuccess(owner);
         awaitSuccess(waiter);
@@ -544,8 +410,8 @@ class MessagingGraphTest {
         ManagedSource first = ManagedSource.running("first", events, new AtomicBoolean(), () -> true);
         ManagedSource second = ManagedSource.readinessFailure("second", events, startupFailure);
         DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
-        graph.addSource("first", first);
-        graph.addSource("second", second);
+        graph.addIncomingConnector("first", first);
+        graph.addIncomingConnector("second", second);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class, graph::start);
 
@@ -563,25 +429,26 @@ class MessagingGraphTest {
     }
 
     @Test
-    void startupAdmissionFailureRollsBackAlreadyAdmittedSources() {
+    void failureImmediatelyAfterActivationFailsRunningGraph() {
         List<String> events = new CopyOnWriteArrayList<>();
         IllegalStateException startupFailure = new IllegalStateException("second source cannot start admission");
         ManagedSource first = ManagedSource.running("first", events, new AtomicBoolean(), () -> true);
         ManagedSource second = ManagedSource.admissionFailure("second", events, startupFailure);
         DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
-        graph.addSource("first", first);
-        graph.addSource("second", second);
+        graph.addIncomingConnector("first", first);
+        graph.addIncomingConnector("second", second);
 
-        IllegalStateException thrown = assertThrows(IllegalStateException.class, graph::start);
+        graph.start();
+        awaitState(graph, DefaultMessagingGraph.State.FAILED);
+        awaitCondition(() -> lifecycleEvents(events).size() == 4);
 
-        assertSame(startupFailure, thrown);
         assertEquals(DefaultMessagingGraph.State.FAILED, graph.state());
-        assertSame(startupFailure, graph.failure().orElseThrow());
+        assertSame(startupFailure, graph.failure().orElseThrow().getCause());
         assertTrue(events.indexOf("admit-first") < events.indexOf("admission-fail-second"), events.toString());
         assertEquals(List.of("force-second", "force-first", "close-second", "close-first"),
                      lifecycleEvents(events));
         assertThrows(IllegalStateException.class, graph::start);
-        graph.close();
+        assertThrows(MessagingException.class, graph::close);
     }
 
     @Test
@@ -666,7 +533,7 @@ class MessagingGraphTest {
         ManagedSource source = ManagedSource.runtimeFailure("source", events, runtimeFailure);
         DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         graph.addBinding(resource);
-        graph.addSource("source", source);
+        graph.addIncomingConnector("source", source);
         graph.start();
 
         source.fail();
@@ -687,7 +554,7 @@ class MessagingGraphTest {
     void sourceFailureDuringDrainIsReported() {
         IllegalStateException sourceFailure = new IllegalStateException("source stop failed");
         DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
-        graph.addSource("source", new StopFailingSource(sourceFailure));
+        graph.addIncomingConnector("source", new StopFailingSource(sourceFailure));
         graph.start();
 
         IllegalStateException failure = assertThrows(IllegalStateException.class, graph::close);
@@ -702,37 +569,15 @@ class MessagingGraphTest {
     void rollbackHandlesOneFailureInstanceFromStartupAndCleanup() {
         IllegalStateException sharedFailure = new IllegalStateException("shared lifecycle failure");
         CountDownLatch running = new CountDownLatch(1);
-        IncomingEndpoint source = new IncomingEndpoint() {
+        IncomingConnector source = new IncomingConnector() {
             @Override
-            public void prepareForGraph() {
-            }
-
-            @Override
-            public void run() {
+            public void run(ConnectorSourceContext context) {
                 running.countDown();
-                try {
-                    new CountDownLatch(1).await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-
-            @Override
-            public void awaitReady(Duration timeout) {
-                ManagedSource.await(running, timeout);
                 throw sharedFailure;
             }
 
             @Override
-            public void startAdmission() {
-            }
-
-            @Override
-            public void stopAdmission() {
-            }
-
-            @Override
-            public void checkpoint() {
+            public void drain() {
             }
 
             @Override
@@ -746,7 +591,7 @@ class MessagingGraphTest {
             }
         };
         DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
-        graph.addSource("shared-failure", source);
+        graph.addIncomingConnector("shared-failure", source);
 
         assertSame(sharedFailure, assertThrows(IllegalStateException.class, graph::start));
         assertEquals(0, sharedFailure.getSuppressed().length);
@@ -785,7 +630,7 @@ class MessagingGraphTest {
     void closeCancelsSourceStartupWithoutWaitingForTheStartupDeadline() throws Exception {
         DefaultMessagingGraph graph = graph(config(Duration.ofSeconds(2)));
         StartupBlockingSource source = new StartupBlockingSource();
-        graph.addSource("blocked", source);
+        graph.addIncomingConnector("blocked", source);
         AsyncTask startup = async(graph::start);
         await(source.running());
         awaitState(graph, DefaultMessagingGraph.State.STARTING);
@@ -802,160 +647,10 @@ class MessagingGraphTest {
     }
 
     @Test
-    void closeCancelsBlockedPreparationWithoutAllowingLatePreparedTransition() throws Exception {
-        CountDownLatch preparationStarted = new CountDownLatch(1);
-        CountDownLatch releasePreparation = new CountDownLatch(1);
-        CountDownLatch preparationReturned = new CountDownLatch(1);
-        AtomicBoolean forced = new AtomicBoolean();
-        AtomicInteger runCalls = new AtomicInteger();
-        List<String> laterSourceEvents = new CopyOnWriteArrayList<>();
-        IncomingEndpoint source = new IncomingEndpoint() {
-            @Override
-            public void prepareForGraph() {
-                preparationStarted.countDown();
-                await(releasePreparation);
-                preparationReturned.countDown();
-            }
-
-            @Override
-            public void run() {
-                runCalls.incrementAndGet();
-            }
-
-            @Override
-            public void awaitReady(Duration timeout) {
-                throw new AssertionError("A source must not start after preparation cancellation");
-            }
-
-            @Override
-            public void startAdmission() {
-                throw new AssertionError("A source must not admit after preparation cancellation");
-            }
-
-            @Override
-            public void stopAdmission() {
-            }
-
-            @Override
-            public void checkpoint() {
-            }
-
-            @Override
-            public void forceClose() {
-                forced.set(true);
-                releasePreparation.countDown();
-            }
-
-            @Override
-            public void close() {
-                releasePreparation.countDown();
-            }
-        };
-        DefaultMessagingGraph graph = graph(config(Duration.ofSeconds(2)));
-        graph.addSource("blocked-prepare", source);
-        graph.addSource("later-source",
-                        ManagedSource.running("later-source",
-                                              laterSourceEvents,
-                                              new AtomicBoolean(),
-                                              () -> true));
-        AsyncTask startup = async(graph::start);
-        await(preparationStarted);
-
-        long started = System.nanoTime();
-        graph.close();
-        long elapsed = System.nanoTime() - started;
-
-        assertTrue(elapsed < TimeUnit.SECONDS.toNanos(1), "Close did not cancel preparation promptly");
-        await(preparationReturned);
-        assertThat(failure(startup).getMessage(), containsString("preparation was cancelled"));
-        assertTrue(forced.get());
-        assertEquals(0, runCalls.get());
-        assertFalse(laterSourceEvents.contains("prepare-later-source"));
-        assertEquals(DefaultMessagingGraph.State.CLOSED, graph.state());
-    }
-
-    @Test
-    void closeCancelsBlockedAdmissionWithoutAllowingLateRunningTransition() throws Exception {
-        CountDownLatch running = new CountDownLatch(1);
-        CountDownLatch stopped = new CountDownLatch(1);
-        CountDownLatch admissionStarted = new CountDownLatch(1);
-        CountDownLatch releaseAdmission = new CountDownLatch(1);
-        CountDownLatch admissionReturned = new CountDownLatch(1);
-        AtomicBoolean forced = new AtomicBoolean();
-        List<String> laterSourceEvents = new CopyOnWriteArrayList<>();
-        IncomingEndpoint source = new IncomingEndpoint() {
-            @Override
-            public void prepareForGraph() {
-            }
-
-            @Override
-            public void run() {
-                running.countDown();
-                await(stopped);
-            }
-
-            @Override
-            public void awaitReady(Duration timeout) {
-                ManagedSource.await(running, timeout);
-            }
-
-            @Override
-            public void startAdmission() {
-                admissionStarted.countDown();
-                await(releaseAdmission);
-                admissionReturned.countDown();
-            }
-
-            @Override
-            public void stopAdmission() {
-                stopped.countDown();
-            }
-
-            @Override
-            public void checkpoint() {
-            }
-
-            @Override
-            public void forceClose() {
-                forced.set(true);
-                releaseAdmission.countDown();
-                stopped.countDown();
-            }
-
-            @Override
-            public void close() {
-                releaseAdmission.countDown();
-                stopped.countDown();
-            }
-        };
-        DefaultMessagingGraph graph = graph(config(Duration.ofSeconds(2)));
-        graph.addSource("blocked-admission", source);
-        graph.addSource("later-source",
-                        ManagedSource.running("later-source",
-                                              laterSourceEvents,
-                                              new AtomicBoolean(),
-                                              () -> true));
-        AsyncTask startup = async(graph::start);
-        await(admissionStarted);
-        awaitState(graph, DefaultMessagingGraph.State.STARTING);
-
-        long started = System.nanoTime();
-        graph.close();
-        long elapsed = System.nanoTime() - started;
-
-        assertTrue(elapsed < TimeUnit.SECONDS.toNanos(1), "Close did not cancel admission promptly");
-        await(admissionReturned);
-        assertThat(failure(startup).getMessage(), containsString("startup was cancelled"));
-        assertTrue(forced.get());
-        assertFalse(laterSourceEvents.contains("admit-later-source"));
-        assertEquals(DefaultMessagingGraph.State.CLOSED, graph.state());
-    }
-
-    @Test
     void normalManagedSourceTerminationFailsRunningGraph() {
         DefaultMessagingGraph graph = graph(config(SHUTDOWN_TIMEOUT));
         NormalEndingSource source = new NormalEndingSource();
-        graph.addSource("ending", source);
+        graph.addIncomingConnector("ending", source);
 
         graph.start();
         awaitState(graph, DefaultMessagingGraph.State.FAILED);
@@ -978,7 +673,7 @@ class MessagingGraphTest {
         AtomicBoolean closeBeforeForce = new AtomicBoolean();
         AtomicBoolean closeInterrupted = new AtomicBoolean();
         List<String> events = new CopyOnWriteArrayList<>();
-        graph.addBinding(new ConnectorEndpoint() {
+        graph.addBinding(new Connector() {
             @Override
             public void forceClose() {
                 events.add("force-start");
@@ -1029,7 +724,7 @@ class MessagingGraphTest {
         CountDownLatch releaseClose = new CountDownLatch(1);
         CountDownLatch closeFinished = new CountDownLatch(1);
         AtomicBoolean closeInterrupted = new AtomicBoolean();
-        graph.addBinding(new ConnectorEndpoint() {
+        graph.addBinding(new Connector() {
             @Override
             public void forceClose() {
             }
@@ -1060,13 +755,13 @@ class MessagingGraphTest {
     }
 
     @Test
-    void endpointCloseIsBoundedByOneCleanupDeadline() {
+    void connectorCloseIsBoundedByOneCleanupDeadline() {
         Duration timeout = Duration.ofMillis(50);
         DefaultMessagingGraph graph = graph(config(timeout));
         CountDownLatch closeStarted = new CountDownLatch(1);
         CountDownLatch releaseClose = new CountDownLatch(1);
         AtomicBoolean forceRequested = new AtomicBoolean();
-        graph.addBinding(new ConnectorEndpoint() {
+        graph.addBinding(new Connector() {
             @Override
             public void forceClose() {
                 forceRequested.set(true);
@@ -1091,7 +786,7 @@ class MessagingGraphTest {
 
         await(closeStarted);
         assertThat(failure.getMessage(), containsString("Timed out while attempting to close connector binding"));
-        assertTrue(elapsed < TimeUnit.SECONDS.toNanos(1), "Endpoint close exceeded the bounded cleanup phase");
+        assertTrue(elapsed < TimeUnit.SECONDS.toNanos(1), "Connector close exceeded the bounded cleanup phase");
         assertTrue(forceRequested.get());
         assertEquals(DefaultMessagingGraph.State.FAILED, graph.state());
         assertThrows(MessagingException.class, graph::close);
@@ -1104,10 +799,10 @@ class MessagingGraphTest {
                                                      new AtomicBoolean(), () -> true);
         TrackingBinding binding = new TrackingBinding("sink", new CopyOnWriteArrayList<>());
 
-        graph.addSource("first", source);
+        graph.addIncomingConnector("first", source);
         graph.addBinding(binding);
 
-        assertThrows(IllegalArgumentException.class, () -> graph.addSource("second", source));
+        assertThrows(IllegalArgumentException.class, () -> graph.addIncomingConnector("second", source));
         assertThrows(IllegalArgumentException.class, () -> graph.addBinding(binding));
         graph.close();
     }
@@ -1119,7 +814,7 @@ class MessagingGraphTest {
         MessagingExecutionConfig config = config(SHUTDOWN_TIMEOUT);
         DefaultMessagingGraph graph = graph(config);
         graph.addChannel("known", new NoOpChannel(), config);
-        graph.addSource("source", source);
+        graph.addIncomingConnector("source", source);
         graph.addRoute("known", "missing");
 
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, graph::prepare);
@@ -1138,7 +833,7 @@ class MessagingGraphTest {
         DefaultMessagingGraph graph = graph(config);
         graph.addChannel("first", new NoOpChannel(), config);
         graph.addChannel("second", new NoOpChannel(), config);
-        graph.addSource("source", source);
+        graph.addIncomingConnector("source", source);
         graph.addRoute("first", "second");
         graph.addRoute("second", "first");
 
@@ -1211,6 +906,14 @@ class MessagingGraphTest {
             Thread.onSpinWait();
         }
         assertEquals(expected, graph.state());
+    }
+
+    private static void awaitCondition(BooleanSupplier condition) {
+        long deadline = System.nanoTime() + WAIT.toNanos();
+        while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+        assertTrue(condition.getAsBoolean(), "Timed out waiting for test condition");
     }
 
     private static void awaitWaiting(AsyncTask task) {
@@ -1291,47 +994,32 @@ class MessagingGraphTest {
         }
     }
 
-    private static final class DualEndpoint implements IncomingEndpoint, OutgoingEndpoint {
+    private static final class DualConnector implements IncomingConnector, OutgoingConnector {
         private final List<String> events;
         private final CountDownLatch running = new CountDownLatch(1);
         private final CountDownLatch stopped = new CountDownLatch(1);
 
-        private DualEndpoint(List<String> events) {
+        private DualConnector(List<String> events) {
             this.events = events;
         }
 
         @Override
-        public void prepareForGraph() {
-            events.add("incoming-prepare");
-        }
-
-        @Override
-        public void run() {
+        public void run(ConnectorSourceContext context) {
             events.add("incoming-run");
             running.countDown();
-            await(stopped);
-        }
-
-        @Override
-        public void awaitReady(Duration timeout) {
-            ManagedSource.await(running, timeout);
             events.add("incoming-ready");
-        }
-
-        @Override
-        public void startAdmission() {
+            if (!context.awaitRunning()) {
+                return;
+            }
             events.add("incoming-admit");
+            await(stopped);
+            events.add("incoming-checkpoint");
         }
 
         @Override
-        public void stopAdmission() {
+        public void drain() {
             events.add("incoming-stop");
             stopped.countDown();
-        }
-
-        @Override
-        public void checkpoint() {
-            events.add("incoming-checkpoint");
         }
 
         @Override
@@ -1340,12 +1028,7 @@ class MessagingGraphTest {
         }
 
         @Override
-        public <T> void sendBatch(MessageBatch<T> batch) {
-        }
-
-        @Override
-        public void flush() {
-            events.add("outgoing-flush");
+        public void sendBatch(MessageBatch<?> batch) {
         }
 
         @Override
@@ -1361,7 +1044,7 @@ class MessagingGraphTest {
         }
     }
 
-    private static class TrackingBinding implements ConnectorEndpoint {
+    private static class TrackingBinding implements Connector {
         private final String name;
         private final List<String> events;
         private final CountDownLatch closedSignal = new CountDownLatch(1);
@@ -1393,7 +1076,7 @@ class MessagingGraphTest {
         }
     }
 
-    private static final class ManagedSource extends TrackingBinding implements IncomingEndpoint {
+    private static final class ManagedSource extends TrackingBinding implements IncomingConnector {
         private final AtomicBoolean ready;
         private final BooleanSupplier admissionGuard;
         private final RuntimeException readinessFailure;
@@ -1446,25 +1129,10 @@ class MessagingGraphTest {
         }
 
         @Override
-        public void prepareForGraph() {
+        public void run(ConnectorSourceContext context) {
             prepared.set(true);
             events().add("prepare-" + name());
-        }
-
-        @Override
-        public void run() {
             running.countDown();
-            MessagingGraphTest.await(admission);
-            if (runtimeFailure != null) {
-                MessagingGraphTest.await(fail);
-                throw runtimeFailure;
-            }
-            MessagingGraphTest.await(stop);
-        }
-
-        @Override
-        public void awaitReady(Duration timeout) {
-            await(running, timeout);
             if (!prepared.get()) {
                 throw new AssertionError("Source readiness was checked before graph preparation");
             }
@@ -1473,10 +1141,9 @@ class MessagingGraphTest {
             }
             ready.set(true);
             events().add("ready-" + name());
-        }
-
-        @Override
-        public void startAdmission() {
+            if (!context.awaitRunning()) {
+                return;
+            }
             if (!admissionGuard.getAsBoolean()) {
                 throw new AssertionError("Source admission started before every source was ready");
             }
@@ -1486,17 +1153,18 @@ class MessagingGraphTest {
             }
             events().add("admit-" + name());
             admission.countDown();
+            if (runtimeFailure != null) {
+                MessagingGraphTest.await(fail);
+                throw runtimeFailure;
+            }
+            MessagingGraphTest.await(stop);
         }
 
         @Override
-        public void stopAdmission() {
+        public void drain() {
             events().add("stop-" + name());
             admission.countDown();
             stop.countDown();
-        }
-
-        @Override
-        public void checkpoint() {
         }
 
         @Override
@@ -1543,7 +1211,7 @@ class MessagingGraphTest {
         }
     }
 
-    private static final class StartupBlockingSource implements IncomingEndpoint {
+    private static final class StartupBlockingSource implements IncomingConnector {
         private final CountDownLatch running = new CountDownLatch(1);
         private final CountDownLatch startupReleased = new CountDownLatch(1);
         private final CountDownLatch stopped = new CountDownLatch(1);
@@ -1551,39 +1219,25 @@ class MessagingGraphTest {
         private final AtomicInteger runCalls = new AtomicInteger();
 
         @Override
-        public void prepareForGraph() {
-        }
-
-        @Override
-        public void run() {
+        public void run(ConnectorSourceContext context) {
             runCalls.incrementAndGet();
             running.countDown();
-            await(stopped);
-        }
-
-        @Override
-        public void awaitReady(Duration timeout) {
             try {
-                if (!startupReleased.await(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
+                if (!startupReleased.await(WAIT.toNanos(), TimeUnit.NANOSECONDS)) {
                     throw new MessagingException("Test source startup timed out");
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new MessagingException("Test source startup was interrupted", e);
             }
+            if (context.awaitRunning()) {
+                await(stopped);
+            }
         }
 
         @Override
-        public void startAdmission() {
-        }
-
-        @Override
-        public void stopAdmission() {
+        public void drain() {
             stopped.countDown();
-        }
-
-        @Override
-        public void checkpoint() {
         }
 
         @Override
@@ -1615,49 +1269,23 @@ class MessagingGraphTest {
         }
     }
 
-    private static final class NormalEndingSource implements IncomingEndpoint {
+    private static final class NormalEndingSource implements IncomingConnector {
         private final CountDownLatch running = new CountDownLatch(1);
         private final CountDownLatch admission = new CountDownLatch(1);
         private final AtomicReference<Thread> owner = new AtomicReference<>();
 
         @Override
-        public void prepareForGraph() {
-        }
-
-        @Override
-        public void run() {
+        public void run(ConnectorSourceContext context) {
             owner.set(Thread.currentThread());
             running.countDown();
-            await(admission);
-        }
-
-        @Override
-        public void awaitReady(Duration timeout) {
-            ManagedSource.await(running, timeout);
-        }
-
-        @Override
-        public void startAdmission() {
-            admission.countDown();
-            Thread sourceThread = owner.get();
-            try {
-                sourceThread.join(WAIT.toMillis());
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new MessagingException("Interrupted while waiting for the normal-ending test source", e);
-            }
-            if (sourceThread.isAlive()) {
-                throw new MessagingException("Normal-ending test source did not finish during startup");
+            if (context.awaitRunning()) {
+                admission.countDown();
             }
         }
 
         @Override
-        public void stopAdmission() {
+        public void drain() {
             admission.countDown();
-        }
-
-        @Override
-        public void checkpoint() {
         }
 
         @Override
@@ -1671,7 +1299,7 @@ class MessagingGraphTest {
         }
     }
 
-    private static final class StopFailingSource implements IncomingEndpoint {
+    private static final class StopFailingSource implements IncomingConnector {
         private final RuntimeException failure;
         private final CountDownLatch running = new CountDownLatch(1);
         private final CountDownLatch admission = new CountDownLatch(1);
@@ -1682,34 +1310,18 @@ class MessagingGraphTest {
         }
 
         @Override
-        public void prepareForGraph() {
-        }
-
-        @Override
-        public void run() {
+        public void run(ConnectorSourceContext context) {
             running.countDown();
-            await(admission);
-            await(stop);
-            throw failure;
+            if (context.awaitRunning()) {
+                admission.countDown();
+                await(stop);
+                throw failure;
+            }
         }
 
         @Override
-        public void awaitReady(Duration timeout) {
-            ManagedSource.await(running, timeout);
-        }
-
-        @Override
-        public void startAdmission() {
-            admission.countDown();
-        }
-
-        @Override
-        public void stopAdmission() {
+        public void drain() {
             stop.countDown();
-        }
-
-        @Override
-        public void checkpoint() {
         }
 
         @Override

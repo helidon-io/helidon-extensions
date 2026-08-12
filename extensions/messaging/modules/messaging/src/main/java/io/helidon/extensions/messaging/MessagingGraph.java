@@ -25,7 +25,7 @@ import io.helidon.common.GenericType;
 /**
  * One imperative messaging topology and lifecycle.
  * <p>
- * A graph owns all channels, sources, routes, connector endpoints, and their lifecycle. The topology is mutable only
+ * A graph owns all channels, sources, routes, connectors, and their lifecycle. The topology is mutable only
  * through its builder and is frozen by {@link Builder#build()}.
  */
 public interface MessagingGraph extends AutoCloseable {
@@ -211,17 +211,17 @@ public interface MessagingGraph extends AutoCloseable {
         <T> Builder batchSink(MessagingChannel<T> source, Consumer<MessageBatch<T>> sink);
 
         /**
-         * Add an outgoing connector as a required channel sink.
+         * Add an outgoing connector as a required channel output.
          * <p>
-         * If the sink is a {@link ConnectorEndpoint}, the builder owns it after this method returns. Closing the
-         * builder or the built graph closes the endpoint.
+         * The builder owns the connector after this method returns. Closing the builder or the built graph closes the
+         * connector.
          *
          * @param source source channel
-         * @param sink outgoing connector sink
+         * @param connector outgoing connector
          * @param <T> payload type
          * @return updated builder
          */
-        <T> Builder outgoingConnector(MessagingChannel<T> source, ConnectorSink sink);
+        <T> Builder outgoingConnector(MessagingChannel<T> source, OutgoingConnector connector);
 
         /**
          * Freeze and build the graph.
@@ -233,7 +233,7 @@ public interface MessagingGraph extends AutoCloseable {
         MessagingGraph build();
 
         /**
-         * Abandon this builder and close every stream and connector endpoint already registered with it.
+         * Abandon this builder and close every stream and connector already registered with it.
          * <p>
          * After a successful {@link #build()}, resource ownership belongs to the returned graph and this method does
          * nothing.

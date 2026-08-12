@@ -15,6 +15,6 @@
  */
 
 /**
- * File connector provider and per-binding endpoints for declarative messaging.
+ * File connector provider and per-binding connectors for declarative messaging.
  */
 package io.helidon.extensions.messaging.connectors.file;

@@ -57,16 +57,16 @@ import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
 import io.helidon.extensions.messaging.ConnectorProvider;
 import io.helidon.extensions.messaging.ConnectorSourceContext;
 import io.helidon.extensions.messaging.FailurePolicy;
+import io.helidon.extensions.messaging.IncomingConnector;
 import io.helidon.extensions.messaging.IncomingConnectorProvider;
-import io.helidon.extensions.messaging.IncomingEndpoint;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingChannel;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.MessagingGraph;
 import io.helidon.extensions.messaging.MessagingRejectedException;
+import io.helidon.extensions.messaging.OutgoingConnector;
 import io.helidon.extensions.messaging.OutgoingConnectorProvider;
-import io.helidon.extensions.messaging.OutgoingEndpoint;
 import io.helidon.service.registry.ServiceRegistryManager;
 
 import org.junit.jupiter.api.Test;
@@ -110,7 +110,7 @@ class FileConnectorTest {
         assertThat(failure.getMessage(), is("line-separator must not be empty"));
 
         RuntimeException configFailure = assertThrows(RuntimeException.class,
-                                                      () -> new FileConnectorProvider().createConfig(
+                                                      () -> new FileConnectorProvider().createOutgoingConnector(
                                                               Config.just(ConfigSources.create(Map.of(
                                                                       "direction", "OUTGOING",
                                                                       ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "audit",
@@ -125,7 +125,7 @@ class FileConnectorTest {
     @Test
     void testCreateFromConfig(@TempDir Path tempDir) {
         Path auditLog = tempDir.resolve("audit.log");
-        FileConnectorConfig config = new FileConnectorProvider().createConfig(Config.just(ConfigSources.create(Map.of(
+        FileConnectorConfig config = FileConnectorConfig.create(Config.just(ConfigSources.create(Map.of(
                 "direction", "OUTGOING",
                 ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "audit",
                 ConnectorConfig.CONNECTOR_ATTRIBUTE, FileConnectorProvider.CONNECTOR_TYPE,
@@ -149,7 +149,7 @@ class FileConnectorTest {
     void testMaxLineBytesMustBePositive(@TempDir Path tempDir) {
         for (String value : List.of("0", "-1")) {
             RuntimeException failure = assertThrows(RuntimeException.class,
-                                                    () -> new FileConnectorProvider().createConfig(
+                                                    () -> new FileConnectorProvider().createIncomingConnector(
                                                             Config.just(ConfigSources.create(Map.of(
                                                                     "direction", "INCOMING",
                                                                     ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "events",
@@ -166,7 +166,7 @@ class FileConnectorTest {
     void testMaxBatchBytesMustBePositive(@TempDir Path tempDir) {
         for (String value : List.of("0", "-1")) {
             RuntimeException failure = assertThrows(RuntimeException.class,
-                                                    () -> new FileConnectorProvider().createConfig(
+                                                    () -> new FileConnectorProvider().createIncomingConnector(
                                                             Config.just(ConfigSources.create(Map.of(
                                                                     "direction", "INCOMING",
                                                                     ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "events",
@@ -189,13 +189,13 @@ class FileConnectorTest {
     }
 
     @Test
-    void testOutgoingEndpointsAreResourceFreeAndLifecycleIndependent(@TempDir Path tempDir) throws IOException {
+    void testOutgoingConnectorsAreResourceFreeAndLifecycleIndependent(@TempDir Path tempDir) throws IOException {
         Path firstPath = tempDir.resolve("first.log");
         Path secondPath = tempDir.resolve("second.log");
         Path thirdPath = tempDir.resolve("third.log");
         FileConnectorProvider provider = new FileConnectorProvider();
-        OutgoingEndpoint first = provider.createOutgoingEndpoint(config(firstPath));
-        OutgoingEndpoint second = provider.createOutgoingEndpoint(config(secondPath));
+        OutgoingConnector first = provider.createOutgoingConnector(config(firstPath));
+        OutgoingConnector second = provider.createOutgoingConnector(config(secondPath));
 
         assertThat(Files.exists(firstPath), is(false));
         assertThat(Files.exists(secondPath), is(false));
@@ -219,10 +219,9 @@ class FileConnectorTest {
         assertThat(firstClosed.getCause(), instanceOf(IllegalStateException.class));
 
         second.send(Message.create("second remains available"));
-        second.flush();
         assertThat(Files.readString(secondPath), is("second remains available\n"));
 
-        OutgoingEndpoint third = provider.createOutgoingEndpoint(config(thirdPath));
+        OutgoingConnector third = provider.createOutgoingConnector(config(thirdPath));
         third.start();
         third.send(Message.create("provider remains available"));
         third.close();
@@ -240,7 +239,7 @@ class FileConnectorTest {
         AtomicBoolean writeInterrupted = new AtomicBoolean();
         AtomicReference<Throwable> sendFailure = new AtomicReference<>();
         AtomicReference<Throwable> forceCloseFailure = new AtomicReference<>();
-        OutgoingEndpoint blocked = FileOutgoingConnector.createEndpoint(config(auditLog), (path, content) -> {
+        OutgoingConnector blocked = FileOutgoingConnector.createConnector(config(auditLog), (path, content) -> {
             writeStarted.countDown();
             try {
                 releaseWrite.await();
@@ -250,7 +249,7 @@ class FileConnectorTest {
                 throw new MessagingException("Expected interrupted test write", e);
             }
         });
-        OutgoingEndpoint sibling = new FileConnectorProvider().createOutgoingEndpoint(config(auditLog));
+        OutgoingConnector sibling = new FileConnectorProvider().createOutgoingConnector(config(auditLog));
         blocked.start();
         sibling.start();
         Thread sendThread = Thread.ofVirtual().start(() -> {
@@ -287,7 +286,6 @@ class FileConnectorTest {
         assertThat(blockedClosed.getCause(), instanceOf(IllegalStateException.class));
 
         sibling.send(Message.create("sibling remains available"));
-        sibling.flush();
         sibling.close();
         assertThat(Files.readString(auditLog), is("sibling remains available\n"));
     }
@@ -300,7 +298,7 @@ class FileConnectorTest {
         AtomicBoolean writeInterrupted = new AtomicBoolean();
         AtomicReference<String> written = new AtomicReference<>();
         AtomicReference<Throwable> sendFailure = new AtomicReference<>();
-        OutgoingEndpoint endpoint = FileOutgoingConnector.createEndpoint(
+        OutgoingConnector connector = FileOutgoingConnector.createConnector(
                 config(tempDir.resolve("audit.log")),
                 (path, content) -> {
                     writeStarted.countDown();
@@ -313,17 +311,17 @@ class FileConnectorTest {
                         throw new MessagingException("Unexpected interrupted test write", e);
                     }
                 });
-        endpoint.start();
+        connector.start();
         Thread sendThread = Thread.ofVirtual().start(() -> {
             try {
-                endpoint.send(Message.create("admitted"));
+                connector.send(Message.create("admitted"));
             } catch (Throwable t) {
                 sendFailure.set(t);
             }
         });
         assertThat(writeStarted.await(1, TimeUnit.SECONDS), is(true));
 
-        endpoint.close();
+        connector.close();
         releaseWrite.countDown();
         sendThread.join(TimeUnit.SECONDS.toMillis(1));
 
@@ -333,42 +331,38 @@ class FileConnectorTest {
         assertThat(written.get(), is("admitted\n"));
         BatchDeliveryException closed = assertThrows(
                 BatchDeliveryException.class,
-                () -> endpoint.send(Message.create("after close")));
+                () -> connector.send(Message.create("after close")));
         assertThat(closed.outcome(0).status(), is(BatchItemStatus.NOT_ATTEMPTED));
         assertThat(closed.getCause(), instanceOf(IllegalStateException.class));
     }
 
     @Test
     @Timeout(value = 5)
-    void testIncomingEndpointsAreResourceFreeAndLifecycleIndependent(@TempDir Path tempDir) throws Exception {
+    void testIncomingConnectorsAreResourceFreeAndLifecycleIndependent(@TempDir Path tempDir) throws Exception {
         Path firstPath = tempDir.resolve("first.log");
         Path secondPath = tempDir.resolve("second.log");
         FileConnectorProvider provider = new FileConnectorProvider();
         CountDownLatch secondDelivered = new CountDownLatch(1);
+        CountDownLatch firstReady = new CountDownLatch(1);
+        CountDownLatch secondReady = new CountDownLatch(1);
         AtomicReference<Throwable> firstFailure = new AtomicReference<>();
         AtomicReference<Throwable> secondFailure = new AtomicReference<>();
-        IncomingEndpoint first = provider.createIncomingEndpoint(
-                incomingConfig(firstPath),
-                incomingContext(ignored -> { }));
-        IncomingEndpoint second = provider.createIncomingEndpoint(
-                incomingConfig(secondPath),
-                incomingContext(ignored -> secondDelivered.countDown()));
+        ConnectorSourceContext firstContext = incomingContext(ignored -> { }, firstReady);
+        ConnectorSourceContext secondContext = incomingContext(ignored -> secondDelivered.countDown(), secondReady);
+        IncomingConnector first = provider.createIncomingConnector(incomingConfig(firstPath));
+        IncomingConnector second = provider.createIncomingConnector(incomingConfig(secondPath));
 
         assertThat(Files.exists(firstPath), is(false));
         assertThat(Files.exists(secondPath), is(false));
 
-        first.prepareForGraph();
-        second.prepareForGraph();
         Thread firstThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> firstFailure.set(throwable))
-                .start(first);
+                .start(() -> first.run(firstContext));
         Thread secondThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> secondFailure.set(throwable))
-                .start(second);
-        first.awaitReady(Duration.ofSeconds(1));
-        second.awaitReady(Duration.ofSeconds(1));
-        first.startAdmission();
-        second.startAdmission();
+                .start(() -> second.run(secondContext));
+        assertThat(firstReady.await(1, TimeUnit.SECONDS), is(true));
+        assertThat(secondReady.await(1, TimeUnit.SECONDS), is(true));
 
         first.close();
         firstThread.join(TimeUnit.SECONDS.toMillis(1));
@@ -378,13 +372,10 @@ class FileConnectorTest {
         append(secondPath, "second remains available\n");
         assertThat(secondDelivered.await(1, TimeUnit.SECONDS), is(true));
 
-        second.stopAdmission();
+        second.drain();
         secondThread.join(TimeUnit.SECONDS.toMillis(1));
-        second.checkpoint();
         second.close();
-        IncomingEndpoint third = provider.createIncomingEndpoint(
-                incomingConfig(tempDir.resolve("third.log")),
-                incomingContext(ignored -> { }));
+        IncomingConnector third = provider.createIncomingConnector(incomingConfig(tempDir.resolve("third.log")));
         third.close();
 
         assertThat(secondThread.isAlive(), is(false));
@@ -395,7 +386,7 @@ class FileConnectorTest {
     @Test
     void testDefaultLineSeparatorWritesOneMessagePerLine(@TempDir Path tempDir) throws IOException {
         Path auditLog = tempDir.resolve("audit.log");
-        var sink = outgoingEndpoint(config(auditLog));
+        var sink = outgoingConnector(config(auditLog));
 
         sink.send(Message.create("first audit event"));
         sink.send(Message.create("second audit event"));
@@ -406,7 +397,7 @@ class FileConnectorTest {
     @Test
     void testCustomLineSeparator(@TempDir Path tempDir) throws IOException {
         Path auditLog = tempDir.resolve("audit.log");
-        var sink = outgoingEndpoint(config(auditLog, "|"));
+        var sink = outgoingConnector(config(auditLog, "|"));
 
         sink.send(Message.create("first audit event"));
         sink.send(Message.create("second audit event"));
@@ -417,7 +408,7 @@ class FileConnectorTest {
     @Test
     void testBatchWritesMessagesInOneConnectorCall(@TempDir Path tempDir) throws IOException {
         Path auditLog = tempDir.resolve("audit.log");
-        var sink = outgoingEndpoint(config(auditLog, "|"));
+        var sink = outgoingConnector(config(auditLog, "|"));
 
         sink.sendBatch(MessageBatch.create(List.of(Message.create("first audit event"),
                                                    Message.create("second audit event"))));
@@ -429,7 +420,7 @@ class FileConnectorTest {
     @Test
     void testBatchWriteFailureReportsEveryOutcomeAsIndeterminate(@TempDir Path tempDir) {
         RuntimeException expectedFailure = new MessagingException("expected write failure");
-        OutgoingEndpoint sink = FileOutgoingConnector.createEndpoint(config(tempDir.resolve("audit.log")),
+        OutgoingConnector sink = FileOutgoingConnector.createConnector(config(tempDir.resolve("audit.log")),
                                                                      (path, content) -> {
                                                                          throw expectedFailure;
                                                                      });
@@ -456,7 +447,7 @@ class FileConnectorTest {
         Path auditLog = tempDir.resolve("audit.log");
         CountDownLatch writeStarted = new CountDownLatch(1);
         CountDownLatch releaseWrite = new CountDownLatch(1);
-        OutgoingEndpoint lockOwner = FileOutgoingConnector.createEndpoint(config(auditLog), (path, content) -> {
+        OutgoingConnector lockOwner = FileOutgoingConnector.createConnector(config(auditLog), (path, content) -> {
             writeStarted.countDown();
             try {
                 releaseWrite.await();
@@ -465,7 +456,7 @@ class FileConnectorTest {
                 throw new MessagingException("Unexpected interrupted lock owner", e);
             }
         });
-        OutgoingEndpoint waiting = FileOutgoingConnector.createEndpoint(config(auditLog));
+        OutgoingConnector waiting = FileOutgoingConnector.createConnector(config(auditLog));
         lockOwner.start();
         waiting.start();
         Thread lockOwnerThread = Thread.ofVirtual().start(() -> lockOwner.send(Message.create("owner")));
@@ -504,7 +495,7 @@ class FileConnectorTest {
 
     @Test
     void testBatchLifecycleFailureReportsEveryItemNotAttempted(@TempDir Path tempDir) {
-        OutgoingEndpoint sink = FileOutgoingConnector.createEndpoint(config(tempDir.resolve("audit.log")));
+        OutgoingConnector sink = FileOutgoingConnector.createConnector(config(tempDir.resolve("audit.log")));
         MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"), Message.create("second")));
 
         BatchDeliveryException failure = assertThrows(BatchDeliveryException.class, () -> sink.sendBatch(batch));
@@ -525,7 +516,7 @@ class FileConnectorTest {
             }
         };
         Path auditLog = tempDir.resolve("audit.log");
-        OutgoingEndpoint sink = outgoingEndpoint(config(auditLog));
+        OutgoingConnector sink = outgoingConnector(config(auditLog));
         MessageBatch<Object> batch = MessageBatch.create(List.of(Message.create("first"),
                                                                  Message.create(invalidPayload)));
 
@@ -553,7 +544,7 @@ class FileConnectorTest {
             Path configuredPath = i % 2 == 0
                     ? auditLog
                     : tempDir.resolve(".").resolve("audit.log");
-            OutgoingEndpoint sink = provider.createOutgoingEndpoint(config(configuredPath));
+            OutgoingConnector sink = provider.createOutgoingConnector(config(configuredPath));
             sink.start();
             String payload = "writer-" + i + ":" + String.valueOf((char) ('a' + i)).repeat(256 * 1024);
             expected.add(payload);
@@ -584,7 +575,7 @@ class FileConnectorTest {
     void testParentDirectoriesAreCreated(@TempDir Path tempDir) throws IOException {
         Path auditLog = tempDir.resolve("logs").resolve("audit.log");
 
-        outgoingEndpoint(config(auditLog))
+        outgoingConnector(config(auditLog))
                 .send(Message.create("audit event"));
 
         assertThat(Files.readString(auditLog), is("audit event\n"));
@@ -596,7 +587,7 @@ class FileConnectorTest {
 
         MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<String> channel = builder.channel("file-output", String.class);
-        builder.outgoingConnector(channel, outgoingEndpoint(config(auditLog, "|")));
+        builder.outgoingConnector(channel, outgoingConnector(config(auditLog, "|")));
 
         try (MessagingGraph graph = builder.build()) {
             graph.start();
@@ -615,7 +606,7 @@ class FileConnectorTest {
 
         MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<String> channel = builder.channel("file-batch-output", String.class);
-        builder.outgoingConnector(channel, outgoingEndpoint(config(auditLog, "|")));
+        builder.outgoingConnector(channel, outgoingConnector(config(auditLog, "|")));
 
         try (MessagingGraph graph = builder.build()) {
             graph.start();
@@ -2069,7 +2060,7 @@ class FileConnectorTest {
                                                           closed,
                                                           registrationListener);
 
-        source.run();
+        source.run(context);
 
         assertThat(deliveries, is(List.of(List.of("during-registration"))));
     }
@@ -2156,8 +2147,7 @@ class FileConnectorTest {
                 return FailureResult.RETRY;
             }
         };
-        FileConnectorProvider provider = new FileConnectorProvider();
-        var source = (FileIncomingConnector.FileSource) provider.createIncomingEndpoint(incomingConfig(input), context);
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
         AtomicInteger offset = new AtomicInteger(-1);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual().start(() -> {
@@ -2216,8 +2206,7 @@ class FileConnectorTest {
                                                         routeFailure);
             }
         };
-        FileConnectorProvider provider = new FileConnectorProvider();
-        var source = (FileIncomingConnector.FileSource) provider.createIncomingEndpoint(incomingConfig(input), context);
+        var source = new FileIncomingConnector.FileSource(incomingConfig(input), context, new AtomicBoolean());
         AtomicInteger offset = new AtomicInteger(-1);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual().start(() -> {
@@ -2243,7 +2232,7 @@ class FileConnectorTest {
 
     @Test
     @Timeout(value = 5)
-    void testEndpointCloseInterruptsReservationWait(@TempDir Path tempDir) throws Exception {
+    void testConnectorCloseInterruptsReservationWait(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "");
         CountDownLatch reservationWait = new CountDownLatch(1);
@@ -2266,13 +2255,13 @@ class FileConnectorTest {
             }
         };
         FileConnectorProvider provider = new FileConnectorProvider();
-        IncomingEndpoint source = provider.createIncomingEndpoint(incomingConfig(input), context);
+        IncomingConnector source = provider.createIncomingConnector(incomingConfig(input));
         AtomicReference<Throwable> failure = new AtomicReference<>();
         AtomicBoolean interruptedOnExit = new AtomicBoolean();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
                 .start(() -> {
-                    source.run();
+                    source.run(context);
                     interruptedOnExit.set(Thread.currentThread().isInterrupted());
                 });
         assertThat(reservationWait.await(1, TimeUnit.SECONDS), is(true));
@@ -2287,7 +2276,7 @@ class FileConnectorTest {
 
     @Test
     @Timeout(value = 5)
-    void testEndpointCloseInterruptsDeliveryStartWaitAndClosesReservation(@TempDir Path tempDir) throws Exception {
+    void testConnectorCloseInterruptsDeliveryStartWaitAndClosesReservation(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "");
         CountDownLatch initialReadFinished = new CountDownLatch(1);
@@ -2350,13 +2339,13 @@ class FileConnectorTest {
             }
         };
         FileConnectorProvider provider = new FileConnectorProvider();
-        IncomingEndpoint source = provider.createIncomingEndpoint(incomingConfig(input), context);
+        IncomingConnector source = provider.createIncomingConnector(incomingConfig(input));
         AtomicReference<Throwable> failure = new AtomicReference<>();
         AtomicBoolean interruptedOnExit = new AtomicBoolean();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
                 .start(() -> {
-                    source.run();
+                    source.run(context);
                     interruptedOnExit.set(Thread.currentThread().isInterrupted());
                 });
         assertThat(initialReadFinished.await(1, TimeUnit.SECONDS), is(true));
@@ -2402,7 +2391,7 @@ class FileConnectorTest {
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
                 .start(() -> {
-                    source.run();
+                    source.run(context);
                     interruptedOnExit.set(Thread.currentThread().isInterrupted());
                 });
         assertThat(readStarted.await(1, TimeUnit.SECONDS), is(true));
@@ -2418,21 +2407,19 @@ class FileConnectorTest {
 
     @Test
     @Timeout(value = 5)
-    @SuppressWarnings("unchecked")
-    void testServiceRegistryDiscoversProviderWithoutOwningEndpointLifecycle(@TempDir Path tempDir) throws Exception {
+    void testServiceRegistryDiscoversProviderWithoutOwningConnectorLifecycle(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         AtomicReference<Throwable> failure = new AtomicReference<>();
         ServiceRegistryManager manager = ServiceRegistryManager.create();
-        IncomingEndpoint source = null;
+        IncomingConnector source = null;
         Thread sourceThread = null;
         try {
-            ConnectorProvider<?> discovered = manager.registry().get(ConnectorProvider.class);
+            ConnectorProvider discovered = manager.registry().get(ConnectorProvider.class);
             assertThat(discovered, instanceOf(FileConnectorProvider.class));
             assertThat(manager.registry().get(IncomingConnectorProvider.class), sameInstance(discovered));
             assertThat(manager.registry().get(OutgoingConnectorProvider.class), sameInstance(discovered));
-            IncomingConnectorProvider<FileConnectorConfig> provider =
-                    (IncomingConnectorProvider<FileConnectorConfig>) discovered;
-            source = provider.createIncomingEndpoint(incomingConfig(input), new ConnectorSourceContext() {
+            IncomingConnectorProvider provider = (IncomingConnectorProvider) discovered;
+            ConnectorSourceContext context = new ConnectorSourceContext() {
                 @Override
                 public String channelName() {
                     return "events";
@@ -2442,10 +2429,12 @@ class FileConnectorTest {
                 public <T> void emitBatch(MessageBatch<T> batch) {
                     throw new AssertionError("No existing file content should be emitted");
                 }
-            });
+            };
+            IncomingConnector createdSource = provider.createIncomingConnector(incomingConfigSource(input));
+            source = createdSource;
             sourceThread = Thread.ofVirtual()
                     .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                    .start(source);
+                    .start(() -> createdSource.run(context));
             awaitFile(input);
             manager.shutdown();
             assertThat(sourceThread.isAlive(), is(true));
@@ -2489,11 +2478,11 @@ class FileConnectorTest {
             }
         };
         FileConnectorProvider provider = new FileConnectorProvider();
-        IncomingEndpoint source = provider.createIncomingEndpoint(incomingConfig(input), context);
+        IncomingConnector source = provider.createIncomingConnector(incomingConfig(input));
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(source);
+                .start(() -> source.run(context));
         Thread.sleep(200);
 
         append(input, "first\n");
@@ -2513,15 +2502,29 @@ class FileConnectorTest {
 
     @Test
     @Timeout(value = 5)
-    void testGraphManagedSourceReconcilesAppendOnlyAfterAdmissionStarts(@TempDir Path tempDir) throws Exception {
+    void testSourceReconcilesAppendOnlyAfterRuntimeStarts(@TempDir Path tempDir) throws Exception {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "existing content is tailed\n");
         List<List<String>> deliveries = new CopyOnWriteArrayList<>();
         CountDownLatch delivered = new CountDownLatch(1);
+        CountDownLatch ready = new CountDownLatch(1);
+        CountDownLatch running = new CountDownLatch(1);
         ConnectorSourceContext context = new ConnectorSourceContext() {
             @Override
             public String channelName() {
                 return "events";
+            }
+
+            @Override
+            public boolean awaitRunning() {
+                ready.countDown();
+                try {
+                    running.await();
+                    return true;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
             }
 
             @Override
@@ -2536,20 +2539,19 @@ class FileConnectorTest {
             }
         };
         FileConnectorProvider provider = new FileConnectorProvider();
-        IncomingEndpoint source = provider.createIncomingEndpoint(incomingConfig(input), context);
-        source.prepareForGraph();
+        IncomingConnector source = provider.createIncomingConnector(incomingConfig(input));
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(source);
-        source.awaitReady(Duration.ofSeconds(1));
+                .start(() -> source.run(context));
+        assertThat(ready.await(1, TimeUnit.SECONDS), is(true));
 
         append(input, "first\n");
         assertThat(delivered.await(200, TimeUnit.MILLISECONDS), is(false));
 
-        source.startAdmission();
+        running.countDown();
         assertThat(delivered.await(1, TimeUnit.SECONDS), is(true));
-        source.stopAdmission();
+        source.drain();
         sourceThread.join(TimeUnit.SECONDS.toMillis(1));
         source.close();
 
@@ -2564,23 +2566,28 @@ class FileConnectorTest {
         Path input = tempDir.resolve("events.log");
         Files.writeString(input, "");
         FileConnectorProvider provider = new FileConnectorProvider();
-        IncomingEndpoint source = provider.createIncomingEndpoint(
-                incomingConfig(input),
-                new TrackingReservationContext(1, ignored -> {
-                }));
-        source.prepareForGraph();
+        CountDownLatch ready = new CountDownLatch(1);
+        ConnectorSourceContext context = new TrackingReservationContext(1, ignored -> {
+        }) {
+            @Override
+            public boolean awaitRunning() {
+                ready.countDown();
+                return true;
+            }
+        };
+        IncomingConnector source = provider.createIncomingConnector(incomingConfig(input));
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(source);
-        source.awaitReady(Duration.ofSeconds(1));
-        source.stopAdmission();
+                .start(() -> source.run(context));
+        assertThat(ready.await(1, TimeUnit.SECONDS), is(true));
+        source.drain();
         sourceThread.join(TimeUnit.SECONDS.toMillis(1));
         source.close();
 
         assertThat(sourceThread.isAlive(), is(false));
         assertThat(failure.get(), nullValue());
-        assertThrows(IllegalStateException.class, source::run);
+        assertThrows(IllegalStateException.class, () -> source.run(context));
     }
 
     @Test
@@ -2606,10 +2613,10 @@ class FileConnectorTest {
         return config(path, FileConnectorConfig.DEFAULT_LINE_SEPARATOR);
     }
 
-    private static OutgoingEndpoint outgoingEndpoint(FileConnectorConfig config) {
-        OutgoingEndpoint endpoint = new FileConnectorProvider().createOutgoingEndpoint(config);
-        endpoint.start();
-        return endpoint;
+    private static OutgoingConnector outgoingConnector(FileConnectorConfig config) {
+        OutgoingConnector connector = new FileConnectorProvider().createOutgoingConnector(config);
+        connector.start();
+        return connector;
     }
 
     private static FileConnectorConfig config(Path path, String lineSeparator) {
@@ -2624,6 +2631,14 @@ class FileConnectorTest {
 
     private static FileConnectorConfig incomingConfig(Path path) {
         return incomingConfig(path, FileConnectorConfig.DEFAULT_LINE_SEPARATOR);
+    }
+
+    private static Config incomingConfigSource(Path path) {
+        return Config.just(ConfigSources.create(Map.of(
+                "direction", "INCOMING",
+                ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "events",
+                ConnectorConfig.CONNECTOR_ATTRIBUTE, FileConnectorProvider.CONNECTOR_TYPE,
+                FileConnectorConfig.PATH_PROPERTY, path.toString())));
     }
 
     private static FileConnectorConfig incomingConfig(Path path, int maxLineBytes) {
@@ -2676,10 +2691,22 @@ class FileConnectorTest {
     }
 
     private static ConnectorSourceContext incomingContext(BatchConsumer consumer) {
+        return incomingContext(consumer, null);
+    }
+
+    private static ConnectorSourceContext incomingContext(BatchConsumer consumer, CountDownLatch ready) {
         return new ConnectorSourceContext() {
             @Override
             public String channelName() {
                 return "events";
+            }
+
+            @Override
+            public boolean awaitRunning() {
+                if (ready != null) {
+                    ready.countDown();
+                }
+                return true;
             }
 
             @Override

@@ -58,17 +58,29 @@ class BatchDefaultsTest {
     }
 
     @Test
-    void connectorSinkWrapsSingleMessageInBatch() {
+    void outgoingConnectorWrapsSingleMessageInBatch() {
         AtomicReference<MessageBatch<?>> received = new AtomicReference<>();
-        ConnectorSink sink = new ConnectorSink() {
+        OutgoingConnector connector = new OutgoingConnector() {
             @Override
-            public <T> void sendBatch(MessageBatch<T> batch) {
+            public void start() {
+            }
+
+            @Override
+            public void sendBatch(MessageBatch<?> batch) {
                 received.set(batch);
+            }
+
+            @Override
+            public void forceClose() {
+            }
+
+            @Override
+            public void close() {
             }
         };
         Message<String> message = Message.create("one");
 
-        sink.send(message);
+        connector.send(message);
 
         assertEquals(1, received.get().size());
         assertSame(message, received.get().get(0));

@@ -36,7 +36,7 @@ class KafkaConnectorServiceTest {
         try {
             ServiceRegistry registry = registryManager.registry();
 
-            ConnectorProvider<?> provider = registry.get(ConnectorProvider.class);
+            ConnectorProvider provider = registry.get(ConnectorProvider.class);
 
             assertThat(provider, instanceOf(KafkaConnectorProvider.class));
             assertThat(provider, instanceOf(IncomingConnectorProvider.class));

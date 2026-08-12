@@ -16,22 +16,22 @@
 
 package io.helidon.extensions.messaging;
 
+import io.helidon.config.Config;
+
 /**
  * Incoming capability of a connector provider.
  *
- * @param <C> connector configuration type
  */
-public interface IncomingConnectorProvider<C extends ConnectorConfig> extends ConnectorProvider<C> {
+public interface IncomingConnectorProvider extends ConnectorProvider {
     /**
-     * Create one unstarted incoming binding endpoint.
+     * Create one unstarted incoming connector.
      * <p>
-     * The endpoint factory may validate and snapshot configuration, but must not acquire transport resources, start
-     * threads, poll, or deliver messages. The messaging graph owns the returned endpoint and runs it on a
+     * The connector factory may validate and snapshot configuration, but must not acquire transport resources, start
+     * threads, poll, or deliver messages. The messaging graph owns the returned connector and runs it on a
      * runtime-owned virtual thread.
      *
-     * @param config typed binding configuration
-     * @param context connector source context
-     * @return incoming endpoint
+     * @param config effective binding configuration
+     * @return incoming connector
      */
-    IncomingEndpoint createIncomingEndpoint(C config, ConnectorSourceContext context);
+    IncomingConnector createIncomingConnector(Config config);
 }

@@ -30,10 +30,10 @@ import io.helidon.extensions.messaging.BatchDeliveryException;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageBatch;
 import io.helidon.extensions.messaging.MessagingException;
-import io.helidon.extensions.messaging.OutgoingEndpoint;
+import io.helidon.extensions.messaging.OutgoingConnector;
 
 /**
- * File outgoing endpoint implementation.
+ * File outgoing connector implementation.
  * <p>
  * A delivery completes successfully when the connector's {@code Files.writeString(...)} call returns without
  * throwing. A failure after a batch append starts reports every item as indeterminate because an append can fail after
@@ -52,14 +52,14 @@ final class FileOutgoingConnector {
     private FileOutgoingConnector() {
     }
 
-    static OutgoingEndpoint createEndpoint(FileConnectorConfig config) {
-        return createEndpoint(config, FileOutgoingConnector::write);
+    static OutgoingConnector createConnector(FileConnectorConfig config) {
+        return createConnector(config, FileOutgoingConnector::write);
     }
 
-    static OutgoingEndpoint createEndpoint(FileConnectorConfig config, FileWriter fileWriter) {
+    static OutgoingConnector createConnector(FileConnectorConfig config, FileWriter fileWriter) {
         Path path = config.path().toAbsolutePath().normalize();
         ReentrantLock writeLock = WRITE_LOCKS[Math.floorMod(path.hashCode(), WRITE_LOCKS.length)];
-        return new FileEndpoint(config, path, writeLock, fileWriter);
+        return new FileConnector(config, path, writeLock, fileWriter);
     }
 
     private static void write(Path path, String content) {
@@ -77,7 +77,7 @@ final class FileOutgoingConnector {
         }
     }
 
-    private static final class FileEndpoint implements OutgoingEndpoint {
+    private static final class FileConnector implements OutgoingConnector {
         private final FileConnectorConfig config;
         private final Path path;
         private final ReentrantLock writeLock;
@@ -86,10 +86,10 @@ final class FileOutgoingConnector {
         private final Set<Thread> activeSendThreads = new HashSet<>();
         private State state = State.NEW;
 
-        private FileEndpoint(FileConnectorConfig config,
-                             Path path,
-                             ReentrantLock writeLock,
-                             FileWriter fileWriter) {
+        private FileConnector(FileConnectorConfig config,
+                              Path path,
+                              ReentrantLock writeLock,
+                              FileWriter fileWriter) {
             this.config = config;
             this.path = path;
             this.writeLock = writeLock;
@@ -101,20 +101,9 @@ final class FileOutgoingConnector {
             lifecycleLock.lock();
             try {
                 if (state == State.CLOSED) {
-                    throw new IllegalStateException("File outgoing endpoint is closed");
+                    throw new IllegalStateException("File outgoing connector is closed");
                 }
                 state = State.STARTED;
-            } finally {
-                lifecycleLock.unlock();
-            }
-        }
-
-        @Override
-        public void flush() {
-            lifecycleLock.lock();
-            try {
-                requireStarted();
-                // Files.writeString completes synchronously, so there is no connector buffer to flush.
             } finally {
                 lifecycleLock.unlock();
             }
@@ -126,7 +115,7 @@ final class FileOutgoingConnector {
         }
 
         @Override
-        public <T> void sendBatch(MessageBatch<T> batch) {
+        public void sendBatch(MessageBatch<?> batch) {
             Objects.requireNonNull(batch);
             Thread sendThread;
             try {
@@ -137,7 +126,7 @@ final class FileOutgoingConnector {
             try {
                 StringBuilder content = new StringBuilder();
                 try {
-                    for (Message<T> message : batch.messages()) {
+                    for (Message<?> message : batch.messages()) {
                         content.append(message.entity())
                                 .append(config.lineSeparator());
                     }
@@ -178,7 +167,7 @@ final class FileOutgoingConnector {
             }
         }
 
-        private <T> void writeBatch(String content, MessageBatch<T> batch) {
+        private void writeBatch(String content, MessageBatch<?> batch) {
             try {
                 writeLock.lockInterruptibly();
             } catch (InterruptedException e) {
@@ -218,10 +207,10 @@ final class FileOutgoingConnector {
 
         private void requireStarted() {
             if (state == State.NEW) {
-                throw new IllegalStateException("File outgoing endpoint has not been started");
+                throw new IllegalStateException("File outgoing connector has not been started");
             }
             if (state == State.CLOSED) {
-                throw new IllegalStateException("File outgoing endpoint is closed");
+                throw new IllegalStateException("File outgoing connector is closed");
             }
         }
 

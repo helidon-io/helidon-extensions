@@ -177,10 +177,22 @@ class MessagingGraphBuilderTest {
         MessagingChannel<String> channel = builder.channel("ordered", String.class);
         List<String> outputs = new ArrayList<>();
         builder.messageSink(channel, ignored -> outputs.add("first"))
-                .outgoingConnector(channel, new ConnectorSink() {
+                .outgoingConnector(channel, new OutgoingConnector() {
                     @Override
-                    public <T> void sendBatch(MessageBatch<T> batch) {
+                    public void start() {
+                    }
+
+                    @Override
+                    public void sendBatch(MessageBatch<?> batch) {
                         outputs.add("connector");
+                    }
+
+                    @Override
+                    public void forceClose() {
+                    }
+
+                    @Override
+                    public void close() {
                     }
                 })
                 .messageSink(channel, ignored -> outputs.add("last"));
@@ -196,16 +208,16 @@ class MessagingGraphBuilderTest {
     @Test
     void closingUnbuiltBuilderClosesRegisteredResources() {
         AtomicBoolean streamClosed = new AtomicBoolean();
-        TestEndpoint endpoint = new TestEndpoint();
+        TestConnector connector = new TestConnector();
         MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<String> channel = builder.channel("abandoned", String.class);
         builder.payloadSource(channel, Stream.<String>empty().onClose(() -> streamClosed.set(true)))
-                .outgoingConnector(channel, endpoint);
+                .outgoingConnector(channel, connector);
 
         builder.close();
 
         assertTrue(streamClosed.get());
-        assertTrue(endpoint.closed.get());
+        assertTrue(connector.closed.get());
         assertThrows(IllegalStateException.class, builder::build);
     }
 
@@ -234,7 +246,7 @@ class MessagingGraphBuilderTest {
         CountDownLatch releaseClose = new CountDownLatch(1);
         CountDownLatch closeExited = new CountDownLatch(1);
         AtomicReference<Throwable> closeFailure = new AtomicReference<>();
-        OrderedEndpoint endpoint = new OrderedEndpoint(new CopyOnWriteArrayList<>());
+        OrderedConnector connector = new OrderedConnector(new CopyOnWriteArrayList<>());
         MessagingGraph.Builder builder = MessagingGraph.builder()
                 .executionConfig(MessagingExecutionConfig.builder()
                                          .shutdownTimeout(SHORT_SHUTDOWN_TIMEOUT)
@@ -245,7 +257,7 @@ class MessagingGraphBuilderTest {
                     awaitUninterruptibly(releaseClose);
                     closeExited.countDown();
                 }))
-                .outgoingConnector(channel, endpoint)
+                .outgoingConnector(channel, connector)
                 .payloadSink(channel, ignored -> { });
 
         Thread closeThread = Thread.ofVirtual().start(() -> runCapturing(builder::close, closeFailure));
@@ -256,13 +268,13 @@ class MessagingGraphBuilderTest {
             assertFalse(closeThread.isAlive(), "Builder close exceeded its shutdown timeout");
             assertTrue(closeFailure.get() instanceof MessagingException, String.valueOf(closeFailure.get()));
             assertTrue(closeFailure.get().getMessage().contains("Timed out"), closeFailure.get().getMessage());
-            assertTrue(endpoint.forceAttempted.await(5, TimeUnit.SECONDS),
+            assertTrue(connector.forceAttempted.await(5, TimeUnit.SECONDS),
                        "Connector force close was not attempted after stream cleanup timed out");
-            assertTrue(endpoint.closeAttempted.await(5, TimeUnit.SECONDS),
+            assertTrue(connector.closeAttempted.await(5, TimeUnit.SECONDS),
                        "Connector close was not attempted after stream cleanup timed out");
-            assertFalse(endpoint.closeInterrupted.get(),
+            assertFalse(connector.closeInterrupted.get(),
                         "Post-deadline connector close started with its interrupt status set");
-            assertEquals(List.of("force", "close"), endpoint.lifecycle);
+            assertEquals(List.of("force", "close"), connector.lifecycle);
         } finally {
             releaseClose.countDown();
             assertTrue(closeExited.await(5, TimeUnit.SECONDS));
@@ -273,10 +285,10 @@ class MessagingGraphBuilderTest {
     @Test
     void closingUnbuiltBuilderForceClosesConnectorBeforeNormalClose() {
         List<String> lifecycle = new CopyOnWriteArrayList<>();
-        OrderedEndpoint endpoint = new OrderedEndpoint(lifecycle);
+        OrderedConnector connector = new OrderedConnector(lifecycle);
         MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<String> channel = builder.channel("abandoned-connector", String.class);
-        builder.outgoingConnector(channel, endpoint);
+        builder.outgoingConnector(channel, connector);
 
         builder.close();
 
@@ -545,9 +557,9 @@ class MessagingGraphBuilderTest {
         MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<String> first = builder.channel("first", String.class);
         MessagingChannel<String> second = builder.channel("second", String.class);
-        TestEndpoint endpoint = new TestEndpoint();
+        TestConnector connector = new TestConnector();
         builder.payloadSource(first, Stream.<String>empty().onClose(() -> closed.set(true)))
-                .outgoingConnector(first, endpoint)
+                .outgoingConnector(first, connector)
                 .route(first, second)
                 .route(second, first);
 
@@ -555,7 +567,7 @@ class MessagingGraphBuilderTest {
 
         assertTrue(failure.getMessage().contains("Cyclic synchronous messaging route"));
         assertTrue(closed.get());
-        assertTrue(endpoint.closed.get());
+        assertTrue(connector.closed.get());
         assertThrows(IllegalStateException.class, builder::build);
     }
 
@@ -642,11 +654,15 @@ class MessagingGraphBuilderTest {
         }
     }
 
-    private static final class TestEndpoint implements ConnectorSink, ConnectorEndpoint {
+    private static final class TestConnector implements OutgoingConnector {
         private final AtomicBoolean closed = new AtomicBoolean();
 
         @Override
-        public <T> void sendBatch(MessageBatch<T> batch) {
+        public void sendBatch(MessageBatch<?> batch) {
+        }
+
+        @Override
+        public void start() {
         }
 
         @Override
@@ -660,18 +676,22 @@ class MessagingGraphBuilderTest {
         }
     }
 
-    private static final class OrderedEndpoint implements ConnectorSink, ConnectorEndpoint {
+    private static final class OrderedConnector implements OutgoingConnector {
         private final List<String> lifecycle;
         private final CountDownLatch forceAttempted = new CountDownLatch(1);
         private final CountDownLatch closeAttempted = new CountDownLatch(1);
         private final AtomicBoolean closeInterrupted = new AtomicBoolean();
 
-        private OrderedEndpoint(List<String> lifecycle) {
+        private OrderedConnector(List<String> lifecycle) {
             this.lifecycle = lifecycle;
         }
 
         @Override
-        public <T> void sendBatch(MessageBatch<T> batch) {
+        public void sendBatch(MessageBatch<?> batch) {
+        }
+
+        @Override
+        public void start() {
         }
 
         @Override

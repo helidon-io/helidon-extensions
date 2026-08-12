@@ -33,7 +33,6 @@ import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.extensions.messaging.BatchDeliveryException;
 import io.helidon.extensions.messaging.BatchItemStatus;
-import io.helidon.extensions.messaging.ConnectorSink;
 import io.helidon.extensions.messaging.EmitterRegistration;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageBatch;
@@ -41,6 +40,7 @@ import io.helidon.extensions.messaging.MessagingChannel;
 import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.MessagingGraph;
 import io.helidon.extensions.messaging.MessagingRuntime;
+import io.helidon.extensions.messaging.OutgoingConnector;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ArrayPayloadConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.BatchChannelOneConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.BroadCustomMessageConsumer;
@@ -184,11 +184,11 @@ class DeclarativeMessagingPocTest {
         MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<String> channel = builder.channel("imperative-batch", String.class);
         builder.batchSink(channel, batches::add)
-                .outgoingConnector(channel, new ConnectorSink() {
+                .outgoingConnector(channel, new NoOpOutgoingConnector() {
                     @Override
-                    public <T> void sendBatch(MessageBatch<T> messages) {
+                    public void sendBatch(MessageBatch<?> messages) {
                         List<String> entities = new ArrayList<>();
-                        for (Message<T> message : messages) {
+                        for (Message<?> message : messages) {
                             entities.add(String.valueOf(message.entity()));
                         }
                         connectorBatches.add(entities);
@@ -216,9 +216,9 @@ class DeclarativeMessagingPocTest {
         MessagingException expectedFailure = new MessagingException("connector failed", new IOException("I/O failed"));
         MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<String> channel = builder.channel("imperative-connector-failure", String.class);
-        builder.outgoingConnector(channel, new ConnectorSink() {
+        builder.outgoingConnector(channel, new NoOpOutgoingConnector() {
             @Override
-            public <T> void sendBatch(MessageBatch<T> batch) {
+            public void sendBatch(MessageBatch<?> batch) {
                 throw expectedFailure;
             }
         });
@@ -787,13 +787,27 @@ class DeclarativeMessagingPocTest {
         registry = registryManager.registry();
     }
 
-    private static ConnectorSink sink(List<Message<?>> messages) {
-        return new ConnectorSink() {
+    private static OutgoingConnector sink(List<Message<?>> messages) {
+        return new NoOpOutgoingConnector() {
             @Override
-            public <T> void sendBatch(MessageBatch<T> batch) {
+            public void sendBatch(MessageBatch<?> batch) {
                 messages.addAll(batch.messages());
             }
         };
+    }
+
+    private abstract static class NoOpOutgoingConnector implements OutgoingConnector {
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void forceClose() {
+        }
+
+        @Override
+        public void close() {
+        }
     }
 
     private static BatchDeliveryException assertBatchFailure(Throwable expectedFailure, Runnable action) {
