@@ -16,8 +16,11 @@
 
 package io.helidon.extensions.langchain4j.providers.oci.genai;
 
-import java.util.List;
-import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
@@ -43,6 +46,7 @@ import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.sameInstance;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -176,7 +180,7 @@ class OciGenAiModelFactoryLifecycleTest {
         var constructionFailure = new IllegalArgumentException("model construction failed");
         var cleanupFailure = new IllegalStateException("model cleanup failed");
         doThrow(cleanupFailure).when(model).close();
-        var factory = new FailingModelFactory(twoModelConfig(), model, constructionFailure);
+        var factory = new FailingModelFactory(twoOwnedModelConfig(), model, constructionFailure);
 
         var actual = assertThrows(IllegalArgumentException.class, factory::services);
 
@@ -188,10 +192,138 @@ class OciGenAiModelFactoryLifecycleTest {
         verify(model, times(1)).close();
     }
 
+    @Test
+    void retriesInitializationAfterConstructionFailure() {
+        var model = Mockito.mock(OciGenAiChatModel.class);
+        var constructionFailure = new IllegalArgumentException("first construction failed");
+        var factory = new RetryingModelFactory(ownedModelConfig(), model, constructionFailure);
+
+        assertThat(assertThrows(IllegalArgumentException.class, factory::services), sameInstance(constructionFailure));
+        assertThat(factory.services(), hasSize(1));
+        assertThat(factory.createCount(), is(2));
+
+        factory.preDestroy();
+        verify(model, times(1)).close();
+    }
+
+    @Test
+    void initializesOnlyOnceWithoutHoldingTheFactoryMonitor() throws Exception {
+        var model = Mockito.mock(OciGenAiChatModel.class);
+        var factory = new BlockingModelFactory(ownedModelConfig(), model);
+        var start = new CountDownLatch(1);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> {
+                await(start);
+                return factory.services();
+            });
+            var second = executor.submit(() -> {
+                await(start);
+                return factory.services();
+            });
+
+            synchronized (factory) {
+                start.countDown();
+                assertThat(factory.awaitConstruction(), is(true));
+            }
+
+            assertThat(factory.createCount(), is(1));
+            factory.continueConstruction();
+
+            var firstServices = first.get(10, TimeUnit.SECONDS);
+            var secondServices = second.get(10, TimeUnit.SECONDS);
+            assertThat(firstServices, sameInstance(secondServices));
+            assertThat(firstServices, hasSize(1));
+            assertThat(factory.createCount(), is(1));
+        }
+
+        factory.preDestroy();
+        verify(model, times(1)).close();
+    }
+
+    @Test
+    void shutdownWakesServicesWaiterAndClosesLateModel() throws Exception {
+        var model = Mockito.mock(OciGenAiChatModel.class);
+        var factory = new BlockingModelFactory(ownedModelConfig(), model);
+        var servicesWaiterThread = new AtomicReference<Thread>();
+        var servicesWaiterStarted = new CountDownLatch(1);
+
+        try (var executor = Executors.newFixedThreadPool(3)) {
+            try {
+                var services = executor.submit(factory::services);
+                assertThat(factory.awaitConstruction(), is(true));
+                var waitingServices = executor.submit(() -> {
+                    servicesWaiterThread.set(Thread.currentThread());
+                    servicesWaiterStarted.countDown();
+                    try {
+                        return factory.services();
+                    } finally {
+                        factory.continueConstruction();
+                    }
+                });
+
+                assertThat(servicesWaiterStarted.await(10, TimeUnit.SECONDS), is(true));
+                assertThat(awaitWaiting(servicesWaiterThread.get()), is(true));
+                var shutdown = executor.submit(factory::preDestroy);
+
+                assertThat(waitingServices.get(10, TimeUnit.SECONDS), is(empty()));
+                assertThat(services.get(10, TimeUnit.SECONDS), is(empty()));
+                shutdown.get(10, TimeUnit.SECONDS);
+            } finally {
+                factory.continueConstruction();
+            }
+        }
+
+        assertThat(factory.services(), is(empty()));
+        verify(model, times(1)).close();
+        factory.preDestroy();
+        verify(model, times(1)).close();
+    }
+
+    @Test
+    void keepsOwnershipPrivateAndDerivedFromConfiguration(ServiceRegistry registry) {
+        registry.get(GenerativeAiInferenceClient.class);
+        var ownedModel = Mockito.mock(OciGenAiChatModel.class);
+        var borrowedModel = Mockito.mock(OciGenAiChatModel.class);
+        var ownedFactory = new FixedModelFactory(twoOwnedModelConfig(), ownedModel);
+        var borrowedFactory = new FixedModelFactory(twoModelConfig(), borrowedModel);
+
+        assertThat(ownedFactory.services(), hasSize(2));
+        assertThat(borrowedFactory.services(), hasSize(2));
+
+        ownedFactory.preDestroy();
+        borrowedFactory.preDestroy();
+
+        verify(ownedModel, times(1)).close();
+        verify(borrowedModel, never()).close();
+    }
+
     private static long closeInvocationCount(Object client) {
         return Mockito.mockingDetails(client).getInvocations().stream()
                 .filter(invocation -> invocation.getMethod().getName().equals("close"))
                 .count();
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out waiting for the test latch.");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting for the test latch.", e);
+        }
+    }
+
+    private static boolean awaitWaiting(Thread thread) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            if (thread.getState() == Thread.State.WAITING) {
+                return true;
+            }
+            Thread.onSpinWait();
+        }
+        return false;
     }
 
     private static void assertClosed(OciGenAiChatModel model) {
@@ -234,6 +366,25 @@ class OciGenAiModelFactoryLifecycleTest {
         return Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
     }
 
+    private static Config twoOwnedModelConfig() {
+        // language=YAML
+        var yaml = """
+                langchain4j:
+                  models:
+                    first:
+                      provider: oci-gen-ai
+                    second:
+                      provider: oci-gen-ai
+                  providers:
+                    oci-gen-ai:
+                      model-name: model-name
+                      compartment-id: compartment-id
+                      region: us-ashburn-1
+                      gen-ai-client-discover-services: false
+                """;
+        return Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
+    }
+
     private static Config mixedAuthAndAsyncClientConfig() {
         // language=YAML
         var yaml = """
@@ -263,14 +414,81 @@ class OciGenAiModelFactoryLifecycleTest {
         }
 
         @Override
-        protected Optional<OciGenAiChatModel> buildModel(String modelName,
-                                                         Config config,
-                                                         List<AutoCloseable> ownedModels) {
+        protected OciGenAiChatModel create(OciGenAiChatModelConfig config) {
             if (buildCount++ == 0) {
-                ownedModels.add(model);
-                return Optional.of(model);
+                return model;
             }
             throw constructionFailure;
+        }
+    }
+
+    private static final class RetryingModelFactory extends OciGenAiChatModelFactory {
+        private final OciGenAiChatModel model;
+        private final RuntimeException constructionFailure;
+        private final AtomicInteger createCount = new AtomicInteger();
+
+        private RetryingModelFactory(Config config, OciGenAiChatModel model, RuntimeException constructionFailure) {
+            super(config);
+            this.model = model;
+            this.constructionFailure = constructionFailure;
+        }
+
+        @Override
+        protected OciGenAiChatModel create(OciGenAiChatModelConfig config) {
+            if (createCount.getAndIncrement() == 0) {
+                throw constructionFailure;
+            }
+            return model;
+        }
+
+        private int createCount() {
+            return createCount.get();
+        }
+    }
+
+    private static final class BlockingModelFactory extends OciGenAiChatModelFactory {
+        private final OciGenAiChatModel model;
+        private final CountDownLatch constructionStarted = new CountDownLatch(1);
+        private final CountDownLatch continueConstruction = new CountDownLatch(1);
+        private final AtomicInteger createCount = new AtomicInteger();
+
+        private BlockingModelFactory(Config config, OciGenAiChatModel model) {
+            super(config);
+            this.model = model;
+        }
+
+        @Override
+        protected OciGenAiChatModel create(OciGenAiChatModelConfig config) {
+            createCount.incrementAndGet();
+            constructionStarted.countDown();
+            await(continueConstruction);
+            return model;
+        }
+
+        private boolean awaitConstruction() throws InterruptedException {
+            return constructionStarted.await(10, TimeUnit.SECONDS);
+        }
+
+        private void continueConstruction() {
+            continueConstruction.countDown();
+        }
+
+        private int createCount() {
+            return createCount.get();
+        }
+    }
+
+    private static final class FixedModelFactory extends OciGenAiChatModelFactory {
+        private final OciGenAiChatModel model;
+
+        private FixedModelFactory(Config config, OciGenAiChatModel model) {
+            super(config);
+            this.model = model;
+        }
+
+        @Override
+        protected OciGenAiChatModel create(OciGenAiChatModelConfig config) {
+            return model;
         }
     }
 }

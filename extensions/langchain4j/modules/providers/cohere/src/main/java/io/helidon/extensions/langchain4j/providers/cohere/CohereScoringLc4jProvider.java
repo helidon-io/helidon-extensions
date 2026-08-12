@@ -16,7 +16,6 @@
 
 package io.helidon.extensions.langchain4j.providers.cohere;
 
-import java.net.Proxy;
 import java.util.Optional;
 
 import io.helidon.builder.api.Option;
@@ -44,27 +43,13 @@ interface CohereScoringLc4jProvider {
     Optional<HttpClientBuilder> httpClientBuilder();
 
     /**
-     * Proxy to use.
-     *
-     * @return an {@link java.util.Optional} containing HTTP proxy to use
-     */
-    @Option.Configured
-    @Option.RegistryService
-    @Option.Deprecated("httpClientBuilder")
-    @AiProvider.CustomBuilderMapping
-    Optional<Proxy> proxy();
-
-    /**
-     * Customizes the model builder to preserve the legacy proxy configuration through the new LangChain4j HTTP client
-     * abstraction.
+     * Customizes the model builder with the configured LangChain4j HTTP client.
      *
      * @return partially configured LangChain4j model builder
      */
     default CohereScoringModel.CohereScoringModelBuilder configuredBuilder() {
         var modelBuilder = CohereScoringModel.builder();
-        httpClientBuilder()
-                .or(() -> proxy().map(CohereHttpClientSupport::create))
-                .ifPresent(modelBuilder::httpClientBuilder);
+        httpClientBuilder().ifPresent(modelBuilder::httpClientBuilder);
         return modelBuilder;
     }
 }
