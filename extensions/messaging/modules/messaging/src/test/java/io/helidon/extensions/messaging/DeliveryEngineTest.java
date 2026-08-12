@@ -377,53 +377,6 @@ class DeliveryEngineTest {
     }
 
     @Test
-    void compatibilityReservationEnforcesItsMessageBound() {
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public String channelName() {
-                return "orders";
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> message) {
-            }
-        };
-        ConnectorDeliveryReservation reservation = context.reserveDelivery(1);
-        MessagingRejectedException oversized = assertThrows(
-                MessagingRejectedException.class,
-                () -> start(reservation, List.of(message(1), message(1)), () -> { }));
-        assertEquals(MessagingRejectedException.Reason.OVERSIZED, oversized.reason());
-        assertThrows(IllegalStateException.class,
-                     () -> start(reservation, List.of(message(1)), () -> { }));
-
-    }
-
-    @Test
-    void compatibilityReservationRejectsNullDeliveryHandle() {
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public String channelName() {
-                return "orders";
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> message) {
-            }
-
-            @Override
-            public <T> ConnectorDelivery submitDelivery(MessageBatch<T> batch,
-                                                        Runnable delivery) {
-                return null;
-            }
-        };
-        ConnectorDeliveryReservation reservation = context.reserveDelivery(1);
-        assertThrows(NullPointerException.class,
-                     () -> start(reservation, List.of(message(1)), () -> { }));
-        assertThrows(IllegalStateException.class,
-                     () -> start(reservation, List.of(message(1)), () -> { }));
-    }
-
-    @Test
     void runtimeReservationRejectsActualMessageCountBeyondReservationAndCloses() {
         MessagingExecutionConfig config = configBuilder()
                 .maxPendingMessages(2)
@@ -619,6 +572,39 @@ class DeliveryEngineTest {
             ConnectorDelivery delivery = tryStart(reservation, List.of(message(1)), () -> { })
                     .orElseThrow();
             await(delivery);
+        }
+    }
+
+    @Test
+    void repeatedTryStartCallsShareReservationAdmissionTimeoutBudget() throws Exception {
+        MessagingExecutionConfig config = configBuilder()
+                .maxPendingMessages(1)
+                .maxInFlightMessages(1)
+                .admissionTimeout(Duration.ofMillis(100))
+                .build();
+        try (DeliveryEngine engine = engine(config, "orders")) {
+            CountDownLatch activeStarted = new CountDownLatch(1);
+            CountDownLatch releaseActive = new CountDownLatch(1);
+            ConnectorDelivery active = submitConnectorDelivery(engine,
+                    "orders",
+                    List.of(message(1)),
+                    () -> {
+                        activeStarted.countDown();
+                        await(releaseActive);
+                    });
+            await(activeStarted);
+            ConnectorDeliveryReservation reservation = engine.reserveConnectorDelivery("orders", 1);
+            MessageBatch<Object> batch = batch(List.of(message(2)));
+
+            assertTrue(reservation.tryStart(batch).isEmpty());
+            Thread.sleep(150);
+            MessagingRejectedException timeout = assertThrows(MessagingRejectedException.class,
+                                                               () -> reservation.tryStart(batch));
+            assertEquals(MessagingRejectedException.Reason.TIMEOUT, timeout.reason());
+
+            releaseActive.countDown();
+            await(active);
+            engine.reserveConnectorDelivery("orders", 1).close();
         }
     }
 
@@ -1405,13 +1391,17 @@ class DeliveryEngineTest {
     private static ConnectorDelivery start(ConnectorDeliveryReservation reservation,
                                            List<? extends Message<?>> messages,
                                            Runnable action) {
-        return reservation.start(batch(messages), action);
+        ConnectorDelivery delivery = reservation.start(batch(messages));
+        action.run();
+        return delivery;
     }
 
     private static java.util.Optional<ConnectorDelivery> tryStart(ConnectorDeliveryReservation reservation,
                                                                  List<? extends Message<?>> messages,
                                                                  Runnable action) {
-        return reservation.tryStart(batch(messages), action);
+        java.util.Optional<ConnectorDelivery> delivery = reservation.tryStart(batch(messages));
+        delivery.ifPresent(ignored -> action.run());
+        return delivery;
     }
 
     private static MessageBatch<Object> batch(List<? extends Message<?>> messages) {

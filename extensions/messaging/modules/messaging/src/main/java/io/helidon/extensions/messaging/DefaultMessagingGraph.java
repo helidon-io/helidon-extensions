@@ -224,7 +224,7 @@ final class DefaultMessagingGraph implements MessagingGraph {
 
     void addIncomingConnector(String name,
                               IncomingConnector connector,
-                              ConnectorSourceContext context) {
+                              IncomingConnectorContext context) {
         Objects.requireNonNull(name);
         Objects.requireNonNull(connector);
         Objects.requireNonNull(context);
@@ -245,15 +245,20 @@ final class DefaultMessagingGraph implements MessagingGraph {
     }
 
     void addIncomingConnector(String name, IncomingConnector connector) {
-        addIncomingConnector(name, connector, new ConnectorSourceContext() {
+        addIncomingConnector(name, connector, new IncomingConnectorContext() {
             @Override
-            public String channelName() {
+            public String channel() {
                 return name;
             }
 
             @Override
-            public <T> void emitBatch(MessageBatch<T> batch) {
-                throw new UnsupportedOperationException("Test incoming context does not emit messages");
+            public ConnectorDeliveryReservation reserveDelivery() {
+                throw new UnsupportedOperationException("Test incoming context does not deliver messages");
+            }
+
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery() {
+                throw new UnsupportedOperationException("Test incoming context does not deliver messages");
             }
         });
     }
@@ -567,7 +572,7 @@ final class DefaultMessagingGraph implements MessagingGraph {
                 continue;
             }
             CompletableFuture<Void> forceCompletion = cleanupOrdering.register(connector);
-            OperationResult result = invokeCleanupBounded("force close connector source "
+            OperationResult result = invokeCleanupBounded("force close incoming connector "
                                                                   + connector.getClass().getName(),
                                                           deadline,
                                                           connector::forceClose,
@@ -590,7 +595,7 @@ final class DefaultMessagingGraph implements MessagingGraph {
             if (connector == null) {
                 continue;
             }
-            String operation = "close connector source " + connector.getClass().getName();
+            String operation = "close incoming connector " + connector.getClass().getName();
             OperationResult result = cleanupOrdering == null
                     ? invokeCleanupBounded(operation, deadline, connector::close)
                     : invokeCleanupAfterForce(operation,
@@ -1168,7 +1173,7 @@ final class DefaultMessagingGraph implements MessagingGraph {
 
         private SourceBinding(String name,
                               IncomingConnector incomingConnector,
-                              ConnectorSourceContext incomingContext) {
+                              IncomingConnectorContext incomingContext) {
             this.name = name;
             this.source = null;
             this.connector = incomingConnector;
@@ -1296,13 +1301,13 @@ final class DefaultMessagingGraph implements MessagingGraph {
         }
     }
 
-    private static final class ManagedSourceContext implements ConnectorSourceContext {
-        private final ConnectorSourceContext delegate;
+    private static final class ManagedSourceContext implements IncomingConnectorContext {
+        private final IncomingConnectorContext delegate;
         private final CountDownLatch ready = new CountDownLatch(1);
         private final CountDownLatch running = new CountDownLatch(1);
         private final AtomicBoolean cancelled = new AtomicBoolean();
 
-        private ManagedSourceContext(ConnectorSourceContext delegate) {
+        private ManagedSourceContext(IncomingConnectorContext delegate) {
             this.delegate = Objects.requireNonNull(delegate);
         }
 
@@ -1319,13 +1324,8 @@ final class DefaultMessagingGraph implements MessagingGraph {
         }
 
         @Override
-        public FailurePolicy failurePolicy() {
-            return delegate.failurePolicy();
-        }
-
-        @Override
-        public String channelName() {
-            return delegate.channelName();
+        public String channel() {
+            return delegate.channel();
         }
 
         @Override
@@ -1334,40 +1334,13 @@ final class DefaultMessagingGraph implements MessagingGraph {
         }
 
         @Override
-        public Optional<Duration> admissionTimeout() {
-            return delegate.admissionTimeout();
+        public ConnectorDeliveryReservation reserveDelivery() {
+            return delegate.reserveDelivery();
         }
 
         @Override
-        public ConnectorDeliveryReservation reserveDelivery(int maxMessages) {
-            return delegate.reserveDelivery(maxMessages);
-        }
-
-        @Override
-        public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
-            return delegate.tryReserveDelivery(maxMessages);
-        }
-
-        @Override
-        public <T> void emitBatch(MessageBatch<T> batch) {
-            delegate.emitBatch(batch);
-        }
-
-        @Override
-        public <T> ConnectorDelivery submitDelivery(MessageBatch<T> batch, Runnable delivery) {
-            return delegate.submitDelivery(batch, delivery);
-        }
-
-        @Override
-        public <T> Optional<ConnectorDelivery> trySubmitDelivery(MessageBatch<T> batch, Runnable delivery) {
-            return delegate.trySubmitDelivery(batch, delivery);
-        }
-
-        @Override
-        public <T> FailureResult handleFailure(MessageBatch<T> batch,
-                                               int failedAttempt,
-                                               RuntimeException failure) {
-            return delegate.handleFailure(batch, failedAttempt, failure);
+        public Optional<ConnectorDeliveryReservation> tryReserveDelivery() {
+            return delegate.tryReserveDelivery();
         }
 
         private boolean awaitReady(Duration timeout) {

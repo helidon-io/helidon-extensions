@@ -22,9 +22,11 @@ import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -209,17 +211,17 @@ class ChannelRegistry implements MessagingRuntime {
     }
 
     /**
-     * Create a context for an incoming connector source.
+     * Create a context for an incoming connector.
      *
      * @param channel channel name
-     * @return connector source context
+     * @return incoming connector context
      */
-    ConnectorSourceContext incomingContext(String channel) {
+    IncomingConnectorContext incomingContext(String channel) {
         return incomingContext(channel, FailurePolicy.create());
     }
 
-    private ConnectorSourceContext incomingContext(String channel, FailurePolicy failurePolicy) {
-        return new RegistryConnectorSourceContext(channel, failurePolicy);
+    private IncomingConnectorContext incomingContext(String channel, FailurePolicy failurePolicy) {
+        return new RegistryIncomingConnectorContext(channel, failurePolicy);
     }
 
     private void validateRegistrationIdentities(List<ConsumerRegistration> consumerRegistrations,
@@ -933,7 +935,7 @@ class ChannelRegistry implements MessagingRuntime {
 
     private void configureIncomingConnectors(List<IncomingDescriptor> descriptors) {
         for (IncomingDescriptor descriptor : descriptors) {
-            ConnectorSourceContext context = incomingContext(descriptor.channel(), descriptor.failurePolicy());
+            IncomingConnectorContext context = incomingContext(descriptor.channel(), descriptor.failurePolicy());
             IncomingConnector connector = Objects.requireNonNull(
                     descriptor.provider().createIncomingConnector(descriptor.config()),
                     "Incoming connector");
@@ -1124,23 +1126,19 @@ class ChannelRegistry implements MessagingRuntime {
         return index == -1 ? key : key.substring(0, index);
     }
 
-    private final class RegistryConnectorSourceContext implements ConnectorSourceContext {
+    private final class RegistryIncomingConnectorContext implements IncomingConnectorContext {
         private final String channel;
         private final FailurePolicy failurePolicy;
+        private long reservationDeadline = Long.MIN_VALUE;
 
-        private RegistryConnectorSourceContext(String channel, FailurePolicy failurePolicy) {
+        private RegistryIncomingConnectorContext(String channel, FailurePolicy failurePolicy) {
             this.channel = channel;
             this.failurePolicy = failurePolicy;
         }
 
         @Override
-        public String channelName() {
+        public String channel() {
             return channel;
-        }
-
-        @Override
-        public FailurePolicy failurePolicy() {
-            return failurePolicy;
         }
 
         @Override
@@ -1149,95 +1147,284 @@ class ChannelRegistry implements MessagingRuntime {
         }
 
         @Override
-        public Optional<Duration> admissionTimeout() {
-            return deliveryEngine.admissionTimeout(channel);
+        public synchronized ConnectorDeliveryReservation reserveDelivery() {
+            reservationDeadline = Long.MIN_VALUE;
+            return deliveryEngine.reserveConnectorDelivery(channel,
+                                                            maxDeliveryMessages(),
+                                                            this::processDelivery);
         }
 
         @Override
-        public ConnectorDeliveryReservation reserveDelivery(int maxMessages) {
-            return deliveryEngine.reserveConnectorDelivery(channel, maxMessages);
-        }
-
-        @Override
-        public Optional<ConnectorDeliveryReservation> tryReserveDelivery(int maxMessages) {
-            return deliveryEngine.tryReserveConnectorDelivery(channel, maxMessages);
-        }
-
-        @Override
-        public <T> void emit(Message<T> message) {
-            ChannelRegistry.this.emit(channel, message);
-        }
-
-        @Override
-        public <T> void emitBatch(MessageBatch<T> messages) {
-            ChannelRegistry.this.emitBatch(channel, messages);
-        }
-
-        @Override
-        public <T> ConnectorDelivery submitDelivery(MessageBatch<T> messages, Runnable delivery) {
-            return deliveryEngine.submitConnectorDelivery(channel, messages, delivery);
-        }
-
-        @Override
-        public <T> Optional<ConnectorDelivery> trySubmitDelivery(MessageBatch<T> messages, Runnable delivery) {
-            return deliveryEngine.trySubmitConnectorDelivery(channel, messages, delivery);
-        }
-
-        @Override
-        public <T> FailureResult handleFailure(MessageBatch<T> messages,
-                                               int failedAttempt,
-                                               RuntimeException failure) {
-            if (failedAttempt < 1) {
-                throw new IllegalArgumentException("failedAttempt must be greater than zero");
+        public synchronized Optional<ConnectorDeliveryReservation> tryReserveDelivery() {
+            long started = System.nanoTime();
+            long timeout = deliveryEngine.admissionTimeout(channel)
+                    .map(Duration::toNanos)
+                    .orElse(Long.MAX_VALUE);
+            long remaining = timeout;
+            if (reservationDeadline != Long.MIN_VALUE) {
+                remaining = reservationDeadline - started;
+                if (remaining <= 0) {
+                    throw new MessagingRejectedException(
+                            channel,
+                            MessagingRejectedException.Reason.TIMEOUT,
+                            "Messaging delivery reservation timed out on channel " + channel);
+                }
             }
-            RuntimeException alignedFailure = BatchDeliveryException.align(messages, failure);
+
+            Optional<ConnectorDeliveryReservation> result = deliveryEngine.tryReserveConnectorDelivery(
+                    channel,
+                    maxDeliveryMessages(),
+                    remaining,
+                    this::processDelivery);
+            if (result.isPresent()) {
+                reservationDeadline = Long.MIN_VALUE;
+            } else if (reservationDeadline == Long.MIN_VALUE && timeout != Long.MAX_VALUE) {
+                reservationDeadline = saturatedAdd(started, timeout);
+                if (reservationDeadline - System.nanoTime() <= 0) {
+                    throw new MessagingRejectedException(
+                            channel,
+                            MessagingRejectedException.Reason.TIMEOUT,
+                            "Messaging delivery reservation timed out on channel " + channel);
+                }
+            }
+            return result;
+        }
+
+        private void processDelivery(MessageBatch<?> root) {
+            boolean[] settled = new boolean[root.size()];
+            Deque<PendingDelivery> pending = new ArrayDeque<>();
+            pending.addFirst(new PendingDelivery(root, 0));
+            while (!pending.isEmpty()) {
+                ensureDeliveryActive();
+                PendingDelivery current = pending.removeFirst();
+                try {
+                    ChannelRegistry.this.emitBatch(channel, current.batch());
+                    markSettled(root, settled, current.batch());
+                } catch (RuntimeException failure) {
+                    handleDeliveryFailure(root, settled, pending, current, failure);
+                }
+            }
+        }
+
+        private void handleDeliveryFailure(MessageBatch<?> root,
+                                           boolean[] settled,
+                                           Deque<PendingDelivery> pending,
+                                           PendingDelivery current,
+                                           RuntimeException failure) {
+            ensureDeliveryActive();
+            BatchDeliveryException alignedFailure = batchFailure(current.batch(), failure);
+            List<Integer> failedIndexes = new ArrayList<>();
+            List<Integer> deferredIndexes = new ArrayList<>();
+            for (int i = 0; i < current.batch().size(); i++) {
+                switch (alignedFailure.outcome(i).status()) {
+                case SUCCEEDED -> markSettled(root, settled, current.batch(), i);
+                case NOT_ATTEMPTED -> deferredIndexes.add(i);
+                case FAILED, INDETERMINATE -> failedIndexes.add(i);
+                default -> throw new IllegalStateException("Unsupported batch item status: "
+                                                                   + alignedFailure.outcome(i).status());
+                }
+            }
+
+            if (failedIndexes.isEmpty()) {
+                // A completely deferred dispatch still consumes an attempt so a bounded policy cannot spin forever.
+                failedIndexes.addAll(deferredIndexes);
+                deferredIndexes.clear();
+            } else if (!deferredIndexes.isEmpty()) {
+                pending.addFirst(new PendingDelivery(current.batch().subset(deferredIndexes),
+                                                     current.failedAttempts()));
+            }
+
+            MessageBatch<?> failedBatch = current.batch().subset(failedIndexes);
+            BatchDeliveryException policyFailure = batchFailure(failedBatch, alignedFailure);
+            int failedAttempt = current.failedAttempts() + 1;
             if (failurePolicy.maxAttempts() == 0 || failedAttempt < failurePolicy.maxAttempts()) {
-                return FailureResult.RETRY;
+                awaitRetry();
+                pending.addFirst(new PendingDelivery(failedBatch, failedAttempt));
+                return;
             }
 
-            return switch (failurePolicy.onExhausted()) {
-            case FAIL -> throw alignedFailure;
+            ensureDeliveryActive();
+            switch (failurePolicy.onExhausted()) {
+            case FAIL -> throw terminalFailure(root,
+                                               settled,
+                                               failedBatch,
+                                               policyFailure,
+                                               "Messaging delivery failed after " + failedAttempt
+                                                       + " attempt(s) on channel " + channel);
             case DROP -> {
+                ensureDeliveryActive();
                 LOGGER.log(System.Logger.Level.WARNING,
                            "Messaging delivery failed after " + failedAttempt
-                                   + " attempt(s); dropping " + messages.size()
+                                   + " attempt(s); dropping " + failedBatch.size()
                                    + " message(s) from channel " + channel,
-                           alignedFailure);
-                yield FailureResult.SETTLED;
+                           policyFailure);
+                markSettled(root, settled, failedBatch);
             }
-            case DEAD_LETTER -> {
-                String target = failurePolicy.deadLetterChannel().orElseThrow();
-                List<DeadLetterMessage<T>> deadLetters = new ArrayList<>(messages.size());
-                for (int i = 0; i < messages.size(); i++) {
-                    deadLetters.add(DeadLetterMessage.create(messages.get(i),
-                                                             channel,
-                                                             failedAttempt,
-                                                             deadLetterFailure(messages, i, alignedFailure)));
-                }
-                MessageBatch<T> deadLetterBatch = messages.derive(deadLetters);
+            case DEAD_LETTER -> routeDeadLetters(root,
+                                                settled,
+                                                failedBatch,
+                                                failedAttempt,
+                                                policyFailure);
+            default -> throw new IllegalStateException("Unsupported failure disposition: "
+                                                               + failurePolicy.onExhausted());
+            }
+        }
+
+        private void awaitRetry() {
+            ensureDeliveryActive();
+            try {
+                Thread.sleep(failurePolicy.retryDelay());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new MessagingRejectedException(
+                        channel,
+                        MessagingRejectedException.Reason.CANCELLED,
+                        "Messaging delivery retry was cancelled on channel " + channel,
+                        e);
+            }
+        }
+
+        private void routeDeadLetters(MessageBatch<?> root,
+                                      boolean[] settled,
+                                      MessageBatch<?> failedBatch,
+                                      int failedAttempt,
+                                      BatchDeliveryException applicationFailure) {
+            String target = failurePolicy.deadLetterChannel().orElseThrow();
+            MessageBatch<?> remaining = failedBatch;
+            while (true) {
+                ensureDeliveryActive();
+                MessageBatch<?> deadLetters = deadLetterBatch(remaining, failedAttempt, applicationFailure);
                 try {
-                    ChannelRegistry.this.emitRoutedBatch(target, deadLetterBatch);
+                    ChannelRegistry.this.emitRoutedBatch(target, deadLetters);
+                    markSettled(root, settled, remaining);
+                    return;
                 } catch (RuntimeException routeFailure) {
-                    RuntimeException result;
-                    if (routeFailure instanceof BatchDeliveryException batchFailure
-                            && deadLetterBatch.sameDelivery(batchFailure.batch())) {
-                        result = new BatchDeliveryException(
-                                "Dead-letter delivery from channel " + channel + " to channel " + target + " failed",
-                                messages,
-                                batchFailure.outcomes(),
-                                batchFailure);
-                    } else {
-                        result = BatchDeliveryException.indeterminate(
-                                "Dead-letter delivery from channel " + channel + " to channel " + target,
-                                messages,
-                                routeFailure);
+                    ensureDeliveryActive();
+                    BatchDeliveryException alignedRouteFailure = batchFailure(deadLetters, routeFailure);
+                    List<Integer> succeeded = new ArrayList<>();
+                    List<Integer> unresolved = new ArrayList<>();
+                    for (int i = 0; i < remaining.size(); i++) {
+                        if (alignedRouteFailure.outcome(i).status() == BatchItemStatus.SUCCEEDED) {
+                            succeeded.add(i);
+                        } else {
+                            unresolved.add(i);
+                        }
                     }
-                    result.addSuppressed(alignedFailure);
+                    if (!succeeded.isEmpty()) {
+                        markSettled(root, settled, remaining.subset(succeeded));
+                    }
+                    if (!succeeded.isEmpty() && !unresolved.isEmpty()) {
+                        remaining = remaining.subset(unresolved);
+                        continue;
+                    }
+
+                    MessageBatch<?> unresolvedBatch = unresolved.isEmpty()
+                            ? remaining
+                            : remaining.subset(unresolved);
+                    BatchDeliveryException unresolvedFailure = unresolved.isEmpty()
+                            ? batchFailure(unresolvedBatch, routeFailure)
+                            : batchFailure(unresolvedBatch, alignedRouteFailure);
+                    BatchDeliveryException result = terminalFailure(
+                            root,
+                            settled,
+                            unresolvedBatch,
+                            unresolvedFailure,
+                            "Dead-letter delivery from channel " + channel + " to channel " + target + " failed");
+                    result.addSuppressed(applicationFailure);
                     throw result;
                 }
-                yield FailureResult.SETTLED;
             }
+        }
+
+        private MessageBatch<?> deadLetterBatch(MessageBatch<?> messages,
+                                                int failedAttempt,
+                                                RuntimeException failure) {
+            List<DeadLetterMessage<Object>> deadLetters = new ArrayList<>(messages.size());
+            for (int i = 0; i < messages.size(); i++) {
+                deadLetters.add(DeadLetterMessage.create(castMessage(messages.get(i)),
+                                                         channel,
+                                                         failedAttempt,
+                                                         deadLetterFailure(messages, i, failure)));
+            }
+            return messages.derive(deadLetters);
+        }
+
+        @SuppressWarnings("unchecked")
+        private Message<Object> castMessage(Message<?> message) {
+            return (Message<Object>) message;
+        }
+
+        private BatchDeliveryException batchFailure(MessageBatch<?> batch, RuntimeException failure) {
+            RuntimeException aligned = BatchDeliveryException.align(batch, failure);
+            return aligned instanceof BatchDeliveryException batchFailure
+                    ? batchFailure
+                    : BatchDeliveryException.indeterminate("Messaging delivery on channel " + channel,
+                                                           batch,
+                                                           aligned);
+        }
+
+        private BatchDeliveryException terminalFailure(MessageBatch<?> root,
+                                                       boolean[] settled,
+                                                       MessageBatch<?> unresolved,
+                                                       BatchDeliveryException failure,
+                                                       String message) {
+            List<BatchItemOutcome> outcomes = new ArrayList<>(root.size());
+            for (int i = 0; i < root.size(); i++) {
+                outcomes.add(settled[i]
+                                     ? BatchItemOutcome.succeeded(i)
+                                     : BatchItemOutcome.notAttempted(i));
+            }
+            for (int i = 0; i < unresolved.size(); i++) {
+                int rootIndex = unresolved.lineageIndexIn(root, i);
+                if (rootIndex < 0) {
+                    throw new MessagingException("Delivery failure does not belong to retained batch " + root.id());
+                }
+                BatchItemOutcome outcome = failure.outcome(i);
+                outcomes.set(rootIndex, reindex(rootIndex, outcome));
+            }
+            Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+            BatchDeliveryException result = new BatchDeliveryException(message, root, outcomes, cause);
+            for (Throwable suppressed : failure.getSuppressed()) {
+                result.addSuppressed(suppressed);
+            }
+            return result;
+        }
+
+        private BatchItemOutcome reindex(int index, BatchItemOutcome outcome) {
+            return switch (outcome.status()) {
+            case SUCCEEDED -> BatchItemOutcome.succeeded(index);
+            case FAILED -> BatchItemOutcome.failed(index, outcome.failure().orElse(null));
+            case NOT_ATTEMPTED -> BatchItemOutcome.notAttempted(index);
+            case INDETERMINATE -> BatchItemOutcome.indeterminate(index, outcome.failure().orElse(null));
+            default -> throw new IllegalStateException("Unsupported batch item status: " + outcome.status());
             };
+        }
+
+        private void ensureDeliveryActive() {
+            DeliveryEngine.ensureCurrentDeliveryActive();
+            if (Thread.currentThread().isInterrupted()) {
+                throw new MessagingRejectedException(
+                        channel,
+                        MessagingRejectedException.Reason.CANCELLED,
+                        "Messaging delivery was cancelled on channel " + channel);
+            }
+        }
+
+        private void markSettled(MessageBatch<?> root, boolean[] settled, MessageBatch<?> batch) {
+            for (int i = 0; i < batch.size(); i++) {
+                markSettled(root, settled, batch, i);
+            }
+        }
+
+        private void markSettled(MessageBatch<?> root,
+                                 boolean[] settled,
+                                 MessageBatch<?> batch,
+                                 int localIndex) {
+            int rootIndex = batch.lineageIndexIn(root, localIndex);
+            if (rootIndex < 0) {
+                throw new MessagingException("Delivery settlement does not belong to retained batch " + root.id());
+            }
+            settled[rootIndex] = true;
         }
 
         private RuntimeException deadLetterFailure(MessageBatch<?> batch,
@@ -1258,6 +1445,14 @@ class ChannelRegistry implements MessagingRuntime {
             }
             return current;
         }
+    }
+
+    private static long saturatedAdd(long first, long second) {
+        long result = first + second;
+        return ((first ^ result) & (second ^ result)) < 0 ? Long.MAX_VALUE : result;
+    }
+
+    private record PendingDelivery(MessageBatch<?> batch, int failedAttempts) {
     }
 
     private static final class ResolvedParameterizedType implements ParameterizedType {

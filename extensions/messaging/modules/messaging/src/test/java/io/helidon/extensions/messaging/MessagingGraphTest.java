@@ -109,7 +109,7 @@ class MessagingGraphTest {
         };
         IncomingConnector incoming = new IncomingConnector() {
             @Override
-            public void run(ConnectorSourceContext context) {
+            public void run(IncomingConnectorContext context) {
                 if (!outgoingReady.get()) {
                     throw new AssertionError("Incoming connector ran before outgoing readiness");
                 }
@@ -321,7 +321,7 @@ class MessagingGraphTest {
         AtomicInteger forceCalls = new AtomicInteger();
         IncomingConnector source = new IncomingConnector() {
             @Override
-            public void run(ConnectorSourceContext context) {
+            public void run(IncomingConnectorContext context) {
                 running.countDown();
                 readinessEntered.countDown();
                 await(releaseReadiness);
@@ -571,7 +571,7 @@ class MessagingGraphTest {
         CountDownLatch running = new CountDownLatch(1);
         IncomingConnector source = new IncomingConnector() {
             @Override
-            public void run(ConnectorSourceContext context) {
+            public void run(IncomingConnectorContext context) {
                 running.countDown();
                 throw sharedFailure;
             }
@@ -1004,7 +1004,7 @@ class MessagingGraphTest {
         }
 
         @Override
-        public void run(ConnectorSourceContext context) {
+        public void run(IncomingConnectorContext context) {
             events.add("incoming-run");
             running.countDown();
             events.add("incoming-ready");
@@ -1129,7 +1129,7 @@ class MessagingGraphTest {
         }
 
         @Override
-        public void run(ConnectorSourceContext context) {
+        public void run(IncomingConnectorContext context) {
             prepared.set(true);
             events().add("prepare-" + name());
             running.countDown();
@@ -1219,7 +1219,7 @@ class MessagingGraphTest {
         private final AtomicInteger runCalls = new AtomicInteger();
 
         @Override
-        public void run(ConnectorSourceContext context) {
+        public void run(IncomingConnectorContext context) {
             runCalls.incrementAndGet();
             running.countDown();
             try {
@@ -1275,7 +1275,7 @@ class MessagingGraphTest {
         private final AtomicReference<Thread> owner = new AtomicReference<>();
 
         @Override
-        public void run(ConnectorSourceContext context) {
+        public void run(IncomingConnectorContext context) {
             owner.set(Thread.currentThread());
             running.countDown();
             if (context.awaitRunning()) {
@@ -1310,7 +1310,7 @@ class MessagingGraphTest {
         }
 
         @Override
-        public void run(ConnectorSourceContext context) {
+        public void run(IncomingConnectorContext context) {
             running.countDown();
             if (context.awaitRunning()) {
                 admission.countDown();

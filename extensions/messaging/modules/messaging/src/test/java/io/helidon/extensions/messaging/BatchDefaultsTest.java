@@ -87,28 +87,6 @@ class BatchDefaultsTest {
     }
 
     @Test
-    void connectorSourceContextWrapsSingleMessageInBatch() {
-        AtomicReference<MessageBatch<?>> received = new AtomicReference<>();
-        ConnectorSourceContext context = new ConnectorSourceContext() {
-            @Override
-            public String channelName() {
-                return "orders";
-            }
-
-            @Override
-            public <T> void emitBatch(MessageBatch<T> batch) {
-                received.set(batch);
-            }
-        };
-        Message<String> message = Message.create("one");
-
-        context.emit(message);
-
-        assertEquals(1, received.get().size());
-        assertSame(message, received.get().get(0));
-    }
-
-    @Test
     void consumerRegistrationReceivesOnlyBatches() {
         AtomicReference<MessageBatch<?>> received = new AtomicReference<>();
         ConsumerRegistration registration = new ConsumerRegistration() {
