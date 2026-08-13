@@ -39,6 +39,8 @@ components:
         - $ref: '#/components/schemas/DeclaredBase'
         - type: object
           properties:
+            kind:
+              type: string
             whiskers:
               type: integer
               format: int32

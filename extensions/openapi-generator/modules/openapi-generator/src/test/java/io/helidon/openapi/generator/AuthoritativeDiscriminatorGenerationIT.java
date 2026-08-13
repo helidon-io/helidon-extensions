@@ -57,15 +57,14 @@ class AuthoritativeDiscriminatorGenerationIT {
         assertThat(base, not(containsString("void kind(")));
         assertThat(base, not(containsString("static BuilderBase<?, ? extends DeclaredBase> builder()")));
         assertThat(cat, containsString("return \"weird.alias\";"));
+        assertThat(cat, not(containsString("private String kind;")));
         assertThat(cat, not(containsString("void kind(")));
 
-        assertThat(metadataChoice, containsString("@Json.Polymorphic(key = \"category\")"));
-        assertThat(metadataChoice,
-                   containsString("@Json.Subtype(alias = \"alpha.v1\", value = MetadataAlpha.class)"));
-        assertThat(metadataChoice,
-                   containsString("@Json.Subtype(alias = \"MetadataBeta\", value = MetadataBeta.class)"));
+        assertThat(metadataChoice, containsString("@Json.Converter(MetadataChoice.MetadataChoiceJsonConverter.class)"));
+        assertThat(metadataChoice, containsString("case \"alpha.v1\" -> deserializeMetadataAlpha(jsonObject)"));
+        assertThat(metadataChoice, containsString("case \"MetadataBeta\" -> deserializeMetadataBeta(jsonObject)"));
         assertThat(metadataChoice, not(containsString("String category();")));
-        assertThat(metadataChoice, not(containsString("JsonConverter")));
+        assertThat(metadataChoice, not(containsString("@Json.Polymorphic")));
     }
 
     @Test
@@ -169,6 +168,18 @@ class AuthoritativeDiscriminatorGenerationIT {
             assertArrayEquals(Files.readAllBytes(file), Files.readAllBytes(secondRoot.resolve(relative)),
                               relative.toString());
         }
+    }
+
+    @Test
+    void diagnosticReferencesDoNotExposeUriCredentialsOrQueries() {
+        assertEquals("https://example.invalid/api.yaml#/components/schemas/Cat",
+                     HelidonDeclarativeCodegen.sanitizeDiagnosticReference(
+                             "https://user:password@example.invalid/api.yaml?access_token=value"
+                                     + "#/components/schemas/Cat"));
+        assertEquals("#/components/schemas/Cat",
+                     HelidonDeclarativeCodegen.sanitizeDiagnosticReference("#/components/schemas/Cat"));
+        assertEquals("file:/tmp/spec.yaml",
+                     HelidonDeclarativeCodegen.sanitizeDiagnosticReference("file:/tmp/spec.yaml?token=hidden"));
     }
 
     private Path generate(String name, String representation) throws Exception {

@@ -82,14 +82,26 @@ class ComposedSchemasGenerationIT {
     }
 
     @Test
+    void abstractIntermediateAllOfModelDoesNotInstantiateItself() throws IOException {
+        String content = read(modelFile("LayeredIntermediate.java"));
+        assertThat(content, containsString("public abstract class LayeredIntermediate extends LayeredBase"));
+        assertThat(content, containsString("class BuilderBase<B extends BuilderBase<B, T>"));
+        assertThat(content, not(containsString("new LayeredIntermediate()")));
+        assertThat(content, not(containsString("class Builder extends BuilderBase<Builder, LayeredIntermediate>")));
+
+        String leaf = read(modelFile("LayeredLeaf.java"));
+        assertThat(leaf, containsString("public class LayeredLeaf extends LayeredIntermediate"));
+        assertThat(leaf, containsString("super(new LayeredLeaf())"));
+    }
+
+    @Test
     void oneOfSchemaGeneratesInterface() throws IOException {
         String content = read(modelFile("Pet.java"));
         assertThat(content, containsString("public interface Pet"));
-        assertThat(content, containsString("@Json.Entity"));
-        assertThat(content, containsString("@Json.Polymorphic(key = \"kind\")"));
-        assertThat(content, containsString("@Json.Subtype(alias = \"cat$special\", value = Cat.class)"));
+        assertThat(content, containsString("@Json.Converter(Pet.PetJsonConverter.class)"));
+        assertThat(content, containsString("case \"cat$special\" -> deserializeCat(jsonObject)"));
         assertThat(content, containsString("String kind();"));
-        assertThat(content, not(containsString("PetJsonConverter")));
+        assertThat(content, not(containsString("@Json.Polymorphic")));
     }
 
     @Test
@@ -148,8 +160,7 @@ class ComposedSchemasGenerationIT {
     @Test
     void unmappedDiscriminatorDefaultsToSchemaName() throws IOException {
         String content = read(modelFile("Problem.java"));
-        assertThat(content, containsString("@Json.Subtype(alias = \"Error\", value = ApiError.class)"));
-        assertThat(content, not(containsString("alias = \"ApiError\"")));
+        assertThat(content, containsString("case \"Error\" -> deserializeApiError(jsonObject)"));
     }
 
     @Test

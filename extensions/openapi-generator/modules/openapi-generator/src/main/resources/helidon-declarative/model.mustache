@@ -59,6 +59,15 @@ import {{import}};
 {{#isDeprecated}}@Deprecated
 {{/isDeprecated}}public interface {{classname}} {
 
+{{#vendorExtensions.x-abstract-discriminator-accessors}}    /**
+     * Canonical OpenAPI discriminator value for the runtime subtype.
+     *
+     * @return exact declared discriminator alias
+     */
+    @Json.Ignore
+    {{{type}}} {{name}}();
+
+{{/vendorExtensions.x-abstract-discriminator-accessors}}
     final class {{classname}}JsonConverter implements JsonConverter<{{classname}}> {
 {{#vendorExtensions.x-union-members}}
         private JsonDeserializer<{{name}}> {{deserializerField}};
@@ -96,7 +105,11 @@ import {{import}};
 {{#vendorExtensions.x-has-union-discriminator}}
             String discriminatorValue = jsonObject.stringValue({{{vendorExtensions.x-union-discriminator-key-literal}}}).orElse(null);
             if (discriminatorValue != null) {
-                {{classname}} discriminatorMatch = deserializeByAlias(discriminatorValue, jsonObject);
+                JsonObject modelObject = JsonObject.builder()
+                        .from(jsonObject)
+                        .unset({{{vendorExtensions.x-union-discriminator-key-literal}}})
+                        .build();
+                {{classname}} discriminatorMatch = deserializeByAlias(discriminatorValue, modelObject);
                 if (discriminatorMatch != null) {
                     return discriminatorMatch;
                 }
@@ -370,22 +383,7 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
         return Set.of({{classname}}.class);
     }
 }
-{{/vendorExtensions.x-use-union-converter}}{{#vendorExtensions.x-use-polymorphic-union}}@Json.Entity
-@Json.Polymorphic(key = {{{vendorExtensions.x-polymorphic-key-literal}}})
-{{#vendorExtensions.x-polymorphic-subtypes}}@Json.Subtype(alias = {{{aliasLiteral}}}, value = {{name}}.class)
-{{/vendorExtensions.x-polymorphic-subtypes}}{{#isDeprecated}}@Deprecated
-{{/isDeprecated}}public interface {{classname}} {
-
-{{#vendorExtensions.x-abstract-discriminator-accessors}}    /**
-     * Canonical OpenAPI discriminator value for the runtime subtype.
-     *
-     * @return exact declared discriminator alias
-     */
-    @Json.Ignore
-    {{{type}}} {{name}}();
-
-{{/vendorExtensions.x-abstract-discriminator-accessors}}}
-{{/vendorExtensions.x-use-polymorphic-union}}{{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}@Json.Entity
+{{/vendorExtensions.x-use-union-converter}}{{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}@Json.Entity
 {{#vendorExtensions.x-has-polymorphic-subtypes}}@Json.Polymorphic(key = {{{vendorExtensions.x-polymorphic-key-literal}}})
 {{#vendorExtensions.x-polymorphic-subtypes}}@Json.Subtype(alias = {{{aliasLiteral}}}, value = {{name}}.class)
 {{/vendorExtensions.x-polymorphic-subtypes}}{{/vendorExtensions.x-has-polymorphic-subtypes}}
@@ -535,6 +533,7 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
     }
 
 {{/vendorExtensions.x-extends-model}}{{#vendorExtensions.x-extends-model}}
+{{^vendorExtensions.x-abstract-polymorphic-base}}
     /**
      * Create a builder for {@link {{classname}}}.
      *
@@ -581,6 +580,7 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
         }
     }
 
+{{/vendorExtensions.x-abstract-polymorphic-base}}
     /**
      * Base builder for {@link {{classname}}}.
      *

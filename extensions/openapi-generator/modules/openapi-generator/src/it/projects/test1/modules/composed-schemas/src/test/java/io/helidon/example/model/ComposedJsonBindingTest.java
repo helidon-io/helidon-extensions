@@ -40,7 +40,7 @@ class ComposedJsonBindingTest {
         assertThat(json, containsString("\"whiskers\":7"));
         assertThat(cat.kind(), is("cat$special"));
 
-        Pet pet = jsonBinding.deserialize("{\"kind\":\"cat$special\",\"whiskers\":7}", Pet.class);
+        Pet pet = jsonBinding.deserialize("{\"whiskers\":7,\"kind\":\"cat$special\"}", Pet.class);
         assertThat(pet, instanceOf(Cat.class));
         assertThat(((Cat) pet).whiskers(), is(7));
     }

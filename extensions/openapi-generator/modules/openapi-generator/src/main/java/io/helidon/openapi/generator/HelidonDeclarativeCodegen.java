@@ -451,8 +451,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                                                          String alias,
                                                          String targetRef) {
         return new IllegalStateException("Unsupported discriminator self-mapping for schema '" + schemaName
-                + "' at #/components/schemas/" + schemaName + " in input specification '" + inputSpec
-                + "': discriminator property '" + propertyName + "', alias '" + alias + "', target '" + targetRef
+                + "' at #/components/schemas/" + schemaName + " in input specification '"
+                + sanitizeDiagnosticReference(inputSpec)
+                + "': discriminator property '" + propertyName + "', alias '" + alias + "', target '"
+                + sanitizeDiagnosticReference(targetRef)
                 + "'. The current Helidon JSON polymorphic runtime cannot safely route a base alias to the abstract "
                 + "owning model. Define a concrete subtype for this alias, or remove the self-mapping when the base "
                 + "is intended to be abstract.");
@@ -1003,15 +1005,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             model.vendorExtensions.put("x-union-discriminator-key-literal",
                                        JavaStringLiterals.toJavaStringLiteral(discriminatorKey));
             model.vendorExtensions.put("x-has-union-discriminator", Boolean.TRUE);
-            model.vendorExtensions.put("x-use-polymorphic-union", Boolean.TRUE);
-            model.vendorExtensions.put("x-has-polymorphic-subtypes", Boolean.TRUE);
-            model.vendorExtensions.put("x-polymorphic-key-literal",
-                                       JavaStringLiterals.toJavaStringLiteral(discriminatorKey));
-            model.vendorExtensions.put("x-polymorphic-subtypes", unionMembers);
             applyUnionDiscriminatorRepresentation(model, members, modelsByClassname, discriminatorKey, unionMembers);
-        } else {
-            model.vendorExtensions.put("x-use-union-converter", Boolean.TRUE);
         }
+        // The converter buffers the complete object, so discriminator lookup is property-order independent.
+        model.vendorExtensions.put("x-use-union-converter", Boolean.TRUE);
         model.vendorExtensions.put("x-render-vars", List.of());
         model.vendorExtensions.put("x-union-requires-exactly-one", "oneOf".equals(kind));
         model.vendorExtensions.put("x-union-requires-unique-best-match", "anyOf".equals(kind));
@@ -1148,6 +1145,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
             CodegenProperty discriminatorProperty = discriminatorProperty(parentModel, discriminatorKey);
             removeRenderedDiscriminatorProperty(parentModel, discriminatorKey);
+            for (String subtypeName : subtypeNames) {
+                removeRenderedDiscriminatorProperty(modelsByClassname.get(subtypeName), discriminatorKey);
+            }
             DiscriminatorRepresentation representation = discriminatorRepresentation(parentModel,
                                                                                         discriminatorProperty != null);
             if (representation == DiscriminatorRepresentation.READ_ONLY_PROPERTY) {
@@ -1160,6 +1160,11 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                                                      List.of(discriminatorProperty));
                 }
                 for (String subtypeName : subtypeNames) {
+                    if (subtypeNamesByParent.containsKey(subtypeName)) {
+                        // An intermediate polymorphic parent remains abstract; its concrete descendants
+                        // supply the discriminator accessor.
+                        continue;
+                    }
                     CodegenModel subtype = modelsByClassname.get(subtypeName);
                     String alias = aliasesBySubtype.get(subtypeName);
                     String valueExpression = discriminatorValueExpression(parentModel,
@@ -1223,7 +1228,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 }
                 if (target == null || !subtypeNames.contains(target) || !modelsByClassname.containsKey(target)) {
                     throw discriminatorMappingFailure(owner,
-                                                      "alias '" + alias + "' targets '" + targetRef
+                                                      "alias '" + alias + "' targets '"
+                                                              + sanitizeDiagnosticReference(targetRef)
                                                               + "', which does not resolve to exactly one concrete subtype");
                 }
                 explicitAliasesBySubtype.computeIfAbsent(target, ignored -> new ArrayList<>()).add(alias);
@@ -1253,8 +1259,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
     private IllegalStateException unsupportedSelfMapping(CodegenModel owner, String alias, String targetRef) {
         return new IllegalStateException("Unsupported discriminator self-mapping for schema '" + owner.schemaName
-                + "' at " + schemaLocation(owner) + " in input specification '" + inputSpec + "': discriminator property '"
-                + discriminatorKey(owner) + "', alias '" + alias + "', target '" + targetRef + "'. "
+                + "' at " + schemaLocation(owner) + " in input specification '"
+                + sanitizeDiagnosticReference(inputSpec) + "': discriminator property '"
+                + discriminatorKey(owner) + "', alias '" + alias + "', target '"
+                + sanitizeDiagnosticReference(targetRef) + "'. "
                 + "The current Helidon JSON polymorphic runtime cannot safely route a base alias to the abstract "
                 + "owning model. Define a concrete subtype for this alias, or remove the self-mapping when the base "
                 + "is intended to be abstract.");
@@ -1262,8 +1270,38 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
     private IllegalStateException discriminatorMappingFailure(CodegenModel owner, String reason) {
         return new IllegalStateException("Invalid discriminator mapping for schema '" + owner.schemaName + "' at "
-                + schemaLocation(owner) + " in input specification '" + inputSpec + "', discriminator property '"
+                + schemaLocation(owner) + " in input specification '" + sanitizeDiagnosticReference(inputSpec)
+                + "', discriminator property '"
                 + discriminatorKey(owner) + "': " + reason + ".");
+    }
+
+    static String sanitizeDiagnosticReference(String value) {
+        if (value == null || value.isBlank() || value.startsWith("#/")) {
+            return value;
+        }
+        URI uri;
+        try {
+            uri = URI.create(value);
+        } catch (IllegalArgumentException ignored) {
+            return value.contains("://") ? "<redacted URI>" : value;
+        }
+        if (uri.getScheme() == null) {
+            return value;
+        }
+        if (uri.isOpaque()) {
+            return uri.getScheme() + ":<redacted>";
+        }
+        try {
+            return new URI(uri.getScheme(),
+                           null,
+                           uri.getHost(),
+                           uri.getPort(),
+                           uri.getPath(),
+                           null,
+                           uri.getFragment()).toString();
+        } catch (Exception ignored) {
+            return uri.getScheme() + ":<redacted>";
+        }
     }
 
     private String schemaLocation(CodegenModel model) {

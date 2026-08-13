@@ -135,6 +135,33 @@ components:
             name:
               type: string
               description: Extended name
+    LayeredBase:
+      type: object
+      discriminator:
+        propertyName: kind
+        mapping:
+          intermediate: '#/components/schemas/LayeredIntermediate'
+      properties:
+        kind:
+          type: string
+    LayeredIntermediate:
+      discriminator:
+        propertyName: kind
+        mapping:
+          leaf: '#/components/schemas/LayeredLeaf'
+      allOf:
+        - $ref: '#/components/schemas/LayeredBase'
+        - type: object
+          properties:
+            middle:
+              type: string
+    LayeredLeaf:
+      allOf:
+        - $ref: '#/components/schemas/LayeredIntermediate'
+        - type: object
+          properties:
+            leaf:
+              type: string
     Cat:
       type: object
       required:
