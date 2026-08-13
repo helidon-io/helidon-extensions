@@ -52,4 +52,31 @@ class CascadingValidationHttpTest {
             assertThat(response.status(), is(Status.INTERNAL_SERVER_ERROR_500));
         }
     }
+
+    @Test
+    void invalidInheritedAllOfPropertyIsRejected() {
+        try (var response = client.post("/validate-child")
+                .contentType(MediaTypes.APPLICATION_JSON)
+                .submit("{\"inheritedCode\":\"x\"}")) {
+            assertThat(response.status(), is(Status.BAD_REQUEST_400));
+        }
+    }
+
+    @Test
+    void invalidListRequestEntityIsRejected() {
+        try (var response = client.post("/validate-many")
+                .contentType(MediaTypes.APPLICATION_JSON)
+                .submit("[{\"code\":\"x\",\"label\":\"y\"}]")) {
+            assertThat(response.status(), is(Status.BAD_REQUEST_400));
+        }
+    }
+
+    @Test
+    void invalidMapValueRequestEntityIsRejected() {
+        try (var response = client.post("/validate-map")
+                .contentType(MediaTypes.APPLICATION_JSON)
+                .submit("{\"production\":{\"code\":\"x\",\"label\":\"y\"}}")) {
+            assertThat(response.status(), is(Status.BAD_REQUEST_400));
+        }
+    }
 }

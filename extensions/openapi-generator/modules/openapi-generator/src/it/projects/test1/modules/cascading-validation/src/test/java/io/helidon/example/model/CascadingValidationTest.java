@@ -82,6 +82,20 @@ class CascadingValidationTest {
         assertThat(validation.validate(ValidationRoot.class, root).valid(), is(true));
     }
 
+    @Test
+    void validatesInheritedAllOfConstraintOnConcreteChild() {
+        ConstrainedChild child = new ConstrainedChild();
+        child.inheritedCode("x");
+
+        ValidationResponse response = validation.validate(ConstrainedChild.class, child);
+
+        assertThat(response.valid(), is(false));
+        assertThat(response.violations().stream()
+                           .map(CascadingValidationTest::path)
+                           .anyMatch(path -> path.contains("inheritedCode")),
+                   is(true));
+    }
+
     private static ConstrainedLeaf leaf(String code, String label) {
         ConstrainedLeaf result = new ConstrainedLeaf();
         result.code(code);

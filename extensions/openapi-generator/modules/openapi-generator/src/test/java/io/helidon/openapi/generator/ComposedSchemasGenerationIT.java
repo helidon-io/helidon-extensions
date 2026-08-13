@@ -159,7 +159,6 @@ class ComposedSchemasGenerationIT {
         assertThat(content, containsString("Extended getExtended("));
         assertThat(content, containsString("Problem saveProblem("));
         assertThat(content, containsString("NullablePet saveNullablePet("));
-        assertThat(content, containsString("ConstraintChoice saveConstraintChoice("));
     }
 
     @Test

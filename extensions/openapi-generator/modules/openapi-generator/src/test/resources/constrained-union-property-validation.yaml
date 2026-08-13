@@ -13,26 +13,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
----
 openapi: 3.0.3
 info:
-  title: Mutually Recursive Cascading Validation
+  title: Constrained union property validation
   version: "1.0"
-paths: {}
+paths:
+  /holder:
+    get:
+      operationId: getHolder
+      responses:
+        "200":
+          description: Holder
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChoiceHolder'
 components:
   schemas:
-    MutualA:
+    ChoiceHolder:
       type: object
-      required: [b]
       properties:
-        b:
-          $ref: '#/components/schemas/MutualB'
-    MutualB:
+        choice:
+          $ref: '#/components/schemas/ConstrainedChoice'
+    ConstrainedChoice:
+      oneOf:
+        - $ref: '#/components/schemas/AlphaChoice'
+        - $ref: '#/components/schemas/BetaChoice'
+    AlphaChoice:
       type: object
-      required: [a]
       properties:
-        code:
+        alpha:
           type: string
-          minLength: 2
-        a:
-          $ref: '#/components/schemas/MutualA'
+          minLength: 3
+    BetaChoice:
+      type: object
+      properties:
+        beta:
+          type: string

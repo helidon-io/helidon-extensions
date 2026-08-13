@@ -98,23 +98,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/NullablePet'
-  /constraint-choices:
-    post:
-      tags: [composed]
-      operationId: saveConstraintChoice
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ConstraintChoice'
-      responses:
-        '200':
-          description: Saved constrained choice
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ConstraintChoice'
 components:
   schemas:
     Base:

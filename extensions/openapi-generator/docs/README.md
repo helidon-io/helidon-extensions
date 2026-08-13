@@ -329,14 +329,22 @@ methods rather than private fields so generated projects compile cleanly with th
 current validation API.
 
 Validation participation is computed transitively across generated model references.
-Participating models receive `@Validation.Validated`, and their direct model,
-`Optional`, collection, map-value, and array boundaries receive `@Validation.Valid`.
-Map keys are not cascade targets. Request entities use the same boundary rules and
-add `helidon-webserver-validation` so invalid entities follow Helidon's standard HTTP
-rejection behavior.
+Participating models receive `@Validation.Validated`. Required, non-null direct model
+boundaries use method-level `@Validation.Valid`; `Optional`, collection, map-value, and
+array boundaries use type-use `@Validation.Valid`. Map keys are not cascade targets.
+Inherited `allOf` constraints and cascades are repeated on generated child overrides so
+the concrete child validator executes the complete parent contract. Request entities
+use the same boundary rules and add `helidon-webserver-validation` so invalid entities
+follow Helidon's standard HTTP rejection behavior.
 
 Arbitrary `Iterable` or custom container mappings cannot guarantee Helidon cascade
-semantics and are rejected before source rendering with an actionable diagnostic.
+semantics and are rejected before source rendering with an actionable diagnostic,
+including request-entity containers. Optional or nullable direct model properties are
+also rejected because Helidon 4.5 does not null-guard a direct `@Validation.Valid`
+validator call; use `Optional`, a supported container, or a required non-null property.
+Model properties and request entities whose union type has constrained concrete members
+are rejected because Helidon cannot statically dispatch that validation boundary to a
+runtime subtype; use a concrete DTO or application validation.
 Recursive references are allowed when they do not participate in generated validation.
 A cycle between participating models is also rejected before rendering because Helidon
 4.5 creates eager `TypeValidator` dependencies for `@Validation.Valid` boundaries and

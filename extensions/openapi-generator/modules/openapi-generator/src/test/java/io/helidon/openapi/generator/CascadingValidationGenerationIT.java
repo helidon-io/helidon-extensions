@@ -54,6 +54,14 @@ class CascadingValidationGenerationIT {
     }
 
     @Test
+    void composesInheritedAllOfConstraintsIntoChildValidator() throws IOException {
+        String child = read(modelFile(outputDir, "ConstrainedChild.java"));
+        assertThat(child, containsString("@Override\n    @Validation.String.Length(min = 3)\n"
+                                                 + "    public String inheritedCode()"));
+        assertThat(child, containsString("return super.inheritedCode();"));
+    }
+
+    @Test
     void annotatesDirectAndSupportedContainerBoundaries() throws IOException {
         String intermediate = read(modelFile(outputDir, "ValidationIntermediate.java"));
         assertThat(intermediate, containsString("@Validation.Valid\n    public ConstrainedLeaf leaf()"));
@@ -71,6 +79,10 @@ class CascadingValidationGenerationIT {
         String expected = "@Validation.Valid @Http.Entity ValidationRoot validationRoot";
         assertThat(read(apiFile(outputDir, "ValidationApi.java")), containsString(expected));
         assertThat(read(apiFile(outputDir, "ValidationEndpoint.java")), containsString(expected));
+
+        String api = read(apiFile(outputDir, "ValidationApi.java"));
+        assertThat(api, containsString("@Http.Entity List<@Validation.Valid ConstrainedLeaf> constrainedLeaf"));
+        assertThat(api, containsString("@Http.Entity Map<String, @Validation.Valid ConstrainedLeaf> requestBody"));
     }
 
     @Test
@@ -105,6 +117,60 @@ class CascadingValidationGenerationIT {
         assertThat(error.getMessage(), containsString("Cascading cannot be guaranteed"));
         assertThat(error.getMessage(), containsString("List, Set, Collection, Optional, Map values, or an array"));
         assertThat(Files.exists(modelFile(iterableOutput, "ValidationRoot.java")),
+                   org.hamcrest.CoreMatchers.is(false));
+    }
+
+    @Test
+    void rejectsNullableDirectModelBoundaryBeforeRendering() {
+        Path target = outputDir.resolve("nullable-direct");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                                                       () -> generate(target,
+                                                                      "nullable-direct-cascading-validation.yaml",
+                                                                      null));
+        assertThat(error.getMessage(), containsString("nullable direct cascading validation boundary"));
+        assertThat(error.getMessage(), containsString("schema 'NullableParent', property 'child'"));
+        assertThat(error.getMessage(), containsString("Make the property required and non-nullable"));
+        assertThat(Files.exists(modelFile(target, "NullableParent.java")),
+                   org.hamcrest.CoreMatchers.is(false));
+    }
+
+    @Test
+    void rejectsCustomRequestEntityContainerBeforeRendering() {
+        Path target = outputDir.resolve("request-iterable");
+        RuntimeException error = assertThrows(RuntimeException.class,
+                                              () -> generate(target,
+                                                             "request-container-cascading-validation.yaml",
+                                                             "Iterable"));
+        assertThat(rootMessage(error), containsString("Unsupported cascading validation request entity"));
+        assertThat(rootMessage(error), containsString("Iterable<ConstrainedChild>"));
+        assertThat(rootMessage(error), containsString("unsupported container 'Iterable'"));
+    }
+
+    @Test
+    void rejectsConstrainedUnionRequestBoundaryBeforeRendering() {
+        Path target = outputDir.resolve("constrained-union");
+        RuntimeException error = assertThrows(RuntimeException.class,
+                                              () -> generate(target,
+                                                             "constrained-union-request-validation.yaml",
+                                                             null));
+        assertThat(rootMessage(error), containsString("Unsupported cascading validation request entity"));
+        assertThat(rootMessage(error), containsString("composed schema type(s) [ConstrainedChoice]"));
+        assertThat(rootMessage(error), containsString("constrained members"));
+        assertThat(rootMessage(error), containsString("concrete request DTO"));
+    }
+
+    @Test
+    void rejectsConstrainedUnionPropertyBoundaryBeforeRendering() {
+        Path target = outputDir.resolve("constrained-union-property");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                                                       () -> generate(target,
+                                                                      "constrained-union-property-validation.yaml",
+                                                                      null));
+        assertThat(error.getMessage(), containsString("schema 'ChoiceHolder', property 'choice'"));
+        assertThat(error.getMessage(), containsString("composed schema type(s) [ConstrainedChoice]"));
+        assertThat(error.getMessage(), containsString("constrained members"));
+        assertThat(error.getMessage(), containsString("concrete property DTO"));
+        assertThat(Files.exists(modelFile(target, "ChoiceHolder.java")),
                    org.hamcrest.CoreMatchers.is(false));
     }
 
@@ -206,5 +272,13 @@ class CascadingValidationGenerationIT {
 
     private static String read(Path file) throws IOException {
         return Files.readString(file).replace("\r\n", "\n");
+    }
+
+    private static String rootMessage(Throwable throwable) {
+        Throwable current = throwable;
+        while (current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current.getMessage();
     }
 }

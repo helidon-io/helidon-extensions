@@ -313,11 +313,13 @@ The current implementation supports Helidon validation generation for:
 
 Validation is handled for both model properties and eligible parameters.
 
-The model pass computes a fixed point of models that directly declare constraints or
-transitively reach such a model. It then marks cascade boundaries at the nested model
-type for supported wrappers, collections, map values, and arrays. Map keys are ignored.
-Unsupported custom containers and cycles in the participating validation graph fail
-before templates render. Non-participating recursive models remain supported.
+The model pass computes participating models with a reverse-adjacency work queue seeded
+by directly constrained models. It marks cascade boundaries at the nested model type for
+supported wrappers, collections, map values, and arrays, and repeats inherited `allOf`
+validation on concrete child accessors. Map keys are ignored. Nullable direct-model
+boundaries, unsupported custom containers, constrained-union property/request boundaries,
+and cycles in the participating validation graph fail before templates render.
+Non-participating recursive models remain supported.
 
 ## Testing Strategy
 

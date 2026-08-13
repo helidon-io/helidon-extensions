@@ -126,7 +126,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private List<SecurityRequirement> globalSecurityRequirements = List.of();
     private final JsonStringEnumSupport jsonStringEnums;
     private Map<String, Map<String, String>> rawDiscriminatorMappingsBySchema = Map.of();
-    private Set<String> participatingValidationTypes = Set.of();
+    private CascadingValidationSupport.Analysis cascadingValidation = CascadingValidationSupport.Analysis.empty();
     /**
      * Creates a new generator with default options and template mappings.
      */
@@ -741,7 +741,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     param.vendorExtensions.put("x-validation-annotations", paramValidations);
                     anyParamValidation = true;
                 }
-                if (param.isBodyParam && CascadingValidationSupport.apply(param, participatingValidationTypes)) {
+                if (param.isBodyParam && CascadingValidationSupport.apply(param, cascadingValidation)) {
                     anyParamValidation = true;
                     anyRequestValidation = true;
                 }
@@ -763,6 +763,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 }
             }
         }
+
+        CascadingValidationSupport.addRequestEntityImports(result, opList);
 
         result.put("hasComputedHeaders", anyComputedHeaders);
         result.put("hasOptionalQueryParams", anyOptionalQuery);
@@ -922,11 +924,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         applyUnionInterfaces(models, unionInterfacesByMember);
         applyAllOfDiscriminatorHierarchy(models, modelsByClassname);
 
-        CascadingValidationSupport.Analysis validationAnalysis =
-                CascadingValidationSupport.analyze(models,
-                                                   modelsByClassname.keySet(),
-                                                   prop -> !buildValidationAnnotations(prop).isEmpty());
-        participatingValidationTypes = validationAnalysis.participatingModels();
+        cascadingValidation = CascadingValidationSupport.analyze(
+                models, modelsByClassname.keySet(), prop -> !buildValidationAnnotations(prop).isEmpty());
 
         boolean anyValidation = false;
         for (Map.Entry<String, ModelsMap> entry : result.entrySet()) {
@@ -941,9 +940,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     continue;
                 }
 
-                boolean modelHasValidation = participatingValidationTypes.contains(model.classname);
+                boolean modelHasValidation = cascadingValidation.participatingModels().contains(model.classname);
                 jsonStringEnums.prepareInlineModelEnums(model);
-                List<CodegenProperty> renderVars = validationAnalysis.propertiesByModel().get(model.classname);
+                List<CodegenProperty> renderVars = cascadingValidation.propertiesByModel().get(model.classname);
 
                 for (CodegenProperty prop : renderVars) {
                     // Mark required properties for @Json.Required
@@ -958,8 +957,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     }
 
                     CascadingValidationSupport.apply(prop,
-                                                      validationAnalysis.modelNames(),
-                                                      participatingValidationTypes);
+                                                      cascadingValidation.modelNames(),
+                                                      cascadingValidation.participatingModels());
 
                     // Format default value as a Java literal for field initializer
                     String javaDefault = formatDefaultValue(prop);
@@ -967,6 +966,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                         prop.vendorExtensions.put("x-default-value", javaDefault);
                     }
                 }
+
+                CascadingValidationSupport.applyInherited(model, cascadingValidation, this::buildValidationAnnotations);
 
                 if (modelHasValidation) {
                     model.vendorExtensions.put("x-has-validations", Boolean.TRUE);

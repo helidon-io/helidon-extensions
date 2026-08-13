@@ -13,26 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
----
 openapi: 3.0.3
 info:
-  title: Mutually Recursive Cascading Validation
+  title: Nullable direct cascading validation
   version: "1.0"
 paths: {}
 components:
   schemas:
-    MutualA:
+    NullableParent:
       type: object
-      required: [b]
       properties:
-        b:
-          $ref: '#/components/schemas/MutualB'
-    MutualB:
+        child:
+          $ref: '#/components/schemas/ConstrainedChild'
+    ConstrainedChild:
       type: object
-      required: [a]
       properties:
         code:
           type: string
-          minLength: 2
-        a:
-          $ref: '#/components/schemas/MutualA'
+          minLength: 3

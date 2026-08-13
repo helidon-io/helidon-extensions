@@ -32,24 +32,54 @@ paths:
       responses:
         "204":
           description: Valid
+  /validate-child:
+    post:
+      operationId: validateChild
+      tags: [validation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConstrainedChild'
+      responses:
+        "204":
+          description: Valid
+  /validate-many:
+    post:
+      operationId: validateMany
+      tags: [validation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/ConstrainedLeaf'
+      responses:
+        "204":
+          description: Valid
+  /validate-map:
+    post:
+      operationId: validateMap
+      tags: [validation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                $ref: '#/components/schemas/ConstrainedLeaf'
+      responses:
+        "204":
+          description: Valid
 components:
   schemas:
-    ConstrainedLeaf:
-      type: object
-      properties:
-        code:
-          type: string
-          minLength: 3
-        label:
-          type: string
-          minLength: 2
-    ValidationIntermediate:
-      type: object
-      properties:
-        leaf:
-          $ref: '#/components/schemas/ConstrainedLeaf'
     ValidationRoot:
       type: object
+      required: [intermediate]
       properties:
         intermediate:
           $ref: '#/components/schemas/ValidationIntermediate'
@@ -72,3 +102,31 @@ components:
             type: array
             items:
               $ref: '#/components/schemas/ConstrainedLeaf'
+    ValidationIntermediate:
+      type: object
+      required: [leaf]
+      properties:
+        leaf:
+          $ref: '#/components/schemas/ConstrainedLeaf'
+    ConstrainedChild:
+      allOf:
+        - $ref: '#/components/schemas/ConstrainedBase'
+        - type: object
+          properties:
+            name:
+              type: string
+    ConstrainedBase:
+      type: object
+      properties:
+        inheritedCode:
+          type: string
+          minLength: 3
+    ConstrainedLeaf:
+      type: object
+      properties:
+        code:
+          type: string
+          minLength: 3
+        label:
+          type: string
+          minLength: 2
