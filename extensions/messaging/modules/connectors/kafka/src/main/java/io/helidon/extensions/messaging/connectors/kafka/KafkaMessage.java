@@ -182,7 +182,10 @@ public interface KafkaMessage<K, V> extends Message<V> {
         }
 
         /**
-         * Add a UTF-8 string header.
+         * Append a native Kafka header whose value is UTF-8 text.
+         * <p>
+         * Repeated names are retained in {@link KafkaMessage#kafkaHeaders()}. The single-valued portable
+         * {@link KafkaMessage#headers()} view exposes the last non-null value for each name.
          *
          * @param name header name
          * @param value header value
@@ -193,9 +196,11 @@ public interface KafkaMessage<K, V> extends Message<V> {
         }
 
         /**
-         * Add a native Kafka header.
+         * Append a native Kafka header.
          * <p>
-         * The supplied array is defensively copied. A {@code null} value represents a native null-valued header.
+         * Repeated names are retained in {@link KafkaMessage#kafkaHeaders()}. The supplied array is defensively copied.
+         * A {@code null} value represents a native null-valued header and is omitted from the single-valued portable
+         * {@link KafkaMessage#headers()} view.
          *
          * @param name header name
          * @param value raw header value, may be {@code null}

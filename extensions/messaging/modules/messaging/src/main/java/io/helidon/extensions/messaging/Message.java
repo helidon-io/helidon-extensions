@@ -21,9 +21,11 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Message envelope with payload and headers.
+ * Message envelope with a payload and portable headers.
  * <p>
- * Implementations must be immutable snapshots and must return an immutable map from {@link #headers()}.
+ * Portable headers are single-valued and keyed by exact, case-sensitive names. Implementations must be immutable
+ * snapshots and must return an immutable map from {@link #headers()}. Connector-specific message subtypes may expose
+ * richer native header representations separately.
  *
  * @param <T> payload type
  */
@@ -58,14 +60,16 @@ public interface Message<T> {
     T entity();
 
     /**
-     * Headers.
+     * Single-valued portable headers.
+     * <p>
+     * The returned map uses exact, case-sensitive names and does not define an iteration order.
      *
      * @return immutable headers
      */
     Map<String, String> headers();
 
     /**
-     * Header value.
+     * Portable header value.
      *
      * @param name header name
      * @return header value
@@ -88,7 +92,9 @@ public interface Message<T> {
         }
 
         /**
-         * Add a header.
+         * Set a portable header.
+         * <p>
+         * Setting the same exact name again replaces its previous value, so the last value set for that name wins.
          *
          * @param name header name
          * @param value header value
