@@ -16,6 +16,8 @@
 
 package io.helidon.extensions.messaging.connectors.kafka;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
@@ -41,5 +43,24 @@ class KafkaMessageTest {
         assertThat(message.timestamp().isEmpty(), is(true));
         assertThat(message.timestampType().isEmpty(), is(true));
         assertThat(message.leaderEpoch().isEmpty(), is(true));
+    }
+
+    @Test
+    void testPortableHeadersExposeLastNonNullNativeValue() {
+        KafkaMessage<String, String> message = KafkaMessage.<String, String>builder("key", "payload")
+                .header("trace", "first")
+                .rawHeader("trace", null)
+                .header("trace", "last")
+                .rawHeader("trace", null)
+                .rawHeader("only-null", null)
+                .build();
+
+        assertThat(message.header("trace").orElseThrow(), is("last"));
+        assertThat(message.header("only-null").isEmpty(), is(true));
+        assertThat(message.kafkaHeaders().stream().map(KafkaMessage.Header::name).toList(),
+                   is(List.of("trace", "trace", "trace", "trace", "only-null")));
+        assertThat(message.kafkaHeaders().get(1).value().isEmpty(), is(true));
+        assertThat(message.kafkaHeaders().get(3).value().isEmpty(), is(true));
+        assertThat(message.kafkaHeaders().get(4).value().isEmpty(), is(true));
     }
 }

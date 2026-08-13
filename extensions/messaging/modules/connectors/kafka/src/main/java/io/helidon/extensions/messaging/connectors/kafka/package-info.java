@@ -16,7 +16,8 @@
 
 /**
  * Kafka connector for declarative messaging.
- * Kafka header values are encoded and decoded as UTF-8 text. Null-valued incoming headers are omitted, and when a
- * Kafka record contains duplicate header names only the last value is retained in the messaging header map.
+ * The portable messaging header map decodes non-null Kafka header values as UTF-8 text and exposes the last non-null
+ * value for each name. {@link io.helidon.extensions.messaging.connectors.kafka.KafkaMessage#kafkaHeaders()} preserves
+ * the lossless ordered native view, including duplicate names and binary or null values.
  */
 package io.helidon.extensions.messaging.connectors.kafka;
