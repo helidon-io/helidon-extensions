@@ -61,6 +61,11 @@
                 <artifactId>helidon-extensions-messaging-connectors-kafka</artifactId>
                 <version>${messaging.extension.version}</version>
             </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.messaging.connectors</groupId>
+                <artifactId>helidon-extensions-messaging-connectors-jms</artifactId>
+                <version>${messaging.extension.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 </project>
