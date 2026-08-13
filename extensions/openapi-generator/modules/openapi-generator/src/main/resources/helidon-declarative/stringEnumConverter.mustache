@@ -28,11 +28,18 @@ final class {{converterName}} implements JsonConverter<{{qualifiedType}}>{{#http
 
     @Override
     public {{qualifiedType}} deserialize(JsonParser parser) {
+        if (parser.checkNull()) {
+            return null;
+        }
         return {{qualifiedType}}.fromValue(parser.readString());
     }
 
     @Override
     public void serialize(JsonGenerator generator, {{qualifiedType}} instance, boolean writeNulls) {
+        if (instance == null) {
+            generator.writeNull();
+            return;
+        }
         generator.write(instance.value());
     }
 {{#httpMapper}}

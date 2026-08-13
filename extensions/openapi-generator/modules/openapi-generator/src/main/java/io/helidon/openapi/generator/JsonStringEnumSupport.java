@@ -16,7 +16,6 @@
 
 package io.helidon.openapi.generator;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -26,12 +25,9 @@ import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.UnaryOperator;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.swagger.v3.core.util.Json;
-import io.swagger.v3.core.util.Yaml;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
+import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.parameters.Parameter;
 import org.openapitools.codegen.CodegenModel;
@@ -50,8 +46,8 @@ final class JsonStringEnumSupport {
         this.enumVarNamer = enumVarNamer;
     }
 
-    void preprocess(OpenAPI openAPI, String inputSpec) {
-        captureInlineRequestEntityEnums(openAPI, inputSpec);
+    void preprocess(OpenAPI openAPI) {
+        captureInlineRequestEntityEnums(openAPI);
         httpParameterEnumSchemas = findHttpParameterEnumSchemas(openAPI);
     }
 
@@ -61,29 +57,33 @@ final class JsonStringEnumSupport {
         }
     }
 
-    void restoreInlineRequestEntityEnum(String operationId, CodegenOperation codegenOperation) {
-        if (operationId == null) {
-            return;
-        }
-        List<String> enumValues = inlineRequestEntityEnumValues.getOrDefault(operationId, List.of());
+    void restoreInlineRequestEntityEnum(String path, String httpMethod, CodegenOperation codegenOperation) {
+        String operationKey = operationKey(path, httpMethod);
+        List<String> enumValues = inlineRequestEntityEnumValues.getOrDefault(operationKey, List.of());
         if (enumValues.isEmpty()) {
             return;
         }
         restoreInlineRequestEntityEnum(codegenOperation,
                                        enumValues,
-                                       inlineRequestEntityEnumCollections.contains(operationId));
+                                       inlineRequestEntityEnumCollections.contains(operationKey));
+        codegenOperation.vendorExtensions.put("x-inline-request-entity-enum-values", enumValues);
+        if (inlineRequestEntityEnumCollections.contains(operationKey)) {
+            codegenOperation.vendorExtensions.put("x-inline-request-entity-enum-collection", Boolean.TRUE);
+        }
     }
 
     void prepareInlineRequestEntityEnum(CodegenOperation operation, CodegenParameter parameter) {
         if (!parameter.isBodyParam) {
             return;
         }
-        List<String> values = inlineRequestEntityEnumValues.get(operation.operationId);
-        if (values == null || values.isEmpty()) {
+        Object capturedValues = operation.vendorExtensions.get("x-inline-request-entity-enum-values");
+        if (!(capturedValues instanceof List<?> values) || values.isEmpty()) {
             return;
         }
-        Map<String, Object> allowableValues = stringAllowableValues(values);
-        if (inlineRequestEntityEnumCollections.contains(operation.operationId) && parameter.items != null) {
+        List<String> enumValues = values.stream().map(Object::toString).toList();
+        Map<String, Object> allowableValues = stringAllowableValues(enumValues);
+        if (operation.vendorExtensions.containsKey("x-inline-request-entity-enum-collection")
+                && parameter.items != null) {
             parameter.items.isEnum = true;
             parameter.items.isString = true;
             parameter.items.allowableValues = allowableValues;
@@ -242,7 +242,7 @@ final class JsonStringEnumSupport {
         }
     }
 
-    private void captureInlineRequestEntityEnums(OpenAPI openAPI, String inputSpec) {
+    private void captureInlineRequestEntityEnums(OpenAPI openAPI) {
         if (openAPI.getPaths() == null) {
             inlineRequestEntityEnumValues = Map.of();
             inlineRequestEntityEnumCollections = Set.of();
@@ -250,18 +250,18 @@ final class JsonStringEnumSupport {
         }
         Map<String, List<String>> valuesByOperation = new LinkedHashMap<>();
         Set<String> collections = new LinkedHashSet<>();
-        openAPI.getPaths().values().forEach(pathItem -> pathItem.readOperations().forEach(operation ->
-                captureInlineRequestEntityEnum(operation, valuesByOperation, collections)));
-        captureRawInlineRequestEntityEnums(inputSpec, valuesByOperation, collections);
+        openAPI.getPaths().forEach((path, pathItem) -> pathItem.readOperationsMap().forEach((method, operation) ->
+                captureInlineRequestEntityEnum(path, method, operation, valuesByOperation, collections)));
         inlineRequestEntityEnumValues = Map.copyOf(valuesByOperation);
         inlineRequestEntityEnumCollections = Set.copyOf(collections);
     }
 
-    private void captureInlineRequestEntityEnum(Operation operation,
+    private void captureInlineRequestEntityEnum(String path,
+                                                PathItem.HttpMethod method,
+                                                Operation operation,
                                                 Map<String, List<String>> valuesByOperation,
                                                 Set<String> collections) {
-        if (operation.getOperationId() == null || operation.getRequestBody() == null
-                || operation.getRequestBody().getContent() == null
+        if (operation.getRequestBody() == null || operation.getRequestBody().getContent() == null
                 || operation.getRequestBody().getContent().isEmpty()) {
             return;
         }
@@ -270,52 +270,15 @@ final class JsonStringEnumSupport {
             return;
         }
         Schema<?> enumSchema = schema.getItems() == null ? schema : schema.getItems();
-        if (enumSchema.get$ref() == null && enumSchema.getEnum() != null && !enumSchema.getEnum().isEmpty()) {
-            valuesByOperation.put(operation.getOperationId(), enumSchema.getEnum().stream()
+        if (enumSchema.get$ref() == null && "string".equals(enumSchema.getType())
+                && enumSchema.getEnum() != null && !enumSchema.getEnum().isEmpty()) {
+            String operationKey = operationKey(path, method.name());
+            valuesByOperation.put(operationKey, enumSchema.getEnum().stream()
                     .map(Object::toString)
                     .toList());
             if (schema.getItems() != null) {
-                collections.add(operation.getOperationId());
+                collections.add(operationKey);
             }
-        }
-    }
-
-    private void captureRawInlineRequestEntityEnums(String inputSpec,
-                                                     Map<String, List<String>> valuesByOperation,
-                                                     Set<String> collections) {
-        if (inputSpec == null || inputSpec.isBlank()) {
-            return;
-        }
-        try {
-            String specContent = InputSpecContentReader.read(inputSpec);
-            ObjectMapper mapper = looksLikeJson(inputSpec, specContent) ? Json.mapper() : Yaml.mapper();
-            JsonNode paths = mapper.readTree(specContent).path("paths");
-            paths.fields().forEachRemaining(pathEntry -> pathEntry.getValue().fields().forEachRemaining(methodEntry ->
-                    captureRawInlineRequestEntityEnum(methodEntry.getValue(), valuesByOperation, collections)));
-        } catch (IOException | RuntimeException ignored) {
-            // The parsed OpenAPI model remains the source of truth when raw input cannot be read.
-        }
-    }
-
-    private void captureRawInlineRequestEntityEnum(JsonNode operation,
-                                                   Map<String, List<String>> valuesByOperation,
-                                                   Set<String> collections) {
-        String operationId = operation.path("operationId").asText(null);
-        JsonNode content = operation.path("requestBody").path("content");
-        if (operationId == null || !content.isObject() || content.isEmpty()) {
-            return;
-        }
-        JsonNode schema = content.elements().next().path("schema");
-        JsonNode enumSchema = schema.has("items") ? schema.path("items") : schema;
-        JsonNode enumNode = enumSchema.path("enum");
-        if (!enumNode.isArray() || enumNode.isEmpty()) {
-            return;
-        }
-        List<String> values = new ArrayList<>();
-        enumNode.forEach(value -> values.add(value.asText()));
-        valuesByOperation.put(operationId, List.copyOf(values));
-        if (schema.has("items")) {
-            collections.add(operationId);
         }
     }
 
@@ -373,7 +336,7 @@ final class JsonStringEnumSupport {
                                                String converterName,
                                                Map<String, Object> allowableValues,
                                                boolean httpMapper) {
-        List<Map<String, String>> values = enumValues(allowableValues);
+        List<Map<String, String>> values = uniqueEnumValues(enumName, enumValues(allowableValues));
         if (values.isEmpty()) {
             return null;
         }
@@ -406,12 +369,31 @@ final class JsonStringEnumSupport {
         return result;
     }
 
+    private List<Map<String, String>> uniqueEnumValues(String enumName, List<Map<String, String>> values) {
+        Set<String> wireValues = new LinkedHashSet<>();
+        Set<String> constantNames = new LinkedHashSet<>();
+        List<Map<String, String>> result = new ArrayList<>();
+        for (Map<String, String> value : values) {
+            String wireValue = value.get("value");
+            if (!wireValues.add(wireValue)) {
+                throw new IllegalArgumentException("OpenAPI string enum '" + enumName
+                                                           + "' declares duplicate wire value " + wireValue);
+            }
+            String baseName = value.get("name");
+            String constantName = baseName;
+            for (int suffix = 2; !constantNames.add(constantName); suffix++) {
+                constantName = baseName + "_" + suffix;
+            }
+            result.add(Map.of("name", constantName, "value", wireValue));
+        }
+        return List.copyOf(result);
+    }
+
     private String refName(String ref) {
         return ref.substring(ref.lastIndexOf('/') + 1);
     }
 
-    private boolean looksLikeJson(String specLocation, String specContent) {
-        String trimmed = specContent.stripLeading();
-        return specLocation.endsWith(".json") || trimmed.startsWith("{") || trimmed.startsWith("[");
+    private String operationKey(String path, String httpMethod) {
+        return httpMethod.toUpperCase() + " " + path;
     }
 }

@@ -375,7 +375,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
     @Override
     public void preprocessOpenAPI(io.swagger.v3.oas.models.OpenAPI openAPI) {
-        jsonStringEnums.preprocess(openAPI, inputSpec);
+        jsonStringEnums.preprocess(openAPI);
         super.preprocessOpenAPI(openAPI);
         globalSecurityRequirements = openAPI.getSecurity() == null
                 ? List.of()
@@ -451,9 +451,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                                           String httpMethod,
                                           Operation operation,
                                           List<Server> servers) {
-        String operationId = operation.getOperationId();
         CodegenOperation op = super.fromOperation(path, httpMethod, operation, servers);
-        jsonStringEnums.restoreInlineRequestEntityEnum(operationId, op);
+        jsonStringEnums.restoreInlineRequestEntityEnum(path, httpMethod, op);
 
         // HTTP method annotation string (e.g. "@Http.GET")
         op.vendorExtensions.put("x-http-annotation", "@Http." + httpMethod.toUpperCase());

@@ -208,6 +208,23 @@ Supporting files:
 
 ## OpenAPI Mapping Notes
 
+### String enums
+
+OpenAPI schemas with `type: string` and `enum` generate typed, immutable Java
+enums for top-level schemas, model properties and collection elements, HTTP
+parameters, and request entities. Each constant retains the exact OpenAPI wire
+value, including case and punctuation. The generated `value()` method returns
+that value, `toString()` uses it for declarative-client HTTP parameters, and
+`fromValue(String)` performs a strict non-null lookup. Distinct wire values that
+normalize to the same Java identifier receive deterministic numeric suffixes.
+
+Helidon JSON remains the JSON implementation. A stateless generated
+`JsonConverter` preserves exact values and JSON `null` for entity and model
+binding. Enums used by path, query, or header parameters additionally receive a
+typed `Mapper<String, EnumType>`; request-entity-only enums do not. Helidon 4.5
+or later is required for declarative HTTP binding to translate a mapper failure
+for a client-supplied enum value into the standard HTTP 400 response.
+
 ### Composed Schemas
 
 The generator supports these schema-composition keywords:

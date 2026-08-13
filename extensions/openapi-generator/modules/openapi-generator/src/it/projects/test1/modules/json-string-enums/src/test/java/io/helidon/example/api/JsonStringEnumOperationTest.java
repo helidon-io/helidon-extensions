@@ -16,14 +16,46 @@
 
 package io.helidon.example.api;
 
+import io.helidon.common.GenericType;
+import io.helidon.common.mapper.Mappers;
+import io.helidon.http.BadRequestException;
+import io.helidon.http.Status;
 import io.helidon.json.binding.JsonBinding;
+import io.helidon.service.registry.Services;
+import io.helidon.webclient.http1.Http1Client;
+import io.helidon.webserver.http.HttpRouting;
+import io.helidon.webserver.testing.junit5.ServerTest;
+import io.helidon.webserver.testing.junit5.SetUpRoute;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+@ServerTest
 class JsonStringEnumOperationTest {
+    private final Http1Client client;
+
+    JsonStringEnumOperationTest(Http1Client client) {
+        this.client = client;
+    }
+
+    @SetUpRoute
+    static void setupRoute(HttpRouting.Builder routing) {
+        var mappers = Services.get(Mappers.class);
+        var targetType = GenericType.create(EnumsApi.InspectModeRouteModeEnum.class);
+        routing.post("/mapped-enum/{value}", (request, response) -> {
+            var value = request.path().pathParameters().first("value")
+                    .map(it -> mappers.map(it,
+                                           GenericType.STRING,
+                                           targetType,
+                                           failure -> new BadRequestException("Invalid enum value.", failure),
+                                           "http",
+                                           "path"))
+                    .orElseThrow();
+            response.send(value.toString());
+        });
+    }
 
     @Test
     void exactHttpMapperUsesWireValue() {
@@ -33,6 +65,14 @@ class JsonStringEnumOperationTest {
         assertThat(mapper.map("authZ"), is(EnumsApi.InspectModeRouteModeEnum.AUTH_Z));
         assertThat(mapper.map("authZ").toString(), is("authZ"));
         assertThrows(IllegalArgumentException.class, () -> mapper.map("AUTH_Z"));
+        assertThrows(NullPointerException.class, () -> mapper.map(null));
+    }
+
+    @Test
+    void invalidHttpEnumValueIsRejectedAsBadRequest() {
+        try (var response = client.post("/mapped-enum/not-a-mode").request()) {
+            assertThat(response.status(), is(Status.BAD_REQUEST_400));
+        }
     }
 
     @Test

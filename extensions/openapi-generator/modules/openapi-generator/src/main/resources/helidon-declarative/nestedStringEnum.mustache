@@ -38,13 +38,12 @@ limitations under the License.
          * Resolve an exact OpenAPI wire value.
          *
          * @param value wire value
-         * @return matching enum constant, or {@code null} when the value is {@code null}
+         * @return matching enum constant
+         * @throws NullPointerException when the value is {@code null}
          * @throws IllegalArgumentException when the value is not declared by the OpenAPI enum
          */
         public static {{enumName}} fromValue(String value) {
-            if (value == null) {
-                return null;
-            }
+            java.util.Objects.requireNonNull(value, "value");
             return switch (value) {
 {{#values}}
                 case {{{value}}} -> {{name}};

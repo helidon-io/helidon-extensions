@@ -66,6 +66,15 @@ class JsonStringEnumGenerationIT {
     }
 
     @Test
+    void collidingJavaConstantNamesAreDisambiguated() throws IOException {
+        String mode = read(outputDir.resolve("src/main/java/io/helidon/example/model/CollidingMode.java"));
+
+        assertThat(mode, containsString("FOO_BAR(\"foo-bar\")"));
+        assertThat(mode, containsString("FOO_BAR2(\"foo_bar\")"));
+        assertThat(mode, containsString("FOO_BAR3(\"FOO-BAR\")"));
+    }
+
+    @Test
     void inlineReferencedAndCollectionEnumsRemainTyped() throws IOException {
         String envelope = read(outputDir.resolve("src/main/java/io/helidon/example/model/EnumEnvelope.java"));
 
@@ -94,6 +103,11 @@ class JsonStringEnumGenerationIT {
                                                + "Mapper<String, EnumsApi.InspectModeRouteModeEnum>"));
         assertThat(api, containsString("implements JsonConverter<EnumsApi.InspectModeBodyEnum>"));
         assertThat(api, not(containsString("Mapper<String, EnumsApi.InspectModeBodyEnum>")));
+        assertThat(api, containsString("enum EnumNoIdPostBodyEnum"));
+        assertThat(api, containsString("FOO_BAR(\"foo-bar\")"));
+        assertThat(api, containsString("FOO_BAR_2(\"foo_bar\")"));
+        assertThat(api, containsString("@Http.Entity Integer body"));
+        assertThat(api, not(containsString("enum NumericEnumBodyBodyEnum")));
     }
 
     @Test
@@ -125,7 +139,7 @@ class JsonStringEnumGenerationIT {
                 .setGeneratorName("helidon-declarative")
                 .setInputSpec(specPath)
                 .setOutputDir(destination.toString())
-                .addAdditionalProperty("helidonVersion", "4.4.1")
+                .addAdditionalProperty("helidonVersion", "4.5.0")
                 .addAdditionalProperty("apiPackage", "io.helidon.example.api")
                 .addAdditionalProperty("modelPackage", "io.helidon.example.model")
                 .addAdditionalProperty("invokerPackage", "io.helidon.example");

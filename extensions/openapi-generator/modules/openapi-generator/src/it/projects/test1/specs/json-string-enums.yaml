@@ -48,12 +48,42 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Mode'
+  /enum-no-id:
+    post:
+      tags: [enums]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: string
+              enum: [foo-bar, foo_bar]
+      responses:
+        '204':
+          description: Accepted
+  /numeric-enum-body:
+    post:
+      tags: [enums]
+      operationId: numericEnumBody
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: integer
+              enum: [1, 2]
+      responses:
+        '204':
+          description: Accepted
 components:
   schemas:
     Mode:
       type: string
       nullable: true
       enum: [fast-mode, authZ, legacy.value]
+    CollidingMode:
+      type: string
+      enum: [foo-bar, foo_bar, FOO-BAR]
     EnumEnvelope:
       type: object
       properties:
