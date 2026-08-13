@@ -23,6 +23,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
 import java.util.Objects;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
@@ -37,8 +39,10 @@ import io.helidon.service.registry.Service;
 @Service.Singleton
 @Weight(Weighted.DEFAULT_WEIGHT + 1)
 class TestOciCertificatesDownloader implements OciCertificatesDownloader {
+    private static final Queue<Supplier<String>> SCRIPTED_CA_OUTCOMES = new ConcurrentLinkedQueue<>();
+
     static String version = "1";
-    static String caCertificateResource = "test-keys/ca.pem";
+    static volatile String caCertificateResource = "test-keys/ca.pem";
 
     static volatile int callCount_loadCertificates;
     static volatile int callCount_loadCertificatesWithPrivateKey;
@@ -51,6 +55,21 @@ class TestOciCertificatesDownloader implements OciCertificatesDownloader {
 
     TestOciCertificatesDownloader(Supplier<DefaultOciCertificatesDownloader> realDownloader) {
         this.realDownloader = realDownloader;
+    }
+
+    static void scriptCaCertificate(String resource) {
+        SCRIPTED_CA_OUTCOMES.add(() -> Objects.requireNonNull(resource));
+    }
+
+    static void scriptCaFailure(RuntimeException failure) {
+        RuntimeException scriptedFailure = Objects.requireNonNull(failure);
+        SCRIPTED_CA_OUTCOMES.add(() -> {
+            throw scriptedFailure;
+        });
+    }
+
+    static void clearCaScript() {
+        SCRIPTED_CA_OUTCOMES.clear();
     }
 
     @Override
@@ -121,9 +140,11 @@ class TestOciCertificatesDownloader implements OciCertificatesDownloader {
     @Override
     public X509Certificate loadCACertificate(String caCertOcid) {
         callCount_loadCACertificate++;
-        if (caFailure != null) {
+        Supplier<String> scriptedOutcome = SCRIPTED_CA_OUTCOMES.poll();
+        if (scriptedOutcome == null && caFailure != null) {
             throw caFailure;
         }
+        String certificateResource = scriptedOutcome == null ? caCertificateResource : scriptedOutcome.get();
 
         try {
             if (OciTestUtils.ociRealUsage()) {
@@ -132,7 +153,7 @@ class TestOciCertificatesDownloader implements OciCertificatesDownloader {
                 TimeUnit.MILLISECONDS.sleep(1); // make sure metrics timestamp changes
                 Objects.requireNonNull(caCertOcid);
                 try (InputStream caCertIs =
-                        TestOciCertificatesDownloader.class.getClassLoader().getResourceAsStream(caCertificateResource)) {
+                        TestOciCertificatesDownloader.class.getClassLoader().getResourceAsStream(certificateResource)) {
                     return DefaultOciCertificatesDownloader.toCertificate(caCertIs);
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);

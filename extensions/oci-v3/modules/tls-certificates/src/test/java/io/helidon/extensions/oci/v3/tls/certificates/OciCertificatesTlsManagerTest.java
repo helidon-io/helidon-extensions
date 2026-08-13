@@ -16,27 +16,35 @@
 
 package io.helidon.extensions.oci.v3.tls.certificates;
 
-import java.lang.reflect.Method;
 import java.net.URI;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
-import io.helidon.common.testing.junit5.InMemoryLoggingHandler;
 import io.helidon.common.tls.Tls;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
+import io.helidon.scheduling.Task;
+import io.helidon.scheduling.TaskManager;
+import io.helidon.service.registry.GlobalServiceRegistry;
 
 import javax.net.ssl.X509KeyManager;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.containsString;
@@ -53,8 +61,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 // see pom.xml for system properties that can be used in these tests
 class OciCertificatesTlsManagerTest {
+    private TaskManager taskManager;
+    private Set<Task> existingTasks;
+
+    @BeforeEach
+    void recordExistingTasks() {
+        taskManager = GlobalServiceRegistry.registry().get(TaskManager.class);
+        existingTasks = Set.copyOf(taskManager.tasks());
+    }
+
     @AfterEach
     void reset() {
+        closeTasksCreatedSince(taskManager, existingTasks);
         TestOciCertificatesDownloader.version = "1";
         TestOciCertificatesDownloader.caCertificateResource = "test-keys/ca.pem";
         TestOciCertificatesDownloader.callCount_loadCertificates = 0;
@@ -63,6 +81,7 @@ class OciCertificatesTlsManagerTest {
         TestOciCertificatesDownloader.managedDelayMillis = 0;
         TestOciCertificatesDownloader.managedFailure = null;
         TestOciCertificatesDownloader.caFailure = null;
+        TestOciCertificatesDownloader.clearCaScript();
         TestOciPrivateKeyDownloader.callCount = 0;
     }
 
@@ -238,9 +257,6 @@ class OciCertificatesTlsManagerTest {
 
     @Test
     void caOnlyRotationFailuresAreLoggedAndRetried() throws Exception {
-        DefaultOciCertificatesTlsManager manager = newManager(OciPrivateKeySource.CERTIFICATE_BUNDLE);
-        X509Certificate initialCa = trustedCa(manager);
-        TestOciCertificatesDownloader.caCertificateResource = "test-keys/ecCert.pem";
         RuntimeException[] failures = {
                 new UnsupportedOperationException("secret unsupported detail"),
                 new IllegalArgumentException("secret material"),
@@ -253,14 +269,21 @@ class OciCertificatesTlsManagerTest {
                 "oci-download-or-tls-state",
                 "runtime-failure"
         };
+        TestOciCertificatesDownloader.scriptCaCertificate("test-keys/ca.pem");
+        for (RuntimeException failure : failures) {
+            TestOciCertificatesDownloader.scriptCaFailure(failure);
+        }
 
-        try (InMemoryLoggingHandler handler = InMemoryLoggingHandler.create(manager)) {
+        QueueLoggingHandler handler = QueueLoggingHandler.create(DefaultOciCertificatesTlsManager.class);
+        try {
+            DefaultOciCertificatesTlsManager manager =
+                    newManager(OciPrivateKeySource.CERTIFICATE_BUNDLE, null, "* * * * * ? *");
+            assertThat(tasksCreatedSince(taskManager, existingTasks).size(), is(1));
+            X509Certificate initialCa = trustedCa(manager);
+
             for (int i = 0; i < failures.length; i++) {
-                TestOciCertificatesDownloader.caFailure = failures[i];
-                invokeScheduledReload(manager);
-
-                assertThat(handler.logRecords().size(), is(i + 1));
-                LogRecord record = handler.logRecords().get(i);
+                LogRecord record = handler.poll(5, TimeUnit.SECONDS);
+                assertThat("scheduled warning " + (i + 1), record, notNullValue());
                 assertThat(record.getLevel(), is(Level.WARNING));
                 assertThat(record.getLoggerName(), is(DefaultOciCertificatesTlsManager.class.getName()));
                 assertThat(record.getThrown(), nullValue());
@@ -269,22 +292,20 @@ class OciCertificatesTlsManagerTest {
                 assertThat(warning, containsString("failure category: " + failureCategories[i]));
                 assertThat(warning, containsString("previously installed TLS identity remains active"));
                 assertThat(warning, not(containsString(failures[i].getMessage())));
+                assertThat(trustedCa(manager), equalTo(initialCa));
             }
+
+            TestOciCertificatesDownloader.caCertificateResource = "test-keys/ecCert.pem";
+            X509Certificate rotatedCa = awaitCaRotation(manager, initialCa, 5, TimeUnit.SECONDS);
+            assertThat(rotatedCa.getSubjectX500Principal().getName(), containsString("CN=managed-ec"));
+            assertThat(privateKeyAlgorithm(manager), is("RSA"));
+
+            assertTrue(TestOciCertificatesDownloader.callCount_loadCertificatesWithPrivateKey >= failures.length + 2);
+            assertTrue(TestOciCertificatesDownloader.callCount_loadCACertificate >= failures.length + 2);
+            assertThat(TestOciPrivateKeyDownloader.callCount, equalTo(0));
+        } finally {
+            handler.close();
         }
-        assertThat(trustedCa(manager), equalTo(initialCa));
-
-        TestOciCertificatesDownloader.caFailure = null;
-        assertTrue(manager.loadContext(false));
-        X509Certificate rotatedCa = trustedCa(manager);
-        assertThat(rotatedCa, not(equalTo(initialCa)));
-        assertThat(rotatedCa.getSubjectX500Principal().getName(), containsString("CN=managed-ec"));
-        assertThat(privateKeyAlgorithm(manager), is("RSA"));
-
-        assertFalse(manager.loadContext(false));
-        assertThat(trustedCa(manager), equalTo(rotatedCa));
-        assertThat(TestOciCertificatesDownloader.callCount_loadCertificatesWithPrivateKey, equalTo(7));
-        assertThat(TestOciCertificatesDownloader.callCount_loadCACertificate, equalTo(7));
-        assertThat(TestOciPrivateKeyDownloader.callCount, equalTo(0));
     }
 
     @Test
@@ -334,8 +355,14 @@ class OciCertificatesTlsManagerTest {
 
     private static DefaultOciCertificatesTlsManager newManager(OciPrivateKeySource privateKeySource,
                                                                Boolean alwaysReload) {
+        return newManager(privateKeySource, alwaysReload, "0 * * * * ? 2099");
+    }
+
+    private static DefaultOciCertificatesTlsManager newManager(OciPrivateKeySource privateKeySource,
+                                                               Boolean alwaysReload,
+                                                               String schedule) {
         OciCertificatesTlsManagerConfig.Builder builder = OciCertificatesTlsManagerConfig.builder()
-                .schedule("0 * * * * ? 2099")
+                .schedule(schedule)
                 .privateKeySource(privateKeySource)
                 .caOcid("test-ca")
                 .certOcid("test-cert");
@@ -374,9 +401,71 @@ class OciCertificatesTlsManagerTest {
         return acceptedIssuers[0];
     }
 
-    private static void invokeScheduledReload(DefaultOciCertificatesTlsManager manager) throws Exception {
-        Method method = DefaultOciCertificatesTlsManager.class.getDeclaredMethod("maybeReload");
-        method.setAccessible(true);
-        method.invoke(manager);
+    private static X509Certificate awaitCaRotation(DefaultOciCertificatesTlsManager manager,
+                                                   X509Certificate initialCa,
+                                                   long timeout,
+                                                   TimeUnit timeUnit) throws InterruptedException {
+        long deadline = System.nanoTime() + timeUnit.toNanos(timeout);
+        X509Certificate current = trustedCa(manager);
+        while (current.equals(initialCa) && System.nanoTime() < deadline) {
+            TimeUnit.MILLISECONDS.sleep(10);
+            current = trustedCa(manager);
+        }
+        assertThat("scheduled retry should install the rotated CA", current, not(equalTo(initialCa)));
+        return current;
+    }
+
+    private static List<Task> tasksCreatedSince(TaskManager taskManager, Set<Task> existingTasks) {
+        return taskManager.tasks()
+                .stream()
+                .filter(task -> !existingTasks.contains(task))
+                .toList();
+    }
+
+    private static void closeTasksCreatedSince(TaskManager taskManager, Set<Task> existingTasks) {
+        for (Task task : tasksCreatedSince(taskManager, existingTasks)) {
+            task.close();
+            task.executor().shutdownNow();
+            try {
+                assertTrue(task.executor().awaitTermination(5, TimeUnit.SECONDS),
+                           "Scheduled task executor should terminate");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("Interrupted while stopping scheduled task executor", e);
+            }
+        }
+    }
+
+    private static final class QueueLoggingHandler extends Handler {
+        private final Logger logger;
+        private final BlockingQueue<LogRecord> records = new LinkedBlockingQueue<>();
+
+        private QueueLoggingHandler(Class<?> loggerClass) {
+            this.logger = Logger.getLogger(loggerClass.getName());
+            logger.addHandler(this);
+        }
+
+        static QueueLoggingHandler create(Class<?> loggerClass) {
+            return new QueueLoggingHandler(loggerClass);
+        }
+
+        @Override
+        public void publish(LogRecord record) {
+            records.add(record);
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public void close() {
+            logger.removeHandler(this);
+            records.clear();
+        }
+
+        LogRecord poll(long timeout, TimeUnit timeUnit) throws InterruptedException {
+            return records.poll(timeout, timeUnit);
+        }
     }
 }
