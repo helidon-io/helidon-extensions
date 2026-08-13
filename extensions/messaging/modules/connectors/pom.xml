@@ -34,5 +34,6 @@
     <modules>
         <module>file</module>
         <module>kafka</module>
+        <module>jms</module>
     </modules>
 </project>

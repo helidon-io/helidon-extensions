@@ -25,22 +25,22 @@ public interface DeadLetterMessage<T> extends Message<T> {
     /**
      * Reserved common header containing the source channel.
      */
-    String SOURCE_CHANNEL_HEADER = "helidon-messaging-dead-letter-source-channel";
+    String SOURCE_CHANNEL_HEADER = "helidon_messaging_dead_letter_source_channel";
 
     /**
      * Reserved common header containing the total delivery attempts.
      */
-    String ATTEMPTS_HEADER = "helidon-messaging-dead-letter-attempts";
+    String ATTEMPTS_HEADER = "helidon_messaging_dead_letter_attempts";
 
     /**
      * Reserved common header containing the processing failure class.
      */
-    String FAILURE_TYPE_HEADER = "helidon-messaging-dead-letter-failure-type";
+    String FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
 
     /**
      * Reserved common header containing the processing failure message.
      */
-    String FAILURE_MESSAGE_HEADER = "helidon-messaging-dead-letter-failure-message";
+    String FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
 
     /**
      * Create a dead-letter message.

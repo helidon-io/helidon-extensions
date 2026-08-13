@@ -45,11 +45,17 @@
     <properties>
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
         <messaging.extension.version>${project.version}</messaging.extension.version>
+        <version.lib.jakarta.jms-api>3.1.0</version.lib.jakarta.jms-api>
         <version.lib.kafka>4.3.1</version.lib.kafka>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>jakarta.jms</groupId>
+                <artifactId>jakarta.jms-api</artifactId>
+                <version>${version.lib.jakarta.jms-api}</version>
+            </dependency>
             <dependency>
                 <groupId>org.apache.kafka</groupId>
                 <artifactId>kafka-clients</artifactId>
