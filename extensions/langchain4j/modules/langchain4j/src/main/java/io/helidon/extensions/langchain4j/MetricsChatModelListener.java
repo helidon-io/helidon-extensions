@@ -24,7 +24,6 @@ import io.helidon.metrics.api.DistributionStatisticsConfig;
 import io.helidon.metrics.api.DistributionSummary;
 import io.helidon.metrics.api.Meter;
 import io.helidon.metrics.api.MeterRegistry;
-import io.helidon.metrics.api.Metrics;
 import io.helidon.metrics.api.Tag;
 import io.helidon.service.registry.Service;
 
@@ -57,9 +56,12 @@ class MetricsChatModelListener implements ChatModelListener {
 
     /**
      * Constructs a {@code MetricsChatModelListener} instance.
+     *
+     * @param meterRegistry meter registry
      */
-    MetricsChatModelListener() {
-        this.meterRegistry = Metrics.globalRegistry();
+    @Service.Inject
+    MetricsChatModelListener(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
         // Limits set based on https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage.
         this.clientTokenUsageStatisticsConfigBuilder = DistributionStatisticsConfig.builder()
                 .buckets(1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864);

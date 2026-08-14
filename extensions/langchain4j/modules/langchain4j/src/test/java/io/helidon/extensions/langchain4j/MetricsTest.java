@@ -23,8 +23,8 @@ import java.util.Map;
 import io.helidon.metrics.api.DistributionSummary;
 import io.helidon.metrics.api.Meter;
 import io.helidon.metrics.api.MeterRegistry;
-import io.helidon.metrics.api.Metrics;
 import io.helidon.metrics.api.Tag;
+import io.helidon.service.registry.Services;
 
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
@@ -52,7 +52,7 @@ public class MetricsTest {
             .messages(List.of(UserMessage.from("test")))
             .build();
 
-    private final MeterRegistry meterRegistry = Metrics.globalRegistry();
+    private final MeterRegistry meterRegistry = Services.get(MeterRegistry.class);
 
     @BeforeEach
     void clearAllRegistry() {
@@ -62,7 +62,7 @@ public class MetricsTest {
 
     @Test
     void testMetricsListener() {
-        MetricsChatModelListener listener = new MetricsChatModelListener();
+        MetricsChatModelListener listener = new MetricsChatModelListener(meterRegistry);
 
         Map<Object, Object> ctx = new HashMap<>();
         listener.onRequest(new ChatModelRequestContext(CHAT_REQ, null, ctx));
@@ -78,7 +78,7 @@ public class MetricsTest {
 
     @Test
     void testMetricsListenerNoTokens() {
-        MetricsChatModelListener listener = new MetricsChatModelListener();
+        MetricsChatModelListener listener = new MetricsChatModelListener(meterRegistry);
 
         Map<Object, Object> ctx = new HashMap<>();
         listener.onRequest(new ChatModelRequestContext(CHAT_REQ, null, ctx));

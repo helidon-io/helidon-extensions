@@ -51,12 +51,6 @@ class TestOciCertificatesDownloader implements OciCertificatesDownloader {
     static volatile RuntimeException managedFailure;
     static volatile RuntimeException caFailure;
 
-    private final Supplier<DefaultOciCertificatesDownloader> realDownloader;
-
-    TestOciCertificatesDownloader(Supplier<DefaultOciCertificatesDownloader> realDownloader) {
-        this.realDownloader = realDownloader;
-    }
-
     static void scriptCaCertificate(String resource) {
         SCRIPTED_CA_OUTCOMES.add(() -> Objects.requireNonNull(resource));
     }
@@ -77,17 +71,13 @@ class TestOciCertificatesDownloader implements OciCertificatesDownloader {
         callCount_loadCertificates++;
 
         try {
-            if (OciTestUtils.ociRealUsage()) {
-                return realDownloader.get().loadCertificates(certOcid);
-            } else {
-                TimeUnit.MILLISECONDS.sleep(1); // make sure metrics timestamp changes
-                Objects.requireNonNull(certOcid);
-                try (InputStream certIs =
-                        TestOciCertificatesDownloader.class.getClassLoader().getResourceAsStream("test-keys/serverCert.pem")) {
-                    return OciCertificatesDownloader.create(version, new X509Certificate[] {DefaultOciCertificatesDownloader.toCertificate(certIs)});
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
+            TimeUnit.MILLISECONDS.sleep(1); // make sure metrics timestamp changes
+            Objects.requireNonNull(certOcid);
+            try (InputStream certIs =
+                    TestOciCertificatesDownloader.class.getClassLoader().getResourceAsStream("test-keys/serverCert.pem")) {
+                return OciCertificatesDownloader.create(version, new X509Certificate[] {DefaultOciCertificatesDownloader.toCertificate(certIs)});
+            } catch (Exception e) {
+                throw new RuntimeException(e);
             }
         } catch (InterruptedException e) {
             System.getLogger(getClass().getName()).log(System.Logger.Level.ERROR, e.getMessage(), e);
@@ -100,10 +90,6 @@ class TestOciCertificatesDownloader implements OciCertificatesDownloader {
         callCount_loadCertificatesWithPrivateKey++;
 
         try {
-            if (OciTestUtils.ociRealUsage()) {
-                return realDownloader.get().loadCertificatesWithPrivateKey(certOcid);
-            }
-
             TimeUnit.MILLISECONDS.sleep(managedDelayMillis);
             Objects.requireNonNull(certOcid);
             if (managedFailure != null) {
@@ -147,17 +133,13 @@ class TestOciCertificatesDownloader implements OciCertificatesDownloader {
         String certificateResource = scriptedOutcome == null ? caCertificateResource : scriptedOutcome.get();
 
         try {
-            if (OciTestUtils.ociRealUsage()) {
-                return realDownloader.get().loadCACertificate(caCertOcid);
-            } else {
-                TimeUnit.MILLISECONDS.sleep(1); // make sure metrics timestamp changes
-                Objects.requireNonNull(caCertOcid);
-                try (InputStream caCertIs =
-                        TestOciCertificatesDownloader.class.getClassLoader().getResourceAsStream(certificateResource)) {
-                    return DefaultOciCertificatesDownloader.toCertificate(caCertIs);
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
-                }
+            TimeUnit.MILLISECONDS.sleep(1); // make sure metrics timestamp changes
+            Objects.requireNonNull(caCertOcid);
+            try (InputStream caCertIs =
+                    TestOciCertificatesDownloader.class.getClassLoader().getResourceAsStream(certificateResource)) {
+                return DefaultOciCertificatesDownloader.toCertificate(caCertIs);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
             }
         } catch (InterruptedException e) {
             System.getLogger(getClass().getName()).log(System.Logger.Level.ERROR, e.getMessage(), e);
