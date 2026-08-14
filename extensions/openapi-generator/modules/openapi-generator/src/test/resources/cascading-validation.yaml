@@ -113,6 +113,9 @@ components:
         - $ref: '#/components/schemas/ConstrainedBase'
         - type: object
           properties:
+            inheritedCode:
+              type: string
+              maxLength: 10
             name:
               type: string
     ConstrainedBase:

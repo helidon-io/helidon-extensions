@@ -25,8 +25,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiPredicate;
 import java.util.function.Function;
-import java.util.function.Predicate;
 
 import org.openapitools.codegen.CodegenModel;
 import org.openapitools.codegen.CodegenOperation;
@@ -35,6 +35,9 @@ import org.openapitools.codegen.CodegenProperty;
 import org.openapitools.codegen.model.ModelsMap;
 import org.openapitools.codegen.model.OperationsMap;
 
+/**
+ * Computes and applies generator-only cascading validation metadata.
+ */
 final class CascadingValidationSupport {
 
     private CascadingValidationSupport() {
@@ -42,7 +45,7 @@ final class CascadingValidationSupport {
 
     static Analysis analyze(List<CodegenModel> models,
                             Set<String> modelNames,
-                            Predicate<CodegenProperty> directlyConstrained) {
+                            BiPredicate<CodegenModel, CodegenProperty> directlyConstrained) {
         Map<String, List<CodegenProperty>> propertiesByModel = new HashMap<>();
         Set<String> directlyConstrainedModels = new LinkedHashSet<>();
         for (CodegenModel model : models) {
@@ -50,27 +53,29 @@ final class CascadingValidationSupport {
                     ? List.of()
                     : renderVars(model);
             propertiesByModel.put(model.classname, properties);
-            if (properties.stream().anyMatch(directlyConstrained)) {
+            if (properties.stream().anyMatch(property -> directlyConstrained.test(model, property))) {
                 directlyConstrainedModels.add(model.classname);
             }
         }
         Set<String> participating = participatingModels(models, propertiesByModel,
                                                         modelNames, directlyConstrainedModels);
-        validateShapes(models, propertiesByModel, modelNames, participating);
-        validateDirectBoundaries(models, propertiesByModel, modelNames, participating);
-        validateAcyclicGraph(propertiesByModel, modelNames, participating);
+        Inheritance inheritance = inheritedValidationProperties(models,
+                                                                 propertiesByModel,
+                                                                 modelNames,
+                                                                 participating,
+                                                                 directlyConstrained);
+        Map<String, List<CodegenProperty>> effectiveProperties = effectiveProperties(propertiesByModel, inheritance);
+        validateShapes(models, effectiveProperties, modelNames, participating);
+        validateDirectBoundaries(models, effectiveProperties, modelNames, participating);
+        validateAcyclicGraph(effectiveProperties, modelNames, participating);
         Set<String> unsupportedUnionTypes = unsupportedUnionTypes(models, participating);
-        validateUnionProperties(models, propertiesByModel, unsupportedUnionTypes);
-        Map<String, List<CodegenProperty>> inheritedProperties = inheritedValidationProperties(models,
-                                                                                                propertiesByModel,
-                                                                                                modelNames,
-                                                                                                participating,
-                                                                                                directlyConstrained);
+        validateUnionProperties(models, effectiveProperties, unsupportedUnionTypes);
         return new Analysis(modelNames,
                             Map.copyOf(propertiesByModel),
                             participating,
                             unsupportedUnionTypes,
-                            inheritedProperties);
+                            inheritance.accessorsByModel,
+                            inheritance.overriddenByModel);
     }
 
     static Set<String> participatingModels(List<CodegenModel> models,
@@ -119,8 +124,30 @@ final class CascadingValidationSupport {
                             + "validators eagerly and does not guard null. Make the property required and non-nullable, "
                             + "use Optional or a supported container boundary, or validate it in application logic.");
                 }
+                validateNestedModelNullability(model, property, javaType, modelNames, participating);
             }
         }
+    }
+
+    private static void validateNestedModelNullability(CodegenModel model,
+                                                       CodegenProperty property,
+                                                       String javaType,
+                                                       Set<String> modelNames,
+                                                       Set<String> participating) {
+        CodegenProperty nested = property.items != null ? property.items : property.additionalProperties;
+        if (nested == null) {
+            return;
+        }
+        String nestedType = propertyType(nested);
+        if (nested.isNullable
+                && ValidationTypeSupport.isDirectParticipatingModel(nestedType, modelNames, participating)) {
+            throw new IllegalArgumentException("Unsupported nullable cascading validation boundary for schema '"
+                    + model.classname + "', property '" + property.baseName + "', mapped Java type '" + javaType
+                    + "': a nested model element or map value is nullable, but Helidon 4.5 invokes "
+                    + "@Validation.Valid validators eagerly without a null guard. Make nested model values "
+                    + "non-nullable or validate the boundary in application logic.");
+        }
+        validateNestedModelNullability(model, nested, javaType, modelNames, participating);
     }
 
     @SuppressWarnings("unchecked")
@@ -166,20 +193,22 @@ final class CascadingValidationSupport {
         }
     }
 
-    private static Map<String, List<CodegenProperty>> inheritedValidationProperties(
+    private static Inheritance inheritedValidationProperties(
             List<CodegenModel> models,
             Map<String, List<CodegenProperty>> propertiesByModel,
             Set<String> modelNames,
             Set<String> participating,
-            Predicate<CodegenProperty> directlyConstrained) {
+            BiPredicate<CodegenModel, CodegenProperty> directlyConstrained) {
         Map<String, CodegenModel> modelsByName = models.stream()
                 .collect(java.util.stream.Collectors.toMap(model -> model.classname, model -> model));
-        Map<String, List<CodegenProperty>> result = new HashMap<>();
+        Map<String, List<CodegenProperty>> accessorsByModel = new HashMap<>();
+        Map<String, Map<String, List<CodegenProperty>>> overriddenByModel = new HashMap<>();
         for (CodegenModel model : models) {
             Set<String> localNames = propertiesByModel.getOrDefault(model.classname, List.of()).stream()
                     .map(property -> property.name)
                     .collect(java.util.stream.Collectors.toSet());
             Map<String, CodegenProperty> inherited = new LinkedHashMap<>();
+            Map<String, List<CodegenProperty>> overridden = new LinkedHashMap<>();
             Set<String> visited = new LinkedHashSet<>();
             Object parentValue = model.vendorExtensions.get("x-extends-model");
             while (parentValue != null && visited.add(parentValue.toString())) {
@@ -188,15 +217,34 @@ final class CascadingValidationSupport {
                     boolean cascades = ValidationTypeSupport.referencedModels(propertyType(property), modelNames)
                             .stream()
                             .anyMatch(participating::contains);
-                    if (!localNames.contains(property.name) && (directlyConstrained.test(property) || cascades)) {
+                    if (localNames.contains(property.name)) {
+                        if (directlyConstrained.test(modelsByName.get(parent), property) || cascades) {
+                            overridden.computeIfAbsent(property.name, ignored -> new ArrayList<>()).add(property);
+                        }
+                    } else if (directlyConstrained.test(modelsByName.get(parent), property) || cascades) {
                         inherited.putIfAbsent(property.name, property);
                     }
                 }
                 CodegenModel parentModel = modelsByName.get(parent);
                 parentValue = parentModel == null ? null : parentModel.vendorExtensions.get("x-extends-model");
             }
-            result.put(model.classname, List.copyOf(inherited.values()));
+            accessorsByModel.put(model.classname, List.copyOf(inherited.values()));
+            Map<String, List<CodegenProperty>> immutableOverridden = new LinkedHashMap<>();
+            overridden.forEach((name, properties) -> immutableOverridden.put(name, List.copyOf(properties)));
+            overriddenByModel.put(model.classname, Map.copyOf(immutableOverridden));
         }
+        return new Inheritance(Map.copyOf(accessorsByModel), Map.copyOf(overriddenByModel));
+    }
+
+    private static Map<String, List<CodegenProperty>> effectiveProperties(
+            Map<String, List<CodegenProperty>> propertiesByModel,
+            Inheritance inheritance) {
+        Map<String, List<CodegenProperty>> result = new HashMap<>();
+        propertiesByModel.forEach((modelName, localProperties) -> {
+            List<CodegenProperty> effective = new ArrayList<>(localProperties);
+            effective.addAll(inheritance.accessorsByModel.getOrDefault(modelName, List.of()));
+            result.put(modelName, List.copyOf(effective));
+        });
         return Map.copyOf(result);
     }
 
@@ -316,6 +364,10 @@ final class CascadingValidationSupport {
     static boolean apply(CodegenParameter parameter,
                          Analysis analysis) {
         String javaType = parameter.dataType;
+        if (ValidationTypeSupport.referencedModels(javaType, analysis.modelNames).stream()
+                .anyMatch(analysis.participatingModels::contains)) {
+            validateRequestNullability(parameter, javaType);
+        }
         Set<String> unsupportedUnions = ValidationTypeSupport.referencedModels(javaType,
                                                                                 analysis.unsupportedUnionTypes);
         if (!unsupportedUnions.isEmpty()) {
@@ -349,6 +401,33 @@ final class CascadingValidationSupport {
         return false;
     }
 
+    private static void validateRequestNullability(CodegenParameter parameter, String javaType) {
+        if (!parameter.requiredAndNotNullable()) {
+            throw new IllegalArgumentException("Unsupported nullable cascading validation request entity '"
+                    + parameter.baseName + "', mapped Java type '" + javaType + "'. Helidon 4.5 invokes "
+                    + "@Validation.Valid validators eagerly and does not guard null. Make the request body required "
+                    + "and non-nullable or validate it in application logic.");
+        }
+        validateNestedRequestNullability(parameter.items, parameter.baseName, javaType);
+        validateNestedRequestNullability(parameter.additionalProperties, parameter.baseName, javaType);
+    }
+
+    private static void validateNestedRequestNullability(CodegenProperty property,
+                                                          String parameterName,
+                                                          String javaType) {
+        if (property == null) {
+            return;
+        }
+        if (property.isModel && property.isNullable) {
+            throw new IllegalArgumentException("Unsupported nullable cascading validation request entity '"
+                    + parameterName + "', mapped Java type '" + javaType + "': a nested model element or map value "
+                    + "is nullable, but Helidon 4.5 invokes @Validation.Valid validators eagerly without a null "
+                    + "guard. Make nested model values non-nullable or validate the boundary in application logic.");
+        }
+        validateNestedRequestNullability(property.items, parameterName, javaType);
+        validateNestedRequestNullability(property.additionalProperties, parameterName, javaType);
+    }
+
     static void applyInherited(CodegenModel model,
                                Analysis analysis,
                                Function<CodegenProperty, List<Map<String, Object>>> validationAnnotations) {
@@ -364,6 +443,16 @@ final class CascadingValidationSupport {
         if (!inherited.isEmpty()) {
             model.vendorExtensions.put("x-inherited-validation-vars", inherited);
         }
+    }
+
+    static List<CodegenProperty> validationSources(CodegenModel model,
+                                                   CodegenProperty localProperty,
+                                                   Analysis analysis) {
+        List<CodegenProperty> result = new ArrayList<>(analysis.overriddenPropertiesByModel
+                                                               .getOrDefault(model.classname, Map.of())
+                                                               .getOrDefault(localProperty.name, List.of()));
+        result.add(localProperty);
+        return List.copyOf(result);
     }
 
     static void addRequestEntityImports(OperationsMap operations, List<CodegenOperation> operationList) {
@@ -405,10 +494,15 @@ final class CascadingValidationSupport {
                     Map<String, List<CodegenProperty>> propertiesByModel,
                     Set<String> participatingModels,
                     Set<String> unsupportedUnionTypes,
-                    Map<String, List<CodegenProperty>> inheritedPropertiesByModel) {
+                    Map<String, List<CodegenProperty>> inheritedPropertiesByModel,
+                    Map<String, Map<String, List<CodegenProperty>>> overriddenPropertiesByModel) {
         static Analysis empty() {
-            return new Analysis(Set.of(), Map.of(), Set.of(), Set.of(), Map.of());
+            return new Analysis(Set.of(), Map.of(), Set.of(), Set.of(), Map.of(), Map.of());
         }
+    }
+
+    private record Inheritance(Map<String, List<CodegenProperty>> accessorsByModel,
+                               Map<String, Map<String, List<CodegenProperty>>> overriddenByModel) {
     }
 
     private record ValidationEdge(String source, String property, String javaType, String target) {

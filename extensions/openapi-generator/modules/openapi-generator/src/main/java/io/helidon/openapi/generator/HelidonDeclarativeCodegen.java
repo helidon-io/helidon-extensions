@@ -126,6 +126,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private List<SecurityRequirement> globalSecurityRequirements = List.of();
     private final JsonStringEnumSupport jsonStringEnums;
     private Map<String, Map<String, String>> rawDiscriminatorMappingsBySchema = Map.of();
+    private Map<String, Map<String, List<CodegenProperty>>> allOfValidationPropertiesBySchema = Map.of();
     private CascadingValidationSupport.Analysis cascadingValidation = CascadingValidationSupport.Analysis.empty();
     /**
      * Creates a new generator with default options and template mappings.
@@ -923,9 +924,15 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         normalizeComposedModels(models, modelsByClassname, unionInterfacesByMember);
         applyUnionInterfaces(models, unionInterfacesByMember);
         applyAllOfDiscriminatorHierarchy(models, modelsByClassname);
+        allOfValidationPropertiesBySchema = AllOfValidationSupport.validationProperties(
+                inputSpec, this::toModelName, (name, schema) -> fromProperty(name, schema, false),
+                property -> !buildValidationAnnotations(property).isEmpty());
 
         cascadingValidation = CascadingValidationSupport.analyze(
-                models, modelsByClassname.keySet(), prop -> !buildValidationAnnotations(prop).isEmpty());
+                models,
+                modelsByClassname.keySet(),
+                (model, property) -> validationSources(model, property).stream()
+                        .anyMatch(source -> !buildValidationAnnotations(source).isEmpty()));
 
         boolean anyValidation = false;
         for (Map.Entry<String, ModelsMap> entry : result.entrySet()) {
@@ -951,7 +958,16 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     }
 
                     // Build @Validation.* annotations from OpenAPI constraints
-                    List<Map<String, Object>> validationAnnotations = buildValidationAnnotations(prop);
+                    List<CodegenProperty> validationSources = new ArrayList<>(allOfValidationPropertiesBySchema
+                                                                                      .getOrDefault(model.classname,
+                                                                                                    Map.of())
+                                                                                      .getOrDefault(prop.baseName,
+                                                                                                    List.of()));
+                    validationSources.addAll(CascadingValidationSupport.validationSources(model,
+                                                                                           prop,
+                                                                                           cascadingValidation));
+                    CodegenProperty validationProperty = AllOfValidationSupport.merge(model, validationSources);
+                    List<Map<String, Object>> validationAnnotations = buildValidationAnnotations(validationProperty);
                     if (!validationAnnotations.isEmpty()) {
                         prop.vendorExtensions.put("x-validation-annotations", validationAnnotations);
                     }
@@ -967,7 +983,16 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     }
                 }
 
-                CascadingValidationSupport.applyInherited(model, cascadingValidation, this::buildValidationAnnotations);
+                CascadingValidationSupport.applyInherited(model, cascadingValidation, inheritedProperty -> {
+                    List<CodegenProperty> validationSources = new ArrayList<>(allOfValidationPropertiesBySchema
+                                                                                      .getOrDefault(model.classname,
+                                                                                                    Map.of())
+                                                                                      .getOrDefault(
+                                                                                              inheritedProperty.baseName,
+                                                                                              List.of()));
+                    validationSources.add(inheritedProperty);
+                    return buildValidationAnnotations(AllOfValidationSupport.merge(model, validationSources));
+                });
 
                 if (modelHasValidation) {
                     model.vendorExtensions.put("x-has-validations", Boolean.TRUE);
@@ -1753,6 +1778,17 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     "@Validation.Collection.Size(" + String.join(", ", attrs) + ")"));
         }
 
+        return result;
+    }
+
+    private List<CodegenProperty> validationSources(CodegenModel model, CodegenProperty property) {
+        if (model == null) {
+            return List.of(property);
+        }
+        List<CodegenProperty> result = new ArrayList<>(allOfValidationPropertiesBySchema
+                                                               .getOrDefault(model.classname, Map.of())
+                                                               .getOrDefault(property.baseName, List.of()));
+        result.add(property);
         return result;
     }
 

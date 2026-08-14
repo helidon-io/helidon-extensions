@@ -56,9 +56,33 @@ class CascadingValidationGenerationIT {
     @Test
     void composesInheritedAllOfConstraintsIntoChildValidator() throws IOException {
         String child = read(modelFile(outputDir, "ConstrainedChild.java"));
-        assertThat(child, containsString("@Override\n    @Validation.String.Length(min = 3)\n"
+        assertThat(child, containsString("@Validation.String.Length(min = 3, value = 10)\n"
                                                  + "    public String inheritedCode()"));
-        assertThat(child, containsString("return super.inheritedCode();"));
+        assertThat(child, not(containsString("return super.inheritedCode();")));
+    }
+
+    @Test
+    void retainsChildOnlyConstraintWhenAllOfPropertyOverridesParent() throws Exception {
+        Path target = outputDir.resolve("child-only-allof");
+        generate(target, "child-only-allof-validation.yaml", null);
+
+        String child = read(modelFile(target, "ValidationChild.java"));
+        assertThat(child, containsString("@Validation.Validated"));
+        assertThat(child, containsString("@Validation.String.Length(value = 5)\n"
+                                                 + "    public String code()"));
+    }
+
+    @Test
+    void rejectsIncompatibleAllOfPropertyConstraints() {
+        Path target = outputDir.resolve("incompatible-allof");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                                                       () -> generate(target,
+                                                                      "incompatible-allof-validation.yaml",
+                                                                      null));
+        assertThat(error.getMessage(), containsString("schema 'ValidationChild', property 'code'"));
+        assertThat(error.getMessage(), containsString("minLength exceeds maxLength"));
+        assertThat(Files.exists(modelFile(target, "ValidationChild.java")),
+                   org.hamcrest.CoreMatchers.is(false));
     }
 
     @Test
@@ -147,6 +171,40 @@ class CascadingValidationGenerationIT {
     }
 
     @Test
+    void rejectsNullableDirectRequestEntityBeforeRendering() {
+        Path target = outputDir.resolve("nullable-request");
+        RuntimeException error = assertThrows(RuntimeException.class,
+                                              () -> generate(target,
+                                                             "nullable-request-cascading-validation.yaml",
+                                                             null));
+        assertThat(rootMessage(error), containsString("nullable cascading validation request entity"));
+        assertThat(rootMessage(error), containsString("ConstrainedChild"));
+    }
+
+    @Test
+    void rejectsNullableRequestContainerElementBeforeRendering() {
+        Path target = outputDir.resolve("nullable-request-element");
+        RuntimeException error = assertThrows(RuntimeException.class,
+                                              () -> generate(target,
+                                                             "nullable-request-element-cascading-validation.yaml",
+                                                             null));
+        assertThat(rootMessage(error), containsString("nested model element or map value is nullable"));
+        assertThat(rootMessage(error), containsString("List<ConstrainedChild>"));
+    }
+
+    @Test
+    void rejectsNullableModelContainerElementBeforeRendering() {
+        Path target = outputDir.resolve("nullable-model-element");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                                                       () -> generate(target,
+                                                                      "nullable-model-element-cascading-validation.yaml",
+                                                                      null));
+        assertThat(error.getMessage(), containsString("schema 'Parent', property 'children'"));
+        assertThat(error.getMessage(), containsString("nested model element or map value is nullable"));
+        assertThat(Files.exists(modelFile(target, "Parent.java")), org.hamcrest.CoreMatchers.is(false));
+    }
+
+    @Test
     void rejectsConstrainedUnionRequestBoundaryBeforeRendering() {
         Path target = outputDir.resolve("constrained-union");
         RuntimeException error = assertThrows(RuntimeException.class,
@@ -214,6 +272,21 @@ class CascadingValidationGenerationIT {
                                                                          "mutual-recursive-cascading-validation.yaml",
                                                                          null));
         assertThat(repeated.getMessage(), org.hamcrest.CoreMatchers.is(error.getMessage()));
+    }
+
+    @Test
+    void rejectsValidationCycleIntroducedByAllOfInheritance() {
+        Path recursiveOutput = outputDir.resolve("inherited-cycle");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                                                       () -> generate(recursiveOutput,
+                                                                      "inherited-cycle-cascading-validation.yaml",
+                                                                      null));
+
+        assertThat(error.getMessage(), containsString("Unsupported recursive cascading validation graph"));
+        assertThat(error.getMessage(), containsString("Child.target (Target)"));
+        assertThat(error.getMessage(), containsString("Target.child (Child)"));
+        assertThat(Files.exists(modelFile(recursiveOutput, "Child.java")),
+                   org.hamcrest.CoreMatchers.is(false));
     }
 
     @Test

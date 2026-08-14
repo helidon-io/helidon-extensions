@@ -24,6 +24,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 
+/**
+ * Parses mapped Java types for supported cascading validation boundaries.
+ */
 final class ValidationTypeSupport {
     private static final Set<String> SUPPORTED_CONTAINERS = Set.of("Optional", "List", "Set", "Collection");
 

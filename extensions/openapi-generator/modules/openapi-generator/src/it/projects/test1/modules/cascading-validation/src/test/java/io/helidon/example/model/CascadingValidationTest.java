@@ -96,6 +96,20 @@ class CascadingValidationTest {
                    is(true));
     }
 
+    @Test
+    void validatesLocalAndInheritedConstraintsOnSameAllOfProperty() {
+        ConstrainedChild child = new ConstrainedChild();
+        child.inheritedCode("12345678901");
+
+        ValidationResponse response = validation.validate(ConstrainedChild.class, child);
+
+        assertThat(response.valid(), is(false));
+        assertThat(response.violations().stream()
+                           .map(CascadingValidationTest::path)
+                           .anyMatch(path -> path.contains("inheritedCode")),
+                   is(true));
+    }
+
     private static ConstrainedLeaf leaf(String code, String label) {
         ConstrainedLeaf result = new ConstrainedLeaf();
         result.code(code);
