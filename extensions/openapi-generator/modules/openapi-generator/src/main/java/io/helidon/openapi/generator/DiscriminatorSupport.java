@@ -35,6 +35,12 @@ final class DiscriminatorSupport {
     private DiscriminatorSupport() {
     }
 
+    @SuppressWarnings("unchecked")
+    static List<CodegenProperty> renderVars(CodegenModel model) {
+        Object renderVars = model.vendorExtensions.get("x-render-vars");
+        return renderVars instanceof List<?> vars ? (List<CodegenProperty>) vars : model.vars;
+    }
+
     static Property inheritedProperty(CodegenModel model,
                                       String discriminatorKey,
                                       Map<String, CodegenModel> modelsByClassname,
@@ -108,6 +114,72 @@ final class DiscriminatorSupport {
                 && candidate != null
                 && !candidate.toString().isBlank()
                 && enumValues.apply(property).contains(candidate.toString());
+    }
+
+    @SuppressWarnings("unchecked")
+    static List<String> enumValues(CodegenProperty property) {
+        if (property == null) {
+            return List.of();
+        }
+        if (property._enum != null && !property._enum.isEmpty()) {
+            return property._enum;
+        }
+        if (property.allowableValues == null) {
+            return List.of();
+        }
+        Object values = property.allowableValues.get("values");
+        if (values instanceof List<?> enumValues) {
+            return enumValues.stream()
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .toList();
+        }
+        return List.of();
+    }
+
+    static CodegenProperty property(CodegenModel model, String discriminatorKey) {
+        if (model == null) {
+            return null;
+        }
+        List<CodegenProperty> properties = model.allVars != null && !model.allVars.isEmpty()
+                ? model.allVars
+                : model.vars;
+        return property(properties, discriminatorKey);
+    }
+
+    static CodegenProperty property(List<CodegenProperty> properties, String discriminatorKey) {
+        if (properties == null || discriminatorKey == null) {
+            return null;
+        }
+        return properties.stream()
+                .filter(candidate -> isProperty(candidate, discriminatorKey))
+                .findFirst()
+                .orElse(null);
+    }
+
+    static boolean isProperty(CodegenProperty property, String discriminatorKey) {
+        return property != null
+                && (discriminatorKey.equals(property.baseName) || discriminatorKey.equals(property.name));
+    }
+
+    @SuppressWarnings("unchecked")
+    static void addAccessor(CodegenModel model, String extensionName, Map<String, Object> accessor) {
+        if (model == null) {
+            return;
+        }
+        List<Map<String, Object>> accessors = (List<Map<String, Object>>) model.vendorExtensions
+                .computeIfAbsent(extensionName, ignored -> new ArrayList<>());
+        for (Map<String, Object> existing : accessors) {
+            if (!existing.get("name").equals(accessor.get("name"))) {
+                continue;
+            }
+            if (existing.equals(accessor)) {
+                return;
+            }
+            throw new IllegalStateException("Contradictory discriminator accessor '" + accessor.get("name")
+                    + "' on model '" + model.classname + "': " + existing + " versus " + accessor);
+        }
+        accessors.add(accessor);
     }
 
     static String sanitizeDiagnosticReference(String value) {

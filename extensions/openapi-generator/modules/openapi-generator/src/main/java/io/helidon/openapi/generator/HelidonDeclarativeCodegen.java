@@ -124,7 +124,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private boolean avoidOptionalListParams = false;
     private DiscriminatorRepresentation discriminatorRepresentation;
     private List<SecurityRequirement> globalSecurityRequirements = List.of();
-    private Map<String, String> rawAllOfDiscriminatorValuesBySchema = Map.of();
     private final JsonStringEnumSupport jsonStringEnums;
     private Map<String, Map<String, String>> rawDiscriminatorMappingsBySchema = Map.of();
 
@@ -1193,7 +1192,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             parentModel.vendorExtensions.put("x-polymorphic-subtypes", sortedSubtypes);
             parentModel.vendorExtensions.put("x-abstract-polymorphic-base", Boolean.TRUE);
 
-            CodegenProperty discriminatorProperty = discriminatorProperty(parentModel, discriminatorKey);
+            CodegenProperty discriminatorProperty = DiscriminatorSupport.property(parentModel, discriminatorKey);
             removeRenderedDiscriminatorProperty(parentModel, discriminatorKey);
             for (String subtypeName : hierarchy.descendantNames(parentType)) {
                 removeRenderedDiscriminatorProperty(modelsByClassname.get(subtypeName), discriminatorKey);
@@ -1204,7 +1203,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 Map<String, Object> abstractAccessor = discriminatorAccessor(discriminatorKey,
                                                                               discriminatorProperty,
                                                                               null);
-                addDiscriminatorAccessor(parentModel, "x-abstract-discriminator-accessors", abstractAccessor);
+                DiscriminatorSupport.addAccessor(parentModel, "x-abstract-discriminator-accessors", abstractAccessor);
                 if (discriminatorProperty != null && discriminatorProperty.isEnum) {
                     parentModel.vendorExtensions.put("x-discriminator-enum-properties",
                                                      List.of(discriminatorProperty));
@@ -1215,7 +1214,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     String valueExpression = discriminatorValueExpression(parentModel,
                                                                           discriminatorKey,
                                                                           alias);
-                    addDiscriminatorAccessor(subtype,
+                    DiscriminatorSupport.addAccessor(subtype,
                                              "x-concrete-discriminator-accessors",
                                              discriminatorAccessor(discriminatorKey,
                                                                    discriminatorProperty,
@@ -1235,8 +1234,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 .map(model -> DiscriminatorSupport.inheritedProperty(model,
                                                                       discriminatorKey,
                                                                       modelsByClassname,
-                                                                      this::renderVars,
-                                                                      this::discriminatorProperty))
+                                                                      DiscriminatorSupport::renderVars,
+                                                                      DiscriminatorSupport::property))
                 .filter(java.util.Objects::nonNull)
                 .toList();
         DiscriminatorSupport.Property discriminatorProperty = DiscriminatorSupport.commonProperty(
@@ -1255,7 +1254,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         Map<String, Object> abstractAccessor = unionDiscriminatorAccessor(discriminatorKey,
                                                                           discriminatorProperty,
                                                                           null);
-        addDiscriminatorAccessor(unionModel, "x-abstract-discriminator-accessors", abstractAccessor);
+        DiscriminatorSupport.addAccessor(unionModel, "x-abstract-discriminator-accessors", abstractAccessor);
         for (Map<String, Object> unionMember : unionMembers) {
             CodegenModel member = modelsByClassname.get(unionMember.get("name").toString());
             String valueExpression = discriminatorProperty == null
@@ -1263,7 +1262,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     : discriminatorValueExpression(discriminatorProperty.owner(),
                                                    discriminatorKey,
                                                    unionMember.get("alias").toString());
-            addDiscriminatorAccessor(member,
+            DiscriminatorSupport.addAccessor(member,
                                      "x-concrete-discriminator-accessors",
                                      unionDiscriminatorAccessor(discriminatorKey,
                                                                  discriminatorProperty,
@@ -1338,7 +1337,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             if (declaredValue == null) {
                 Object shorthand = subtype.vendorExtensions.get("x-inline-discriminator-shorthand");
                 if (DiscriminatorSupport.isDeclaredEnumValue(
-                        discriminatorProperty(owner, discriminatorKey(owner)), shorthand, this::discriminatorEnumValues)) {
+                        DiscriminatorSupport.property(owner, discriminatorKey(owner)),
+                        shorthand,
+                        DiscriminatorSupport::enumValues)) {
                     declaredValue = shorthand;
                 }
             }
@@ -1415,14 +1416,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         if (model == null) {
             return;
         }
-        List<CodegenProperty> filtered = renderVars(model).stream()
-                .filter(property -> !isDiscriminatorProperty(property, discriminatorKey))
+        List<CodegenProperty> filtered = DiscriminatorSupport.renderVars(model).stream()
+                .filter(property -> !DiscriminatorSupport.isProperty(property, discriminatorKey))
                 .toList();
         model.vendorExtensions.put("x-render-vars", filtered);
-    }
-
-    private boolean isDiscriminatorProperty(CodegenProperty property, String discriminatorKey) {
-        return property != null && (discriminatorKey.equals(property.baseName) || discriminatorKey.equals(property.name));
     }
 
     private Map<String, Object> discriminatorAccessor(String discriminatorKey,
@@ -1440,25 +1437,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return result;
     }
 
-    @SuppressWarnings("unchecked")
-    private void addDiscriminatorAccessor(CodegenModel model, String extensionName, Map<String, Object> accessor) {
-        if (model == null) {
-            return;
-        }
-        List<Map<String, Object>> accessors = (List<Map<String, Object>>) model.vendorExtensions
-                .computeIfAbsent(extensionName, ignored -> new ArrayList<>());
-        for (Map<String, Object> existing : accessors) {
-            if (!existing.get("name").equals(accessor.get("name"))) {
-                continue;
-            }
-            if (existing.equals(accessor)) {
-                return;
-            }
-            throw new IllegalStateException("Contradictory discriminator accessor '" + accessor.get("name")
-                    + "' on model '" + model.classname + "': " + existing + " versus " + accessor);
-        }
-        accessors.add(accessor);
-    }
 
     private Set<String> localAllOfPropertyNames(List<CodegenProperty> allOfSchemas,
                                                 CodegenProperty parentMember,
@@ -1626,35 +1604,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return false;
     }
 
-    @SuppressWarnings("unchecked")
-    private List<String> discriminatorEnumValues(CodegenProperty property) {
-        if (property == null) {
-            return List.of();
-        }
-
-        if (property._enum != null && !property._enum.isEmpty()) {
-            return property._enum;
-        }
-
-        if (property.allowableValues == null) {
-            return List.of();
-        }
-
-        Object values = property.allowableValues.get("values");
-        if (values instanceof List<?> enumValues) {
-            return enumValues.stream()
-                    .filter(String.class::isInstance)
-                    .map(String.class::cast)
-                    .toList();
-        }
-
-        return List.of();
-    }
-
     private String discriminatorValueExpression(CodegenModel parentModel,
                                                 String discriminatorKey,
                                                 String discriminatorValue) {
-        CodegenProperty property = discriminatorProperty(parentModel, discriminatorKey);
+        CodegenProperty property = DiscriminatorSupport.property(parentModel, discriminatorKey);
         if (property == null) {
             return JavaStringLiterals.toJavaStringLiteral(discriminatorValue);
         }
@@ -1676,33 +1629,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             return null;
         }
 
-        for (String enumValue : discriminatorEnumValues(property)) {
+        for (String enumValue : DiscriminatorSupport.enumValues(property)) {
             String enumConstant = toEnumVarName(enumValue, "String");
             if (enumValue.equals(discriminatorValue)) {
                 return enumConstant;
-            }
-        }
-        return null;
-    }
-
-    private CodegenProperty discriminatorProperty(CodegenModel parentModel, String discriminatorKey) {
-        List<CodegenProperty> properties = parentModel.allVars != null && !parentModel.allVars.isEmpty()
-                ? parentModel.allVars
-                : parentModel.vars;
-        return discriminatorProperty(properties, discriminatorKey);
-    }
-
-    private CodegenProperty discriminatorProperty(List<CodegenProperty> properties, String discriminatorKey) {
-        if (properties == null) {
-            return null;
-        }
-
-        for (CodegenProperty property : properties) {
-            if (property == null) {
-                continue;
-            }
-            if (discriminatorKey.equals(property.baseName) || discriminatorKey.equals(property.name)) {
-                return property;
             }
         }
         return null;
