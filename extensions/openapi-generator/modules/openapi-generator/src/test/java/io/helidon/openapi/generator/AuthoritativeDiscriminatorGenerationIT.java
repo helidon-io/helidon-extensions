@@ -217,6 +217,26 @@ class AuthoritativeDiscriminatorGenerationIT {
                      HelidonDeclarativeCodegen.sanitizeDiagnosticReference("file:/tmp/spec.yaml?token=hidden"));
     }
 
+    @Test
+    void supportsExtensionValuesInheritedEnumTypesAndTransitiveHierarchies() throws Exception {
+        URL resource = getClass().getClassLoader().getResource("authoritative-discriminator-adversarial.yaml");
+        Path output = generate("adversarial", Paths.get(resource.toURI()).toAbsolutePath(), null);
+
+        assertThat(model(output, "ExtensionCat"), containsString("return ExtensionBase.KindEnum.WIRE_CAT;"));
+
+        String distinctLeaf = model(output, "DistinctLeaf");
+        assertThat(distinctLeaf, containsString("public BaseKindEnum baseKind()"));
+        assertThat(distinctLeaf, containsString("public LeafKindEnum leafKind()"));
+
+        assertThat(model(output, "EnumPet"), containsString("KindHolder.KindEnum kind();"));
+        assertThat(model(output, "UnionCat"), containsString("public KindHolder.KindEnum kind()"));
+        assertThat(model(output, "UnionDog"), containsString("public KindHolder.KindEnum kind()"));
+
+        assertThat(model(output, "TransitiveBase"),
+                   containsString("@Json.Subtype(alias = \"leaf\", value = TransitiveLeaf.class)"));
+        assertThat(model(output, "TransitiveLeaf"), containsString("return \"leaf\";"));
+    }
+
     private Path generate(String name, String representation) throws Exception {
         URL resource = getClass().getClassLoader().getResource("authoritative-discriminators.yaml");
         Path spec = Paths.get(resource.toURI()).toAbsolutePath();

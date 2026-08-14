@@ -488,6 +488,20 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         boolean hasDeclaredProperties = hasDeclaredProperties(schema);
         model.vendorExtensions.put("x-has-declared-properties", hasDeclaredProperties);
         model.vendorExtensions.put("x-schema-nullable", Boolean.TRUE.equals(schema.getNullable()));
+        Object discriminatorValue = extensionValue(schema, "x-discriminator-value");
+        if (discriminatorValue == null && schema.getAllOf() != null) {
+            for (Object memberObject : schema.getAllOf()) {
+                if (memberObject instanceof Schema<?> member) {
+                    discriminatorValue = extensionValue(member, "x-discriminator-value");
+                    if (discriminatorValue != null) {
+                        break;
+                    }
+                }
+            }
+        }
+        if (discriminatorValue != null && !discriminatorValue.toString().isBlank()) {
+            model.vendorExtensions.put("x-declared-discriminator-value", discriminatorValue.toString());
+        }
         Object representation = extensionValue(schema, EXT_DISCRIMINATOR_REPRESENTATION);
         if (representation != null) {
             DiscriminatorRepresentation parsed = parseDiscriminatorRepresentation(representation,
@@ -960,10 +974,13 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             model.vendorExtensions.put("x-render-vars", model.vars);
         }
         for (CodegenModel model : models) {
+            if (model.oneOf.isEmpty() && model.anyOf.isEmpty() && !model.allOf.isEmpty()) {
+                normalizeAllOfModel(model, modelsByClassname);
+            }
+        }
+        for (CodegenModel model : models) {
             if ((!model.oneOf.isEmpty() || !model.anyOf.isEmpty()) && shouldRenderAsUnionInterface(model)) {
                 normalizeUnionModel(model, modelsByClassname, unionInterfacesByMember);
-            } else if (!model.allOf.isEmpty()) {
-                normalizeAllOfModel(model, modelsByClassname);
             }
         }
     }
@@ -1097,7 +1114,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private void applyAllOfDiscriminatorHierarchy(List<CodegenModel> models,
                                                   Map<String, CodegenModel> modelsByClassname) {
         Map<String, List<String>> subtypeNamesByParent = new LinkedHashMap<>();
-        Map<String, String> parentBySubtype = new LinkedHashMap<>();
 
         for (CodegenModel model : models) {
             String parentType = (String) model.vendorExtensions.get("x-extends-model");
@@ -1105,20 +1121,31 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 continue;
             }
 
-            CodegenModel parentModel = modelsByClassname.get(parentType);
-            if (parentModel == null || parentModel.discriminator == null) {
+            if (!modelsByClassname.containsKey(parentType)) {
                 continue;
             }
             subtypeNamesByParent.computeIfAbsent(parentType, ignored -> new ArrayList<>()).add(model.classname);
-            parentBySubtype.put(model.classname, parentType);
         }
 
         Map<String, Map<String, String>> aliasesByParent = new LinkedHashMap<>();
-        subtypeNamesByParent.forEach((parentType, subtypeNames) -> {
+        List<String> parentTypes = new ArrayList<>(subtypeNamesByParent.keySet());
+        parentTypes.sort((left, right) -> Integer.compare(hierarchyDepth(left, subtypeNamesByParent),
+                                                          hierarchyDepth(right, subtypeNamesByParent)));
+        parentTypes.forEach(parentType -> {
             CodegenModel parentModel = modelsByClassname.get(parentType);
             if (parentModel != null && parentModel.discriminator != null) {
+                List<String> concreteSubtypeNames = concreteSubtypeNames(parentType, subtypeNamesByParent);
+                Map<String, String> descendantAliases = descendantAliases(parentType,
+                                                                           concreteSubtypeNames,
+                                                                           aliasesByParent,
+                                                                           subtypeNamesByParent,
+                                                                           modelsByClassname);
                 aliasesByParent.put(parentType,
-                                    validateAndResolveAliases(parentModel, subtypeNames, modelsByClassname));
+                                    validateAndResolveAliases(parentModel,
+                                                              concreteSubtypeNames,
+                                                              descendantAliases,
+                                                              subtypeNamesByParent,
+                                                              modelsByClassname));
             }
         });
 
@@ -1134,13 +1161,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             }
 
             List<String> concreteSubtypeNames = concreteSubtypeNames(parentType, subtypeNamesByParent);
-            Map<String, String> aliasesBySubtype = new LinkedHashMap<>();
-            for (String concreteSubtypeName : concreteSubtypeNames) {
-                String directParent = parentBySubtype.get(concreteSubtypeName);
-                aliasesBySubtype.put(concreteSubtypeName,
-                                     aliasesByParent.getOrDefault(directParent, Map.of())
-                                             .getOrDefault(concreteSubtypeName, concreteSubtypeName));
-            }
+            Map<String, String> aliasesBySubtype = aliasesByParent.getOrDefault(parentType, Map.of());
             Map<String, String> subtypeByAlias = new LinkedHashMap<>();
             aliasesBySubtype.forEach((subtype, alias) -> {
                 String previousSubtype = subtypeByAlias.putIfAbsent(alias, subtype);
@@ -1170,7 +1191,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
             CodegenProperty discriminatorProperty = discriminatorProperty(parentModel, discriminatorKey);
             removeRenderedDiscriminatorProperty(parentModel, discriminatorKey);
-            for (String subtypeName : subtypeNames) {
+            for (String subtypeName : descendantNames(parentType, subtypeNamesByParent)) {
                 removeRenderedDiscriminatorProperty(modelsByClassname.get(subtypeName), discriminatorKey);
             }
             DiscriminatorRepresentation representation = discriminatorRepresentation(parentModel,
@@ -1184,12 +1205,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     parentModel.vendorExtensions.put("x-discriminator-enum-properties",
                                                      List.of(discriminatorProperty));
                 }
-                for (String subtypeName : subtypeNames) {
-                    if (subtypeNamesByParent.containsKey(subtypeName)) {
-                        // An intermediate polymorphic parent remains abstract; its concrete descendants
-                        // supply the discriminator accessor.
-                        continue;
-                    }
+                for (String subtypeName : concreteSubtypeNames) {
                     CodegenModel subtype = modelsByClassname.get(subtypeName);
                     String alias = aliasesBySubtype.get(subtypeName);
                     String valueExpression = discriminatorValueExpression(parentModel,
@@ -1210,6 +1226,79 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         LinkedHashSet<String> result = new LinkedHashSet<>();
         collectConcreteSubtypeNames(parentType, subtypeNamesByParent, new LinkedHashSet<>(), result);
         return new ArrayList<>(result);
+    }
+
+    private List<String> descendantNames(String parentType,
+                                         Map<String, List<String>> subtypeNamesByParent) {
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        collectDescendantNames(parentType, subtypeNamesByParent, new LinkedHashSet<>(), result);
+        return new ArrayList<>(result);
+    }
+
+    private int hierarchyDepth(String parentType, Map<String, List<String>> subtypeNamesByParent) {
+        return hierarchyDepth(parentType, subtypeNamesByParent, new LinkedHashSet<>());
+    }
+
+    private int hierarchyDepth(String parentType,
+                               Map<String, List<String>> subtypeNamesByParent,
+                               Set<String> visiting) {
+        if (!visiting.add(parentType)) {
+            throw new IllegalStateException("Cyclic allOf discriminator hierarchy involving model '"
+                                                    + parentType + "'");
+        }
+        int depth = 0;
+        for (String subtypeName : subtypeNamesByParent.getOrDefault(parentType, List.of())) {
+            depth = Math.max(depth, 1 + hierarchyDepth(subtypeName, subtypeNamesByParent, visiting));
+        }
+        visiting.remove(parentType);
+        return depth;
+    }
+
+    private Map<String, String> descendantAliases(String parentType,
+                                                  List<String> concreteSubtypeNames,
+                                                  Map<String, Map<String, String>> aliasesByParent,
+                                                  Map<String, List<String>> subtypeNamesByParent,
+                                                  Map<String, CodegenModel> modelsByClassname) {
+        CodegenModel parent = modelsByClassname.get(parentType);
+        String discriminatorKey = discriminatorKey(parent);
+        Map<String, String> result = new LinkedHashMap<>();
+        List<String> descendants = descendantNames(parentType, subtypeNamesByParent);
+        for (String concreteSubtypeName : concreteSubtypeNames) {
+            String selectedAlias = null;
+            int selectedDepth = -1;
+            for (String descendant : descendants) {
+                CodegenModel descendantModel = modelsByClassname.get(descendant);
+                Map<String, String> aliases = aliasesByParent.get(descendant);
+                if (aliases == null || !discriminatorKey.equals(discriminatorKey(descendantModel))
+                        || !aliases.containsKey(concreteSubtypeName)) {
+                    continue;
+                }
+                int depth = hierarchyDepth(descendant, subtypeNamesByParent);
+                if (depth > selectedDepth) {
+                    selectedAlias = aliases.get(concreteSubtypeName);
+                    selectedDepth = depth;
+                }
+            }
+            if (selectedAlias != null) {
+                result.put(concreteSubtypeName, selectedAlias);
+            }
+        }
+        return result;
+    }
+
+    private void collectDescendantNames(String parentType,
+                                        Map<String, List<String>> subtypeNamesByParent,
+                                        Set<String> visiting,
+                                        Set<String> result) {
+        if (!visiting.add(parentType)) {
+            throw new IllegalStateException("Cyclic allOf discriminator hierarchy involving model '"
+                                                    + parentType + "'");
+        }
+        for (String subtypeName : subtypeNamesByParent.getOrDefault(parentType, List.of())) {
+            result.add(subtypeName);
+            collectDescendantNames(subtypeName, subtypeNamesByParent, visiting, result);
+        }
+        visiting.remove(parentType);
     }
 
     private void collectConcreteSubtypeNames(String parentType,
@@ -1235,9 +1324,15 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                                                         Map<String, CodegenModel> modelsByClassname,
                                                         String discriminatorKey,
                                                         List<Map<String, Object>> unionMembers) {
-        boolean declared = members.stream()
+        List<DiscriminatorProperty> discriminatorProperties = members.stream()
                 .map(modelsByClassname::get)
-                .anyMatch(model -> discriminatorProperty(model, discriminatorKey) != null);
+                .map(model -> inheritedDiscriminatorProperty(model, discriminatorKey, modelsByClassname))
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        DiscriminatorProperty discriminatorProperty = commonDiscriminatorProperty(unionModel,
+                                                                                    discriminatorKey,
+                                                                                    discriminatorProperties);
+        boolean declared = discriminatorProperty != null;
         for (String member : members) {
             removeRenderedDiscriminatorProperty(modelsByClassname.get(member), discriminatorKey);
         }
@@ -1246,22 +1341,90 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             return;
         }
 
-        Map<String, Object> abstractAccessor = discriminatorAccessor(discriminatorKey,
-                                                                      null,
-                                                                      null);
+        Map<String, Object> abstractAccessor = unionDiscriminatorAccessor(discriminatorKey,
+                                                                          discriminatorProperty,
+                                                                          null);
         addDiscriminatorAccessor(unionModel, "x-abstract-discriminator-accessors", abstractAccessor);
         for (Map<String, Object> unionMember : unionMembers) {
             CodegenModel member = modelsByClassname.get(unionMember.get("name").toString());
+            String valueExpression = discriminatorProperty == null
+                    ? unionMember.get("aliasLiteral").toString()
+                    : discriminatorValueExpression(discriminatorProperty.owner(),
+                                                   discriminatorKey,
+                                                   unionMember.get("alias").toString());
             addDiscriminatorAccessor(member,
                                      "x-concrete-discriminator-accessors",
-                                     discriminatorAccessor(discriminatorKey,
-                                                           null,
-                                                           unionMember.get("aliasLiteral").toString()));
+                                     unionDiscriminatorAccessor(discriminatorKey,
+                                                                 discriminatorProperty,
+                                                                 valueExpression));
         }
+    }
+
+    private DiscriminatorProperty commonDiscriminatorProperty(CodegenModel unionModel,
+                                                               String discriminatorKey,
+                                                               List<DiscriminatorProperty> properties) {
+        if (properties.isEmpty()) {
+            return null;
+        }
+        DiscriminatorProperty first = properties.getFirst();
+        String expectedType = qualifiedDiscriminatorType(first);
+        for (DiscriminatorProperty candidate : properties) {
+            if (!expectedType.equals(qualifiedDiscriminatorType(candidate))) {
+                throw discriminatorMappingFailure(unionModel,
+                                                   "members expose incompatible Java types for discriminator property '"
+                                                           + discriminatorKey + "': '" + expectedType + "' and '"
+                                                           + qualifiedDiscriminatorType(candidate) + "'");
+            }
+        }
+        return first;
+    }
+
+    private DiscriminatorProperty inheritedDiscriminatorProperty(CodegenModel model,
+                                                                  String discriminatorKey,
+                                                                  Map<String, CodegenModel> modelsByClassname) {
+        Set<String> visited = new LinkedHashSet<>();
+        CodegenModel current = model;
+        while (current != null && visited.add(current.classname)) {
+            CodegenProperty local = discriminatorProperty(renderVars(current), discriminatorKey);
+            if (local != null) {
+                return new DiscriminatorProperty(current, local);
+            }
+            Object parent = current.vendorExtensions.get("x-extends-model");
+            current = parent instanceof String parentName ? modelsByClassname.get(parentName) : null;
+        }
+        CodegenProperty inherited = discriminatorProperty(model, discriminatorKey);
+        return inherited == null ? null : new DiscriminatorProperty(model, inherited);
+    }
+
+    private Map<String, Object> unionDiscriminatorAccessor(String discriminatorKey,
+                                                           DiscriminatorProperty discriminatorProperty,
+                                                           String valueExpression) {
+        if (discriminatorProperty == null) {
+            return discriminatorAccessor(discriminatorKey, null, valueExpression);
+        }
+        Map<String, Object> result = discriminatorAccessor(discriminatorKey,
+                                                            discriminatorProperty.property(),
+                                                            valueExpression);
+        result.put("type", qualifiedDiscriminatorType(discriminatorProperty));
+        return result;
+    }
+
+    private String qualifiedDiscriminatorType(DiscriminatorProperty discriminatorProperty) {
+        CodegenProperty property = discriminatorProperty.property();
+        String type = property.datatypeWithEnum == null ? property.dataType : property.datatypeWithEnum;
+        return property.isEnum ? discriminatorProperty.owner().classname + "." + type : type;
     }
 
     private Map<String, String> validateAndResolveAliases(CodegenModel owner,
                                                           List<String> subtypeNames,
+                                                          Map<String, CodegenModel> modelsByClassname) {
+        return validateAndResolveAliases(owner, subtypeNames, Map.of(), Map.of(), modelsByClassname);
+    }
+
+    private Map<String, String> validateAndResolveAliases(CodegenModel owner,
+                                                          List<String> concreteSubtypeNames,
+                                                          Map<String, String> descendantAliases,
+                                                          Map<String, List<String>> subtypeNamesByParent,
                                                           Map<String, CodegenModel> modelsByClassname) {
         Map<String, List<String>> explicitAliasesBySubtype = new LinkedHashMap<>();
         Map<String, String> mapping = rawDiscriminatorMappingsBySchema.get(owner.schemaName);
@@ -1276,18 +1439,23 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 if (owner.classname.equals(target)) {
                     throw unsupportedSelfMapping(owner, alias, targetRef);
                 }
-                if (target == null || !subtypeNames.contains(target) || !modelsByClassname.containsKey(target)) {
+                List<String> resolvedTargets = mappingTargets(target,
+                                                              concreteSubtypeNames,
+                                                              subtypeNamesByParent,
+                                                              modelsByClassname);
+                if (resolvedTargets.size() != 1) {
                     throw discriminatorMappingFailure(owner,
                                                       "alias '" + alias + "' targets '"
                                                               + sanitizeDiagnosticReference(targetRef)
                                                               + "', which does not resolve to exactly one concrete subtype");
                 }
-                explicitAliasesBySubtype.computeIfAbsent(target, ignored -> new ArrayList<>()).add(alias);
+                explicitAliasesBySubtype.computeIfAbsent(resolvedTargets.getFirst(), ignored -> new ArrayList<>())
+                        .add(alias);
             }
         }
 
         Map<String, String> result = new LinkedHashMap<>();
-        for (String subtypeName : subtypeNames) {
+        for (String subtypeName : concreteSubtypeNames) {
             List<String> aliases = explicitAliasesBySubtype.getOrDefault(subtypeName, List.of());
             if (aliases.size() > 1) {
                 throw discriminatorMappingFailure(owner,
@@ -1299,12 +1467,31 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 continue;
             }
             CodegenModel subtype = modelsByClassname.get(subtypeName);
-            String implicitAlias = subtype.schemaName == null || subtype.schemaName.isBlank()
-                    ? subtypeName
-                    : subtype.schemaName;
+            Object declaredValue = subtype.vendorExtensions.get("x-declared-discriminator-value");
+            String implicitAlias = declaredValue == null || declaredValue.toString().isBlank()
+                    ? descendantAliases.getOrDefault(subtypeName,
+                            subtype.schemaName == null || subtype.schemaName.isBlank() ? subtypeName : subtype.schemaName)
+                    : declaredValue.toString();
             result.put(subtypeName, implicitAlias);
         }
         return result;
+    }
+
+    private List<String> mappingTargets(String target,
+                                        List<String> concreteSubtypeNames,
+                                        Map<String, List<String>> subtypeNamesByParent,
+                                        Map<String, CodegenModel> modelsByClassname) {
+        if (target == null || !modelsByClassname.containsKey(target)) {
+            return List.of();
+        }
+        if (concreteSubtypeNames.contains(target)) {
+            return List.of(target);
+        }
+        if (!subtypeNamesByParent.containsKey(target)) {
+            return List.of();
+        }
+        List<String> descendants = concreteSubtypeNames(target, subtypeNamesByParent);
+        return concreteSubtypeNames.containsAll(descendants) ? descendants : List.of();
     }
 
     private IllegalStateException unsupportedSelfMapping(CodegenModel owner, String alias, String targetRef) {
@@ -1410,7 +1597,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                                                       CodegenProperty property,
                                                       String valueExpression) {
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("name", property == null ? toVarName(discriminatorKey) : property.name);
+        String name = property == null ? toVarName(discriminatorKey) : property.name;
+        result.put("name", name);
+        result.put("fieldName", name);
         result.put("nameLiteral", JavaStringLiterals.toJavaStringLiteral(discriminatorKey));
         result.put("type", property == null ? "String" : property.datatypeWithEnum);
         if (valueExpression != null) {
@@ -1434,7 +1623,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 return;
             }
             throw new IllegalStateException("Contradictory discriminator accessor '" + accessor.get("name")
-                    + "' on model '" + model.classname + "'");
+                    + "' on model '" + model.classname + "': " + existing + " versus " + accessor);
         }
         accessors.add(accessor);
     }
@@ -1668,6 +1857,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         List<CodegenProperty> properties = parentModel.allVars != null && !parentModel.allVars.isEmpty()
                 ? parentModel.allVars
                 : parentModel.vars;
+        return discriminatorProperty(properties, discriminatorKey);
+    }
+
+    private CodegenProperty discriminatorProperty(List<CodegenProperty> properties, String discriminatorKey) {
         if (properties == null) {
             return null;
         }
@@ -1681,6 +1874,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             }
         }
         return null;
+    }
+
+    private record DiscriminatorProperty(CodegenModel owner, CodegenProperty property) {
     }
 
     /**

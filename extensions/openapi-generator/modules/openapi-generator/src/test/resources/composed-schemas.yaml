@@ -140,7 +140,7 @@ components:
       discriminator:
         propertyName: kind
         mapping:
-          intermediate: '#/components/schemas/LayeredIntermediate'
+          leaf: '#/components/schemas/LayeredIntermediate'
       properties:
         kind:
           type: string

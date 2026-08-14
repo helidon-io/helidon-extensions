@@ -30,7 +30,6 @@ import org.openapitools.codegen.config.CodegenConfigurator;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class DiscriminatorEnumAllOfGenerationIT {
 
@@ -66,12 +65,16 @@ class DiscriminatorEnumAllOfGenerationIT {
     }
 
     @Test
-    void legacySubtypeAliasInferenceIsNotApplied() {
-        IllegalStateException exception = assertThrows(IllegalStateException.class,
-                                                        () -> generate("discriminator-enum-repro.yaml"));
-        assertThat(exception.getMessage(), containsString("Unable to resolve discriminator value"));
-        assertThat(exception.getMessage(), containsString("RegionHealthCheckCategoryDetails"));
-        assertThat(exception.getMessage(), containsString("property 'category'"));
+    void explicitSubtypeExtensionProducesDerivedEnumAccessor() throws Exception {
+        Path output = generate("discriminator-enum-repro.yaml");
+        String parent = read(output, "MqlCheckDetails");
+        String subtype = read(output, "RegionHealthCheckCategoryDetails");
+
+        assertThat(parent,
+                   containsString("@Json.Subtype(alias = \"REGION_HEALTH_CHECK\", "
+                                          + "value = RegionHealthCheckCategoryDetails.class)"));
+        assertThat(subtype,
+                   containsString("return MqlCheckDetails.CategoryEnum.REGION_HEALTH_CHECK;"));
     }
 
     private Path generate(String resourceName) throws Exception {

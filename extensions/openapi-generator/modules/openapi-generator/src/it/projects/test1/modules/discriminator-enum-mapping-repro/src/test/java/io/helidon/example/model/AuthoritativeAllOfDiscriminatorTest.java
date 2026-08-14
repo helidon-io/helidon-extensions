@@ -53,6 +53,35 @@ class AuthoritativeAllOfDiscriminatorTest {
                                                    ConditionShapeDetails.class));
     }
 
+    @Test
+    void explicitExtensionValueRoundTrips() {
+        String json = jsonBinding.serialize((ExtensionBase) new ExtensionCat(), ExtensionBase.class);
+
+        assertThat(occurrences(json, "\"kind\""), is(1));
+        assertThat(json.contains("\"kind\":\"WIRE_CAT\""), is(true));
+        assertThat(jsonBinding.deserialize(json, ExtensionBase.class), instanceOf(ExtensionCat.class));
+    }
+
+    @Test
+    void inheritedEnumDiscriminatorRoundTripsThroughUnion() {
+        String json = jsonBinding.serialize((EnumPet) new UnionCat(), EnumPet.class);
+
+        assertThat(occurrences(json, "\"kind\""), is(1));
+        assertThat(json.contains("\"kind\":\"cat\""), is(true));
+        EnumPet restored = jsonBinding.deserialize(json, EnumPet.class);
+        assertThat(restored, instanceOf(UnionCat.class));
+        assertThat(restored.kind(), is(KindHolder.KindEnum.CAT));
+    }
+
+    @Test
+    void directMappingToTransitiveLeafRoundTrips() {
+        String json = jsonBinding.serialize((TransitiveBase) new TransitiveLeaf(), TransitiveBase.class);
+
+        assertThat(occurrences(json, "\"kind\""), is(1));
+        assertThat(json.contains("\"kind\":\"leaf\""), is(true));
+        assertThat(jsonBinding.deserialize(json, TransitiveBase.class), instanceOf(TransitiveLeaf.class));
+    }
+
     private int occurrences(String value, String token) {
         return (value.length() - value.replace(token, "").length()) / token.length();
     }

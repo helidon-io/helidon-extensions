@@ -13,46 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
----
 openapi: 3.0.3
 info:
-  title: discriminator-enum-reproducer
+  title: Adversarial discriminator cases
   version: 1.0.0
 paths: {}
 components:
   schemas:
-    ConditionShapeDetails:
-      type: object
-      required:
-        - conditionShape
-      discriminator:
-        propertyName: conditionShape
-        mapping:
-          CHANGE_FREEZE: '#/components/schemas/ChangeFreezeConditionShape'
-          TIME_WINDOW_CONSTRAINTS: '#/components/schemas/TimeWindowConstraintsConditionShape'
-      properties:
-        conditionShape:
-          type: string
-          enum:
-            - CHANGE_FREEZE
-            - TIME_WINDOW_CONSTRAINTS
-
-    ChangeFreezeConditionShape:
-      allOf:
-        - $ref: '#/components/schemas/ConditionShapeDetails'
-        - type: object
-          properties:
-            changeFreezeDetails:
-              type: string
-
-    TimeWindowConstraintsConditionShape:
-      allOf:
-        - $ref: '#/components/schemas/ConditionShapeDetails'
-        - type: object
-          properties:
-            timeWindowDetails:
-              type: string
-
     ExtensionBase:
       type: object
       properties:

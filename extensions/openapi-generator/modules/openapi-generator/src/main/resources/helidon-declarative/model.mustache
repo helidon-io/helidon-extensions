@@ -316,7 +316,7 @@ import {{import}};
 
 {{#vendorExtensions.x-union-members}}
         private {{classname}} deserialize{{name}}(JsonObject jsonObject) {
-            return {{deserializerField}}.deserialize(JsonParser.create(jsonObject));
+            return {{deserializerField}}.deserialize(JsonParser.create(jsonObject.toString()));
         }
 
         private JsonObject serialize{{name}}({{name}} instance, boolean writeNulls) {
@@ -398,7 +398,7 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
 
 {{#vendorExtensions.x-concrete-discriminator-accessors}}    /** Canonical discriminator used by direct Helidon JSON binding. */
     @Json.Property({{{nameLiteral}}})
-    private {{{type}}} {{name}} = {{{valueExpression}}};
+    private {{{type}}} {{fieldName}} = {{{valueExpression}}};
 
 {{/vendorExtensions.x-concrete-discriminator-accessors}}
 {{#vendorExtensions.x-render-vars}}
