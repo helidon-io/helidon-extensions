@@ -18,12 +18,24 @@ package io.helidon.extensions.messaging.tests.jms;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
+import io.helidon.extensions.messaging.ConnectorConfig;
+import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
+import io.helidon.extensions.messaging.IncomingConnector;
+import io.helidon.extensions.messaging.IncomingConnectorContext;
 import io.helidon.extensions.messaging.MessagingRuntime;
+import io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfig;
+import io.helidon.extensions.messaging.connectors.jms.JmsConnectorProvider;
 import io.helidon.extensions.messaging.connectors.jms.JmsMessage;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 
+import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -76,6 +88,59 @@ class JmsBackPressureIT {
         }
     }
 
+    @Test
+    @Timeout(60)
+    void testIncomingConnectionRemainsStoppedUntilGraphActivation() throws Exception {
+        String queue = "activation-gate-" + System.nanoTime();
+        try (ArtemisBroker broker = ArtemisBroker.create(temporaryDirectory.resolve("activation-gate"));
+                ActiveMQConnectionFactory connectorFactory = new ActiveMQConnectionFactory(broker.connectionUrl())) {
+            broker.start();
+            connectorFactory.setConsumerWindowSize(1024 * 1024);
+            JmsTestClient.sendText(broker.connectionFactory(), queue, false, "waiting", ignored -> { });
+            IncomingConnector connector = new JmsConnectorProvider(connectorFactory)
+                    .createIncomingConnector(JmsConnectorConfig.builder()
+                                                     .direction(ConnectorConfig.Direction.INCOMING)
+                                                     .channel("activation-gate")
+                                                     .connector(JmsConnectorProvider.CONNECTOR_TYPE)
+                                                     .destination(queue)
+                                                     .closeTimeout(Duration.ofSeconds(5))
+                                                     .build());
+            ActivationGateContext context = new ActivationGateContext();
+            AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+            Thread source = Thread.ofVirtual().start(() -> {
+                try {
+                    connector.run(context);
+                } catch (Throwable failure) {
+                    sourceFailure.set(failure);
+                }
+            });
+
+            try {
+                assertThat("connector reached graph activation",
+                           context.awaitingActivation(WAIT_TIMEOUT), is(true));
+                await(() -> broker.queueConsumerCount(queue) == 1,
+                      WAIT_TIMEOUT,
+                      "JMS consumer was not created before graph activation");
+                long observationDeadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+                while (System.nanoTime() < observationDeadline) {
+                    assertThat("message acquired before graph activation",
+                               broker.queueDeliveringCount(queue), is(0));
+                    assertThat("message must remain pending before graph activation",
+                               broker.queuePendingMessageCount(queue), is(1L));
+                    Thread.sleep(20);
+                }
+            } finally {
+                context.cancelActivation();
+                connector.forceClose();
+                source.join(Duration.ofSeconds(5));
+                connector.close();
+            }
+
+            assertThat("JMS source stopped", source.isAlive(), is(false));
+            assertThat("JMS source failure", sourceFailure.get(), nullValue());
+        }
+    }
+
     private static String incomingConfig(String destination) {
         return """
                 helidon:
@@ -86,5 +151,54 @@ class JmsBackPressureIT {
                         destination: "%s"
                         receive-timeout: PT0.05S
                 """.formatted(JmsMessagingTypes.BACK_PRESSURE_INCOMING_CHANNEL, destination);
+    }
+
+    private static void await(BooleanSupplier condition,
+                              Duration timeout,
+                              String failureMessage) throws InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
+        assertThat(failureMessage, condition.getAsBoolean(), is(true));
+    }
+
+    private static final class ActivationGateContext implements IncomingConnectorContext {
+        private final CountDownLatch awaitingActivation = new CountDownLatch(1);
+        private final CountDownLatch activationCancelled = new CountDownLatch(1);
+
+        @Override
+        public boolean awaitRunning() {
+            awaitingActivation.countDown();
+            try {
+                activationCancelled.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return false;
+        }
+
+        @Override
+        public String channel() {
+            return "activation-gate";
+        }
+
+        @Override
+        public ConnectorDeliveryReservation reserveDelivery() {
+            throw new AssertionError("JMS delivery reserved before graph activation");
+        }
+
+        @Override
+        public Optional<ConnectorDeliveryReservation> tryReserveDelivery() {
+            throw new AssertionError("JMS delivery reserved before graph activation");
+        }
+
+        private boolean awaitingActivation(Duration timeout) throws InterruptedException {
+            return awaitingActivation.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+        }
+
+        private void cancelActivation() {
+            activationCancelled.countDown();
+        }
     }
 }

@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.core.config.impl.ConfigurationImpl;
 import org.apache.activemq.artemis.core.server.JournalType;
+import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.embedded.EmbeddedActiveMQ;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 
@@ -84,6 +85,18 @@ final class ArtemisBroker implements AutoCloseable {
         return connectionUrl(port);
     }
 
+    synchronized int queueConsumerCount(String queueName) {
+        return requireQueue(queueName).getConsumerCount();
+    }
+
+    synchronized long queuePendingMessageCount(String queueName) {
+        return requireQueue(queueName).getPendingMessageCount();
+    }
+
+    synchronized int queueDeliveringCount(String queueName) {
+        return requireQueue(queueName).getDeliveringCount();
+    }
+
     @Override
     public void close() throws Exception {
         try {
@@ -99,6 +112,18 @@ final class ArtemisBroker implements AutoCloseable {
             socket.setReuseAddress(false);
             return socket.getLocalPort();
         }
+    }
+
+    private Queue requireQueue(String queueName) {
+        EmbeddedActiveMQ current = broker;
+        if (current == null) {
+            throw new IllegalStateException("Embedded Artemis broker is not running");
+        }
+        Queue queue = current.getActiveMQServer().locateQueue(queueName);
+        if (queue == null) {
+            throw new IllegalStateException("Embedded Artemis queue does not exist: " + queueName);
+        }
+        return queue;
     }
 
     private static String acceptorUrl(int port) {

@@ -106,15 +106,19 @@ final class JmsIncomingConnector {
                 if (runContext.maxDeliveryMessages() < 1) {
                     throw new MessagingException("JMS delivery message limit must be greater than zero");
                 }
-                resources = connectWithRetry();
+                resources = connectWithRetry(null, false);
                 if (resources == null || !runContext.awaitRunning() || closed.get() || draining.get()) {
+                    return;
+                }
+                resources = connectWithRetry(resources, true);
+                if (resources == null) {
                     return;
                 }
 
                 while (!closed.get() && !draining.get()) {
                     if (resources.broken()) {
                         closeForReconnect(resources);
-                        resources = connectWithRetry();
+                        resources = connectWithRetry(null, true);
                         if (resources == null) {
                             return;
                         }
@@ -125,7 +129,7 @@ final class JmsIncomingConnector {
                     }
                     if (result == DeliveryResult.RECONNECT) {
                         closeForReconnect(resources);
-                        resources = connectWithRetry();
+                        resources = connectWithRetry(null, true);
                         if (resources == null) {
                             return;
                         }
@@ -398,19 +402,45 @@ final class JmsIncomingConnector {
             return null;
         }
 
-        private Resources connectWithRetry() {
+        private Resources connectWithRetry(Resources candidate, boolean startConnection) {
             Duration delay = config.reconnectInitialDelay();
+            Resources resources = candidate;
             while (!closed.get() && !draining.get()) {
                 try {
-                    Resources resources = connect();
+                    if (resources == null) {
+                        resources = connect();
+                    }
+                    if (startConnection) {
+                        start(resources);
+                    }
                     if (closed.get() || draining.get()) {
                         closeResources(resources, resourceCleanupDeadline(), false);
                         return null;
                     }
                     return resources;
                 } catch (JmsResourceCleanupException e) {
+                    if (resources != null) {
+                        RuntimeException cleanupFailure = cleanupFailedSetup(resources);
+                        resources = null;
+                        if (cleanupFailure != null) {
+                            cleanupFailure.addSuppressed(e);
+                            throw new JmsResourceCleanupException(
+                                    "Cannot clean up failed JMS connection setup for channel " + config.channel(),
+                                    cleanupFailure);
+                        }
+                    }
                     throw e;
                 } catch (JMSException | RuntimeException e) {
+                    if (resources != null) {
+                        RuntimeException cleanupFailure = cleanupFailedSetup(resources);
+                        resources = null;
+                        if (cleanupFailure != null) {
+                            cleanupFailure.addSuppressed(e);
+                            throw new JmsResourceCleanupException(
+                                    "Cannot clean up failed JMS connection setup for channel " + config.channel(),
+                                    cleanupFailure);
+                        }
+                    }
                     if (closed.get() || draining.get()) {
                         return null;
                     }
@@ -418,6 +448,14 @@ final class JmsIncomingConnector {
                         return null;
                     }
                     delay = doubleDelay(delay, config.reconnectMaxDelay());
+                } catch (Error e) {
+                    if (resources != null) {
+                        RuntimeException cleanupFailure = cleanupFailedSetup(resources);
+                        if (cleanupFailure != null) {
+                            e.addSuppressed(cleanupFailure);
+                        }
+                    }
+                    throw e;
                 }
             }
             return null;
@@ -465,17 +503,9 @@ final class JmsIncomingConnector {
                         () -> createConsumer(session, destination));
                 resources.consumer(consumer);
                 requireUsable(resources);
-                connectionSupport.executeSetup("connection start", () -> {
-                    connection.start();
-                    return null;
-                });
-                requireUsable(resources);
                 return resources;
             } catch (JMSException | RuntimeException e) {
-                activeResources.compareAndSet(resources, null);
-                RuntimeException cleanupFailure = closeResources(resources,
-                                                                  resourceCleanupDeadline(),
-                                                                  !closed.get() && !draining.get());
+                RuntimeException cleanupFailure = cleanupFailedSetup(resources);
                 if (cleanupFailure != null) {
                     cleanupFailure.addSuppressed(e);
                     throw new JmsResourceCleanupException("Cannot clean up failed JMS connection setup for channel "
@@ -483,15 +513,28 @@ final class JmsIncomingConnector {
                 }
                 throw e;
             } catch (Error e) {
-                activeResources.compareAndSet(resources, null);
-                RuntimeException cleanupFailure = closeResources(resources,
-                                                                  resourceCleanupDeadline(),
-                                                                  !closed.get() && !draining.get());
+                RuntimeException cleanupFailure = cleanupFailedSetup(resources);
                 if (cleanupFailure != null) {
                     e.addSuppressed(cleanupFailure);
                 }
                 throw e;
             }
+        }
+
+        private void start(Resources resources) throws JMSException {
+            requireUsable(resources);
+            connectionSupport.executeSetup("connection start", () -> {
+                resources.connection().start();
+                return null;
+            });
+            requireUsable(resources);
+        }
+
+        private RuntimeException cleanupFailedSetup(Resources resources) {
+            activeResources.compareAndSet(resources, null);
+            return closeResources(resources,
+                                  resourceCleanupDeadline(),
+                                  !closed.get() && !draining.get());
         }
 
         private void requireUsable(Resources resources) throws JMSException {
@@ -777,6 +820,10 @@ final class JmsIncomingConnector {
 
         private Session session() {
             return Objects.requireNonNull(session.get(), "JMS session");
+        }
+
+        private Connection connection() {
+            return connection;
         }
 
         private void session(Session session) {

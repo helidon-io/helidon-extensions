@@ -164,7 +164,7 @@ class JmsIncomingConnectorTest {
 
         verify(connection).setClientID("orders-client");
         verify(session).createDurableConsumer(topic, "orders-subscription", "region = 'EU'", true);
-        verify(connection).start();
+        verify(connection, never()).start();
         verify(connection).close();
     }
 
@@ -197,8 +197,135 @@ class JmsIncomingConnectorTest {
 
         verify(connection, never()).setClientID(any());
         verify(session).createDurableConsumer(topic, "orders-subscription", null, false);
-        verify(connection).start();
+        verify(connection, never()).start();
         verify(connection).close();
+    }
+
+    @Test
+    @Timeout(5)
+    void doesNotStartConnectionBeforeContextAllowsRunning() throws Exception {
+        JmsClient client = client();
+        CountDownLatch awaitingRunning = new CountDownLatch(1);
+        CountDownLatch allowRunning = new CountDownLatch(1);
+        CountDownLatch receiving = new CountDownLatch(1);
+        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
+        when(client.consumer.receive(anyLong())).thenAnswer(invocation -> {
+            receiving.countDown();
+            connectorReference.get().drain();
+            return null;
+        });
+        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        connectorReference.set(connector);
+        AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+        Thread source = Thread.ofVirtual().start(() -> capture(
+                () -> connector.run(new TestContext(new ArrayList<>(),
+                                                    new TestReservation(new ArrayList<>(), TestDelivery.completed())) {
+                    @Override
+                    public boolean awaitRunning() {
+                        awaitingRunning.countDown();
+                        awaitIgnoringInterruption(allowRunning);
+                        return true;
+                    }
+                }),
+                sourceFailure));
+
+        try {
+            assertThat(awaitingRunning.await(1, TimeUnit.SECONDS), is(true));
+            verify(client.connection, never()).start();
+            verify(client.consumer, never()).receive(anyLong());
+
+            allowRunning.countDown();
+            assertThat(receiving.await(1, TimeUnit.SECONDS), is(true));
+            source.join(Duration.ofSeconds(2));
+        } finally {
+            allowRunning.countDown();
+            if (source.isAlive()) {
+                connector.forceClose();
+                source.join(Duration.ofSeconds(2));
+            }
+        }
+
+        assertThat(source.isAlive(), is(false));
+        assertThat(sourceFailure.get(), nullValue());
+        verify(client.connection).start();
+    }
+
+    @Test
+    @Timeout(5)
+    void connectionStartFailureRetriesAfterActivation() throws Exception {
+        JmsClient first = client();
+        JmsClient second = client();
+        ConnectionFactory factory = mock(ConnectionFactory.class);
+        when(factory.createConnection()).thenReturn(first.connection, second.connection);
+        doThrow(new JMSException("start failed")).when(first.connection).start();
+        TextMessage delivered = textMessage("after-start-retry");
+        when(second.consumer.receive(anyLong())).thenReturn(delivered);
+        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
+        doAnswer(invocation -> {
+            connectorReference.get().drain();
+            return null;
+        }).when(delivered).acknowledge();
+        AtomicInteger activationWaits = new AtomicInteger();
+        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> factory);
+        connectorReference.set(connector);
+
+        connector.run(new TestContext(new ArrayList<>(),
+                                      new TestReservation(new ArrayList<>(), TestDelivery.completed())) {
+            @Override
+            public boolean awaitRunning() {
+                activationWaits.incrementAndGet();
+                return true;
+            }
+        });
+
+        assertThat(activationWaits.get(), is(1));
+        verify(factory, times(2)).createConnection();
+        verify(first.connection).start();
+        verify(first.consumer, never()).receive(anyLong());
+        verify(first.connection).close();
+        verify(second.connection).start();
+        verify(delivered).acknowledge();
+    }
+
+    @Test
+    @Timeout(5)
+    void connectionBrokenDuringActivationWaitReconnectsWithoutStartingBrokenGeneration() throws Exception {
+        JmsClient first = client();
+        JmsClient second = client();
+        AtomicReference<ExceptionListener> firstListener = new AtomicReference<>();
+        doAnswer(invocation -> {
+            firstListener.set(invocation.getArgument(0));
+            return null;
+        }).when(first.connection).setExceptionListener(any(ExceptionListener.class));
+        ConnectionFactory factory = mock(ConnectionFactory.class);
+        when(factory.createConnection()).thenReturn(first.connection, second.connection);
+        TextMessage delivered = textMessage("after-activation-reconnect");
+        when(second.consumer.receive(anyLong())).thenReturn(delivered);
+        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
+        doAnswer(invocation -> {
+            connectorReference.get().drain();
+            return null;
+        }).when(delivered).acknowledge();
+        AtomicInteger activationWaits = new AtomicInteger();
+        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> factory);
+        connectorReference.set(connector);
+
+        connector.run(new TestContext(new ArrayList<>(),
+                                      new TestReservation(new ArrayList<>(), TestDelivery.completed())) {
+            @Override
+            public boolean awaitRunning() {
+                activationWaits.incrementAndGet();
+                firstListener.get().onException(new JMSException("failed during activation"));
+                return true;
+            }
+        });
+
+        assertThat(activationWaits.get(), is(1));
+        verify(factory, times(2)).createConnection();
+        verify(first.connection, never()).start();
+        verify(first.connection).close();
+        verify(second.connection).start();
+        verify(delivered).acknowledge();
     }
 
     @Test
@@ -295,11 +422,21 @@ class JmsIncomingConnectorTest {
         connectorReference.set(connector);
         TestReservation firstReservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
         TestReservation secondReservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
+        AtomicInteger activationWaits = new AtomicInteger();
 
-        connector.run(new TestContext(new ArrayList<>(), firstReservation, secondReservation));
+        connector.run(new TestContext(new ArrayList<>(), firstReservation, secondReservation) {
+            @Override
+            public boolean awaitRunning() {
+                activationWaits.incrementAndGet();
+                return true;
+            }
+        });
 
+        assertThat(activationWaits.get(), is(1));
         verify(factory, times(2)).createConnection("orders-user", "secret");
+        verify(first.connection).start();
         verify(first.connection).close();
+        verify(second.connection).start();
         verify(delivered).acknowledge();
     }
 
@@ -717,6 +854,7 @@ class JmsIncomingConnectorTest {
         closer.join(Duration.ofSeconds(1));
         assertThat(closeFailure.get(), nullValue());
         assertThat(sourceFailure.get(), nullValue());
+        verify(client.connection, never()).start();
     }
 
     @Test
@@ -789,6 +927,7 @@ class JmsIncomingConnectorTest {
         assertThat(failure.getMessage(), containsString("Cannot close JMS resources"));
         assertThat(failure.getCause(), is(connectionFailure));
         assertThat(List.of(failure.getCause().getSuppressed()), is(List.of(consumerFailure, sessionFailure)));
+        verify(client.connection, never()).start();
         verify(client.consumer).close();
         verify(client.session).close();
     }
