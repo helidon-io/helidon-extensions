@@ -83,6 +83,7 @@ class JsonStringEnumGenerationIT {
         assertThat(envelope, containsString("private List<Mode> modes"));
         assertThat(envelope, containsString("private List<InlineModesEnum> inlineModes"));
         assertThat(envelope, containsString("public enum InlineModeEnum"));
+        assertThat(envelope, containsString("Exact string values declared by the OpenAPI schema."));
         assertThat(envelope, containsString("(\"on-hold\")"));
         assertThat(envelope, containsString("public enum InlineModesEnum"));
         assertThat(envelope, containsString("(\"batchAuthZ\")"));
@@ -104,10 +105,13 @@ class JsonStringEnumGenerationIT {
         assertThat(api, containsString("implements JsonConverter<EnumsApi.InspectModeBodyEnum>"));
         assertThat(api, not(containsString("Mapper<String, EnumsApi.InspectModeBodyEnum>")));
         assertThat(api, containsString("enum EnumNoIdPostBodyEnum"));
+        assertThat(api, containsString("Exact string values declared by the OpenAPI schema."));
         assertThat(api, containsString("FOO_BAR(\"foo-bar\")"));
         assertThat(api, containsString("FOO_BAR_2(\"foo_bar\")"));
         assertThat(api, containsString("@Http.Entity Integer body"));
         assertThat(api, not(containsString("enum NumericEnumBodyBodyEnum")));
+        assertThat(api, containsString("@Http.Entity Boolean body"));
+        assertThat(api, not(containsString("enum BooleanEnumBodyBodyEnum")));
     }
 
     @Test
@@ -132,6 +136,29 @@ class JsonStringEnumGenerationIT {
         }
     }
 
+    @Test
+    void generatedProjectUsesRequiredHelidonBaselineByDefault() throws IOException {
+        assertThat(read(outputDir.resolve("pom.xml")), containsString("<helidon.version>4.5.0</helidon.version>"));
+    }
+
+    @Test
+    void rejectsStringEnumCookieParametersBeforeRendering() throws Exception {
+        Path cookieOutput = tempDir.resolve("cookie");
+        URL resource = JsonStringEnumGenerationIT.class.getClassLoader()
+                .getResource("cookie-string-enum-parameter.yaml");
+        CodegenConfigurator configurator = new CodegenConfigurator()
+                .setGeneratorName("helidon-declarative")
+                .setInputSpec(Paths.get(resource.toURI()).toAbsolutePath().toString())
+                .setOutputDir(cookieOutput.toString());
+
+        IllegalArgumentException error = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> new DefaultGenerator().opts(configurator.toClientOptInput()).generate());
+        assertThat(error.getMessage(), containsString("string enum cookie parameter 'mode'"));
+        assertThat(error.getMessage(), containsString("does not provide a cookie parameter annotation"));
+        assertThat(Files.exists(cookieOutput.resolve("src/main/java")), org.hamcrest.CoreMatchers.is(false));
+    }
+
     private static void generate(Path destination) throws Exception {
         URL resource = JsonStringEnumGenerationIT.class.getClassLoader().getResource("json-string-enums.yaml");
         String specPath = Paths.get(resource.toURI()).toAbsolutePath().toString();
@@ -139,7 +166,6 @@ class JsonStringEnumGenerationIT {
                 .setGeneratorName("helidon-declarative")
                 .setInputSpec(specPath)
                 .setOutputDir(destination.toString())
-                .addAdditionalProperty("helidonVersion", "4.5.0")
                 .addAdditionalProperty("apiPackage", "io.helidon.example.api")
                 .addAdditionalProperty("modelPackage", "io.helidon.example.model")
                 .addAdditionalProperty("invokerPackage", "io.helidon.example");

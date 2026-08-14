@@ -88,6 +88,20 @@ paths:
       responses:
         '204':
           description: Accepted
+  /boolean-enum-body:
+    post:
+      tags: [enums]
+      operationId: booleanEnumBody
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: boolean
+              enum: [true, false]
+      responses:
+        '204':
+          description: Accepted
 components:
   schemas:
     Mode:

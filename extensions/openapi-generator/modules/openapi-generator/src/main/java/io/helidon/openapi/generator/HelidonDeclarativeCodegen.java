@@ -112,7 +112,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             "RESPONSE",
             "RESPONSES");
 
-    private String helidonVersion = "4.4.1";
+    private String helidonVersion = "4.5.0";
     private String javaVersion = "21";
     private boolean generateClient = true;
     private boolean generateErrorHandler = true;

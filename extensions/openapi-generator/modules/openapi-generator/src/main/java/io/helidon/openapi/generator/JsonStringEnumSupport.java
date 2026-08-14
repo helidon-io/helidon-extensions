@@ -36,6 +36,9 @@ import org.openapitools.codegen.CodegenParameter;
 import org.openapitools.codegen.CodegenProperty;
 import org.openapitools.codegen.model.OperationsMap;
 
+/**
+ * Prepares exact-wire-value string enums and their Helidon JSON and HTTP mappings.
+ */
 final class JsonStringEnumSupport {
     private final BiFunction<String, String, String> enumVarNamer;
     private Set<String> httpParameterEnumSchemas = Set.of();
@@ -128,8 +131,7 @@ final class JsonStringEnumSupport {
         }
         parameter.datatypeWithEnum = parameter.dataType;
 
-        boolean httpMapper = parameter.isPathParam || parameter.isQueryParam
-                || parameter.isHeaderParam || parameter.isCookieParam;
+        boolean httpMapper = parameter.isPathParam || parameter.isQueryParam || parameter.isHeaderParam;
         Map<String, Object> definition = enumDefinition(enumName,
                                                         apiClassname + "Api." + enumName,
                                                         apiClassname + "Api" + enumName + "JsonConverter",
@@ -222,11 +224,38 @@ final class JsonStringEnumSupport {
                 String parameterName = refName(parameter.get$ref());
                 resolved = openAPI.getComponents().getParameters().getOrDefault(parameterName, parameter);
             }
+            if ("cookie".equals(resolved.getIn()) && isStringEnumSchema(openAPI, resolved.getSchema())) {
+                throw unsupportedCookieEnum(resolved);
+            }
             collectEnumSchemaRefs(resolved.getSchema(), result);
             if (resolved.getContent() != null) {
+                if ("cookie".equals(resolved.getIn()) && resolved.getContent().values().stream()
+                        .anyMatch(mediaType -> isStringEnumSchema(openAPI, mediaType.getSchema()))) {
+                    throw unsupportedCookieEnum(resolved);
+                }
                 resolved.getContent().values().forEach(mediaType -> collectEnumSchemaRefs(mediaType.getSchema(), result));
             }
         }
+    }
+
+    private boolean isStringEnumSchema(OpenAPI openAPI, Schema<?> schema) {
+        if (schema == null) {
+            return false;
+        }
+        if (schema.get$ref() != null && schema.get$ref().startsWith("#/components/schemas/")
+                && openAPI.getComponents() != null && openAPI.getComponents().getSchemas() != null) {
+            return isStringEnumSchema(openAPI, openAPI.getComponents().getSchemas().get(refName(schema.get$ref())));
+        }
+        return schema.getItems() == null
+                ? "string".equals(schema.getType()) && schema.getEnum() != null && !schema.getEnum().isEmpty()
+                : isStringEnumSchema(openAPI, schema.getItems());
+    }
+
+    private IllegalArgumentException unsupportedCookieEnum(Parameter parameter) {
+        return new IllegalArgumentException("Unsupported OpenAPI string enum cookie parameter '"
+                + parameter.getName() + "'. Helidon declarative HTTP does not provide a cookie parameter "
+                + "annotation. Read the Cookie header in endpoint code or map the value to a supported path, "
+                + "query, or header parameter.");
     }
 
     private void collectEnumSchemaRefs(Schema<?> schema, Set<String> result) {
