@@ -44,7 +44,7 @@ final class JmsMessageMapper {
         try {
             Object body = readBody(message, allowObjectMessages);
             Map<String, Object> properties = readProperties(message);
-            return JmsMessageImpl.incoming(body, properties, message);
+            return JmsMessageImpl.incoming(body, properties, message, allowObjectMessages);
         } catch (JMSException e) {
             throw new MessagingException("Cannot snapshot incoming JMS message", e);
         }
@@ -53,10 +53,13 @@ final class JmsMessageMapper {
     static jakarta.jms.Message toJmsMessage(Session session,
                                             Message<?> message,
                                             boolean allowObjectMessages) throws JMSException {
-        jakarta.jms.Message result = createBodyMessage(session, message.entity(), allowObjectMessages);
+        Object entity = message instanceof JmsMessageImpl<?> jmsMessage
+                ? jmsMessage.entityForMapping(allowObjectMessages)
+                : message.entity();
+        jakarta.jms.Message result = createBodyMessage(session, entity, allowObjectMessages);
         if (message instanceof JmsMessage<?> jmsMessage) {
             for (Map.Entry<String, Object> entry : jmsMessage.jmsProperties().entrySet()) {
-                result.setObjectProperty(JmsMessageImpl.requirePropertyName(entry.getKey()), entry.getValue());
+                setTypedProperty(result, entry.getKey(), entry.getValue());
             }
             if (jmsMessage.correlationId().isPresent()) {
                 result.setJMSCorrelationID(jmsMessage.correlationId().orElseThrow());
@@ -111,7 +114,7 @@ final class JmsMessageMapper {
             Map<String, Object> body = new LinkedHashMap<>();
             Enumeration<?> names = mapMessage.getMapNames();
             while (names.hasMoreElements()) {
-                String name = String.valueOf(names.nextElement());
+                String name = requireMapName(names.nextElement());
                 body.put(name, snapshotBodyValue(mapMessage.getObject(name)));
             }
             return Collections.unmodifiableMap(body);
@@ -156,12 +159,14 @@ final class JmsMessageMapper {
             return result;
         }
         if (entity instanceof Map<?, ?> map) {
-            MapMessage result = session.createMapMessage();
+            Map<String, Object> values = new LinkedHashMap<>();
             for (Map.Entry<?, ?> entry : map.entrySet()) {
-                if (!(entry.getKey() instanceof String key)) {
-                    throw new MessagingException("JMS map-message keys must be strings");
-                }
-                result.setObject(key, snapshotBodyValue(entry.getValue()));
+                String key = requireMapName(entry.getKey());
+                values.put(key, snapshotBodyValue(entry.getValue()));
+            }
+            MapMessage result = session.createMapMessage();
+            for (Map.Entry<String, Object> entry : values.entrySet()) {
+                result.setObject(entry.getKey(), entry.getValue());
             }
             return result;
         }
@@ -193,7 +198,7 @@ final class JmsMessageMapper {
             }
             Object value = message.getObjectProperty(name);
             if (value != null) {
-                result.put(name, JmsMessageImpl.snapshotProperty(value));
+                result.put(name, JmsMessageImpl.snapshotProperty(name, value));
             }
         }
         return Map.copyOf(result);
@@ -218,10 +223,34 @@ final class JmsMessageMapper {
         throw new MessagingException("Unsupported JMS map or stream value type: " + value.getClass().getName());
     }
 
+    private static String requireMapName(Object name) {
+        try {
+            return JmsMessageImpl.requireMapName(name);
+        } catch (IllegalArgumentException e) {
+            throw new MessagingException(e.getMessage(), e);
+        }
+    }
+
+    private static void setTypedProperty(jakarta.jms.Message message, String name, Object value) throws JMSException {
+        String actualName = JmsMessageImpl.requirePropertyName(name);
+        Object actualValue = JmsMessageImpl.snapshotProperty(actualName, value);
+        if (JmsMessageImpl.JMSX_GROUP_ID.equals(actualName)) {
+            message.setStringProperty(actualName, (String) actualValue);
+        } else if (JmsMessageImpl.JMSX_GROUP_SEQ.equals(actualName)) {
+            message.setIntProperty(actualName, (Integer) actualValue);
+        } else {
+            message.setObjectProperty(actualName, actualValue);
+        }
+    }
+
     private static void setStringProperty(jakarta.jms.Message message, String name, String value) {
         String actualName = JmsMessageImpl.requirePropertyName(name);
         try {
-            message.setStringProperty(actualName, value);
+            if (JmsMessageImpl.JMSX_GROUP_SEQ.equals(actualName)) {
+                message.setIntProperty(actualName, Integer.parseInt(value));
+            } else {
+                message.setStringProperty(actualName, value);
+            }
         } catch (JMSException | RuntimeException e) {
             throw new MessagingException("Cannot set JMS property " + actualName, e);
         }

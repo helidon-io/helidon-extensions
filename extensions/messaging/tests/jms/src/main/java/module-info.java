@@ -19,4 +19,6 @@ module io.helidon.extensions.messaging.tests.jms {
     requires io.helidon.extensions.messaging;
     requires io.helidon.extensions.messaging.connectors.jms;
     requires io.helidon.service.registry;
+
+    exports io.helidon.extensions.messaging.tests.jms to io.helidon.service.registry;
 }

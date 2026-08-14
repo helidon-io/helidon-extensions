@@ -59,6 +59,51 @@ final class JmsIncomingConnector {
         return new Connector(Objects.requireNonNull(config), Objects.requireNonNull(connectionFactoryResolver));
     }
 
+    static Duration jitter(Duration delay,
+                           Duration maximum,
+                           double variation,
+                           double sample) {
+        Objects.requireNonNull(delay);
+        Objects.requireNonNull(maximum);
+        if (delay.isZero() || delay.isNegative() || maximum.isZero() || maximum.isNegative()) {
+            throw new IllegalArgumentException("JMS reconnect delays must be positive");
+        }
+        if (!(variation >= 0 && variation < 1)) {
+            throw new IllegalArgumentException("JMS reconnect jitter must be at least 0 and less than 1");
+        }
+        if (!(sample >= 0 && sample <= 1)) {
+            throw new IllegalArgumentException("JMS reconnect jitter sample must be between 0 and 1");
+        }
+
+        Duration cappedDelay = delay.compareTo(maximum) > 0 ? maximum : delay;
+        if (variation == 0) {
+            return cappedDelay;
+        }
+
+        long delayNanos;
+        try {
+            delayNanos = cappedDelay.toNanos();
+        } catch (ArithmeticException e) {
+            // Duration can represent a much larger value than the nanosecond-based wait APIs.
+            return cappedDelay;
+        }
+        long maximumNanos = saturatedNanos(maximum);
+        double multiplier = (1 - variation) + 2 * variation * sample;
+        double randomizedNanos = delayNanos * multiplier;
+        long nanos = randomizedNanos >= maximumNanos
+                ? maximumNanos
+                : Math.max(1, (long) randomizedNanos);
+        return Duration.ofNanos(nanos);
+    }
+
+    private static long saturatedNanos(Duration duration) {
+        try {
+            return duration.toNanos();
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
+    }
+
     private static final class Connector implements IncomingConnector {
         private static final Duration MAX_ADMISSION_RETRY_DELAY = Duration.ofMillis(100);
 
@@ -84,8 +129,8 @@ final class JmsIncomingConnector {
 
         private Connector(JmsConnectorConfig config,
                           JmsConnectionFactoryResolver connectionFactoryResolver) {
-            this.config = config;
             this.connectionSupport = new JmsConnectionSupport(config, connectionFactoryResolver);
+            this.config = connectionSupport.runtimeConfig();
         }
 
         @Override
@@ -152,6 +197,7 @@ final class JmsIncomingConnector {
                 closed.set(true);
                 draining.set(true);
                 acquisitionStopSignal.countDown();
+                connectionSupport.forceClose();
                 ConnectorDelivery delivery = activeDelivery.getAndSet(null);
                 if (delivery != null) {
                     delivery.cancel();
@@ -166,7 +212,6 @@ final class JmsIncomingConnector {
                 sourceOwner.compareAndSet(owner, null);
                 runCompletion.countDown();
                 if (cleanupFailure != null) {
-                    recordConnectorCloseFailure(cleanupFailure);
                     if (primaryFailure != null) {
                         primaryFailure.addSuppressed(cleanupFailure);
                     } else if (!closeRequested.get()) {
@@ -605,7 +650,7 @@ final class JmsIncomingConnector {
 
         private boolean awaitReconnect(Duration delay) {
             try {
-                return !acquisitionStopSignal.await(delay.toNanos(), TimeUnit.NANOSECONDS);
+                return !acquisitionStopSignal.await(saturatedNanos(delay), TimeUnit.NANOSECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 if (closed.get() || draining.get()) {
@@ -719,12 +764,8 @@ final class JmsIncomingConnector {
 
         private Duration jitter(Duration delay) {
             double variation = config.reconnectJitter();
-            if (variation == 0) {
-                return delay;
-            }
-            double multiplier = ThreadLocalRandom.current().nextDouble(1 - variation, 1 + variation);
-            long nanos = Math.max(1, (long) Math.min(Long.MAX_VALUE, delay.toNanos() * multiplier));
-            return Duration.ofNanos(nanos);
+            double sample = variation == 0 ? 0.5 : ThreadLocalRandom.current().nextDouble();
+            return JmsIncomingConnector.jitter(delay, config.reconnectMaxDelay(), variation, sample);
         }
 
         private static long receiveTimeoutMillis(Duration timeout) {
@@ -746,12 +787,19 @@ final class JmsIncomingConnector {
 
         private static long deadline(Duration timeout) {
             long now = System.nanoTime();
-            long nanos = timeout.toNanos();
-            return Long.MAX_VALUE - now < nanos ? Long.MAX_VALUE : now + nanos;
+            try {
+                return Math.addExact(now, timeout.toNanos());
+            } catch (ArithmeticException e) {
+                return Long.MAX_VALUE;
+            }
         }
 
         private static long remainingNanos(long deadline) {
-            return Math.max(0, deadline - System.nanoTime());
+            try {
+                return Math.max(0, Math.subtractExact(deadline, System.nanoTime()));
+            } catch (ArithmeticException e) {
+                return Long.MAX_VALUE;
+            }
         }
 
         private static Duration doubleDelay(Duration delay, Duration maximum) {

@@ -42,6 +42,8 @@ import jakarta.jms.JMSException;
 final class JmsConnectionSupport {
     private final JmsConnectorConfig config;
     private final JmsConnectionFactoryResolver resolver;
+    private final String username;
+    private final char[] password;
     private final ReentrantLock lock = new ReentrantLock();
     private final Condition activityChanged = lock.newCondition();
     private final Set<ConnectionAttempt> attempts = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -53,17 +55,25 @@ final class JmsConnectionSupport {
     private boolean closeRequested;
 
     JmsConnectionSupport(JmsConnectorConfig config, JmsConnectionFactoryResolver resolver) {
-        this.config = Objects.requireNonNull(config);
+        JmsConnectorConfig source = Objects.requireNonNull(config);
         this.resolver = Objects.requireNonNull(resolver);
+        this.username = source.username().orElse(null);
+        this.password = source.password().map(char[]::clone).orElse(null);
+        this.config = credentialFreeConfig(source);
+    }
+
+    JmsConnectorConfig runtimeConfig() {
+        return config;
     }
 
     ConnectionHandle createConnection() throws JMSException {
-        ConnectionAttempt attempt = new ConnectionAttempt();
+        ConnectionAttempt attempt;
         lock.lock();
         try {
             if (closeRequested) {
                 throw new IllegalStateException("JMS connector is closed for channel " + config.channel());
             }
+            attempt = new ConnectionAttempt();
             attempts.add(attempt);
         } finally {
             lock.unlock();
@@ -80,10 +90,10 @@ final class JmsConnectionSupport {
                 throw new IllegalStateException("JMS connector is closed for channel " + config.channel());
             }
             setupAttempts.add(attempt);
+            attempt.start();
         } finally {
             lock.unlock();
         }
-        attempt.start();
         return attempt.await();
     }
 
@@ -93,6 +103,7 @@ final class JmsConnectionSupport {
         lock.lock();
         try {
             closeRequested = true;
+            clearPassword(password);
             currentAttempts = List.copyOf(attempts);
             currentSetupAttempts = List.copyOf(setupAttempts);
         } finally {
@@ -147,7 +158,7 @@ final class JmsConnectionSupport {
         lock.lock();
         try {
             while (!attempts.isEmpty() || !setupAttempts.isEmpty() || !activeCloses.isEmpty()) {
-                long remaining = Math.max(0, deadline - System.nanoTime());
+                long remaining = remainingNanos(deadline);
                 if (remaining == 0) {
                     interruptActivity();
                     throw new MessagingException("Timed out closing JMS resources for channel " + config.channel());
@@ -239,14 +250,44 @@ final class JmsConnectionSupport {
         throw new MessagingException("Cannot close JMS resources for channel " + config.channel(), closeFailure);
     }
 
+    private static long remainingNanos(long deadline) {
+        try {
+            return Math.max(0, Math.subtractExact(deadline, System.nanoTime()));
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
+    }
+
+    private static JmsConnectorConfig credentialFreeConfig(JmsConnectorConfig config) {
+        return JmsConnectorConfig.builder()
+                .from(config)
+                .clearUsername()
+                .clearPassword()
+                .build();
+    }
+
+    private static void clearPassword(char[] password) {
+        if (password != null) {
+            Arrays.fill(password, '\0');
+        }
+    }
+
     private final class ConnectionAttempt {
         private final CompletableFuture<ConnectionHandle> result = new CompletableFuture<>();
         private final AtomicReference<ConnectionHandle> produced = new AtomicReference<>();
         private final AtomicBoolean abandoned = new AtomicBoolean();
-        private final Thread worker = Thread.ofVirtual()
-                .name("jms-connection-acquisition-" + config.channel())
-                .inheritInheritableThreadLocals(false)
-                .unstarted(this::acquire);
+        private final char[] password;
+        private final Thread worker;
+
+        private ConnectionAttempt() {
+            this.password = JmsConnectionSupport.this.password == null
+                    ? null
+                    : JmsConnectionSupport.this.password.clone();
+            this.worker = Thread.ofVirtual()
+                    .name("jms-connection-acquisition-" + config.channel())
+                    .inheritInheritableThreadLocals(false)
+                    .unstarted(this::acquire);
+        }
 
         private void start() {
             worker.start();
@@ -295,24 +336,31 @@ final class JmsConnectionSupport {
                 }
                 result.completeExceptionally(failure);
             } finally {
+                clearAttemptPassword();
                 attemptFinished(this);
             }
         }
 
         private Connection create(ConnectionFactory factory) throws JMSException {
-            if (config.username().isEmpty()) {
+            if (username == null) {
                 return factory.createConnection();
             }
-            char[] password = config.password().orElseThrow().clone();
-            try {
-                return factory.createConnection(config.username().orElseThrow(), new String(password));
-            } finally {
-                Arrays.fill(password, '\0');
+            String password;
+            synchronized (this) {
+                if (abandoned.get()) {
+                    throw new IllegalStateException("JMS connector is closed for channel " + config.channel());
+                }
+                password = new String(Objects.requireNonNull(this.password));
+                clearPassword(this.password);
             }
+            return factory.createConnection(username, password);
         }
 
         private void abandon() {
-            abandoned.set(true);
+            synchronized (this) {
+                abandoned.set(true);
+                clearPassword(password);
+            }
             result.completeExceptionally(new IllegalStateException("JMS connector is closed for channel "
                                                                            + config.channel()));
             interrupt();
@@ -321,6 +369,10 @@ final class JmsConnectionSupport {
 
         private void interrupt() {
             worker.interrupt();
+        }
+
+        private synchronized void clearAttemptPassword() {
+            clearPassword(password);
         }
     }
 
@@ -419,6 +471,11 @@ final class JmsConnectionSupport {
 
         private void execute() {
             try {
+                synchronized (this) {
+                    if (abandoned) {
+                        return;
+                    }
+                }
                 T value = setup.execute();
                 boolean closeLate;
                 synchronized (this) {
@@ -514,7 +571,7 @@ final class JmsConnectionSupport {
         private void await(long deadline) {
             boolean interrupted = false;
             try {
-                long remaining = Math.max(0, deadline - System.nanoTime());
+                long remaining = remainingNanos(deadline);
                 if (remaining == 0) {
                     throw new TimeoutException();
                 }

@@ -16,6 +16,11 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
+import java.util.Arrays;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Supplier;
+
 import io.helidon.builder.api.Prototype;
 import io.helidon.extensions.messaging.ConnectorConfig;
 
@@ -76,6 +81,50 @@ final class JmsConnectorConfigSupport {
     private JmsConnectorConfigSupport() {
     }
 
+    /**
+     * Configure a JMS connection password.
+     *
+     * @param target builder to update
+     * @param password password characters
+     */
+    @Prototype.BuilderMethod
+    static void password(JmsConnectorConfig.BuilderBase<?, ?> target, char[] password) {
+        PasswordSupplier passwordSource = new PasswordSupplier(Objects.requireNonNull(password));
+        clearConfiguredPassword(target);
+        target.passwordSource(passwordSource);
+    }
+
+    /**
+     * Configure a JMS connection password.
+     *
+     * @param target builder to update
+     * @param password password
+     */
+    @Prototype.BuilderMethod
+    static void password(JmsConnectorConfig.BuilderBase<?, ?> target, String password) {
+        char[] passwordChars = Objects.requireNonNull(password).toCharArray();
+        try {
+            password(target, passwordChars);
+        } finally {
+            Arrays.fill(passwordChars, '\0');
+        }
+    }
+
+    /**
+     * Clear the configured JMS connection password.
+     *
+     * @param target builder to update
+     */
+    @Prototype.BuilderMethod
+    static void clearPassword(JmsConnectorConfig.BuilderBase<?, ?> target) {
+        clearConfiguredPassword(target);
+        target.passwordSource(PasswordSupplier.empty());
+    }
+
+    private static void clearConfiguredPassword(JmsConnectorConfig.BuilderBase<?, ?> target) {
+        target.clearConfiguredPassword();
+    }
+
     private static void requirePositive(String name, java.time.Duration duration) {
         if (duration.isZero() || duration.isNegative()) {
             throw new IllegalArgumentException(name + " must be greater than zero");
@@ -96,6 +145,8 @@ final class JmsConnectorConfigSupport {
     static final class BuilderDecorator implements Prototype.BuilderDecorator<JmsConnectorConfig.BuilderBase<?, ?>> {
         @Override
         public void decorate(JmsConnectorConfig.BuilderBase<?, ?> target) {
+            clearConfiguredPassword(target);
+            target.passwordSource(new PasswordSupplier(target.passwordSource().get()));
             requireNonBlank(CONNECTION_FACTORY_PROPERTY, target.connectionFactory());
             requireNonBlank(JNDI_CONNECTION_FACTORY_PROPERTY, target.jndiConnectionFactory());
             requireNonBlank(JNDI_DESTINATION_PROPERTY, target.jndiDestination());
@@ -118,7 +169,7 @@ final class JmsConnectorConfigSupport {
                 throw new IllegalArgumentException(DESTINATION_PROPERTY + " and " + JNDI_DESTINATION_PROPERTY
                                                            + " are mutually exclusive");
             }
-            if (target.username().isPresent() != target.password().isPresent()) {
+            if (target.username().isPresent() != target.passwordSource().get().isPresent()) {
                 throw new IllegalArgumentException(USERNAME_PROPERTY + " and " + PASSWORD_PROPERTY
                                                            + " must be configured together");
             }
@@ -156,6 +207,45 @@ final class JmsConnectorConfigSupport {
                     || target.reconnectJitter() >= 1) {
                 throw new IllegalArgumentException(RECONNECT_JITTER_PROPERTY + " must be in the range [0, 1)");
             }
+        }
+    }
+
+    /**
+     * Copies a password read from configuration into defensive storage.
+     */
+    static final class ConfiguredPasswordDecorator
+            implements Prototype.OptionDecorator<JmsConnectorConfig.BuilderBase<?, ?>, Optional<String>> {
+        @Override
+        public void decorate(JmsConnectorConfig.BuilderBase<?, ?> target, Optional<String> configuredPassword) {
+            configuredPassword.ifPresent(it -> {
+                char[] password = it.toCharArray();
+                try {
+                    target.passwordSource(new PasswordSupplier(password));
+                } finally {
+                    Arrays.fill(password, '\0');
+                }
+            });
+        }
+    }
+
+    private static final class PasswordSupplier implements Supplier<Optional<char[]>> {
+        private final char[] password;
+
+        private PasswordSupplier(char[] password) {
+            this.password = password.clone();
+        }
+
+        private PasswordSupplier(Optional<char[]> password) {
+            this.password = password.map(char[]::clone).orElse(null);
+        }
+
+        private static PasswordSupplier empty() {
+            return new PasswordSupplier(Optional.empty());
+        }
+
+        @Override
+        public Optional<char[]> get() {
+            return Optional.ofNullable(password).map(char[]::clone);
         }
     }
 }

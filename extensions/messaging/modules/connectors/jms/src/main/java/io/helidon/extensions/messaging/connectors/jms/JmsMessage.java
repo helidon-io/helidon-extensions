@@ -25,12 +25,19 @@ import java.util.OptionalLong;
 import io.helidon.extensions.messaging.Message;
 
 /**
- * JMS-specific immutable message envelope.
+ * JMS-specific message envelope with immutable metadata and property snapshots.
  * <p>
  * Incoming messages snapshot the native message body, selected JMS metadata, and application properties before the
  * connector hands them to the runtime. The metadata view includes message and String correlation identifiers, type,
  * timestamp, expiration, delivery time, priority, and redelivery state. This interface never exposes a live JMS
  * message, session, or connection.
+ * <p>
+ * Application-created messages snapshot byte-array, map, and stream bodies when built. An application-created
+ * {@link java.io.Serializable} object body is retained by reference until an object-message-enabled connector maps it,
+ * so the disabled security gate can reject it without invoking serialization callbacks. The connector defensively
+ * snapshots an enabled object body before giving it to the JMS provider; the application must not mutate that body
+ * between building and sending the message.
+ * <p>
  * Portable {@link #headers()} are string views of the single-valued native JMS application properties; use
  * {@link #jmsProperties()} to retain their supported native value types.
  *
@@ -117,7 +124,8 @@ public interface JmsMessage<T> extends Message<T> {
 
     /**
      * Immutable JMS application-property snapshot. Supported values are {@link Boolean}, {@link Byte}, {@link Short},
-     * {@link Integer}, {@link Long}, {@link Float}, {@link Double}, and {@link String}.
+     * {@link Integer}, {@link Long}, {@link Float}, {@link Double}, and {@link String}. The standard client-settable
+     * {@code JMSXGroupID} and {@code JMSXGroupSeq} properties are included when present.
      *
      * @return JMS properties
      */
@@ -168,12 +176,13 @@ public interface JmsMessage<T> extends Message<T> {
          * @return updated builder
          */
         public Builder<T> property(String name, Object value) {
-            properties.put(JmsMessageImpl.requirePropertyName(name), JmsMessageImpl.snapshotProperty(value));
+            String actualName = JmsMessageImpl.requirePropertyName(name);
+            properties.put(actualName, JmsMessageImpl.snapshotProperty(actualName, value));
             return this;
         }
 
         /**
-         * Build an immutable message.
+         * Build a message with immutable metadata and application-property snapshots.
          *
          * @return JMS message
          */

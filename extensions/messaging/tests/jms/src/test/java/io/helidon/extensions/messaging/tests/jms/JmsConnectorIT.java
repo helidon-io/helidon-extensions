@@ -106,6 +106,8 @@ class JmsConnectorIT {
                             .type("order-created")
                             .property("region", "EU")
                             .property("attempt", 7)
+                            .property("JMSXGroupID", "order-group")
+                            .property("JMSXGroupSeq", 3)
                             .build());
 
         JmsMessage<String> received = receiver.awaitMessage(WAIT_TIMEOUT);
@@ -119,8 +121,14 @@ class JmsConnectorIT {
         assertThat(received.deliveryTime().isPresent(), is(true));
         assertThat(received.priority().orElseThrow(), is(4));
         assertThat(received.redelivered(), is(Optional.of(false)));
-        assertThat(received.jmsProperties(), is(Map.of("region", "EU", "attempt", 7)));
-        assertThat(received.headers(), is(Map.of("region", "EU", "attempt", "7")));
+        assertThat(received.jmsProperties(), is(Map.of("region", "EU",
+                                                       "attempt", 7,
+                                                       "JMSXGroupID", "order-group",
+                                                       "JMSXGroupSeq", 3)));
+        assertThat(received.headers(), is(Map.of("region", "EU",
+                                                "attempt", "7",
+                                                "JMSXGroupID", "order-group",
+                                                "JMSXGroupSeq", "3")));
     }
 
     @Test
@@ -324,6 +332,48 @@ class JmsConnectorIT {
         assertThat(redelivered.redelivered(), is(Optional.of(true)));
     }
 
+    @Test
+    @Timeout(60)
+    void transactedMessageIsRolledBackThenCommittedAfterRegistryRestart() throws Exception {
+        String queue = uniqueName("transacted-redelivery");
+        ServiceRegistryManager firstManager = registryManager(failingTransactedRedeliveryConfig(queue),
+                                                              PoisonReceiver.class);
+        ServiceRegistry firstRegistry = firstManager.registry();
+        PoisonReceiver failingReceiver = firstRegistry.get(PoisonReceiver.class);
+        firstRegistry.get(MessagingRuntime.class);
+        JmsTestClient.sendText(connectionFactory(), queue, false, "poison",
+                               message -> setStringProperty(message, "source_prop", "transaction-value"));
+
+        await(() -> failingReceiver.poisonAttemptCount() == 1,
+              WAIT_TIMEOUT,
+              "failed transacted JMS delivery");
+        ServiceRegistryException shutdownFailure = assertThrows(ServiceRegistryException.class,
+                                                                () -> shutdown(firstManager));
+        assertThat("expected terminal handler failure on first transacted registry",
+                   hasCause(shutdownFailure, IllegalStateException.class, "Expected poison JMS message failure"),
+                   is(true));
+
+        ServiceRegistryManager secondManager = registryManager(transactedTextIncomingConfig(queue), TextReceiver.class);
+        ServiceRegistry secondRegistry = secondManager.registry();
+        TextReceiver succeedingReceiver = secondRegistry.get(TextReceiver.class);
+        secondRegistry.get(MessagingRuntime.class);
+
+        JmsMessage<String> redelivered = succeedingReceiver.awaitMessage(WAIT_TIMEOUT);
+        assertThat("provider redelivery after transaction rollback", redelivered, notNullValue());
+        assertThat(redelivered.entity(), is("poison"));
+        assertThat(redelivered.jmsProperties().get("source_prop"), is("transaction-value"));
+        assertThat(redelivered.redelivered(), is(Optional.of(true)));
+        await(() -> broker.queueDeliveringCount(queue) == 0
+                        && broker.queuePendingMessageCount(queue) == 0,
+              WAIT_TIMEOUT,
+              "successful transacted JMS delivery was not committed");
+
+        shutdown(secondManager);
+        assertThat("successful transacted delivery must be committed",
+                   JmsTestClient.receiveText(connectionFactory(), queue, POLL_TIMEOUT),
+                   nullValue());
+    }
+
     private ServiceRegistryManager registryManager(String yaml, Class<?>... fixtureTypes) {
         ServiceRegistryManager manager = JmsScenarioRegistry.create(yaml, connectionFactory(), fixtureTypes);
         managers.add(manager);
@@ -492,6 +542,26 @@ class JmsConnectorIT {
                 """.formatted(JmsMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL, queue);
     }
 
+    private static String failingTransactedRedeliveryConfig(String queue) {
+        return """
+                helidon:
+                  messaging:
+                    incoming:
+                      %s:
+                        connector: jms
+                        destination: "%s"
+                        destination-type: QUEUE
+                        transacted: true
+                        receive-timeout: PT0.05S
+                        close-timeout: PT2S
+                        failure:
+                          retry:
+                            delay: PT0.02S
+                            max-attempts: 1
+                          on-exhausted: FAIL
+                """.formatted(JmsMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL, queue);
+    }
+
     private static String textIncomingConfig(String queue) {
         return """
                 helidon:
@@ -501,6 +571,21 @@ class JmsConnectorIT {
                         connector: jms
                         destination: "%s"
                         destination-type: QUEUE
+                        receive-timeout: PT0.05S
+                        close-timeout: PT2S
+                """.formatted(JmsMessagingTypes.TEXT_INCOMING_CHANNEL, queue);
+    }
+
+    private static String transactedTextIncomingConfig(String queue) {
+        return """
+                helidon:
+                  messaging:
+                    incoming:
+                      %s:
+                        connector: jms
+                        destination: "%s"
+                        destination-type: QUEUE
+                        transacted: true
                         receive-timeout: PT0.05S
                         close-timeout: PT2S
                 """.formatted(JmsMessagingTypes.TEXT_INCOMING_CHANNEL, queue);

@@ -231,8 +231,9 @@ final class JmsMessagingTypes {
 
         @Messaging.ReceiveFrom(BACK_PRESSURE_INCOMING_CHANNEL)
         void receive(JmsMessage<String> message) {
+            int delivery = deliveries.incrementAndGet();
             messages.add(message);
-            if (deliveries.incrementAndGet() == 1) {
+            if (delivery == 1) {
                 await(releaseFirstMessage, "Interrupted while holding the first JMS message");
             }
         }

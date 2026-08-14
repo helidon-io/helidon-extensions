@@ -17,6 +17,7 @@
 package io.helidon.extensions.messaging.connectors.jms;
 
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
 
@@ -114,6 +115,126 @@ class JmsConnectorConfigTest {
 
         assertThat(new String(config.password().orElseThrow()), is("secret"));
         assertThat(config.toString().contains("secret"), is(false));
+    }
+
+    @Test
+    void testPasswordIsDefensivelyCopiedAcrossBuilderAndPrototypeBoundaries() {
+        char[] supplied = "secret".toCharArray();
+        JmsConnectorConfig.Builder builder = incomingBuilder()
+                .username("orders-user")
+                .password(supplied);
+        Arrays.fill(supplied, 'x');
+
+        char[] builderCopy = builder.passwordSource().get().orElseThrow();
+        assertThat(new String(builderCopy), is("secret"));
+        Arrays.fill(builderCopy, 'x');
+
+        JmsConnectorConfig config = builder.build();
+        char[] configCopy = config.password().orElseThrow();
+        assertThat(new String(configCopy), is("secret"));
+        Arrays.fill(configCopy, 'x');
+        char[] sourceCopy = config.passwordSource().get().orElseThrow();
+        Arrays.fill(sourceCopy, 'x');
+        assertThat(new String(config.password().orElseThrow()), is("secret"));
+
+        JmsConnectorConfig copied = JmsConnectorConfig.builder().from(config).build();
+        assertThat(new String(copied.password().orElseThrow()), is("secret"));
+    }
+
+    @Test
+    void testConfiguredPasswordIsMovedToDefensiveStorage() {
+        Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
+                Map.entry("direction", "INCOMING"),
+                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "orders"),
+                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, JmsConnectorProvider.CONNECTOR_TYPE),
+                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
+                Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
+                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
+        JmsConnectorConfig.Builder builder = JmsConnectorConfig.builder().config(configSource);
+        assertThat(builder.configuredPassword().orElseThrow(), is("secret"));
+
+        JmsConnectorConfig config = builder.build();
+
+        assertThat(config.configuredPassword().isEmpty(), is(true));
+        char[] password = config.password().orElseThrow();
+        assertThat(new String(password), is("secret"));
+        Arrays.fill(password, 'x');
+        assertThat(new String(config.password().orElseThrow()), is("secret"));
+    }
+
+    @Test
+    void testProgrammaticPasswordChangesClearConfiguredStaging() {
+        Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
+                Map.entry("direction", "INCOMING"),
+                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "orders"),
+                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, JmsConnectorProvider.CONNECTOR_TYPE),
+                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
+                Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
+                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
+        JmsConnectorConfig.Builder replacing = JmsConnectorConfig.builder().config(configSource);
+        assertThat(replacing.configuredPassword().orElseThrow(), is("secret"));
+
+        JmsConnectorConfig replaced = replacing.password("replacement").build();
+
+        assertThat(replacing.configuredPassword().isEmpty(), is(true));
+        assertThat(new String(replaced.password().orElseThrow()), is("replacement"));
+
+        JmsConnectorConfig.Builder clearing = JmsConnectorConfig.builder().config(configSource);
+        assertThat(clearing.configuredPassword().orElseThrow(), is("secret"));
+        clearing.clearPassword();
+
+        assertThat(clearing.configuredPassword().isEmpty(), is(true));
+        assertThat(clearing.passwordSource().get().isEmpty(), is(true));
+    }
+
+    @Test
+    void testConfiguredPasswordIsNotAliasedWhenCopyingBuilders() {
+        Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
+                Map.entry("direction", "INCOMING"),
+                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "orders"),
+                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, JmsConnectorProvider.CONNECTOR_TYPE),
+                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
+                Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
+                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
+        JmsConnectorConfig.Builder source = JmsConnectorConfig.builder().config(configSource);
+        JmsConnectorConfig.Builder copy = JmsConnectorConfig.builder().from(source);
+
+        JmsConnectorConfig copiedConfig = copy.build();
+        assertThat(source.configuredPassword().orElseThrow(), is("secret"));
+        JmsConnectorConfig sourceConfig = source.build();
+
+        assertThat(new String(copiedConfig.password().orElseThrow()), is("secret"));
+        assertThat(new String(sourceConfig.password().orElseThrow()), is("secret"));
+
+        JmsConnectorConfig.Builder reverseSource = JmsConnectorConfig.builder().config(configSource);
+        JmsConnectorConfig.Builder reverseCopy = JmsConnectorConfig.builder().from(reverseSource);
+
+        JmsConnectorConfig reverseSourceConfig = reverseSource.build();
+        assertThat(reverseCopy.configuredPassword().orElseThrow(), is("secret"));
+        JmsConnectorConfig reverseCopiedConfig = reverseCopy.build();
+
+        assertThat(new String(reverseSourceConfig.password().orElseThrow()), is("secret"));
+        assertThat(new String(reverseCopiedConfig.password().orElseThrow()), is("secret"));
+    }
+
+    @Test
+    void testPrototypeCopyOverridesStaleConfiguredPassword() {
+        Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
+                Map.entry("direction", "INCOMING"),
+                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "orders"),
+                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, JmsConnectorProvider.CONNECTOR_TYPE),
+                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
+                Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
+                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "stale-secret"))));
+        JmsConnectorConfig prototype = incomingBuilder()
+                .username("orders-user")
+                .password("prototype-secret")
+                .build();
+        JmsConnectorConfig.Builder target = JmsConnectorConfig.builder().config(configSource);
+
+        JmsConnectorConfig copied = target.from(prototype).build();
+
+        assertThat(new String(copied.password().orElseThrow()), is("prototype-secret"));
     }
 
     @Test
