@@ -216,3 +216,6 @@ components:
           enum: [safe]
           minLength: 4
           pattern: ^safe$
+        numericPriority:
+          type: integer
+          enum: [1, 2]

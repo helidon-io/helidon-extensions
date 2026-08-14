@@ -581,6 +581,13 @@ public class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendor
 {{>nestedStringEnum}}
 
 {{/vendorExtensions.x-inline-string-enums}}
+{{#vendorExtensions.x-render-vars}}{{#isEnum}}{{^vendorExtensions.x-enum-wire-constraints-validated}}
+    public enum {{vendorExtensions.x-enum-name}} {
+        {{#allowableValues}}{{#enumVars}}{{name}}{{^-last}},
+        {{/-last}}{{/enumVars}};{{/allowableValues}}
+    }
+
+{{/vendorExtensions.x-enum-wire-constraints-validated}}{{/isEnum}}{{/vendorExtensions.x-render-vars}}
 }
 {{#vendorExtensions.x-inline-string-enums}}
 

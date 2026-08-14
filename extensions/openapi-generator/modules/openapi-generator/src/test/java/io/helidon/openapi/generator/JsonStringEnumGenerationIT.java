@@ -108,6 +108,10 @@ class JsonStringEnumGenerationIT {
         assertThat(envelope, containsString("(\"batchAuthZ\")"));
         assertThat(envelope, containsString("implements JsonConverter<EnumEnvelope.InlineModeEnum>"));
         assertThat(envelope, containsString("implements JsonConverter<EnumEnvelope.InlineModesEnum>"));
+        assertThat(envelope, containsString("private NumericPriorityEnum numericPriority"));
+        assertThat(envelope, containsString("public enum NumericPriorityEnum"));
+        assertThat(envelope, containsString("NUMBER_1"));
+        assertThat(envelope, containsString("NUMBER_2"));
     }
 
     @Test

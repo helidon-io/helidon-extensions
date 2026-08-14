@@ -216,6 +216,14 @@ final class JsonStringEnumSupport {
         List<CodegenProperty> properties = renderVars(model);
         List<Map<String, Object>> definitions = new ArrayList<>();
         for (CodegenProperty property : properties) {
+            if (property.isEnum) {
+                String enumName = property.isArray && property.items != null
+                        ? property.items.datatypeWithEnum
+                        : property.datatypeWithEnum;
+                if (enumName != null && !enumName.isBlank()) {
+                    property.vendorExtensions.put("x-enum-name", enumName);
+                }
+            }
             if (property.isEnumRef && property.isString) {
                 validateEnumWireValues("model property '" + model.classname + "." + property.baseName + "'",
                                        wireValues(property._enum, property.allowableValues),
