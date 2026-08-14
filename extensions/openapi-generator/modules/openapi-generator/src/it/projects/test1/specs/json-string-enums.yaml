@@ -89,13 +89,13 @@ paths:
       responses:
         '204':
           description: Accepted
-  /validated-enum:
+  /validated-enum/{mode}:
     get:
       tags: [enums]
       operationId: validatedEnum
       parameters:
         - name: mode
-          in: query
+          in: path
           required: true
           schema:
             type: string
@@ -144,7 +144,7 @@ paths:
       parameters:
         - name: apiBazMode
           in: query
-          required: true
+          required: false
           schema:
             type: string
             enum: [a]
@@ -158,7 +158,7 @@ paths:
       parameters:
         - name: mode
           in: query
-          required: true
+          required: false
           schema:
             type: string
             enum: [b]

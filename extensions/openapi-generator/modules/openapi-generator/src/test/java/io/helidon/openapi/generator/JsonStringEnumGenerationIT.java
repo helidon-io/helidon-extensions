@@ -131,7 +131,7 @@ class JsonStringEnumGenerationIT {
         assertThat(api, not(containsString("enum NumericEnumBodyBodyEnum")));
         assertThat(api, containsString("@Http.Entity Boolean body"));
         assertThat(api, not(containsString("enum BooleanEnumBodyBodyEnum")));
-        assertThat(api, containsString("@Http.QueryParam(\"mode\") ValidatedEnumModeEnum mode"));
+        assertThat(api, containsString("@Http.PathParam(\"mode\") ValidatedEnumModeEnum mode"));
         assertThat(api, not(containsString("@Validation.String.Length(min = 4)")));
         assertThat(api, containsString("@Http.Entity String body"));
         assertThat(api, not(containsString("enum TextEnumBodyBodyEnum")));
