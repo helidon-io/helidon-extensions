@@ -16,16 +16,23 @@
 
 package io.helidon.extensions.langchain4j.providers.oci.genai;
 
+import java.lang.reflect.Modifier;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
+import io.helidon.service.registry.ServiceDescriptor;
 import io.helidon.service.registry.ServiceRegistry;
+import io.helidon.service.registry.ServiceRegistryConfig;
+import io.helidon.service.registry.ServiceRegistryManager;
 import io.helidon.testing.junit5.Testing;
 
 import com.oracle.bmc.Region;
@@ -34,29 +41,33 @@ import com.oracle.bmc.generativeaiinference.GenerativeAiInferenceAsyncClient;
 import com.oracle.bmc.generativeaiinference.GenerativeAiInferenceClient;
 import dev.langchain4j.community.model.oracle.oci.genai.OciGenAiChatModel;
 import dev.langchain4j.community.model.oracle.oci.genai.OciGenAiStreamingChatModel;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.arrayContaining;
 import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.sameInstance;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 
 @Testing.Test(perMethod = true)
 class OciGenAiModelFactoryLifecycleTest {
+    @BeforeEach
+    void resetLifecycleTestModel() {
+        LifecycleTestModel.reset();
+        LifecycleTestModelShutdownObserver.reset();
+    }
+
     @Test
     void cachesServicesAndLeavesSharedRegistryClientOpenOnShutdown(ServiceRegistry registry) {
         var client = registry.get(GenerativeAiInferenceClient.class);
         registry.get(MockGenAiUtilBean.class);
-        var factory = new OciGenAiChatModelFactory(twoModelConfig());
+        var factory = chatFactory(twoModelConfig());
 
         var first = factory.services();
         var second = factory.services();
@@ -80,7 +91,7 @@ class OciGenAiModelFactoryLifecycleTest {
 
     @Test
     void closesInternallyOwnedModelOnShutdown() {
-        var factory = new OciGenAiChatModelFactory(ownedModelConfig());
+        var factory = chatFactory(ownedModelConfig());
         var model = factory.services().getFirst().get();
 
         factory.preDestroy();
@@ -157,8 +168,8 @@ class OciGenAiModelFactoryLifecycleTest {
                 .serviceRegistry(registry)
                 .config(OciGenAiConstants.create(config, OciGenAiStreamingChatModel.class, "mixed"))
                 .build();
-        var syncFactory = new OciGenAiChatModelFactory(config);
-        var streamingFactory = new OciGenAiStreamingChatModelFactory(config);
+        var syncFactory = chatFactory(config);
+        var streamingFactory = streamingFactory(config);
         var syncModel = syncFactory.services().getFirst().get();
         long closesBeforeShutdown = closeInvocationCount(asyncClient);
 
@@ -176,40 +187,219 @@ class OciGenAiModelFactoryLifecycleTest {
 
     @Test
     void closesEarlierOwnedModelsWhenLaterConstructionFails() {
-        var model = Mockito.mock(OciGenAiChatModel.class);
         var constructionFailure = new IllegalArgumentException("model construction failed");
         var cleanupFailure = new IllegalStateException("model cleanup failed");
-        doThrow(cleanupFailure).when(model).close();
-        var factory = new FailingModelFactory(twoOwnedModelConfig(), model, constructionFailure);
+        var closeAttempt = new AtomicInteger();
+        var model = LifecycleTestModel.create(() -> {
+            if (closeAttempt.getAndIncrement() == 0) {
+                throw cleanupFailure;
+            }
+        });
+        LifecycleTestModel.plan("first-plan", () -> model);
+        LifecycleTestModel.plan("second-plan", () -> {
+            throw constructionFailure;
+        });
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(twoLifecycleModelConfig(), lifecycle);
 
         var actual = assertThrows(IllegalArgumentException.class, factory::services);
 
         assertThat(actual, sameInstance(constructionFailure));
         assertThat(actual.getSuppressed(), arrayContaining(cleanupFailure));
-        verify(model, times(1)).close();
+        assertThat(model.closeCount(), is(1));
+        assertThat(LifecycleTestModel.buildCount(), is(2));
 
-        factory.preDestroy();
-        verify(model, times(1)).close();
+        var cleanupPending = assertThrows(IllegalStateException.class, factory::services);
+        assertThat(cleanupPending.getCause(), sameInstance(cleanupFailure));
+        assertThat(LifecycleTestModel.buildCount(), is(2));
+
+        lifecycle.preDestroy();
+        assertThat(model.closeCount(), is(2));
+        assertThat(model.closed(), is(true));
+
+        lifecycle.preDestroy();
+        assertThat(model.closeCount(), is(2));
     }
 
     @Test
     void retriesInitializationAfterConstructionFailure() {
-        var model = Mockito.mock(OciGenAiChatModel.class);
+        var model = LifecycleTestModel.create();
         var constructionFailure = new IllegalArgumentException("first construction failed");
-        var factory = new RetryingModelFactory(ownedModelConfig(), model, constructionFailure);
+        var buildAttempt = new AtomicInteger();
+        LifecycleTestModel.plan("retry-plan", () -> {
+            if (buildAttempt.getAndIncrement() == 0) {
+                throw constructionFailure;
+            }
+            return model;
+        });
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(oneLifecycleModelConfig("retry-plan"), lifecycle);
 
         assertThat(assertThrows(IllegalArgumentException.class, factory::services), sameInstance(constructionFailure));
         assertThat(factory.services(), hasSize(1));
-        assertThat(factory.createCount(), is(2));
+        assertThat(LifecycleTestModel.buildCount(), is(2));
 
-        factory.preDestroy();
-        verify(model, times(1)).close();
+        lifecycle.preDestroy();
+        assertThat(model.closeCount(), is(1));
     }
 
     @Test
-    void initializesOnlyOnceWithoutHoldingTheFactoryMonitor() throws Exception {
-        var model = Mockito.mock(OciGenAiChatModel.class);
-        var factory = new BlockingModelFactory(ownedModelConfig(), model);
+    void closesRepeatedOwnedModelOnlyOnce() {
+        var model = LifecycleTestModel.create();
+        LifecycleTestModel.plan("first-plan", () -> model);
+        LifecycleTestModel.plan("second-plan", () -> model);
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(twoLifecycleModelConfig(), lifecycle);
+
+        assertThat(factory.services(), hasSize(2));
+
+        lifecycle.preDestroy();
+        assertThat(model.closeCount(), is(1));
+    }
+
+    @Test
+    void reportsShutdownFailureAndRetriesOnlyPendingModels() {
+        var cleanupFailure = new IllegalStateException("shutdown cleanup failed");
+        var closeAttempt = new AtomicInteger();
+        var closedModel = LifecycleTestModel.create();
+        var pendingModel = LifecycleTestModel.create(() -> {
+            if (closeAttempt.getAndIncrement() == 0) {
+                throw cleanupFailure;
+            }
+        });
+        LifecycleTestModel.plan("first-plan", () -> closedModel);
+        LifecycleTestModel.plan("second-plan", () -> pendingModel);
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(twoLifecycleModelConfig(), lifecycle);
+
+        assertThat(factory.services(), hasSize(2));
+
+        var actual = assertThrows(IllegalStateException.class, lifecycle::preDestroy);
+        assertThat(actual.getMessage(), is("Failed to close LangChain4j model instances."));
+        assertThat(actual.getCause(), sameInstance(cleanupFailure));
+        assertThat(closedModel.closeCount(), is(1));
+        assertThat(closedModel.closed(), is(true));
+        assertThat(pendingModel.closeCount(), is(1));
+        assertThat(pendingModel.closed(), is(false));
+
+        lifecycle.preDestroy();
+        assertThat(closedModel.closeCount(), is(1));
+        assertThat(pendingModel.closeCount(), is(2));
+        assertThat(pendingModel.closed(), is(true));
+        assertThat(factory.services(), is(empty()));
+
+        lifecycle.preDestroy();
+        assertThat(closedModel.closeCount(), is(1));
+        assertThat(pendingModel.closeCount(), is(2));
+    }
+
+    @Test
+    void propagatesErrorFromShutdownRetry() {
+        var firstFailure = new IllegalStateException("first shutdown cleanup failed");
+        var retryFailure = new AssertionError("shutdown retry failed");
+        var closeAttempt = new AtomicInteger();
+        var model = LifecycleTestModel.create(() -> {
+            int attempt = closeAttempt.getAndIncrement();
+            if (attempt == 0) {
+                throw firstFailure;
+            }
+            if (attempt == 1) {
+                throw retryFailure;
+            }
+        });
+        LifecycleTestModel.plan("ordered-plan", () -> model);
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(oneLifecycleModelConfig("ordered-plan"), lifecycle);
+
+        assertThat(factory.services(), hasSize(1));
+
+        var first = assertThrows(IllegalStateException.class, lifecycle::preDestroy);
+        assertThat(first.getCause(), sameInstance(firstFailure));
+
+        var retry = assertThrows(AssertionError.class, lifecycle::preDestroy);
+        assertThat(retry, sameInstance(retryFailure));
+        assertThat(retry.getSuppressed(), arrayContaining(firstFailure));
+        assertThat(model.closed(), is(false));
+        assertThat(model.closeCount(), is(2));
+
+        lifecycle.preDestroy();
+        assertThat(model.closed(), is(true));
+        assertThat(model.closeCount(), is(3));
+        assertThat(factory.services(), is(empty()));
+
+        lifecycle.preDestroy();
+        assertThat(model.closeCount(), is(3));
+    }
+
+    @Test
+    void propagatesErrorWhenAnotherPendingModelFailsFirstOnRetry() {
+        var firstInitialFailure = new IllegalStateException("first initial cleanup failed");
+        var secondInitialFailure = new IllegalArgumentException("second initial cleanup failed");
+        var retryRuntimeFailure = new IllegalStateException("first retry cleanup failed");
+        var retryError = new AssertionError("second retry cleanup failed");
+        var firstCloseAttempt = new AtomicInteger();
+        var secondCloseAttempt = new AtomicInteger();
+        var firstModel = LifecycleTestModel.create(() -> {
+            int attempt = firstCloseAttempt.getAndIncrement();
+            if (attempt == 0) {
+                throw firstInitialFailure;
+            }
+            if (attempt == 1) {
+                throw retryRuntimeFailure;
+            }
+        });
+        var secondModel = LifecycleTestModel.create(() -> {
+            int attempt = secondCloseAttempt.getAndIncrement();
+            if (attempt == 0) {
+                throw secondInitialFailure;
+            }
+            if (attempt == 1) {
+                throw retryError;
+            }
+        });
+        LifecycleTestModel.plan("first-plan", () -> firstModel);
+        LifecycleTestModel.plan("second-plan", () -> secondModel);
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(twoLifecycleModelConfig(), lifecycle);
+
+        assertThat(factory.services(), hasSize(2));
+
+        var first = assertThrows(IllegalStateException.class, lifecycle::preDestroy);
+        assertThat(first.getCause(), sameInstance(firstInitialFailure));
+        assertThat(firstInitialFailure.getSuppressed(), arrayContaining(secondInitialFailure));
+
+        var retry = assertThrows(AssertionError.class, lifecycle::preDestroy);
+        assertThat(retry, sameInstance(retryError));
+        assertThat(retry.getSuppressed(), arrayContaining(retryRuntimeFailure, firstInitialFailure));
+        assertThat(firstModel.closed(), is(false));
+        assertThat(firstModel.closeCount(), is(2));
+        assertThat(secondModel.closed(), is(false));
+        assertThat(secondModel.closeCount(), is(2));
+
+        lifecycle.preDestroy();
+        assertThat(firstModel.closed(), is(true));
+        assertThat(firstModel.closeCount(), is(3));
+        assertThat(secondModel.closed(), is(true));
+        assertThat(secondModel.closeCount(), is(3));
+        assertThat(factory.services(), is(empty()));
+
+        lifecycle.preDestroy();
+        assertThat(firstModel.closeCount(), is(3));
+        assertThat(secondModel.closeCount(), is(3));
+    }
+
+    @Test
+    void initializesOnlyOnceWithExplicitCoordination() throws Exception {
+        var model = LifecycleTestModel.create();
+        var constructionStarted = new CountDownLatch(1);
+        var continueConstruction = new CountDownLatch(1);
+        LifecycleTestModel.plan("blocking-plan", () -> {
+            constructionStarted.countDown();
+            await(continueConstruction);
+            return model;
+        });
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(oneLifecycleModelConfig("blocking-plan"), lifecycle);
         var start = new CountDownLatch(1);
 
         try (var executor = Executors.newFixedThreadPool(2)) {
@@ -222,80 +412,128 @@ class OciGenAiModelFactoryLifecycleTest {
                 return factory.services();
             });
 
-            synchronized (factory) {
-                start.countDown();
-                assertThat(factory.awaitConstruction(), is(true));
-            }
+            start.countDown();
+            assertThat(constructionStarted.await(10, TimeUnit.SECONDS), is(true));
 
-            assertThat(factory.createCount(), is(1));
-            factory.continueConstruction();
+            assertThat(LifecycleTestModel.buildCount(), is(1));
+            continueConstruction.countDown();
 
             var firstServices = first.get(10, TimeUnit.SECONDS);
             var secondServices = second.get(10, TimeUnit.SECONDS);
             assertThat(firstServices, sameInstance(secondServices));
             assertThat(firstServices, hasSize(1));
-            assertThat(factory.createCount(), is(1));
+            assertThat(LifecycleTestModel.buildCount(), is(1));
         }
 
-        factory.preDestroy();
-        verify(model, times(1)).close();
+        lifecycle.preDestroy();
+        assertThat(model.closeCount(), is(1));
     }
 
     @Test
     void shutdownWakesServicesWaiterAndClosesLateModel() throws Exception {
-        var model = Mockito.mock(OciGenAiChatModel.class);
-        var factory = new BlockingModelFactory(ownedModelConfig(), model);
+        var model = LifecycleTestModel.create();
+        var constructionStarted = new CountDownLatch(1);
+        var continueConstruction = new CountDownLatch(1);
+        LifecycleTestModel.plan("shutdown-race-plan", () -> {
+            constructionStarted.countDown();
+            await(continueConstruction);
+            return model;
+        });
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(oneLifecycleModelConfig("shutdown-race-plan"), lifecycle);
         var servicesWaiterThread = new AtomicReference<Thread>();
         var servicesWaiterStarted = new CountDownLatch(1);
 
         try (var executor = Executors.newFixedThreadPool(3)) {
             try {
                 var services = executor.submit(factory::services);
-                assertThat(factory.awaitConstruction(), is(true));
+                assertThat(constructionStarted.await(10, TimeUnit.SECONDS), is(true));
                 var waitingServices = executor.submit(() -> {
                     servicesWaiterThread.set(Thread.currentThread());
                     servicesWaiterStarted.countDown();
                     try {
                         return factory.services();
                     } finally {
-                        factory.continueConstruction();
+                        continueConstruction.countDown();
                     }
                 });
 
                 assertThat(servicesWaiterStarted.await(10, TimeUnit.SECONDS), is(true));
                 assertThat(awaitWaiting(servicesWaiterThread.get()), is(true));
-                var shutdown = executor.submit(factory::preDestroy);
+                var shutdown = executor.submit(lifecycle::preDestroy);
 
                 assertThat(waitingServices.get(10, TimeUnit.SECONDS), is(empty()));
                 assertThat(services.get(10, TimeUnit.SECONDS), is(empty()));
                 shutdown.get(10, TimeUnit.SECONDS);
             } finally {
-                factory.continueConstruction();
+                continueConstruction.countDown();
             }
         }
 
         assertThat(factory.services(), is(empty()));
-        verify(model, times(1)).close();
-        factory.preDestroy();
-        verify(model, times(1)).close();
+        assertThat(model.closeCount(), is(1));
+        lifecycle.preDestroy();
+        assertThat(model.closeCount(), is(1));
     }
 
     @Test
-    void keepsOwnershipPrivateAndDerivedFromConfiguration(ServiceRegistry registry) {
-        registry.get(GenerativeAiInferenceClient.class);
-        var ownedModel = Mockito.mock(OciGenAiChatModel.class);
-        var borrowedModel = Mockito.mock(OciGenAiChatModel.class);
-        var ownedFactory = new FixedModelFactory(twoOwnedModelConfig(), ownedModel);
-        var borrowedFactory = new FixedModelFactory(twoModelConfig(), borrowedModel);
+    void generatedFactoryUsesPrivateCreationAndExplicitCoordination() throws Exception {
+        var create = OciGenAiChatModelFactory.class.getDeclaredMethod("create", OciGenAiChatModelConfig.class);
 
-        assertThat(ownedFactory.services(), hasSize(2));
-        assertThat(borrowedFactory.services(), hasSize(2));
+        assertThat(Modifier.isPrivate(create.getModifiers()), is(true));
+        assertThat(OciGenAiChatModelFactory.class.getDeclaredField("lifecycleLock").getType(),
+                   equalTo(ReentrantLock.class));
+        assertThat(OciGenAiChatModelFactory.class.getDeclaredField("lifecycleChanged").getType(),
+                   equalTo(Condition.class));
+        assertThat(java.util.Arrays.stream(OciGenAiChatModelFactory.class.getDeclaredFields())
+                           .noneMatch(field -> field.getType() == Object.class),
+                   is(true));
+        assertThat(java.util.Arrays.stream(OciGenAiChatModelFactory.class.getDeclaredMethods())
+                           .noneMatch(method -> Modifier.isSynchronized(method.getModifiers())),
+                   is(true));
+        assertThat(java.util.Arrays.stream(OciGenAiChatModelFactory__ServiceDescriptor.class.getDeclaredMethods())
+                           .noneMatch(method -> method.getName().equals("preDestroy")),
+                   is(true));
+        assertThat(OciGenAiChatModelFactory__ServiceDescriptor.INSTANCE.weight(), is(98.0));
+        assertThat(OciGenAiChatModelFactory__ServiceDescriptor.INSTANCE.runLevel(), is(Optional.empty()));
+        assertThat(OciGenAiChatModelFactoryLifecycle__ServiceDescriptor.INSTANCE.weight(), is(Double.MAX_VALUE));
+        assertThat(OciGenAiChatModelFactoryLifecycle__ServiceDescriptor.INSTANCE.runLevel(),
+                   is(Optional.of(Double.MIN_VALUE)));
+    }
 
-        ownedFactory.preDestroy();
-        borrowedFactory.preDestroy();
+    @Test
+    void registryShutdownClosesModelAfterOrdinaryConsumerWithoutEagerConstruction() {
+        var createdModel = new AtomicReference<LifecycleTestModel>();
+        LifecycleTestModel.plan("ordered-plan", () -> {
+            var model = LifecycleTestModel.create();
+            createdModel.set(model);
+            return model;
+        });
+        var manager = lifecycleRegistry(oneLifecycleModelConfig("ordered-plan"));
 
-        verify(ownedModel, times(1)).close();
-        verify(borrowedModel, never()).close();
+        try {
+            assertThat(LifecycleTestModel.buildCount(), is(0));
+            manager.registry().get(LifecycleTestModelShutdownObserver.class);
+            assertThat(LifecycleTestModel.buildCount(), is(1));
+
+            manager.shutdown();
+
+            assertThat(LifecycleTestModelShutdownObserver.stoppedWithOpenModel(), is(true));
+            assertThat(createdModel.get().closed(), is(true));
+            assertThat(createdModel.get().closeCount(), is(1));
+        } finally {
+            manager.shutdown();
+        }
+    }
+
+    @Test
+    void registryShutdownClosesModelAfterRunLevelOneConsumer() {
+        assertEagerConsumerShutdownOrder(shutdownObserverDescriptor(1.0, 100.0));
+    }
+
+    @Test
+    void registryShutdownClosesModelAfterSameRunLevelHigherWeightConsumer() {
+        assertEagerConsumerShutdownOrder(shutdownObserverDescriptor(Double.MIN_VALUE, 200.0));
     }
 
     private static long closeInvocationCount(Object client) {
@@ -366,22 +604,30 @@ class OciGenAiModelFactoryLifecycleTest {
         return Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
     }
 
-    private static Config twoOwnedModelConfig() {
+    private static Config twoLifecycleModelConfig() {
         // language=YAML
         var yaml = """
                 langchain4j:
                   models:
                     first:
-                      provider: oci-gen-ai
+                      provider: lifecycle-test
+                      plan: first-plan
                     second:
-                      provider: oci-gen-ai
-                  providers:
-                    oci-gen-ai:
-                      model-name: model-name
-                      compartment-id: compartment-id
-                      region: us-ashburn-1
-                      gen-ai-client-discover-services: false
+                      provider: lifecycle-test
+                      plan: second-plan
                 """;
+        return Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
+    }
+
+    private static Config oneLifecycleModelConfig(String plan) {
+        // language=YAML
+        var yaml = """
+                langchain4j:
+                  models:
+                    ordered:
+                      provider: lifecycle-test
+                      plan: %s
+                """.formatted(plan);
         return Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
     }
 
@@ -402,93 +648,63 @@ class OciGenAiModelFactoryLifecycleTest {
         return Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
     }
 
-    private static final class FailingModelFactory extends OciGenAiChatModelFactory {
-        private final OciGenAiChatModel model;
-        private final RuntimeException constructionFailure;
-        private int buildCount;
+    private static OciGenAiChatModelFactory chatFactory(Config config) {
+        return new OciGenAiChatModelFactory(config, new OciGenAiChatModelFactoryLifecycle());
+    }
 
-        private FailingModelFactory(Config config, OciGenAiChatModel model, RuntimeException constructionFailure) {
-            super(config);
-            this.model = model;
-            this.constructionFailure = constructionFailure;
-        }
+    private static OciGenAiStreamingChatModelFactory streamingFactory(Config config) {
+        return new OciGenAiStreamingChatModelFactory(config, new OciGenAiStreamingChatModelFactoryLifecycle());
+    }
 
-        @Override
-        protected OciGenAiChatModel create(OciGenAiChatModelConfig config) {
-            if (buildCount++ == 0) {
-                return model;
+    private static ServiceRegistryManager lifecycleRegistry(Config config) {
+        return lifecycleRegistry(config, LifecycleTestModelShutdownObserver__ServiceDescriptor.INSTANCE);
+    }
+
+    private static ServiceRegistryManager lifecycleRegistry(Config config, ServiceDescriptor<?> observerDescriptor) {
+        var registryConfig = ServiceRegistryConfig.builder()
+                .discoverServices(false)
+                .discoverServicesFromServiceLoader(false)
+                .putContractInstance(Config.class, config)
+                .addServiceDescriptor(LifecycleTestModelFactory__ServiceDescriptor.INSTANCE)
+                .addServiceDescriptor(LifecycleTestModelFactoryLifecycle__ServiceDescriptor.INSTANCE)
+                .addServiceDescriptor(observerDescriptor)
+                .build();
+        return ServiceRegistryManager.start(registryConfig);
+    }
+
+    private static ServiceDescriptor<?> shutdownObserverDescriptor(double runLevel, double weight) {
+        return new LifecycleTestModelShutdownObserver__ServiceDescriptor<LifecycleTestModelShutdownObserver>() {
+            @Override
+            public double weight() {
+                return weight;
             }
-            throw constructionFailure;
-        }
-    }
 
-    private static final class RetryingModelFactory extends OciGenAiChatModelFactory {
-        private final OciGenAiChatModel model;
-        private final RuntimeException constructionFailure;
-        private final AtomicInteger createCount = new AtomicInteger();
-
-        private RetryingModelFactory(Config config, OciGenAiChatModel model, RuntimeException constructionFailure) {
-            super(config);
-            this.model = model;
-            this.constructionFailure = constructionFailure;
-        }
-
-        @Override
-        protected OciGenAiChatModel create(OciGenAiChatModelConfig config) {
-            if (createCount.getAndIncrement() == 0) {
-                throw constructionFailure;
+            @Override
+            public Optional<Double> runLevel() {
+                return Optional.of(runLevel);
             }
-            return model;
-        }
-
-        private int createCount() {
-            return createCount.get();
-        }
+        };
     }
 
-    private static final class BlockingModelFactory extends OciGenAiChatModelFactory {
-        private final OciGenAiChatModel model;
-        private final CountDownLatch constructionStarted = new CountDownLatch(1);
-        private final CountDownLatch continueConstruction = new CountDownLatch(1);
-        private final AtomicInteger createCount = new AtomicInteger();
-
-        private BlockingModelFactory(Config config, OciGenAiChatModel model) {
-            super(config);
-            this.model = model;
-        }
-
-        @Override
-        protected OciGenAiChatModel create(OciGenAiChatModelConfig config) {
-            createCount.incrementAndGet();
-            constructionStarted.countDown();
-            await(continueConstruction);
+    private static void assertEagerConsumerShutdownOrder(ServiceDescriptor<?> observerDescriptor) {
+        var createdModel = new AtomicReference<LifecycleTestModel>();
+        LifecycleTestModel.plan("ordered-plan", () -> {
+            var model = LifecycleTestModel.create();
+            createdModel.set(model);
             return model;
-        }
+        });
+        var manager = lifecycleRegistry(oneLifecycleModelConfig("ordered-plan"), observerDescriptor);
 
-        private boolean awaitConstruction() throws InterruptedException {
-            return constructionStarted.await(10, TimeUnit.SECONDS);
-        }
+        try {
+            assertThat(LifecycleTestModel.buildCount(), is(1));
 
-        private void continueConstruction() {
-            continueConstruction.countDown();
-        }
+            manager.shutdown();
 
-        private int createCount() {
-            return createCount.get();
-        }
-    }
-
-    private static final class FixedModelFactory extends OciGenAiChatModelFactory {
-        private final OciGenAiChatModel model;
-
-        private FixedModelFactory(Config config, OciGenAiChatModel model) {
-            super(config);
-            this.model = model;
-        }
-
-        @Override
-        protected OciGenAiChatModel create(OciGenAiChatModelConfig config) {
-            return model;
+            assertThat(LifecycleTestModelShutdownObserver.stoppedWithOpenModel(), is(true));
+            assertThat(createdModel.get().closed(), is(true));
+            assertThat(createdModel.get().closeCount(), is(1));
+        } finally {
+            manager.shutdown();
         }
     }
 }
