@@ -84,7 +84,8 @@ class DiscriminatorAllOfGenerationIT {
         assertThat(content, containsString("public String conditionShape()"));
         assertThat(content, containsString("return \"CHANGE_FREEZE\";"));
         assertThat(content, not(containsString("void conditionShape(")));
-        assertThat(content, not(containsString("Builder conditionShape(")));
+        assertThat(content, containsString("public Builder conditionShape(String conditionShape)"));
+        assertThat(content, containsString("Unsupported discriminator value '"));
     }
 
     private static File modelFile(String fileName) {

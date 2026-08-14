@@ -145,6 +145,41 @@ class AuthoritativeDiscriminatorGenerationIT {
         assertThat(message, containsString("input specification '"));
         assertThat(message, containsString("Define a concrete subtype"));
         assertFalse(Files.exists(tempDir.resolve("self-generated/src/main/java")));
+
+        RuntimeException duplicateDescendantAlias = generateFailure("duplicate-descendant-alias", """
+                Base:
+                  type: object
+                  discriminator:
+                    propertyName: kind
+                  properties:
+                    kind:
+                      type: string
+                MidA:
+                  discriminator:
+                    propertyName: kind
+                    mapping:
+                      leaf: '#/components/schemas/LeafA'
+                  allOf:
+                    - $ref: '#/components/schemas/Base'
+                    - type: object
+                MidB:
+                  discriminator:
+                    propertyName: kind
+                    mapping:
+                      leaf: '#/components/schemas/LeafB'
+                  allOf:
+                    - $ref: '#/components/schemas/Base'
+                    - type: object
+                LeafA:
+                  allOf:
+                    - $ref: '#/components/schemas/MidA'
+                    - type: object
+                LeafB:
+                  allOf:
+                    - $ref: '#/components/schemas/MidB'
+                    - type: object
+                """);
+        assertThat(rootMessage(duplicateDescendantAlias), containsString("share canonical alias 'leaf'"));
     }
 
     @Test

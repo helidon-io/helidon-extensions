@@ -173,6 +173,24 @@ components:
         whiskers:
           type: integer
           format: int32
+    MetadataAlpha:
+      type: object
+      properties:
+        alpha:
+          type: string
+    MetadataBeta:
+      type: object
+      properties:
+        beta:
+          type: string
+    MetadataChoice:
+      oneOf:
+        - $ref: '#/components/schemas/MetadataAlpha'
+        - $ref: '#/components/schemas/MetadataBeta'
+      discriminator:
+        propertyName: category
+        mapping:
+          alpha.v1: '#/components/schemas/MetadataAlpha'
     Dog:
       type: object
       required:

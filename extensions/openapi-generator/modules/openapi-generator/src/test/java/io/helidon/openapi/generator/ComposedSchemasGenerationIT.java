@@ -92,6 +92,10 @@ class ComposedSchemasGenerationIT {
         String leaf = read(modelFile("LayeredLeaf.java"));
         assertThat(leaf, containsString("public class LayeredLeaf extends LayeredIntermediate"));
         assertThat(leaf, containsString("super(new LayeredLeaf())"));
+
+        String base = read(modelFile("LayeredBase.java"));
+        assertThat(base, containsString("@Json.Subtype(alias = \"leaf\", value = LayeredLeaf.class)"));
+        assertThat(base, not(containsString("value = LayeredIntermediate.class")));
     }
 
     @Test
@@ -110,6 +114,7 @@ class ComposedSchemasGenerationIT {
         assertThat(cat, containsString("implements"));
         assertThat(cat, containsString("Pet"));
         assertThat(cat, containsString("return \"cat$special\";"));
+        assertThat(cat, not(containsString("@Json.Ignore\n    public String kind()")));
         assertThat(cat, not(containsString("private String kind;")));
         assertThat(cat, not(containsString("void kind(")));
 
@@ -244,6 +249,7 @@ class ComposedSchemasGenerationIT {
                 import static org.hamcrest.CoreMatchers.instanceOf;
                 import static org.hamcrest.CoreMatchers.is;
                 import static org.hamcrest.MatcherAssert.assertThat;
+                import static org.junit.jupiter.api.Assertions.assertThrows;
 
                 class ComposedJsonBindingTest {
 
@@ -255,12 +261,86 @@ class ComposedSchemasGenerationIT {
                         cat.whiskers(7);
 
                         String json = jsonBinding.serialize((Pet) cat, Pet.class);
+                        assertThat(occurrences(json, "\\\"kind\\\""), is(1));
                         assertThat(json, containsString("\\\"kind\\\":\\\"cat$special\\\""));
                         assertThat(json, containsString("\\\"whiskers\\\":7"));
 
                         Pet pet = jsonBinding.deserialize("{\\\"kind\\\":\\\"cat$special\\\",\\\"whiskers\\\":7}", Pet.class);
                         assertThat(pet, instanceOf(Cat.class));
                         assertThat(((Cat) pet).whiskers(), is(7));
+                    }
+
+                    @Test
+                    void directMemberBindingPreservesDiscriminator() {
+                        Cat cat = new Cat();
+                        cat.whiskers(7);
+
+                        String json = jsonBinding.serialize(cat, Cat.class);
+                        assertThat(occurrences(json, "\\\"kind\\\""), is(1));
+                        assertThat(json, containsString("\\\"kind\\\":\\\"cat$special\\\""));
+
+                        Cat restored = jsonBinding.deserialize(
+                                "{\\\"kind\\\":\\\"cat$special\\\",\\\"whiskers\\\":7}", Cat.class);
+                        assertThat(restored.kind(), is("cat$special"));
+                        assertThat(restored.whiskers(), is(7));
+
+                        assertThrows(RuntimeException.class,
+                                     () -> jsonBinding.deserialize(
+                                             "{\\\"kind\\\":\\\"dog\\\",\\\"whiskers\\\":7}", Cat.class));
+                    }
+
+                    @Test
+                    void everyOneOfMemberRoundTripsWithItsCanonicalAlias() {
+                        Dog dog = new Dog();
+                        dog.bark(true);
+
+                        String json = jsonBinding.serialize((Pet) dog, Pet.class);
+                        assertThat(occurrences(json, "\\\"kind\\\""), is(1));
+                        assertThat(json, containsString("\\\"kind\\\":\\\"dog\\\""));
+
+                        Pet restored = jsonBinding.deserialize(json, Pet.class);
+                        assertThat(restored, instanceOf(Dog.class));
+                        assertThat(((Dog) restored).bark(), is(true));
+                    }
+
+                    @Test
+                    void metadataDiscriminatorIsRequired() {
+                        assertThrows(RuntimeException.class,
+                                     () -> jsonBinding.deserialize("{\\\"alpha\\\":\\\"value\\\"}",
+                                                                  MetadataChoice.class));
+                    }
+
+                    @Test
+                    void everyMetadataMemberRoundTripsWithItsCanonicalAlias() {
+                        MetadataAlpha alpha = new MetadataAlpha();
+                        alpha.alpha("a");
+                        String alphaJson = jsonBinding.serialize((MetadataChoice) alpha, MetadataChoice.class);
+                        assertThat(alphaJson, containsString("\\\"category\\\":\\\"alpha.v1\\\""));
+                        assertThat(jsonBinding.deserialize(alphaJson, MetadataChoice.class),
+                                   instanceOf(MetadataAlpha.class));
+
+                        MetadataBeta beta = new MetadataBeta();
+                        beta.beta("b");
+                        String betaJson = jsonBinding.serialize((MetadataChoice) beta, MetadataChoice.class);
+                        assertThat(betaJson, containsString("\\\"category\\\":\\\"MetadataBeta\\\""));
+                        assertThat(jsonBinding.deserialize(betaJson, MetadataChoice.class),
+                                   instanceOf(MetadataBeta.class));
+                    }
+
+                    @Test
+                    void layeredAllOfRoundTripsThroughRootBase() {
+                        LayeredLeaf leaf = new LayeredLeaf();
+                        leaf.middle("middle");
+                        leaf.leaf("leaf-value");
+
+                        String json = jsonBinding.serialize((LayeredBase) leaf, LayeredBase.class);
+                        assertThat(occurrences(json, "\\\"kind\\\""), is(1));
+                        assertThat(json, containsString("\\\"kind\\\":\\\"leaf\\\""));
+
+                        LayeredBase restored = jsonBinding.deserialize(json, LayeredBase.class);
+                        assertThat(restored, instanceOf(LayeredLeaf.class));
+                        assertThat(((LayeredLeaf) restored).middle(), is("middle"));
+                        assertThat(((LayeredLeaf) restored).leaf(), is("leaf-value"));
                     }
 
                     @Test
@@ -311,6 +391,10 @@ class ComposedSchemasGenerationIT {
                         PatternChoice numericCode = jsonBinding.deserialize("{\\\"code\\\":\\\"123\\\"}",
                                                                             PatternChoice.class);
                         assertThat(numericCode, instanceOf(NumericCode.class));
+                    }
+
+                    private int occurrences(String value, String token) {
+                        return (value.length() - value.replace(token, "").length()) / token.length();
                     }
                 }
                 """);

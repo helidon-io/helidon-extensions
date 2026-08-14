@@ -64,10 +64,10 @@ import {{import}};
      *
      * @return exact declared discriminator alias
      */
-    @Json.Ignore
     {{{type}}} {{name}}();
 
 {{/vendorExtensions.x-abstract-discriminator-accessors}}
+    /** Helidon JSON converter for the complete {{classname}} union. */
     final class {{classname}}JsonConverter implements JsonConverter<{{classname}}> {
 {{#vendorExtensions.x-union-members}}
         private JsonDeserializer<{{name}}> {{deserializerField}};
@@ -116,8 +116,11 @@ import {{import}};
                 throw new IllegalArgumentException("Unsupported discriminator value '" + discriminatorValue
                         + "' for {{classname}}");
             }
-{{/vendorExtensions.x-has-union-discriminator}}
+            throw new IllegalArgumentException("Missing discriminator property "
+                    + {{{vendorExtensions.x-union-discriminator-key-literal}}} + " for {{classname}}");
+{{/vendorExtensions.x-has-union-discriminator}}{{^vendorExtensions.x-has-union-discriminator}}
             return deserializeStructurally(jsonObject);
+{{/vendorExtensions.x-has-union-discriminator}}
         }
 
         @Override
@@ -325,6 +328,7 @@ import {{import}};
 {{#vendorExtensions.x-has-union-discriminator}}
             return JsonObject.builder()
                     .from(jsonObject)
+                    .unset({{{vendorExtensions.x-union-discriminator-key-literal}}})
                     .set({{{vendorExtensions.x-union-discriminator-key-literal}}}, {{{aliasLiteral}}})
                     .build();
 {{/vendorExtensions.x-has-union-discriminator}}{{^vendorExtensions.x-has-union-discriminator}}
@@ -392,6 +396,11 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
 {{/vendorExtensions.x-has-validations}}{{^vendorExtensions.x-abstract-polymorphic-base}}@Json.BuilderInfo({{classname}}.Builder.class)
 {{/vendorExtensions.x-abstract-polymorphic-base}}public {{#vendorExtensions.x-abstract-polymorphic-base}}abstract {{/vendorExtensions.x-abstract-polymorphic-base}}class {{classname}}{{#vendorExtensions.x-extends-model}} extends {{vendorExtensions.x-extends-model}}{{/vendorExtensions.x-extends-model}}{{#vendorExtensions.x-has-implements-models}} implements {{#vendorExtensions.x-implements-models}}{{name}}{{^last}}, {{/last}}{{/vendorExtensions.x-implements-models}}{{/vendorExtensions.x-has-implements-models}} {
 
+{{#vendorExtensions.x-concrete-discriminator-accessors}}    /** Canonical discriminator used by direct Helidon JSON binding. */
+    @Json.Property({{{nameLiteral}}})
+    private {{{type}}} {{name}} = {{{valueExpression}}};
+
+{{/vendorExtensions.x-concrete-discriminator-accessors}}
 {{#vendorExtensions.x-render-vars}}
     {{#description}}/** {{description}} */
     {{/description}}{{#vendorExtensions.x-json-required}}@Json.Required
@@ -414,9 +423,9 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
      * Canonical OpenAPI discriminator value for this subtype.
      *
      * @return exact declared discriminator alias
-     */
+    */
     @Override
-    @Json.Ignore
+    @Json.Property({{{nameLiteral}}})
     public {{{type}}} {{name}}() {
         return {{{valueExpression}}};
     }
@@ -472,6 +481,21 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
         }
 
 {{/vendorExtensions.x-render-vars}}
+{{#vendorExtensions.x-concrete-discriminator-accessors}}        /**
+         * Accept the canonical discriminator during JSON binding.
+         *
+         * @param {{name}} discriminator value
+         * @return this builder
+         */
+        public Builder {{name}}({{{type}}} {{name}}) {
+            if (!{{{valueExpression}}}.equals({{name}})) {
+                throw new IllegalArgumentException("Unsupported discriminator value '" + {{name}}
+                        + "' for {{classname}}");
+            }
+            return this;
+        }
+
+{{/vendorExtensions.x-concrete-discriminator-accessors}}
         /**
          * Build the instance.
          *
@@ -569,6 +593,21 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
         }
 
 {{/vendorExtensions.x-render-vars}}
+{{#vendorExtensions.x-concrete-discriminator-accessors}}        /**
+         * Accept the canonical discriminator during JSON binding.
+         *
+         * @param {{name}} discriminator value
+         * @return this builder
+         */
+        public Builder {{name}}({{{type}}} {{name}}) {
+            if (!{{{valueExpression}}}.equals({{name}})) {
+                throw new IllegalArgumentException("Unsupported discriminator value '" + {{name}}
+                        + "' for {{classname}}");
+            }
+            return this;
+        }
+
+{{/vendorExtensions.x-concrete-discriminator-accessors}}
         /**
          * Build the instance.
          *

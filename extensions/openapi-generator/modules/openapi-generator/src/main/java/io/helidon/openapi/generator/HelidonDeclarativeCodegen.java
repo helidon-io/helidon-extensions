@@ -1097,6 +1097,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private void applyAllOfDiscriminatorHierarchy(List<CodegenModel> models,
                                                   Map<String, CodegenModel> modelsByClassname) {
         Map<String, List<String>> subtypeNamesByParent = new LinkedHashMap<>();
+        Map<String, String> parentBySubtype = new LinkedHashMap<>();
 
         for (CodegenModel model : models) {
             String parentType = (String) model.vendorExtensions.get("x-extends-model");
@@ -1109,7 +1110,17 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 continue;
             }
             subtypeNamesByParent.computeIfAbsent(parentType, ignored -> new ArrayList<>()).add(model.classname);
+            parentBySubtype.put(model.classname, parentType);
         }
+
+        Map<String, Map<String, String>> aliasesByParent = new LinkedHashMap<>();
+        subtypeNamesByParent.forEach((parentType, subtypeNames) -> {
+            CodegenModel parentModel = modelsByClassname.get(parentType);
+            if (parentModel != null && parentModel.discriminator != null) {
+                aliasesByParent.put(parentType,
+                                    validateAndResolveAliases(parentModel, subtypeNames, modelsByClassname));
+            }
+        });
 
         subtypeNamesByParent.forEach((parentType, subtypeNames) -> {
             CodegenModel parentModel = modelsByClassname.get(parentType);
@@ -1122,10 +1133,24 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 return;
             }
 
-            Map<String, String> aliasesBySubtype = validateAndResolveAliases(parentModel,
-                                                                              subtypeNames,
-                                                                              modelsByClassname);
-            List<Map<String, Object>> sortedSubtypes = subtypeNames.stream()
+            List<String> concreteSubtypeNames = concreteSubtypeNames(parentType, subtypeNamesByParent);
+            Map<String, String> aliasesBySubtype = new LinkedHashMap<>();
+            for (String concreteSubtypeName : concreteSubtypeNames) {
+                String directParent = parentBySubtype.get(concreteSubtypeName);
+                aliasesBySubtype.put(concreteSubtypeName,
+                                     aliasesByParent.getOrDefault(directParent, Map.of())
+                                             .getOrDefault(concreteSubtypeName, concreteSubtypeName));
+            }
+            Map<String, String> subtypeByAlias = new LinkedHashMap<>();
+            aliasesBySubtype.forEach((subtype, alias) -> {
+                String previousSubtype = subtypeByAlias.putIfAbsent(alias, subtype);
+                if (previousSubtype != null && !previousSubtype.equals(subtype)) {
+                    throw discriminatorMappingFailure(parentModel,
+                                                      "concrete descendants '" + previousSubtype + "' and '"
+                                                              + subtype + "' share canonical alias '" + alias + "'");
+                }
+            });
+            List<Map<String, Object>> sortedSubtypes = concreteSubtypeNames.stream()
                     .map(name -> new LinkedHashMap<String, Object>(Map.of(
                             "alias", aliasesBySubtype.get(name),
                             "aliasLiteral", JavaStringLiterals.toJavaStringLiteral(aliasesBySubtype.get(name)),
@@ -1178,6 +1203,31 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 }
             }
         });
+    }
+
+    private List<String> concreteSubtypeNames(String parentType,
+                                              Map<String, List<String>> subtypeNamesByParent) {
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        collectConcreteSubtypeNames(parentType, subtypeNamesByParent, new LinkedHashSet<>(), result);
+        return new ArrayList<>(result);
+    }
+
+    private void collectConcreteSubtypeNames(String parentType,
+                                             Map<String, List<String>> subtypeNamesByParent,
+                                             Set<String> visiting,
+                                             Set<String> result) {
+        if (!visiting.add(parentType)) {
+            throw new IllegalStateException("Cyclic allOf discriminator hierarchy involving model '"
+                                                    + parentType + "'");
+        }
+        for (String subtypeName : subtypeNamesByParent.getOrDefault(parentType, List.of())) {
+            if (subtypeNamesByParent.containsKey(subtypeName)) {
+                collectConcreteSubtypeNames(subtypeName, subtypeNamesByParent, visiting, result);
+            } else {
+                result.add(subtypeName);
+            }
+        }
+        visiting.remove(parentType);
     }
 
     private void applyUnionDiscriminatorRepresentation(CodegenModel unionModel,
@@ -1361,6 +1411,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                                                       String valueExpression) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("name", property == null ? toVarName(discriminatorKey) : property.name);
+        result.put("nameLiteral", JavaStringLiterals.toJavaStringLiteral(discriminatorKey));
         result.put("type", property == null ? "String" : property.datatypeWithEnum);
         if (valueExpression != null) {
             result.put("valueExpression", valueExpression);

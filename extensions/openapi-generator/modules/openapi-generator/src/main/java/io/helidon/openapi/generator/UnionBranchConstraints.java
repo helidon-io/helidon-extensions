@@ -26,6 +26,9 @@ import java.util.stream.Collectors;
 import org.openapitools.codegen.CodegenModel;
 import org.openapitools.codegen.CodegenProperty;
 
+/**
+ * Renders the structural JSON constraints used to distinguish union branches.
+ */
 final class UnionBranchConstraints {
 
     private UnionBranchConstraints() {
