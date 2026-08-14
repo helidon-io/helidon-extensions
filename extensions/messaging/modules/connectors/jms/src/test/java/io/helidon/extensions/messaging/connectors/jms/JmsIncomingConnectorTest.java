@@ -169,6 +169,39 @@ class JmsIncomingConnectorTest {
     }
 
     @Test
+    void usesAdministrativelyConfiguredClientIdForDurableTopicConsumer() throws Exception {
+        ConnectionFactory factory = mock(ConnectionFactory.class);
+        Connection connection = mock(Connection.class);
+        Session session = mock(Session.class);
+        Topic topic = mock(Topic.class);
+        MessageConsumer consumer = mock(MessageConsumer.class);
+        when(factory.createConnection()).thenReturn(connection);
+        when(connection.createSession(false, Session.CLIENT_ACKNOWLEDGE)).thenReturn(session);
+        when(session.createTopic("events")).thenReturn(topic);
+        when(session.createDurableConsumer(topic, "orders-subscription", null, false)).thenReturn(consumer);
+        JmsConnectorConfig topicConfig = JmsConnectorConfig.builder()
+                .from(config(false))
+                .destinationType(JmsDestinationType.TOPIC)
+                .durable(true)
+                .subscriptionName("orders-subscription")
+                .build();
+        IncomingConnector connector = JmsIncomingConnector.create(topicConfig, ignored -> factory);
+        TestContext context = new TestContext(new ArrayList<>()) {
+            @Override
+            public boolean awaitRunning() {
+                return false;
+            }
+        };
+
+        connector.run(context);
+
+        verify(connection, never()).setClientID(any());
+        verify(session).createDurableConsumer(topic, "orders-subscription", null, false);
+        verify(connection).start();
+        verify(connection).close();
+    }
+
+    @Test
     void poisonBodyMappingRecoversWithoutAcknowledgingOrReconnecting() throws Exception {
         JmsClient client = client();
         ObjectMessage nativeMessage = mock(ObjectMessage.class);

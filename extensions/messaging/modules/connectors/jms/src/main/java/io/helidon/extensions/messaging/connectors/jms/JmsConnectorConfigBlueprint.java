@@ -102,7 +102,8 @@ interface JmsConnectorConfigBlueprint extends ConnectorConfig {
     Optional<char[]> password();
 
     /**
-     * JMS connection client identifier.
+     * JMS connection client identifier assigned by the application. Omit this option when the connection factory
+     * supplies an administratively configured client identifier.
      *
      * @return client identifier
      */

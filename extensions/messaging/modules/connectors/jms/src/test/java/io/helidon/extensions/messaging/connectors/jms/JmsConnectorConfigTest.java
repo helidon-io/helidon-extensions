@@ -85,11 +85,11 @@ class JmsConnectorConfigTest {
         JmsConnectorConfig config = incomingBuilder()
                 .destinationType(JmsDestinationType.TOPIC)
                 .durable(true)
-                .clientId("orders-client")
                 .subscriptionName("orders-subscription")
                 .build();
 
         assertThat(config.durable(), is(true));
+        assertThat(config.clientId().isEmpty(), is(true));
     }
 
     @Test

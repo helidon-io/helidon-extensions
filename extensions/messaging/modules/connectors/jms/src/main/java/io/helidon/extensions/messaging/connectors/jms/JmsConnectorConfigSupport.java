@@ -133,9 +133,8 @@ final class JmsConnectorConfigSupport {
                 if (target.destinationType() != JmsDestinationType.TOPIC) {
                     throw new IllegalArgumentException(DURABLE_PROPERTY + " requires destination-type TOPIC");
                 }
-                if (target.clientId().isEmpty() || target.subscriptionName().isEmpty()) {
-                    throw new IllegalArgumentException(DURABLE_PROPERTY + " requires " + CLIENT_ID_PROPERTY + " and "
-                                                               + SUBSCRIPTION_NAME_PROPERTY);
+                if (target.subscriptionName().isEmpty()) {
+                    throw new IllegalArgumentException(DURABLE_PROPERTY + " requires " + SUBSCRIPTION_NAME_PROPERTY);
                 }
             } else if (target.subscriptionName().isPresent()) {
                 throw new IllegalArgumentException(SUBSCRIPTION_NAME_PROPERTY + " requires " + DURABLE_PROPERTY);
