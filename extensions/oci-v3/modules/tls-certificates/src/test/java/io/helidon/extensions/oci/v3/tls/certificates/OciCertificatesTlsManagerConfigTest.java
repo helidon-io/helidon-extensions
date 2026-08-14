@@ -75,6 +75,14 @@ class OciCertificatesTlsManagerConfigTest {
     }
 
     @Test
+    void nullPasswordArrayIsRejectedWithoutUpdatingBuilder() {
+        OciCertificatesTlsManagerConfig.Builder builder = baseBuilder();
+
+        assertThrows(NullPointerException.class, () -> builder.keyPassword((char[]) null));
+        assertThat(builder.keyPassword(), is(Optional.empty()));
+    }
+
+    @Test
     void alwaysReloadIsOptionalAndConfigurable() {
         OciCertificatesTlsManagerConfig.Builder builder = baseBuilder();
 

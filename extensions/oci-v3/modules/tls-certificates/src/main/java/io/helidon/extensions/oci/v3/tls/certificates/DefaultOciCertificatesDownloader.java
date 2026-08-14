@@ -167,7 +167,10 @@ class DefaultOciCertificatesDownloader implements OciCertificatesDownloader {
         X509Certificate[] certificates = parseCertificates(certificatePem,
                                                            certChainPem == null ? "" : certChainPem);
 
-        char[] passphrase = toPassphrase(bundle.getPrivateKeyPemPassphrase());
+        String privateKeyPemPassphrase = bundle.getPrivateKeyPemPassphrase();
+        char[] passphrase = privateKeyPemPassphrase == null || privateKeyPemPassphrase.isEmpty()
+                ? null
+                : privateKeyPemPassphrase.toCharArray();
         PrivateKey privateKey;
         try {
             privateKey = parsePrivateKey(privateKeyPem, passphrase);
@@ -266,10 +269,6 @@ class DefaultOciCertificatesDownloader implements OciCertificatesDownloader {
             }
         }
         return certificates.toArray(X509Certificate[]::new);
-    }
-
-    private static char[] toPassphrase(String passphrase) {
-        return passphrase == null || passphrase.isEmpty() ? null : passphrase.toCharArray();
     }
 
     private static String requireBundleValue(String value, String error) {

@@ -18,6 +18,7 @@ package io.helidon.extensions.oci.v3.tls.certificates;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Supplier;
 
 import io.helidon.builder.api.Prototype;
@@ -54,6 +55,7 @@ final class OciCertificatesTlsManagerConfigSupport {
          */
         @Prototype.BuilderMethod
         static void keyPassword(OciCertificatesTlsManagerConfig.BuilderBase<?, ?> builder, char[] keyPassword) {
+            Objects.requireNonNull(keyPassword);
             builder.keyPassword(() -> keyPassword);
         }
 

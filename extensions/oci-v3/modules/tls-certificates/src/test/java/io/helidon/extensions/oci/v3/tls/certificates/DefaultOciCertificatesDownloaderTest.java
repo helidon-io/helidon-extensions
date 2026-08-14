@@ -33,6 +33,7 @@ import com.oracle.bmc.auth.AuthCachingPolicy;
 import com.oracle.bmc.auth.BasicAuthenticationDetailsProvider;
 import com.oracle.bmc.auth.ProvidesClientConfigurators;
 import com.oracle.bmc.auth.RegionProvider;
+import com.oracle.bmc.certificates.model.CertificateBundle;
 import com.oracle.bmc.certificates.model.CertificateBundlePublicOnly;
 import com.oracle.bmc.certificates.model.CertificateBundleWithPrivateKey;
 import com.oracle.bmc.certificates.responses.GetCertificateBundleResponse;
@@ -245,8 +246,7 @@ class DefaultOciCertificatesDownloaderTest {
         return DefaultOciCertificatesDownloader.toCertificatesWithPrivateKey(response(bundle, etag));
     }
 
-    private static GetCertificateBundleResponse response(com.oracle.bmc.certificates.model.CertificateBundle bundle,
-                                                         String etag) {
+    private static GetCertificateBundleResponse response(CertificateBundle bundle, String etag) {
         return GetCertificateBundleResponse.builder()
                 .__httpStatusCode__(200)
                 .etag(etag)
