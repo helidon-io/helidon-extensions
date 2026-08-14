@@ -21,7 +21,6 @@ import java.net.ServerSocket;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 
-import jakarta.jms.ConnectionFactory;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.core.config.impl.ConfigurationImpl;
 import org.apache.activemq.artemis.core.server.JournalType;
@@ -77,7 +76,7 @@ final class ArtemisBroker implements AutoCloseable {
         }
     }
 
-    ConnectionFactory connectionFactory() {
+    ActiveMQConnectionFactory connectionFactory() {
         return connectionFactory;
     }
 

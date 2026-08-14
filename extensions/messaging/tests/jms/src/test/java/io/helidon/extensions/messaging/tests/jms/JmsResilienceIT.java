@@ -107,7 +107,7 @@ class JmsResilienceIT {
 
     @Test
     @Timeout(60)
-    void durableTopicReceivesMessagePublishedWhileRuntimeIsOffline() throws Exception {
+    void durableTopicUsesAdministeredClientIdAndReceivesMessagePublishedWhileOffline() throws Exception {
         String topic = uniqueName("durable-topic");
         String clientId = uniqueName("durable-client");
         String subscriptionName = uniqueName("durable-subscription");
@@ -117,7 +117,8 @@ class JmsResilienceIT {
 
         try {
             broker.start();
-            firstManager = durableManager(broker.connectionFactory(), topic, clientId, subscriptionName);
+            broker.connectionFactory().setClientID(clientId);
+            firstManager = durableManager(broker.connectionFactory(), topic, subscriptionName);
             firstManager.registry().get(MessagingRuntime.class);
             firstManager.shutdown();
             firstManager = null;
@@ -128,7 +129,7 @@ class JmsResilienceIT {
                                    "published while offline",
                                    ignored -> { });
 
-            secondManager = durableManager(broker.connectionFactory(), topic, clientId, subscriptionName);
+            secondManager = durableManager(broker.connectionFactory(), topic, subscriptionName);
             ServiceRegistry secondRegistry = secondManager.registry();
             DurableReceiver receiver = secondRegistry.get(DurableReceiver.class);
             secondRegistry.get(MessagingRuntime.class);
@@ -175,7 +176,6 @@ class JmsResilienceIT {
 
     private static ServiceRegistryManager durableManager(ConnectionFactory connectionFactory,
                                                           String topic,
-                                                          String clientId,
                                                           String subscriptionName) {
         return JmsScenarioRegistry.create("""
                 helidon:
@@ -186,12 +186,10 @@ class JmsResilienceIT {
                         destination: "%s"
                         destination-type: TOPIC
                         durable: true
-                        client-id: "%s"
                         subscription-name: "%s"
                         receive-timeout: PT0.05S
                 """.formatted(JmsMessagingTypes.DURABLE_INCOMING_CHANNEL,
                                topic,
-                               clientId,
                                subscriptionName),
                                           connectionFactory,
                                           DurableReceiver.class);

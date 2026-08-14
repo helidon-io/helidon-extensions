@@ -114,7 +114,8 @@ API only at connection creation. It does not log credentials.
 ### Topic subscriptions
 
 A non-durable topic consumer needs only `destination-type: TOPIC`. A durable topic subscription additionally requires
-`durable`, `client-id`, and `subscription-name`:
+`durable`, `subscription-name`, and a client identifier. Configure `client-id` when the application assigns the
+identifier:
 
 ```yaml
 helidon:
@@ -129,6 +130,9 @@ helidon:
         subscription-name: inventory-notifications
         no-local: false
 ```
+
+Omit `client-id` when the `ConnectionFactory` supplies an administratively configured client identifier. An explicitly
+configured `client-id` is set immediately after creating the connection and cannot override an administered identifier.
 
 `no-local` is valid only for topics. Subscription options are rejected for outgoing bindings.
 
