@@ -24,6 +24,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.UnaryOperator;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
@@ -41,15 +43,27 @@ import org.openapitools.codegen.model.OperationsMap;
  */
 final class JsonStringEnumSupport {
     private final BiFunction<String, String, String> enumVarNamer;
+    private final UnaryOperator<String> modelNamer;
+    private final Set<String> allocatedModelTypes = new LinkedHashSet<>();
+    private final Set<String> allocatedApiTypes = new LinkedHashSet<>();
     private Set<String> httpParameterEnumSchemas = Set.of();
     private Map<String, List<String>> inlineRequestEntityEnumValues = Map.of();
     private Set<String> inlineRequestEntityEnumCollections = Set.of();
 
-    JsonStringEnumSupport(BiFunction<String, String, String> enumVarNamer) {
+    JsonStringEnumSupport(BiFunction<String, String, String> enumVarNamer,
+                          UnaryOperator<String> modelNamer) {
         this.enumVarNamer = enumVarNamer;
+        this.modelNamer = modelNamer;
     }
 
     void preprocess(OpenAPI openAPI) {
+        allocatedModelTypes.clear();
+        allocatedApiTypes.clear();
+        if (openAPI.getComponents() != null && openAPI.getComponents().getSchemas() != null) {
+            openAPI.getComponents().getSchemas().keySet().stream()
+                    .map(modelNamer)
+                    .forEach(allocatedModelTypes::add);
+        }
         captureInlineRequestEntityEnums(openAPI);
         httpParameterEnumSchemas = findHttpParameterEnumSchemas(openAPI);
     }
@@ -106,6 +120,15 @@ final class JsonStringEnumSupport {
         boolean itemEnum = item != null && item.isEnum && !item.isEnumRef && item.isString;
         boolean directEnum = !parameter.isArray && parameter.isEnum && !parameter.isEnumRef && parameter.isString;
         Map<String, Object> allowableValues = itemEnum ? item.allowableValues : parameter.allowableValues;
+        if (!parameter.isArray && parameter.isEnumRef && parameter.isString) {
+            validateEnumWireValues("operation parameter '" + parameter.baseName + "'",
+                                   wireValues(parameter._enum, parameter.allowableValues),
+                                   parameter.minLength,
+                                   parameter.maxLength,
+                                   parameter.pattern);
+            parameter.vendorExtensions.put("x-enum-wire-constraints-validated", Boolean.TRUE);
+            return;
+        }
         if ((!itemEnum && !directEnum) || enumValues(allowableValues).isEmpty()) {
             return;
         }
@@ -113,6 +136,15 @@ final class JsonStringEnumSupport {
         String enumName = javaName.apply(operation.operationId)
                 + javaName.apply(parameter.paramName)
                 + "Enum";
+        CodegenProperty constraintSource = itemEnum ? item : null;
+        validateEnumWireValues("operation parameter '" + parameter.baseName + "'",
+                               constraintSource == null
+                                       ? wireValues(parameter._enum, allowableValues)
+                                       : wireValues(constraintSource._enum, allowableValues),
+                               constraintSource == null ? parameter.minLength : constraintSource.minLength,
+                               constraintSource == null ? parameter.maxLength : constraintSource.maxLength,
+                               constraintSource == null ? parameter.pattern : constraintSource.pattern);
+        parameter.vendorExtensions.put("x-enum-wire-constraints-validated", Boolean.TRUE);
         String bareType = parameter.vendorExtensions.containsKey("x-bare-type")
                 ? parameter.vendorExtensions.get("x-bare-type").toString()
                 : parameter.dataType;
@@ -132,9 +164,12 @@ final class JsonStringEnumSupport {
         parameter.datatypeWithEnum = parameter.dataType;
 
         boolean httpMapper = parameter.isPathParam || parameter.isQueryParam || parameter.isHeaderParam;
+        reserveApiTypes(apiClassname);
+        String converterName = allocateTypeName(allocatedApiTypes,
+                                                apiClassname + "Api" + enumName + "JsonConverter");
         Map<String, Object> definition = enumDefinition(enumName,
                                                         apiClassname + "Api." + enumName,
-                                                        apiClassname + "Api" + enumName + "JsonConverter",
+                                                        converterName,
                                                         allowableValues,
                                                         httpMapper);
         operationEnums.putIfAbsent(enumName, definition);
@@ -155,9 +190,15 @@ final class JsonStringEnumSupport {
         if (!model.isEnum || !model.isString) {
             return false;
         }
+        validateEnumWireValues("schema '" + model.schemaName + "'",
+                               wireValues(null, model.allowableValues),
+                               model.getMinLength(),
+                               model.getMaxLength(),
+                               model.getPattern());
         Map<String, Object> definition = enumDefinition(model.classname,
                                                         model.classname,
-                                                        model.classname + "JsonConverter",
+                                                        allocateTypeName(allocatedModelTypes,
+                                                                         model.classname + "JsonConverter"),
                                                         model.allowableValues,
                                                         Boolean.TRUE.equals(model.vendorExtensions
                                                                                     .get("x-http-parameter-enum")));
@@ -175,16 +216,33 @@ final class JsonStringEnumSupport {
         List<CodegenProperty> properties = renderVars(model);
         List<Map<String, Object>> definitions = new ArrayList<>();
         for (CodegenProperty property : properties) {
+            if (property.isEnumRef && property.isString) {
+                validateEnumWireValues("model property '" + model.classname + "." + property.baseName + "'",
+                                       wireValues(property._enum, property.allowableValues),
+                                       property.minLength,
+                                       property.maxLength,
+                                       property.pattern);
+                property.vendorExtensions.put("x-enum-wire-constraints-validated", Boolean.TRUE);
+                continue;
+            }
             CodegenProperty enumProperty = inlineStringEnumProperty(property);
             if (enumProperty == null || enumProperty.datatypeWithEnum == null
                     || enumProperty.datatypeWithEnum.isBlank()) {
                 continue;
             }
             String enumName = enumProperty.datatypeWithEnum;
+            validateEnumWireValues("model property '" + model.classname + "." + property.baseName + "'",
+                                   wireValues(enumProperty._enum, enumProperty.allowableValues),
+                                   enumProperty.minLength,
+                                   enumProperty.maxLength,
+                                   enumProperty.pattern);
             property.vendorExtensions.put("x-enum-name", enumName);
+            property.vendorExtensions.put("x-enum-wire-constraints-validated", Boolean.TRUE);
             Map<String, Object> definition = enumDefinition(enumName,
                                                             model.classname + "." + enumName,
-                                                            model.classname + enumName + "JsonConverter",
+                                                            allocateTypeName(allocatedModelTypes,
+                                                                             model.classname + enumName
+                                                                                     + "JsonConverter"),
                                                             enumProperty.allowableValues,
                                                             false);
             if (definition != null) {
@@ -294,21 +352,101 @@ final class JsonStringEnumSupport {
                 || operation.getRequestBody().getContent().isEmpty()) {
             return;
         }
-        Schema<?> schema = operation.getRequestBody().getContent().values().iterator().next().getSchema();
-        if (schema == null || schema.get$ref() != null) {
-            return;
+        List<String> capturedValues = null;
+        Boolean collection = null;
+        for (Map.Entry<String, io.swagger.v3.oas.models.media.MediaType> entry
+                : operation.getRequestBody().getContent().entrySet()) {
+            if (!isJsonMediaType(entry.getKey())) {
+                return;
+            }
+            if (entry.getValue() == null) {
+                return;
+            }
+            Schema<?> schema = entry.getValue().getSchema();
+            if (schema == null || schema.get$ref() != null) {
+                return;
+            }
+            boolean currentCollection = schema.getItems() != null;
+            Schema<?> enumSchema = currentCollection ? schema.getItems() : schema;
+            if (enumSchema.get$ref() != null || !"string".equals(enumSchema.getType())
+                    || enumSchema.getEnum() == null || enumSchema.getEnum().isEmpty()) {
+                return;
+            }
+            List<String> currentValues = enumSchema.getEnum().stream().map(Object::toString).toList();
+            if (capturedValues != null
+                    && (!capturedValues.equals(currentValues) || collection != currentCollection)) {
+                return;
+            }
+            capturedValues = currentValues;
+            collection = currentCollection;
         }
-        Schema<?> enumSchema = schema.getItems() == null ? schema : schema.getItems();
-        if (enumSchema.get$ref() == null && "string".equals(enumSchema.getType())
-                && enumSchema.getEnum() != null && !enumSchema.getEnum().isEmpty()) {
+        if (capturedValues != null) {
             String operationKey = operationKey(path, method.name());
-            valuesByOperation.put(operationKey, enumSchema.getEnum().stream()
-                    .map(Object::toString)
-                    .toList());
-            if (schema.getItems() != null) {
+            valuesByOperation.put(operationKey, capturedValues);
+            if (Boolean.TRUE.equals(collection)) {
                 collections.add(operationKey);
             }
         }
+    }
+
+    private boolean isJsonMediaType(String mediaType) {
+        if (mediaType == null) {
+            return false;
+        }
+        String normalized = mediaType.split(";", 2)[0].trim().toLowerCase(java.util.Locale.ROOT);
+        return "application/json".equals(normalized) || normalized.endsWith("+json");
+    }
+
+    private void reserveApiTypes(String apiClassname) {
+        allocatedApiTypes.add(apiClassname + "Api");
+        allocatedApiTypes.add(apiClassname + "Endpoint");
+        allocatedApiTypes.add(apiClassname + "Client");
+        allocatedApiTypes.add(apiClassname + "Exception");
+        allocatedApiTypes.add(apiClassname + "ErrorHandler");
+    }
+
+    private String allocateTypeName(Set<String> allocatedTypes, String preferredName) {
+        if (allocatedTypes.add(preferredName)) {
+            return preferredName;
+        }
+        int suffix = 2;
+        while (!allocatedTypes.add(preferredName + suffix)) {
+            suffix++;
+        }
+        return preferredName + suffix;
+    }
+
+    private void validateEnumWireValues(String location,
+                                        List<String> values,
+                                        Integer minLength,
+                                        Integer maxLength,
+                                        String pattern) {
+        Pattern compiledPattern = null;
+        if (pattern != null && !pattern.isEmpty()) {
+            try {
+                compiledPattern = Pattern.compile(pattern);
+            } catch (PatternSyntaxException e) {
+                throw new IllegalArgumentException("Invalid OpenAPI pattern on " + location + ": "
+                                                           + e.getMessage(), e);
+            }
+        }
+        for (String value : values) {
+            if (minLength != null && value.length() < minLength) {
+                throw invalidEnumConstraint(location, value, "minLength " + minLength);
+            }
+            if (maxLength != null && value.length() > maxLength) {
+                throw invalidEnumConstraint(location, value, "maxLength " + maxLength);
+            }
+            if (compiledPattern != null && !compiledPattern.matcher(value).find()) {
+                throw invalidEnumConstraint(location, value, "pattern '" + pattern + "'");
+            }
+        }
+    }
+
+    private IllegalArgumentException invalidEnumConstraint(String location, String value, String constraint) {
+        return new IllegalArgumentException("OpenAPI string enum wire value '" + value + "' on " + location
+                                                    + " does not satisfy " + constraint
+                                                    + "; generated enum validation cannot preserve this contradictory schema");
     }
 
     private void restoreInlineRequestEntityEnum(CodegenOperation codegenOperation,
@@ -343,7 +481,17 @@ final class JsonStringEnumSupport {
             enumVars.add(Map.of("name", enumVarNamer.apply(wireValue, "String"),
                                 "value", JavaStringLiterals.toJavaStringLiteral(wireValue)));
         }
-        return Map.of("enumVars", enumVars);
+        return Map.of("enumVars", enumVars, "values", List.copyOf(values));
+    }
+
+    private List<String> wireValues(List<String> declaredValues, Map<String, Object> allowableValues) {
+        if (declaredValues != null && !declaredValues.isEmpty()) {
+            return List.copyOf(declaredValues);
+        }
+        if (allowableValues != null && allowableValues.get("values") instanceof List<?> values) {
+            return values.stream().map(Object::toString).toList();
+        }
+        return List.of();
     }
 
     private CodegenProperty inlineStringEnumProperty(CodegenProperty property) {

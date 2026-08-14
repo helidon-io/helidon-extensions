@@ -132,7 +132,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
      */
     public HelidonDeclarativeCodegen() {
         super();
-        jsonStringEnums = new JsonStringEnumSupport(this::toEnumVarName);
+        jsonStringEnums = new JsonStringEnumSupport(this::toEnumVarName, this::toModelName);
 
         outputFolder = "generated-code/helidon-declarative";
         // Setting the fields directly configures where templates are resolved from
@@ -1740,7 +1740,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private List<Map<String, Object>> buildValidationAnnotations(CodegenProperty prop) {
         List<Map<String, Object>> result = new ArrayList<>();
 
-        if (prop.isString) {
+        if (prop.isString && !prop.vendorExtensions.containsKey("x-enum-wire-constraints-validated")) {
             // minLength / maxLength → @Validation.String.Length
             if (prop.minLength != null || prop.maxLength != null) {
                 List<String> attrs = new ArrayList<>();
@@ -1828,7 +1828,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private List<Map<String, Object>> buildParamValidationAnnotations(CodegenParameter param) {
         List<Map<String, Object>> result = new ArrayList<>();
 
-        if (param.isString) {
+        if (param.isString && !param.vendorExtensions.containsKey("x-enum-wire-constraints-validated")) {
             if (param.minLength != null || param.maxLength != null) {
                 List<String> attrs = new ArrayList<>();
                 if (param.minLength != null) attrs.add("min = " + param.minLength);

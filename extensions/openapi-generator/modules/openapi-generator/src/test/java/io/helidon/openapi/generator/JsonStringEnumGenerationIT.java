@@ -75,6 +75,25 @@ class JsonStringEnumGenerationIT {
     }
 
     @Test
+    void converterNamesDoNotCollideWithGeneratedSchemaTypes() throws IOException {
+        String mode = read(outputDir.resolve("src/main/java/io/helidon/example/model/Mode.java"));
+        assertThat(mode, containsString("@Json.Converter(ModeJsonConverter2.class)"));
+        assertThat(mode, containsString("final class ModeJsonConverter2 implements JsonConverter<Mode>"));
+
+        String reserved = read(outputDir.resolve(
+                "src/main/java/io/helidon/example/model/ModeJsonConverter.java"));
+        assertThat(reserved, containsString("public enum ModeJsonConverter"));
+
+        String envelope = read(outputDir.resolve("src/main/java/io/helidon/example/model/EnumEnvelope.java"));
+        assertThat(envelope, containsString("EnumEnvelopeInlineModeEnumJsonConverter2.class"));
+
+        String firstApi = read(outputDir.resolve("src/main/java/io/helidon/example/api/FooApi.java"));
+        String secondApi = read(outputDir.resolve("src/main/java/io/helidon/example/api/FooApiBarApi.java"));
+        assertThat(firstApi, containsString("FooApiBarApiBazModeEnumJsonConverter"));
+        assertThat(secondApi, containsString("FooApiBarApiBazModeEnumJsonConverter2"));
+    }
+
+    @Test
     void inlineReferencedAndCollectionEnumsRemainTyped() throws IOException {
         String envelope = read(outputDir.resolve("src/main/java/io/helidon/example/model/EnumEnvelope.java"));
 
@@ -112,6 +131,28 @@ class JsonStringEnumGenerationIT {
         assertThat(api, not(containsString("enum NumericEnumBodyBodyEnum")));
         assertThat(api, containsString("@Http.Entity Boolean body"));
         assertThat(api, not(containsString("enum BooleanEnumBodyBodyEnum")));
+        assertThat(api, containsString("@Http.QueryParam(\"mode\") ValidatedEnumModeEnum mode"));
+        assertThat(api, not(containsString("@Validation.String.Length(min = 4)")));
+        assertThat(api, containsString("@Http.Entity String body"));
+        assertThat(api, not(containsString("enum TextEnumBodyBodyEnum")));
+        assertThat(api, not(containsString("enum MixedEnumBodyBodyEnum")));
+    }
+
+    @Test
+    void rejectsEnumValuesThatContradictStringConstraints() throws Exception {
+        Path invalidOutput = tempDir.resolve("invalid-constraints");
+        URL resource = JsonStringEnumGenerationIT.class.getClassLoader()
+                .getResource("invalid-string-enum-constraints.yaml");
+        CodegenConfigurator configurator = new CodegenConfigurator()
+                .setGeneratorName("helidon-declarative")
+                .setInputSpec(Paths.get(resource.toURI()).toAbsolutePath().toString())
+                .setOutputDir(invalidOutput.toString());
+
+        RuntimeException error = org.junit.jupiter.api.Assertions.assertThrows(
+                RuntimeException.class,
+                () -> new DefaultGenerator().opts(configurator.toClientOptInput()).generate());
+        assertThat(rootMessage(error), containsString("wire value 'unsafe'"));
+        assertThat(rootMessage(error), containsString("does not satisfy maxLength 4"));
     }
 
     @Test
@@ -174,5 +215,13 @@ class JsonStringEnumGenerationIT {
 
     private static String read(Path file) throws IOException {
         return Files.readString(file).replace("\r\n", "\n");
+    }
+
+    private static String rootMessage(Throwable throwable) {
+        Throwable current = throwable;
+        while (current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current.getMessage();
     }
 }

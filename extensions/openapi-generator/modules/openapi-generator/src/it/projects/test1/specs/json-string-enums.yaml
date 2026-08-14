@@ -89,6 +89,82 @@ paths:
       responses:
         '204':
           description: Accepted
+  /validated-enum:
+    get:
+      tags: [enums]
+      operationId: validatedEnum
+      parameters:
+        - name: mode
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [safe]
+            minLength: 4
+            pattern: ^safe$
+      responses:
+        '204':
+          description: Accepted
+  /text-enum-body:
+    post:
+      tags: [enums]
+      operationId: textEnumBody
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              enum: [one]
+      responses:
+        '204':
+          description: Accepted
+  /mixed-enum-body:
+    post:
+      tags: [enums]
+      operationId: mixedEnumBody
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: string
+              enum: [one]
+          text/plain:
+            schema:
+              type: string
+              enum: [one]
+      responses:
+        '204':
+          description: Accepted
+  /helper-name-a:
+    get:
+      tags: [foo]
+      operationId: bar
+      parameters:
+        - name: apiBazMode
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [a]
+      responses:
+        '204':
+          description: Accepted
+  /helper-name-b:
+    get:
+      tags: [foo-api-bar]
+      operationId: baz
+      parameters:
+        - name: mode
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [b]
+      responses:
+        '204':
+          description: Accepted
 components:
   schemas:
     Mode:
@@ -98,6 +174,12 @@ components:
     CollidingMode:
       type: string
       enum: [foo-bar, foo_bar, FOO-BAR]
+    ModeJsonConverter:
+      type: string
+      enum: [slow]
+    EnumEnvelopeInlineModeEnumJsonConverter:
+      type: string
+      enum: [reserved]
     EnumEnvelope:
       type: object
       properties:
@@ -116,3 +198,8 @@ components:
           items:
             type: string
             enum: [batch-fast, batchAuthZ]
+        validatedInline:
+          type: string
+          enum: [safe]
+          minLength: 4
+          pattern: ^safe$
