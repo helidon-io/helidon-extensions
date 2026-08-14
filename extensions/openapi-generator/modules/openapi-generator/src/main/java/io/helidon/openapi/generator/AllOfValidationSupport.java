@@ -31,6 +31,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.core.util.Json;
 import io.swagger.v3.core.util.Yaml;
+import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.media.Schema;
 import org.openapitools.codegen.CodegenModel;
 import org.openapitools.codegen.CodegenProperty;
@@ -43,13 +44,27 @@ final class AllOfValidationSupport {
     private AllOfValidationSupport() {
     }
 
+    static Snapshot snapshot(OpenAPI openAPI) {
+        if (openAPI == null) {
+            return Snapshot.empty();
+        }
+        try {
+            return new Snapshot(Json.mapper().valueToTree(openAPI));
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("Cannot snapshot the parsed OpenAPI document for allOf metadata: "
+                                                       + e.getMessage(), e);
+        }
+    }
+
     static Map<String, String> discriminatorValues(String inputSpec) {
         if (inputSpec == null || inputSpec.isBlank()) {
             return Map.of();
         }
         try {
             String content = InputSpecContentReader.read(inputSpec);
-            JsonNode root = mapper(inputSpec, content).readTree(content);
+            JsonNode root = inputSpec.toLowerCase().endsWith(".json") || content.stripLeading().startsWith("{")
+                    ? Json.mapper().readTree(content)
+                    : Yaml.mapper().readTree(content);
             Map<String, String> result = new LinkedHashMap<>();
             collectDiscriminatorValues(root.path("components").path("schemas"), result);
             collectDiscriminatorValues(root.path("definitions"), result);
@@ -60,17 +75,16 @@ final class AllOfValidationSupport {
     }
 
     static Map<String, Map<String, List<CodegenProperty>>> validationProperties(
-            String inputSpec,
+            Snapshot snapshot,
             Function<String, String> modelName,
             PropertyFactory propertyFactory,
             Predicate<CodegenProperty> constrained) {
-        if (inputSpec == null || inputSpec.isBlank()) {
+        if (snapshot.isEmpty()) {
             return Map.of();
         }
         try {
-            String content = InputSpecContentReader.read(inputSpec);
-            ObjectMapper mapper = mapper(inputSpec, content);
-            JsonNode root = mapper.readTree(content);
+            ObjectMapper mapper = Json.mapper();
+            JsonNode root = snapshot.root();
             JsonNode schemas = root.path("components").path("schemas");
             if (!schemas.isObject()) {
                 schemas = root.path("definitions");
@@ -79,9 +93,9 @@ final class AllOfValidationSupport {
                 return Map.of();
             }
             return collectValidationProperties(schemas, mapper, modelName, propertyFactory, constrained);
-        } catch (IOException | RuntimeException e) {
-            throw new IllegalArgumentException("Cannot inspect allOf validation constraints in OpenAPI input '"
-                                                       + inputSpec + "': " + e.getMessage(), e);
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("Cannot inspect allOf validation constraints in the parsed OpenAPI "
+                                                       + "document: " + e.getMessage(), e);
         }
     }
 
@@ -211,16 +225,6 @@ final class AllOfValidationSupport {
         return null;
     }
 
-    private static ObjectMapper mapper(String location, String content) {
-        String filename = "";
-        if (location != null) {
-            int slash = Math.max(location.lastIndexOf('/'), location.lastIndexOf('\\'));
-            filename = (slash >= 0 ? location.substring(slash + 1) : location).toLowerCase();
-        }
-        String trimmed = content == null ? "" : content.stripLeading();
-        return filename.endsWith(".json") || trimmed.startsWith("{") ? Json.mapper() : Yaml.mapper();
-    }
-
     private static void ensureCompatibleTypes(CodegenModel model,
                                               CodegenProperty local,
                                               CodegenProperty inherited) {
@@ -311,5 +315,17 @@ final class AllOfValidationSupport {
     @FunctionalInterface
     interface PropertyFactory {
         CodegenProperty create(String name, Schema<?> schema);
+    }
+
+    record Snapshot(JsonNode root) {
+        private static final Snapshot EMPTY = new Snapshot(null);
+
+        static Snapshot empty() {
+            return EMPTY;
+        }
+
+        boolean isEmpty() {
+            return root == null || root.isMissingNode() || root.isNull();
+        }
     }
 }

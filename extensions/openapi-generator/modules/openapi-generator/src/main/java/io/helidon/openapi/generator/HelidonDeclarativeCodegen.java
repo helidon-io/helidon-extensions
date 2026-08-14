@@ -126,6 +126,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private List<SecurityRequirement> globalSecurityRequirements = List.of();
     private final JsonStringEnumSupport jsonStringEnums;
     private Map<String, Map<String, String>> rawDiscriminatorMappingsBySchema = Map.of();
+    private AllOfValidationSupport.Snapshot allOfValidationSnapshot = AllOfValidationSupport.Snapshot.empty();
     private Map<String, Map<String, List<CodegenProperty>>> allOfValidationPropertiesBySchema = Map.of();
     private CascadingValidationSupport.Analysis cascadingValidation = CascadingValidationSupport.Analysis.empty();
     /**
@@ -390,6 +391,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     public void preprocessOpenAPI(io.swagger.v3.oas.models.OpenAPI openAPI) {
         jsonStringEnums.preprocess(openAPI);
         captureRawDiscriminatorMappings(openAPI);
+        allOfValidationSnapshot = AllOfValidationSupport.snapshot(openAPI);
         super.preprocessOpenAPI(openAPI);
         globalSecurityRequirements = openAPI.getSecurity() == null
                 ? List.of()
@@ -925,7 +927,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         applyUnionInterfaces(models, unionInterfacesByMember);
         applyAllOfDiscriminatorHierarchy(models, modelsByClassname);
         allOfValidationPropertiesBySchema = AllOfValidationSupport.validationProperties(
-                inputSpec, this::toModelName, (name, schema) -> fromProperty(name, schema, false),
+                allOfValidationSnapshot, this::toModelName, (name, schema) -> fromProperty(name, schema, false),
                 property -> !buildValidationAnnotations(property).isEmpty());
 
         cascadingValidation = CascadingValidationSupport.analyze(

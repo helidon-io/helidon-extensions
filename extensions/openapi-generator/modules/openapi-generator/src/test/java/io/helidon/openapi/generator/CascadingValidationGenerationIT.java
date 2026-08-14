@@ -17,10 +17,14 @@
 package io.helidon.openapi.generator;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import com.sun.net.httpserver.HttpServer;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -310,6 +314,64 @@ class CascadingValidationGenerationIT {
                    org.hamcrest.CoreMatchers.is(read(apiFile(outputDir, "ValidationApi.java"))));
     }
 
+    @Test
+    void authenticatedRemoteInputIsFetchedOnlyByTheOpenApiParser() throws Exception {
+        String specification = """
+                openapi: 3.0.3
+                info:
+                  title: Authenticated validation fixture
+                  version: 1.0.0
+                paths: {}
+                components:
+                  schemas:
+                    ValidationBase:
+                      type: object
+                      properties:
+                        code:
+                          type: string
+                          minLength: 3
+                    ValidationChild:
+                      allOf:
+                        - $ref: '#/components/schemas/ValidationBase'
+                        - type: object
+                          properties:
+                            code:
+                              type: string
+                              maxLength: 10
+                """;
+        AtomicInteger requestCount = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/spec.yaml", exchange -> {
+            requestCount.incrementAndGet();
+            if (!"Bearer dummy".equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
+                exchange.sendResponseHeaders(401, -1);
+                exchange.close();
+                return;
+            }
+            byte[] content = specification.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/yaml");
+            exchange.sendResponseHeaders(200, content.length);
+            try (var response = exchange.getResponseBody()) {
+                response.write(content);
+            }
+        });
+        server.start();
+        try {
+            Path target = outputDir.resolve("authenticated-remote");
+            String input = "http://127.0.0.1:" + server.getAddress().getPort()
+                    + "/spec.yaml?signature=must-not-enter-diagnostics";
+            CodegenConfigurator configurator = baseConfigurator(target, input)
+                    .setAuth("Authorization:Bearer%20dummy");
+            new DefaultGenerator().opts(configurator.toClientOptInput()).generate();
+
+            assertThat(requestCount.get(), org.hamcrest.CoreMatchers.is(1));
+            assertThat(read(modelFile(target, "ValidationChild.java")),
+                       containsString("@Validation.String.Length(min = 3, value = 10)"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private static void assertValidated(String fileName) throws IOException {
         assertThat(read(modelFile(outputDir, fileName)), containsString("@Validation.Validated"));
     }
@@ -321,18 +383,23 @@ class CascadingValidationGenerationIT {
     private static void generate(Path target, String resourceName, String arrayMapping) throws Exception {
         URL resource = CascadingValidationGenerationIT.class.getClassLoader()
                 .getResource(resourceName);
-        CodegenConfigurator configurator = new CodegenConfigurator()
+        CodegenConfigurator configurator = baseConfigurator(target,
+                                                            Paths.get(resource.toURI()).toAbsolutePath().toString());
+        if (arrayMapping != null) {
+            configurator.addTypeMapping("array", arrayMapping);
+        }
+        new DefaultGenerator().opts(configurator.toClientOptInput()).generate();
+    }
+
+    private static CodegenConfigurator baseConfigurator(Path target, String inputSpec) {
+        return new CodegenConfigurator()
                 .setGeneratorName("helidon-declarative")
-                .setInputSpec(Paths.get(resource.toURI()).toAbsolutePath().toString())
+                .setInputSpec(inputSpec)
                 .setOutputDir(target.toString())
                 .addAdditionalProperty("helidonVersion", "4.5.0")
                 .addAdditionalProperty("apiPackage", "io.helidon.example.api")
                 .addAdditionalProperty("modelPackage", "io.helidon.example.model")
                 .addAdditionalProperty("invokerPackage", "io.helidon.example");
-        if (arrayMapping != null) {
-            configurator.addTypeMapping("array", arrayMapping);
-        }
-        new DefaultGenerator().opts(configurator.toClientOptInput()).generate();
     }
 
     private static Path modelFile(Path root, String name) {
