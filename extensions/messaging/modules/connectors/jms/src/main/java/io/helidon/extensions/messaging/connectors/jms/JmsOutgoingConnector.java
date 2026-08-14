@@ -37,6 +37,8 @@ import jakarta.jms.JMSException;
 import jakarta.jms.JMSRuntimeException;
 import jakarta.jms.MessageProducer;
 import jakarta.jms.Session;
+import jakarta.jms.TransactionRolledBackException;
+import jakarta.jms.TransactionRolledBackRuntimeException;
 
 /**
  * Outgoing JMS connector support.
@@ -48,6 +50,46 @@ final class JmsOutgoingConnector {
     static OutgoingConnector create(JmsConnectorConfig config,
                                     JmsConnectionFactoryResolver connectionFactoryResolver) {
         return new Connector(Objects.requireNonNull(config), Objects.requireNonNull(connectionFactoryResolver));
+    }
+
+    static Duration jitter(Duration delay, Duration maximum, double variation, double sample) {
+        Objects.requireNonNull(delay);
+        Objects.requireNonNull(maximum);
+        if (delay.isZero() || delay.isNegative() || maximum.isZero() || maximum.isNegative()) {
+            throw new IllegalArgumentException("JMS reconnect delays must be positive");
+        }
+        if (!(variation >= 0 && variation < 1)) {
+            throw new IllegalArgumentException("JMS reconnect jitter must be at least 0 and less than 1");
+        }
+        if (!(sample >= 0 && sample <= 1)) {
+            throw new IllegalArgumentException("JMS reconnect jitter sample must be between 0 and 1");
+        }
+
+        Duration cappedDelay = delay.compareTo(maximum) > 0 ? maximum : delay;
+        if (variation == 0) {
+            return cappedDelay;
+        }
+
+        long delayNanos;
+        try {
+            delayNanos = cappedDelay.toNanos();
+        } catch (ArithmeticException e) {
+            // Duration can represent a much larger value than the nanosecond-based sleep APIs.
+            return cappedDelay;
+        }
+        long maximumNanos;
+        try {
+            maximumNanos = maximum.toNanos();
+        } catch (ArithmeticException e) {
+            maximumNanos = Long.MAX_VALUE;
+        }
+
+        double multiplier = (1 - variation) + 2 * variation * sample;
+        double randomizedNanos = delayNanos * multiplier;
+        long nanos = randomizedNanos >= maximumNanos
+                ? maximumNanos
+                : Math.max(1, (long) randomizedNanos);
+        return Duration.ofNanos(nanos);
     }
 
     private static final class Connector implements OutgoingConnector {
@@ -63,8 +105,8 @@ final class JmsOutgoingConnector {
 
         private Connector(JmsConnectorConfig config,
                           JmsConnectionFactoryResolver connectionFactoryResolver) {
-            this.config = config;
             this.connectionSupport = new JmsConnectionSupport(config, connectionFactoryResolver);
+            this.config = connectionSupport.runtimeConfig();
         }
 
         @Override
@@ -156,11 +198,11 @@ final class JmsOutgoingConnector {
                 closeRequested = true;
                 state = State.CLOSED;
                 active = operationThread;
+                connectionSupport.forceClose();
                 closeOwnedResources();
             } finally {
                 lifecycleLock.unlock();
             }
-            connectionSupport.forceClose();
             if (active != null && active != Thread.currentThread()) {
                 active.interrupt();
             }
@@ -175,11 +217,11 @@ final class JmsOutgoingConnector {
                 closeRequested = true;
                 state = State.CLOSED;
                 active = operationThread;
+                connectionSupport.forceClose();
                 closeOwnedResources();
             } finally {
                 lifecycleLock.unlock();
             }
-            connectionSupport.forceClose();
             if (active != null && active != Thread.currentThread()) {
                 active.interrupt();
             }
@@ -240,6 +282,7 @@ final class JmsOutgoingConnector {
                     disposeConnecting(created);
                     lastFailure = new JMSException("JMS connection failed before it became ready");
                 } catch (JmsResourceCleanupException e) {
+                    enterTerminalState();
                     throw e;
                 } catch (JMSException | RuntimeException e) {
                     lastFailure = e;
@@ -463,7 +506,7 @@ final class JmsOutgoingConnector {
                                                      e);
                 }
                 try {
-                    current.producer.send(message);
+                    executeProviderCall("message send", () -> current.producer.send(message));
                     outcomes.add(BatchItemOutcome.succeeded(i));
                 } catch (JMSException | JMSRuntimeException e) {
                     current.broken = true;
@@ -507,8 +550,11 @@ final class JmsOutgoingConnector {
 
             try {
                 for (jakarta.jms.Message message : messages) {
-                    current.producer.send(message);
+                    executeProviderCall("transactional message send", () -> current.producer.send(message));
                 }
+            } catch (ProviderCallAbandonedException e) {
+                current.broken = true;
+                throw BatchDeliveryException.indeterminate("JMS transactional batch delivery", batch, e);
             } catch (JMSException | JMSRuntimeException e) {
                 current.broken = true;
                 throw rollbackAfterSendFailure(current, batch, e);
@@ -518,7 +564,13 @@ final class JmsOutgoingConnector {
             }
 
             try {
-                current.session.commit();
+                executeProviderCall("transaction commit", current.session::commit);
+            } catch (ProviderCallAbandonedException e) {
+                current.broken = true;
+                throw BatchDeliveryException.indeterminate("JMS transactional batch commit", batch, e);
+            } catch (TransactionRolledBackException | TransactionRolledBackRuntimeException e) {
+                current.broken = true;
+                throw atomicFailed(batch, e);
             } catch (JMSException | JMSRuntimeException e) {
                 current.broken = true;
                 rollbackBestEffort(current, e);
@@ -534,7 +586,7 @@ final class JmsOutgoingConnector {
                                                                  MessageBatch<?> batch,
                                                                  Throwable failure) {
             try {
-                current.session.rollback();
+                executeProviderCall("transaction rollback", current.session::rollback);
                 return atomicFailed(batch, failure);
             } catch (JMSException | RuntimeException rollbackFailure) {
                 failure.addSuppressed(rollbackFailure);
@@ -544,9 +596,33 @@ final class JmsOutgoingConnector {
 
         private void rollbackBestEffort(Resources current, Throwable failure) {
             try {
-                current.session.rollback();
+                executeProviderCall("transaction rollback", current.session::rollback);
             } catch (JMSException | RuntimeException rollbackFailure) {
                 failure.addSuppressed(rollbackFailure);
+            }
+        }
+
+        private void executeProviderCall(String operation, ProviderOperation providerOperation) throws JMSException {
+            try {
+                connectionSupport.executeSetup(operation, () -> {
+                    providerOperation.execute();
+                    return null;
+                });
+            } catch (MessagingException e) {
+                if (causedByInterruption(e)) {
+                    throw new ProviderCallAbandonedException(operation, e);
+                }
+                throw e;
+            } catch (IllegalStateException e) {
+                if (closeRequested()) {
+                    throw new ProviderCallAbandonedException(operation, e);
+                }
+                throw e;
+            }
+            if (closeRequested()) {
+                throw new ProviderCallAbandonedException(
+                        operation,
+                        new IllegalStateException("JMS outgoing connector is closed"));
             }
         }
 
@@ -610,6 +686,11 @@ final class JmsOutgoingConnector {
         }
 
         private JmsResourceCleanupException cleanupFailure(String message, RuntimeException failure) {
+            enterTerminalState();
+            return new JmsResourceCleanupException(message, failure);
+        }
+
+        private void enterTerminalState() {
             lifecycleLock.lock();
             try {
                 closeRequested = true;
@@ -618,13 +699,23 @@ final class JmsOutgoingConnector {
                 lifecycleLock.unlock();
             }
             connectionSupport.forceClose();
-            return new JmsResourceCleanupException(message, failure);
         }
 
         private static boolean causedByJmsFailure(Throwable failure) {
             Throwable current = failure;
             while (current != null) {
                 if (current instanceof JMSException || current instanceof JMSRuntimeException) {
+                    return true;
+                }
+                current = current.getCause();
+            }
+            return false;
+        }
+
+        private static boolean causedByInterruption(Throwable failure) {
+            Throwable current = failure;
+            while (current != null) {
+                if (current instanceof InterruptedException) {
                     return true;
                 }
                 current = current.getCause();
@@ -649,12 +740,19 @@ final class JmsOutgoingConnector {
 
         private static long deadline(Duration timeout) {
             long now = System.nanoTime();
-            long nanos = timeout.toNanos();
-            return Long.MAX_VALUE - now < nanos ? Long.MAX_VALUE : now + nanos;
+            try {
+                return Math.addExact(now, timeout.toNanos());
+            } catch (ArithmeticException e) {
+                return Long.MAX_VALUE;
+            }
         }
 
         private static long remainingNanos(long deadline) {
-            return Math.max(0, deadline - System.nanoTime());
+            try {
+                return Math.max(0, Math.subtractExact(deadline, System.nanoTime()));
+            } catch (ArithmeticException e) {
+                return Long.MAX_VALUE;
+            }
         }
 
         private void requireStarted() {
@@ -702,13 +800,10 @@ final class JmsOutgoingConnector {
         }
 
         private Duration jitter(Duration delay) {
-            double variation = config.reconnectJitter();
-            if (variation == 0) {
-                return delay;
-            }
-            double multiplier = ThreadLocalRandom.current().nextDouble(1 - variation, 1 + variation);
-            long nanos = Math.max(1, (long) Math.min(Long.MAX_VALUE, delay.toNanos() * multiplier));
-            return Duration.ofNanos(nanos);
+            return JmsOutgoingConnector.jitter(delay,
+                                               config.reconnectMaxDelay(),
+                                               config.reconnectJitter(),
+                                               ThreadLocalRandom.current().nextDouble());
         }
 
         private static Duration doubleDelay(Duration delay, Duration maximum) {
@@ -779,6 +874,17 @@ final class JmsOutgoingConnector {
             NEW,
             READY,
             CLOSED
+        }
+
+        @FunctionalInterface
+        private interface ProviderOperation {
+            void execute() throws JMSException;
+        }
+
+        private static final class ProviderCallAbandonedException extends MessagingException {
+            private ProviderCallAbandonedException(String operation, Throwable cause) {
+                super("JMS " + operation + " completion is indeterminate", cause);
+            }
         }
 
         private static final class CleanupBudget {

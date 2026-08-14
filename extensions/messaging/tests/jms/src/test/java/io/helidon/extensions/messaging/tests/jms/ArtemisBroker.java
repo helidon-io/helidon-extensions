@@ -16,8 +16,6 @@
 
 package io.helidon.extensions.messaging.tests.jms;
 
-import java.io.IOException;
-import java.net.ServerSocket;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 
@@ -30,20 +28,18 @@ import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 
 final class ArtemisBroker implements AutoCloseable {
     private final Path dataDirectory;
-    private final int port;
     private final String name;
-    private final ActiveMQConnectionFactory connectionFactory;
+    private int port;
+    private ActiveMQConnectionFactory connectionFactory;
     private EmbeddedActiveMQ broker;
 
-    private ArtemisBroker(Path dataDirectory, int port, String name) {
+    private ArtemisBroker(Path dataDirectory, String name) {
         this.dataDirectory = dataDirectory;
-        this.port = port;
         this.name = name;
-        this.connectionFactory = new ActiveMQConnectionFactory(connectionUrl(port));
     }
 
-    static ArtemisBroker create(Path dataDirectory) throws IOException {
-        return new ArtemisBroker(dataDirectory, availablePort(), "helidon-jms-it-" + System.nanoTime());
+    static ArtemisBroker create(Path dataDirectory) {
+        return new ArtemisBroker(dataDirectory, "helidon-jms-it-" + System.nanoTime());
     }
 
     synchronized void start() throws Exception {
@@ -61,12 +57,36 @@ final class ArtemisBroker implements AutoCloseable {
                 .setLargeMessagesDirectory(dataDirectory.resolve("large-messages").toString())
                 .addAcceptorConfiguration("tcp", acceptorUrl(port));
         EmbeddedActiveMQ started = new EmbeddedActiveMQ().setConfiguration(configuration);
-        started.start();
-        if (!started.getActiveMQServer().waitForActivation(10, TimeUnit.SECONDS)) {
-            started.stop();
-            throw new IllegalStateException("Embedded Artemis broker did not become active");
+        try {
+            started.start();
+            if (!started.getActiveMQServer().waitForActivation(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Embedded Artemis broker did not become active");
+            }
+            int actualPort = started.getActiveMQServer()
+                    .getRemotingService()
+                    .getAcceptor("tcp")
+                    .getActualPort();
+            if (actualPort < 1) {
+                throw new IllegalStateException("Embedded Artemis broker did not report its bound TCP port");
+            }
+            if (port == 0) {
+                port = actualPort;
+                connectionFactory = new ActiveMQConnectionFactory(connectionUrl(port));
+            } else if (actualPort != port) {
+                throw new IllegalStateException("Embedded Artemis broker did not bind the requested port " + port);
+            }
+            broker = started;
+        } catch (Exception | Error failure) {
+            try {
+                started.stop();
+            } catch (Throwable stopFailure) {
+                failure.addSuppressed(stopFailure);
+            }
+            if (failure instanceof Exception exception) {
+                throw exception;
+            }
+            throw (Error) failure;
         }
-        broker = started;
     }
 
     synchronized void stop() throws Exception {
@@ -77,11 +97,12 @@ final class ArtemisBroker implements AutoCloseable {
         }
     }
 
-    ActiveMQConnectionFactory connectionFactory() {
-        return connectionFactory;
+    synchronized ActiveMQConnectionFactory connectionFactory() {
+        return requireConnectionFactory();
     }
 
-    String connectionUrl() {
+    synchronized String connectionUrl() {
+        requireConnectionFactory();
         return connectionUrl(port);
     }
 
@@ -98,20 +119,95 @@ final class ArtemisBroker implements AutoCloseable {
     }
 
     @Override
-    public void close() throws Exception {
+    public synchronized void close() throws Exception {
+        Throwable failure = null;
+        ActiveMQConnectionFactory current = connectionFactory;
+        connectionFactory = null;
+        if (current != null) {
+            try {
+                current.close();
+            } catch (Throwable e) {
+                failure = e;
+            }
+        }
+        try {
+            awaitTemporaryResourcesRemoved();
+        } catch (Throwable e) {
+            failure = merge(failure, e);
+        }
         try {
             stop();
-        } finally {
-            connectionFactory.close();
+        } catch (Throwable e) {
+            failure = merge(failure, e);
+        }
+        try {
             ActiveMQClient.clearThreadPools(5, TimeUnit.SECONDS);
+        } catch (Throwable e) {
+            failure = merge(failure, e);
+        }
+        if (failure instanceof Exception exception) {
+            throw exception;
+        }
+        if (failure instanceof Error error) {
+            throw error;
+        }
+        if (failure != null) {
+            throw new AssertionError("Cannot close embedded Artemis broker", failure);
         }
     }
 
-    private static int availablePort() throws IOException {
-        try (ServerSocket socket = new ServerSocket(0)) {
-            socket.setReuseAddress(false);
-            return socket.getLocalPort();
+    private static Throwable merge(Throwable first, Throwable next) {
+        if (first == null) {
+            return next;
         }
+        first.addSuppressed(next);
+        return first;
+    }
+
+    private void awaitTemporaryResourcesRemoved() throws InterruptedException {
+        EmbeddedActiveMQ current = broker;
+        if (current == null) {
+            return;
+        }
+        var server = current.getActiveMQServer();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (hasTemporaryResources(server)) {
+            if (System.nanoTime() >= deadline) {
+                throw new IllegalStateException("Timed out awaiting embedded Artemis temporary-resource cleanup");
+            }
+            try {
+                TimeUnit.MILLISECONDS.sleep(10);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw e;
+            }
+        }
+    }
+
+    private static boolean hasTemporaryResources(org.apache.activemq.artemis.core.server.ActiveMQServer server) {
+        boolean temporaryQueue = server.getPostOffice()
+                .getAllBindings()
+                .map(binding -> binding.getBindable())
+                .filter(Queue.class::isInstance)
+                .map(Queue.class::cast)
+                .anyMatch(Queue::isTemporary);
+        if (temporaryQueue) {
+            return true;
+        }
+        return server.getPostOffice()
+                .getAddresses()
+                .stream()
+                .map(server::getAddressInfo)
+                .filter(address -> address != null)
+                .anyMatch(address -> address.isTemporary());
+    }
+
+    private ActiveMQConnectionFactory requireConnectionFactory() {
+        ActiveMQConnectionFactory current = connectionFactory;
+        if (current == null) {
+            throw new IllegalStateException("Embedded Artemis broker has not been started");
+        }
+        return current;
     }
 
     private Queue requireQueue(String queueName) {

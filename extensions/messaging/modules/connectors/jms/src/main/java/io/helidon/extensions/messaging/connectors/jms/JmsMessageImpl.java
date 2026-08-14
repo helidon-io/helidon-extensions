@@ -34,7 +34,11 @@ import java.util.OptionalLong;
 import jakarta.jms.JMSException;
 
 final class JmsMessageImpl<T> implements JmsMessage<T> {
+    static final String JMSX_GROUP_ID = "JMSXGroupID";
+    static final String JMSX_GROUP_SEQ = "JMSXGroupSeq";
+
     private final T entity;
+    private final boolean snapshotSerializableOnAccess;
     private final Map<String, Object> properties;
     private final Map<String, String> headers;
     private final Optional<String> messageId;
@@ -55,8 +59,10 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
                            OptionalLong expiration,
                            OptionalLong deliveryTime,
                            OptionalInt priority,
-                           Optional<Boolean> redelivered) {
-        this.entity = snapshotBody(entity);
+                           Optional<Boolean> redelivered,
+                           boolean snapshotSerializable) {
+        this.entity = snapshotBody(entity, snapshotSerializable);
+        this.snapshotSerializableOnAccess = snapshotSerializable;
         this.properties = snapshotProperties(properties);
         this.headers = portableHeaders(this.properties);
         this.messageId = messageId;
@@ -82,12 +88,14 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
                                     OptionalLong.empty(),
                                     OptionalLong.empty(),
                                     OptionalInt.empty(),
-                                    Optional.empty());
+                                    Optional.empty(),
+                                    false);
     }
 
     static <T> JmsMessage<T> incoming(T entity,
                                       Map<String, Object> properties,
-                                      jakarta.jms.Message message) throws JMSException {
+                                      jakarta.jms.Message message,
+                                      boolean snapshotSerializable) throws JMSException {
         return new JmsMessageImpl<>(entity,
                                     properties,
                                     Optional.ofNullable(message.getJMSMessageID()),
@@ -97,7 +105,8 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
                                     OptionalLong.of(message.getJMSExpiration()),
                                     OptionalLong.of(message.getJMSDeliveryTime()),
                                     OptionalInt.of(message.getJMSPriority()),
-                                    Optional.of(message.getJMSRedelivered()));
+                                    Optional.of(message.getJMSRedelivered()),
+                                    snapshotSerializable);
     }
 
     static String requirePropertyName(String name) {
@@ -109,7 +118,13 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
     }
 
     static boolean isApplicationPropertyName(String name) {
-        if (name == null || name.isEmpty() || name.startsWith("JMS")) {
+        if (name == null || name.isEmpty()) {
+            return false;
+        }
+        if (JMSX_GROUP_ID.equals(name) || JMSX_GROUP_SEQ.equals(name)) {
+            return true;
+        }
+        if (name.startsWith("JMS")) {
             return false;
         }
         int first = name.codePointAt(0);
@@ -129,7 +144,8 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
         };
     }
 
-    static Object snapshotProperty(Object value) {
+    static Object snapshotProperty(String name, Object value) {
+        String actualName = requirePropertyName(name);
         Object actual = Objects.requireNonNull(value);
         if (actual instanceof Boolean
                 || actual instanceof Byte
@@ -139,22 +155,26 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
                 || actual instanceof Float
                 || actual instanceof Double
                 || actual instanceof String) {
+            if (JMSX_GROUP_ID.equals(actualName) && !(actual instanceof String)) {
+                throw new IllegalArgumentException(JMSX_GROUP_ID + " must be a String");
+            }
+            if (JMSX_GROUP_SEQ.equals(actualName) && !(actual instanceof Integer)) {
+                throw new IllegalArgumentException(JMSX_GROUP_SEQ + " must be an Integer");
+            }
             return actual;
         }
         throw new IllegalArgumentException("Unsupported JMS property type: " + actual.getClass().getName());
     }
 
     @SuppressWarnings("unchecked")
-    private static <T> T snapshotBody(T entity) {
+    private static <T> T snapshotBody(T entity, boolean snapshotSerializable) {
         if (entity instanceof byte[] bytes) {
             return (T) bytes.clone();
         }
         if (entity instanceof Map<?, ?> map) {
             Map<Object, Object> result = new LinkedHashMap<>();
             map.forEach((key, value) -> {
-                if (!(key instanceof String name)) {
-                    throw new IllegalArgumentException("JMS map-message keys must be strings");
-                }
+                String name = requireMapName(key);
                 result.put(name, snapshotMapOrStreamValue(value));
             });
             return (T) Collections.unmodifiableMap(result);
@@ -162,7 +182,7 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
         if (entity instanceof java.util.List<?> list) {
             return (T) list.stream().map(JmsMessageImpl::snapshotMapOrStreamValue).toList();
         }
-        if (entity instanceof Serializable serializable) {
+        if (entity instanceof Serializable serializable && snapshotSerializable) {
             try {
                 ByteArrayOutputStream bytes = new ByteArrayOutputStream();
                 try (ObjectOutputStream output = new ObjectOutputStream(bytes)) {
@@ -176,10 +196,20 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
                                                            + entity.getClass().getName(), e);
             }
         }
+        if (entity instanceof Serializable) {
+            return entity;
+        }
         if (entity == null) {
             return null;
         }
         throw new IllegalArgumentException("Unsupported JMS message body type: " + entity.getClass().getName());
+    }
+
+    static String requireMapName(Object name) {
+        if (!(name instanceof String actual) || actual.isEmpty()) {
+            throw new IllegalArgumentException("JMS map-message names must be non-empty strings");
+        }
+        return actual;
     }
 
     private static Object snapshotMapOrStreamValue(Object value) {
@@ -203,7 +233,10 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
 
     private static Map<String, Object> snapshotProperties(Map<String, Object> properties) {
         Map<String, Object> result = new LinkedHashMap<>();
-        properties.forEach((name, value) -> result.put(requirePropertyName(name), snapshotProperty(value)));
+        properties.forEach((name, value) -> {
+            String actualName = requirePropertyName(name);
+            result.put(actualName, snapshotProperty(actualName, value));
+        });
         return Collections.unmodifiableMap(result);
     }
 
@@ -215,7 +248,11 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
 
     @Override
     public T entity() {
-        return snapshotBody(entity);
+        return snapshotBody(entity, snapshotSerializableOnAccess);
+    }
+
+    T entityForMapping(boolean allowObjectMessages) {
+        return snapshotBody(entity, allowObjectMessages);
     }
 
     @Override

@@ -19,6 +19,7 @@ package io.helidon.extensions.messaging.connectors.jms;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
@@ -92,14 +93,38 @@ interface JmsConnectorConfigBlueprint extends ConnectorConfig {
     Optional<String> username();
 
     /**
-     * JMS connection password. Implementations must avoid retaining a {@link String} representation beyond the
-     * {@code ConnectionFactory.createConnection} call.
+     * JMS connection password read from configuration. This value is moved to {@link #passwordSource()} and cleared from
+     * the builder before the prototype is created.
      *
-     * @return configured password characters
+     * @return configured password
      */
     @Option.Configured(JmsConnectorConfigSupport.PASSWORD_PROPERTY)
     @Option.Confidential
-    Optional<char[]> password();
+    @Option.Access("")
+    @Option.Decorator(JmsConnectorConfigSupport.ConfiguredPasswordDecorator.class)
+    @Option.Redundant
+    Optional<String> configuredPassword();
+
+    /**
+     * Internal source of defensive password copies.
+     *
+     * @return configured password source
+     */
+    @Option.Confidential
+    @Option.Access("")
+    @Option.DefaultCode("java.util.Optional.empty()")
+    @Option.Redundant(equality = true, stringValue = false)
+    Supplier<Optional<char[]>> passwordSource();
+
+    /**
+     * JMS connection password. Each invocation returns a defensive copy. Implementations must avoid retaining a
+     * {@link String} representation beyond the {@code ConnectionFactory.createConnection} call.
+     *
+     * @return configured password characters
+     */
+    default Optional<char[]> password() {
+        return passwordSource().get().map(char[]::clone);
+    }
 
     /**
      * JMS connection client identifier assigned by the application. Omit this option when the connection factory

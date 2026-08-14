@@ -18,7 +18,9 @@ package io.helidon.extensions.messaging.connectors.jms;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -42,6 +44,8 @@ import jakarta.jms.MessageProducer;
 import jakarta.jms.Queue;
 import jakarta.jms.Session;
 import jakarta.jms.TextMessage;
+import jakarta.jms.TransactionRolledBackException;
+import jakarta.jms.TransactionRolledBackRuntimeException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -49,6 +53,7 @@ import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -243,6 +248,47 @@ class JmsOutgoingConnectorTest {
     }
 
     @Test
+    void confirmedCommitRollbackReportsAllFailedWithoutRedundantRollback() throws Exception {
+        JmsClient first = client();
+        JmsClient second = client();
+        TransactionRolledBackException commitFailure = new TransactionRolledBackException("transaction rejected");
+        doThrow(commitFailure).when(first.session).commit();
+        AtomicInteger resolutions = new AtomicInteger();
+        OutgoingConnector connector = start(config(true), ignored -> resolutions.getAndIncrement() == 0
+                ? first.factory
+                : second.factory);
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                       () -> connector.sendBatch(batch("first", "second")));
+
+        assertStatuses(failure, BatchItemStatus.FAILED, BatchItemStatus.FAILED);
+        assertThat(failure.getCause(), is(commitFailure));
+        verify(first.session, never()).rollback();
+        connector.send("after-rollback");
+        assertThat(resolutions.get(), is(2));
+        verify(first.connection).close();
+        verify(second.session).commit();
+        connector.close();
+    }
+
+    @Test
+    void confirmedRuntimeCommitRollbackReportsAllFailedWithoutRedundantRollback() throws Exception {
+        JmsClient client = client();
+        TransactionRolledBackRuntimeException commitFailure =
+                new TransactionRolledBackRuntimeException("transaction rejected");
+        doThrow(commitFailure).when(client.session).commit();
+        OutgoingConnector connector = start(config(true), ignored -> client.factory);
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                       () -> connector.sendBatch(batch("first", "second")));
+
+        assertStatuses(failure, BatchItemStatus.FAILED, BatchItemStatus.FAILED);
+        assertThat(failure.getCause(), is(commitFailure));
+        verify(client.session, never()).rollback();
+        connector.close();
+    }
+
+    @Test
     void transactedRuntimeCommitFailureAndRollbackFailureRemainIndeterminate() throws Exception {
         JmsClient client = client();
         JMSRuntimeException commitFailure = new JMSRuntimeException("commit failed");
@@ -392,19 +438,44 @@ class JmsOutgoingConnectorTest {
     }
 
     @Test
+    void resourceCleanupFailureMakesStartupTerminal() {
+        JmsResourceCleanupException cleanupFailure = new JmsResourceCleanupException(
+                "Cannot close JNDI context",
+                new IllegalStateException("context leaked"));
+        AtomicInteger resolutions = new AtomicInteger();
+        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored -> {
+            resolutions.incrementAndGet();
+            throw cleanupFailure;
+        });
+
+        assertThat(assertThrows(JmsResourceCleanupException.class, connector::start), is(cleanupFailure));
+        IllegalStateException secondStart = assertThrows(IllegalStateException.class, connector::start);
+
+        assertThat(secondStart.getMessage(), containsString("closed"));
+        assertThat(resolutions.get(), is(1));
+    }
+
+    @Test
+    @Timeout(5)
     void reconnectUsesTheConfiguredCredentialsOnEveryAttempt() throws Exception {
         JmsClient first = client();
         JmsClient second = client();
         ConnectionFactory factory = mock(ConnectionFactory.class);
         when(factory.createConnection("orders-user", "secret"))
                 .thenReturn(first.connection, second.connection);
+        when(factory.createConnection("orders-user", "xxxxxx"))
+                .thenThrow(new AssertionError("connector observed a mutated password"));
         doThrow(new JMSException("temporarily unavailable")).when(first.connection).start();
-        JmsConnectorConfig config = JmsConnectorConfig.builder()
+        char[] mutablePassword = "secret".toCharArray();
+        JmsConnectorConfig baseConfig = JmsConnectorConfig.builder()
                 .from(config(false))
                 .username("orders-user")
-                .password("secret".toCharArray())
+                .password("ignored")
                 .build();
+        JmsConnectorConfig config = mock(JmsConnectorConfig.class, delegatesTo(baseConfig));
+        when(config.password()).thenReturn(Optional.of(mutablePassword));
         OutgoingConnector connector = JmsOutgoingConnector.create(config, ignored -> factory);
+        Arrays.fill(mutablePassword, 'x');
 
         connector.start();
 
@@ -431,6 +502,149 @@ class JmsOutgoingConnectorTest {
         BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
                                                        () -> connector.send("not-sent"));
         assertStatuses(failure, BatchItemStatus.NOT_ATTEMPTED);
+    }
+
+    @Test
+    @Timeout(5)
+    void forceCloseAbandonsPerMessageSendThatIgnoresInterruption() throws Exception {
+        JmsClient client = client();
+        CountDownLatch sending = new CountDownLatch(1);
+        CountDownLatch releaseSend = new CountDownLatch(1);
+        CountDownLatch sendFinished = new CountDownLatch(1);
+        CountDownLatch connectionClosed = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            sending.countDown();
+            try {
+                awaitIgnoringInterruption(releaseSend);
+            } finally {
+                sendFinished.countDown();
+            }
+            return null;
+        }).when(client.producer).send(any(jakarta.jms.Message.class));
+        doAnswer(invocation -> {
+            connectionClosed.countDown();
+            return null;
+        }).when(client.connection).close();
+        OutgoingConnector connector = start(config(false), ignored -> client.factory);
+        AtomicReference<Throwable> sendFailure = new AtomicReference<>();
+        Thread sender = Thread.ofVirtual().start(() -> capture(
+                () -> connector.sendBatch(batch("first", "untouched")), sendFailure));
+
+        try {
+            assertThat(sending.await(1, TimeUnit.SECONDS), is(true));
+
+            connector.forceClose();
+
+            assertThat(connectionClosed.await(1, TimeUnit.SECONDS), is(true));
+            sender.join(Duration.ofSeconds(1));
+            assertThat(sender.isAlive(), is(false));
+            assertThat(sendFailure.get() instanceof BatchDeliveryException, is(true));
+            BatchDeliveryException failure = (BatchDeliveryException) sendFailure.get();
+            assertStatuses(failure, BatchItemStatus.INDETERMINATE, BatchItemStatus.NOT_ATTEMPTED);
+
+            releaseSend.countDown();
+            assertThat(sendFinished.await(1, TimeUnit.SECONDS), is(true));
+            assertThat(sendFailure.get(), is(failure));
+            verify(client.producer, times(1)).send(any(jakarta.jms.Message.class));
+            connector.close();
+        } finally {
+            releaseSend.countDown();
+            connector.forceClose();
+            sender.join(Duration.ofSeconds(1));
+        }
+    }
+
+    @Test
+    @Timeout(5)
+    void forceCloseAbandonsTransactionalSendWithoutConcurrentRollback() throws Exception {
+        JmsClient client = client();
+        CountDownLatch sending = new CountDownLatch(1);
+        CountDownLatch releaseSend = new CountDownLatch(1);
+        CountDownLatch sendFinished = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            sending.countDown();
+            try {
+                awaitIgnoringInterruption(releaseSend);
+            } finally {
+                sendFinished.countDown();
+            }
+            return null;
+        }).when(client.producer).send(any(jakarta.jms.Message.class));
+        OutgoingConnector connector = start(config(true), ignored -> client.factory);
+        AtomicReference<Throwable> sendFailure = new AtomicReference<>();
+        Thread sender = Thread.ofVirtual().start(() -> capture(
+                () -> connector.sendBatch(batch("first", "untouched")), sendFailure));
+
+        try {
+            assertThat(sending.await(1, TimeUnit.SECONDS), is(true));
+
+            connector.forceClose();
+
+            sender.join(Duration.ofSeconds(1));
+            assertThat(sender.isAlive(), is(false));
+            assertThat(sendFailure.get() instanceof BatchDeliveryException, is(true));
+            BatchDeliveryException failure = (BatchDeliveryException) sendFailure.get();
+            assertStatuses(failure, BatchItemStatus.INDETERMINATE, BatchItemStatus.INDETERMINATE);
+            verify(client.session, never()).rollback();
+            verify(client.session, never()).commit();
+
+            releaseSend.countDown();
+            assertThat(sendFinished.await(1, TimeUnit.SECONDS), is(true));
+            assertThat(sendFailure.get(), is(failure));
+            verify(client.producer, times(1)).send(any(jakarta.jms.Message.class));
+            verify(client.session, never()).rollback();
+            connector.close();
+        } finally {
+            releaseSend.countDown();
+            connector.forceClose();
+            sender.join(Duration.ofSeconds(1));
+        }
+    }
+
+    @Test
+    @Timeout(5)
+    void forceCloseAbandonsTransactionalCommitWithoutPublishingLateSuccess() throws Exception {
+        JmsClient client = client();
+        CountDownLatch committing = new CountDownLatch(1);
+        CountDownLatch releaseCommit = new CountDownLatch(1);
+        CountDownLatch commitFinished = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            committing.countDown();
+            try {
+                awaitIgnoringInterruption(releaseCommit);
+            } finally {
+                commitFinished.countDown();
+            }
+            return null;
+        }).when(client.session).commit();
+        OutgoingConnector connector = start(config(true), ignored -> client.factory);
+        AtomicReference<Throwable> sendFailure = new AtomicReference<>();
+        Thread sender = Thread.ofVirtual().start(() -> capture(
+                () -> connector.sendBatch(batch("first", "second")), sendFailure));
+
+        try {
+            assertThat(committing.await(1, TimeUnit.SECONDS), is(true));
+
+            connector.forceClose();
+
+            sender.join(Duration.ofSeconds(1));
+            assertThat(sender.isAlive(), is(false));
+            assertThat(sendFailure.get() instanceof BatchDeliveryException, is(true));
+            BatchDeliveryException failure = (BatchDeliveryException) sendFailure.get();
+            assertStatuses(failure, BatchItemStatus.INDETERMINATE, BatchItemStatus.INDETERMINATE);
+            verify(client.session, never()).rollback();
+
+            releaseCommit.countDown();
+            assertThat(commitFinished.await(1, TimeUnit.SECONDS), is(true));
+            assertThat(sendFailure.get(), is(failure));
+            verify(client.producer, times(2)).send(any(jakarta.jms.Message.class));
+            verify(client.session, never()).rollback();
+            connector.close();
+        } finally {
+            releaseCommit.countDown();
+            connector.forceClose();
+            sender.join(Duration.ofSeconds(1));
+        }
     }
 
     @Test
@@ -722,6 +936,18 @@ class JmsOutgoingConnectorTest {
     }
 
     @Test
+    @Timeout(5)
+    void hugeCloseTimeoutIsSaturated() throws Exception {
+        JmsClient client = client();
+        OutgoingConnector connector = start(config(false, Duration.ofSeconds(Long.MAX_VALUE)),
+                                             ignored -> client.factory);
+
+        connector.close();
+
+        verify(client.connection).close();
+    }
+
+    @Test
     void failedCloseIsIdempotentAndDoesNotRetryNativeResources() throws Exception {
         JmsClient client = client();
         JMSException connectionFailure = new JMSException("connection close failed");
@@ -744,6 +970,7 @@ class JmsOutgoingConnectorTest {
     }
 
     @Test
+    @Timeout(5)
     void gracefulCloseIsBoundedAndCanFinishOnRetry() throws Exception {
         JmsClient client = client();
         CountDownLatch closing = new CountDownLatch(1);
@@ -759,15 +986,54 @@ class JmsOutgoingConnectorTest {
             }
             return null;
         }).when(client.connection).close();
-        OutgoingConnector connector = start(config(false, Duration.ofMillis(50)), ignored -> client.factory);
+        OutgoingConnector connector = null;
+        try {
+            connector = start(config(false, Duration.ofMillis(50)), ignored -> client.factory);
 
-        MessagingException failure = assertThrows(MessagingException.class, connector::close);
+            MessagingException failure = assertThrows(MessagingException.class, connector::close);
 
-        assertThat(failure.getMessage(), containsString("Timed out closing JMS resources"));
-        assertThat(closing.await(1, TimeUnit.SECONDS), is(true));
-        release.countDown();
-        connector.close();
-        verify(client.connection, times(1)).close();
+            assertThat(failure.getMessage(), containsString("Timed out closing JMS resources"));
+            assertThat(closing.await(1, TimeUnit.SECONDS), is(true));
+            release.countDown();
+            connector.close();
+            verify(client.connection, times(1)).close();
+        } finally {
+            release.countDown();
+            if (connector != null) {
+                connector.forceClose();
+            }
+        }
+    }
+
+    @Test
+    void reconnectJitterIsCappedAtTheConfiguredMaximum() {
+        Duration maximum = Duration.ofMillis(100);
+
+        Duration actual = JmsOutgoingConnector.jitter(Duration.ofMillis(90), maximum, 0.5, 1);
+
+        assertThat(actual, is(maximum));
+    }
+
+    @Test
+    void reconnectJitterAcceptsATinyNonZeroVariation() {
+        Duration delay = Duration.ofNanos(1);
+
+        Duration actual = JmsOutgoingConnector.jitter(delay,
+                                                      Duration.ofSeconds(1),
+                                                      Double.MIN_VALUE,
+                                                      0.5);
+
+        assertThat(actual, is(delay));
+    }
+
+    @Test
+    void reconnectJitterHandlesDurationsLargerThanNanosecondsCanRepresent() {
+        Duration huge = Duration.ofSeconds(Long.MAX_VALUE);
+
+        Duration actual = JmsOutgoingConnector.jitter(huge, huge, 0.5, 1);
+
+        assertThat(actual.compareTo(huge) <= 0, is(true));
+        assertThat(actual.isPositive(), is(true));
     }
 
     private static JmsClient client() throws Exception {

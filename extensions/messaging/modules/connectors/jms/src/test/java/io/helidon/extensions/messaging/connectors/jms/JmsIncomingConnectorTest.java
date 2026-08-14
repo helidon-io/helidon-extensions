@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
+import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -53,6 +54,7 @@ import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -202,6 +204,30 @@ class JmsIncomingConnectorTest {
     }
 
     @Test
+    void naturalRunCompletionClearsConnectorOwnedCredentials() throws Exception {
+        JmsClient client = client();
+        when(client.factory.createConnection("scott", "tiger")).thenReturn(client.connection);
+        JmsConnectorConfig credentialConfig = JmsConnectorConfig.builder()
+                .from(config(false))
+                .username("scott")
+                .password("tiger")
+                .build();
+        IncomingConnector connector = JmsIncomingConnector.create(credentialConfig, ignored -> client.factory);
+        char[] connectorPassword = connectorPassword(connector);
+
+        connector.run(new TestContext(new ArrayList<>()) {
+            @Override
+            public boolean awaitRunning() {
+                return false;
+            }
+        });
+
+        assertArrayEquals(new char[connectorPassword.length], connectorPassword);
+        verify(client.connection, never()).start();
+        verify(client.connection).close();
+    }
+
+    @Test
     @Timeout(5)
     void doesNotStartConnectionBeforeContextAllowsRunning() throws Exception {
         JmsClient client = client();
@@ -285,6 +311,65 @@ class JmsIncomingConnectorTest {
         verify(first.connection).close();
         verify(second.connection).start();
         verify(delivered).acknowledge();
+    }
+
+    @Test
+    @Timeout(5)
+    void minimumPositiveReconnectJitterDoesNotBreakRetry() throws Exception {
+        JmsClient client = client();
+        ConnectionFactory factory = mock(ConnectionFactory.class);
+        when(factory.createConnection())
+                .thenThrow(new JMSException("broker unavailable"))
+                .thenReturn(client.connection);
+        TextMessage delivered = textMessage("after-retry");
+        when(client.consumer.receive(anyLong())).thenReturn(delivered);
+        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
+        doAnswer(invocation -> {
+            connectorReference.get().drain();
+            return null;
+        }).when(delivered).acknowledge();
+        JmsConnectorConfig connectorConfig = JmsConnectorConfig.builder()
+                .from(config(false))
+                .reconnectJitter(Double.MIN_VALUE)
+                .build();
+        IncomingConnector connector = JmsIncomingConnector.create(connectorConfig, ignored -> factory);
+        connectorReference.set(connector);
+
+        connector.run(new TestContext(new ArrayList<>(),
+                                      new TestReservation(new ArrayList<>(), TestDelivery.completed())));
+
+        verify(factory, times(2)).createConnection();
+        verify(delivered).acknowledge();
+    }
+
+    @Test
+    void reconnectJitterIsCappedAtTheConfiguredMaximum() {
+        Duration maximum = Duration.ofMillis(100);
+
+        Duration delay = JmsIncomingConnector.jitter(Duration.ofMillis(90), maximum, 0.5, 1);
+
+        assertThat(delay, is(maximum));
+    }
+
+    @Test
+    @Timeout(5)
+    void hugeReconnectDelayWithDefaultAndZeroJitterRemainsCloseable() throws Exception {
+        Duration hugeDelay = Duration.ofSeconds(Long.MAX_VALUE);
+        JmsConnectorConfig defaultJitter = JmsConnectorConfig.builder()
+                .direction(ConnectorConfig.Direction.INCOMING)
+                .channel(CHANNEL)
+                .connector(JmsConnectorProvider.CONNECTOR_TYPE)
+                .destination("events")
+                .reconnectInitialDelay(hugeDelay)
+                .reconnectMaxDelay(hugeDelay)
+                .build();
+        assertThat(defaultJitter.reconnectJitter(), is(0.2));
+
+        assertReconnectWaitIsCloseable(defaultJitter);
+        assertReconnectWaitIsCloseable(JmsConnectorConfig.builder()
+                                               .from(defaultJitter)
+                                               .reconnectJitter(0)
+                                               .build());
     }
 
     @Test
@@ -776,6 +861,7 @@ class JmsIncomingConnectorTest {
     @Timeout(5)
     void drainDuringReceiveWaitsOnlyForConfiguredReceiveTimeout() throws Exception {
         JmsClient client = client();
+        Duration receiveTimeout = Duration.ofMillis(37);
         CountDownLatch receiving = new CountDownLatch(1);
         CountDownLatch releaseReceive = new CountDownLatch(1);
         when(client.consumer.receive(anyLong())).thenAnswer(invocation -> {
@@ -784,7 +870,11 @@ class JmsIncomingConnectorTest {
             return null;
         });
         TestReservation reservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        JmsConnectorConfig connectorConfig = JmsConnectorConfig.builder()
+                .from(config(false))
+                .receiveTimeout(receiveTimeout)
+                .build();
+        IncomingConnector connector = JmsIncomingConnector.create(connectorConfig, ignored -> client.factory);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
                 () -> connector.run(new TestContext(new ArrayList<>(), reservation)),
@@ -798,6 +888,7 @@ class JmsIncomingConnectorTest {
         assertThat(failure.get(), nullValue());
         assertThat(reservation.starts(), is(0));
         assertThat(reservation.closed(), is(true));
+        verify(client.consumer).receive(receiveTimeout.toMillis());
     }
 
     @Test
@@ -854,6 +945,98 @@ class JmsIncomingConnectorTest {
         closer.join(Duration.ofSeconds(1));
         assertThat(closeFailure.get(), nullValue());
         assertThat(sourceFailure.get(), nullValue());
+        verify(client.connection, never()).start();
+    }
+
+    @Test
+    @Timeout(5)
+    void gracefulCloseTimeoutDoesNotPoisonRetry() throws Exception {
+        JmsClient client = client();
+        CountDownLatch awaitingRunning = new CountDownLatch(1);
+        CountDownLatch connectionCloseStarted = new CountDownLatch(1);
+        CountDownLatch releaseConnectionClose = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            connectionCloseStarted.countDown();
+            awaitIgnoringInterruption(releaseConnectionClose);
+            return null;
+        }).when(client.connection).close();
+        JmsConnectorConfig connectorConfig = JmsConnectorConfig.builder()
+                .from(config(false))
+                .closeTimeout(Duration.ofMillis(50))
+                .build();
+        IncomingConnector connector = JmsIncomingConnector.create(connectorConfig, ignored -> client.factory);
+        AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+        Thread source = Thread.ofVirtual().start(() -> capture(
+                () -> connector.run(new TestContext(new ArrayList<>()) {
+                    @Override
+                    public boolean awaitRunning() {
+                        awaitingRunning.countDown();
+                        try {
+                            new CountDownLatch(1).await();
+                            return true;
+                        } catch (InterruptedException e) {
+                            return false;
+                        }
+                    }
+                }),
+                sourceFailure));
+        assertThat(awaitingRunning.await(1, TimeUnit.SECONDS), is(true));
+
+        try {
+            MessagingException failure = assertThrows(MessagingException.class, connector::close);
+            assertThat(failure.getMessage(), containsString("Timed out closing JMS"));
+            assertThat(connectionCloseStarted.await(1, TimeUnit.SECONDS), is(true));
+            releaseConnectionClose.countDown();
+
+            connector.close();
+            source.join(Duration.ofSeconds(1));
+            assertThat(source.isAlive(), is(false));
+            assertThat(sourceFailure.get(), nullValue());
+            verify(client.connection, times(1)).close();
+        } finally {
+            releaseConnectionClose.countDown();
+            connector.forceClose();
+            source.join(Duration.ofSeconds(1));
+        }
+    }
+
+    @Test
+    @Timeout(5)
+    void hugeCloseTimeoutIsSaturatedBeforeRequestingClose() throws Exception {
+        JmsClient client = client();
+        CountDownLatch awaitingRunning = new CountDownLatch(1);
+        JmsConnectorConfig connectorConfig = JmsConnectorConfig.builder()
+                .from(config(false))
+                .closeTimeout(Duration.ofSeconds(Long.MAX_VALUE))
+                .build();
+        IncomingConnector connector = JmsIncomingConnector.create(connectorConfig, ignored -> client.factory);
+        AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+        Thread source = Thread.ofVirtual().start(() -> capture(
+                () -> connector.run(new TestContext(new ArrayList<>()) {
+                    @Override
+                    public boolean awaitRunning() {
+                        awaitingRunning.countDown();
+                        try {
+                            new CountDownLatch(1).await();
+                            return true;
+                        } catch (InterruptedException e) {
+                            return false;
+                        }
+                    }
+                }),
+                sourceFailure));
+        assertThat(awaitingRunning.await(1, TimeUnit.SECONDS), is(true));
+
+        try {
+            connector.close();
+        } finally {
+            connector.forceClose();
+        }
+
+        source.join(Duration.ofSeconds(1));
+        assertThat(source.isAlive(), is(false));
+        assertThat(sourceFailure.get(), nullValue());
+        verify(client.connection).close();
         verify(client.connection, never()).start();
     }
 
@@ -952,6 +1135,15 @@ class JmsIncomingConnectorTest {
         return message;
     }
 
+    private static char[] connectorPassword(IncomingConnector connector) throws Exception {
+        Field connectionSupportField = connector.getClass().getDeclaredField("connectionSupport");
+        connectionSupportField.setAccessible(true);
+        Object connectionSupport = connectionSupportField.get(connector);
+        Field passwordField = JmsConnectionSupport.class.getDeclaredField("password");
+        passwordField.setAccessible(true);
+        return (char[]) passwordField.get(connectionSupport);
+    }
+
     private static JmsConnectorConfig config(boolean transacted) {
         return JmsConnectorConfig.builder()
                 .direction(ConnectorConfig.Direction.INCOMING)
@@ -965,6 +1157,33 @@ class JmsIncomingConnectorTest {
                 .reconnectMaxDelay(Duration.ofMillis(1))
                 .reconnectJitter(0)
                 .build();
+    }
+
+    private static void assertReconnectWaitIsCloseable(JmsConnectorConfig config) throws Exception {
+        ConnectionFactory factory = mock(ConnectionFactory.class);
+        CountDownLatch connectionAttempted = new CountDownLatch(1);
+        when(factory.createConnection()).thenAnswer(invocation -> {
+            connectionAttempted.countDown();
+            throw new JMSException("broker unavailable");
+        });
+        IncomingConnector connector = JmsIncomingConnector.create(config, ignored -> factory);
+        AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+        Thread source = Thread.ofVirtual().start(() -> capture(
+                () -> connector.run(new TestContext(new ArrayList<>())),
+                sourceFailure));
+        assertThat(connectionAttempted.await(1, TimeUnit.SECONDS), is(true));
+
+        try {
+            source.join(Duration.ofMillis(200));
+            assertThat(source.isAlive(), is(true));
+        } finally {
+            connector.forceClose();
+            source.join(Duration.ofSeconds(1));
+        }
+
+        assertThat(source.isAlive(), is(false));
+        assertThat(sourceFailure.get(), nullValue());
+        verify(factory, times(1)).createConnection();
     }
 
     private static void capture(Runnable task, AtomicReference<Throwable> failure) {

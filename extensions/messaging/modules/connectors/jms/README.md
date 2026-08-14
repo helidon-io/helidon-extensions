@@ -108,8 +108,9 @@ password: ${JMS_PASSWORD}
 This example resolves `JMS_PASSWORD` from Helidon's default environment-variable config source. Applications can use
 any configured secret-capable source or config filter instead.
 
-The connector retains the configured password as `char[]` and converts it to the `String` required by the Jakarta JMS
-API only at connection creation. It does not log credentials.
+The connector snapshots the configured password as `char[]`, converts it to the `String` required by the Jakarta JMS
+API only at connection creation, and clears its private copy when shutdown is requested. It does not log credentials.
+An application-owned typed configuration remains reusable and retains its own defensive password copy.
 
 ### Topic subscriptions
 
@@ -178,6 +179,8 @@ JmsMessage<String> message = JmsMessage.<String>builder("accepted")
         .type("order-result")
         .property("region", "EU")
         .property("attempt", 1)
+        .property("JMSXGroupID", "order-42")
+        .property("JMSXGroupSeq", 1)
         .build();
 results.emitMessage(message);
 ```
@@ -200,14 +203,19 @@ are the string representation of JMS application properties.
 
 Map and stream values must use JMS-supported primitive wrapper, `String`, `Character`, `byte[]`, or null values. JMS
 application properties support `Boolean`, numeric primitive wrappers, and `String`. Property names must be valid JMS
-selector identifiers and must not use the provider-reserved `JMS` prefix. Provider-owned `JMSX*` and `JMS_*`
-properties are not exposed as portable application headers. Invalid application property names or values fail the send
+selector identifiers and must not use the provider-reserved `JMS` prefix, except for the standard client-settable
+`JMSXGroupID` (`String`) and `JMSXGroupSeq` (`Integer`) properties. Other provider-owned `JMSX*` and `JMS_*` properties
+are not exposed as portable application headers. Generic portable headers may also set these two grouping properties;
+the `JMSXGroupSeq` header value must be a decimal integer. Invalid application property names or values fail the send
 before the broker success point.
 
 Java object messages are disabled by default. Enabling them permits native Java serialization and deserialization and
 must be limited to trusted producers, trusted payload classes, and a properly restricted deserialization environment.
-The connector makes a serialization round-trip when snapshotting a `Serializable` body, but deep immutability still
-depends on the serialized object graph and application classes:
+Wrapping an outgoing `Serializable` payload in `JmsMessage` does not itself invoke serialization callbacks. The disabled
+object-message gate rejects it without serializing or deserializing it. When object messages are enabled, the connector
+makes a serialization round-trip immediately before handing a defensive body snapshot to the JMS provider; applications
+must not mutate the payload between building and sending the message. Deep immutability still depends on the serialized
+object graph and application classes:
 
 ```yaml
 allow-object-messages: true
@@ -219,6 +227,12 @@ Do not enable object messages for data from an untrusted broker, tenant, or prod
 
 The connector uses one synchronous consumer and one outstanding message per JMS session. It reserves runtime delivery
 capacity before calling `receive`, then holds that capacity until transport settlement is complete.
+
+The Jakarta Messaging API does not provide a portable way to limit a provider's client-side prefetch. Runtime delivery
+capacity therefore controls calls to `receive`, but a provider may already have moved additional messages from the
+broker into its client buffer. If broker-side acquisition must follow runtime backpressure, configure the supplied
+`ConnectionFactory` with provider-specific consumer credit or prefetch disabled. For Artemis, a consumer window size of
+zero keeps the next message pending at the broker until the connector has another runtime reservation.
 
 For a non-transacted session, the connector uses `CLIENT_ACKNOWLEDGE` and acknowledges only after runtime delivery,
 including configured retry, drop, or dead-letter handling, has completed. For `transacted: true`, it commits the local
