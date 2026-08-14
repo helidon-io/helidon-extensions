@@ -77,6 +77,22 @@ class DiscriminatorEnumAllOfGenerationIT {
                    containsString("return MqlCheckDetails.CategoryEnum.REGION_HEALTH_CHECK;"));
     }
 
+    @Test
+    void convertedSwagger2InlineDiscriminatorValuesRemainAuthoritative() throws Exception {
+        Path output = generate("discriminator-swagger2-name-drift.yaml");
+        String parent = read(output, "ConditionShapeDetails");
+
+        assertThat(parent,
+                   containsString("@Json.Subtype(alias = \"CHANGE_FREEZE\", value = ChangeFreezeConditionShape.class)"));
+        assertThat(parent,
+                   containsString("@Json.Subtype(alias = \"CM_PREREQUISITES_VIOLATION\", "
+                                          + "value = CmPreRequisiteViolationConditionShape.class)"));
+        assertThat(read(output, "ChangeFreezeConditionShape"),
+                   containsString("return ConditionShapeDetails.ConditionShapeEnum.CHANGE_FREEZE;"));
+        assertThat(read(output, "CmPreRequisiteViolationConditionShape"),
+                   containsString("return ConditionShapeDetails.ConditionShapeEnum.CM_PREREQUISITES_VIOLATION;"));
+    }
+
     private Path generate(String resourceName) throws Exception {
         URL resource = getClass().getClassLoader().getResource(resourceName);
         Path spec = Paths.get(resource.toURI()).toAbsolutePath();

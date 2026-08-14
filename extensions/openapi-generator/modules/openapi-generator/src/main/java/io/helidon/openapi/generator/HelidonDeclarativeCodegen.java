@@ -502,6 +502,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         if (discriminatorValue != null && !discriminatorValue.toString().isBlank()) {
             model.vendorExtensions.put("x-declared-discriminator-value", discriminatorValue.toString());
         }
+        String legacyDiscriminatorValue = DiscriminatorSupport.inlineShorthand(schema);
+        if (legacyDiscriminatorValue != null) {
+            model.vendorExtensions.put("x-inline-discriminator-shorthand", legacyDiscriminatorValue);
+        }
         Object representation = extensionValue(schema, EXT_DISCRIMINATOR_REPRESENTATION);
         if (representation != null) {
             DiscriminatorRepresentation parsed = parseDiscriminatorRepresentation(representation,
@@ -1317,7 +1321,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                         .add(alias);
             }
         }
-
         Map<String, String> result = new LinkedHashMap<>();
         for (String subtypeName : concreteSubtypeNames) {
             List<String> aliases = explicitAliasesBySubtype.getOrDefault(subtypeName, List.of());
@@ -1332,6 +1335,13 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             }
             CodegenModel subtype = modelsByClassname.get(subtypeName);
             Object declaredValue = subtype.vendorExtensions.get("x-declared-discriminator-value");
+            if (declaredValue == null) {
+                Object shorthand = subtype.vendorExtensions.get("x-inline-discriminator-shorthand");
+                if (DiscriminatorSupport.isDeclaredEnumValue(
+                        discriminatorProperty(owner, discriminatorKey(owner)), shorthand, this::discriminatorEnumValues)) {
+                    declaredValue = shorthand;
+                }
+            }
             String implicitAlias = declaredValue == null || declaredValue.toString().isBlank()
                     ? descendantAliases.getOrDefault(subtypeName,
                             subtype.schemaName == null || subtype.schemaName.isBlank() ? subtypeName : subtype.schemaName)

@@ -26,6 +26,8 @@ import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
+import io.swagger.v3.oas.models.media.Discriminator;
+import io.swagger.v3.oas.models.media.Schema;
 import org.openapitools.codegen.CodegenModel;
 import org.openapitools.codegen.CodegenProperty;
 
@@ -77,6 +79,35 @@ final class DiscriminatorSupport {
         CodegenProperty property = discriminatorProperty.property();
         String type = property.datatypeWithEnum == null ? property.dataType : property.datatypeWithEnum;
         return property.isEnum ? discriminatorProperty.owner().classname + "." + type : type;
+    }
+
+    static String inlineShorthand(Schema<?> schema) {
+        if (schema == null || schema.getAllOf() == null) {
+            return null;
+        }
+        for (Schema<?> member : schema.getAllOf()) {
+            if (member == null || member.getDiscriminator() == null) {
+                continue;
+            }
+            Discriminator discriminator = member.getDiscriminator();
+            String value = discriminator.getPropertyName();
+            if (value != null && !value.isBlank()
+                    && (discriminator.getMapping() == null || discriminator.getMapping().isEmpty())
+                    && (member.getProperties() == null || !member.getProperties().containsKey(value))) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    static boolean isDeclaredEnumValue(CodegenProperty property,
+                                       Object candidate,
+                                       Function<CodegenProperty, List<String>> enumValues) {
+        return property != null
+                && property.isEnum
+                && candidate != null
+                && !candidate.toString().isBlank()
+                && enumValues.apply(property).contains(candidate.toString());
     }
 
     static String sanitizeDiagnosticReference(String value) {
