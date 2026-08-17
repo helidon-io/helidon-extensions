@@ -123,6 +123,20 @@ final class AllOfValidationSupport {
         return merged;
     }
 
+    static List<CodegenProperty> validationSources(
+            Map<String, Map<String, List<CodegenProperty>>> propertiesBySchema,
+            CodegenModel model,
+            CodegenProperty property) {
+        if (model == null) {
+            return List.of(property);
+        }
+        List<CodegenProperty> result = new ArrayList<>(propertiesBySchema
+                                                               .getOrDefault(model.classname, Map.of())
+                                                               .getOrDefault(property.baseName, List.of()));
+        result.add(property);
+        return result;
+    }
+
     private static Map<String, Map<String, List<CodegenProperty>>> collectValidationProperties(
             JsonNode schemas,
             ObjectMapper mapper,

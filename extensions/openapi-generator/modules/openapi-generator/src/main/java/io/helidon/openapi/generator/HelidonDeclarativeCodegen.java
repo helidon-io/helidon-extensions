@@ -129,6 +129,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private AllOfValidationSupport.Snapshot allOfValidationSnapshot = AllOfValidationSupport.Snapshot.empty();
     private Map<String, Map<String, List<CodegenProperty>>> allOfValidationPropertiesBySchema = Map.of();
     private CascadingValidationSupport.Analysis cascadingValidation = CascadingValidationSupport.Analysis.empty();
+
     /**
      * Creates a new generator with default options and template mappings.
      */
@@ -926,7 +927,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         normalizeComposedModels(models, modelsByClassname, unionInterfacesByMember);
         applyUnionInterfaces(models, unionInterfacesByMember);
         applyAllOfDiscriminatorHierarchy(models, modelsByClassname);
-
         Set<String> topLevelStringEnums = jsonStringEnums.prepareModels(models);
         allOfValidationPropertiesBySchema = AllOfValidationSupport.validationProperties(
                 allOfValidationSnapshot, this::toModelName, (name, schema) -> fromProperty(name, schema, false),
@@ -935,9 +935,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         cascadingValidation = CascadingValidationSupport.analyze(
                 models,
                 modelsByClassname.keySet(),
-                (model, property) -> validationSources(model, property).stream()
+                (model, property) -> AllOfValidationSupport.validationSources(
+                                allOfValidationPropertiesBySchema, model, property).stream()
                         .anyMatch(source -> !buildValidationAnnotations(source).isEmpty()));
-
         boolean anyValidation = false;
         for (Map.Entry<String, ModelsMap> entry : result.entrySet()) {
             ModelsMap modelsMap = entry.getValue();
@@ -1780,17 +1780,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     "@Validation.Collection.Size(" + String.join(", ", attrs) + ")"));
         }
 
-        return result;
-    }
-
-    private List<CodegenProperty> validationSources(CodegenModel model, CodegenProperty property) {
-        if (model == null) {
-            return List.of(property);
-        }
-        List<CodegenProperty> result = new ArrayList<>(allOfValidationPropertiesBySchema
-                                                               .getOrDefault(model.classname, Map.of())
-                                                               .getOrDefault(property.baseName, List.of()));
-        result.add(property);
         return result;
     }
 
