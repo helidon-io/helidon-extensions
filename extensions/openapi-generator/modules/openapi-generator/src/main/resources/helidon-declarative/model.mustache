@@ -44,6 +44,21 @@ import io.helidon.json.binding.JsonDeserializer;
 import io.helidon.json.binding.JsonSerializer;
 import io.helidon.service.registry.Service;
 {{/vendorExtensions.x-use-union-converter}}{{/model}}
+{{#model}}{{#vendorExtensions.x-use-polymorphic-converter}}import java.io.ByteArrayOutputStream;
+import java.util.Set;
+import io.helidon.common.GenericType;
+import io.helidon.json.JsonGenerator;
+import io.helidon.json.JsonObject;
+import io.helidon.json.JsonParser;
+import io.helidon.json.JsonValue;
+import io.helidon.json.JsonValueType;
+import io.helidon.json.binding.JsonBindingFactory;
+import io.helidon.json.binding.JsonBindingConfigurator;
+import io.helidon.json.binding.JsonConverter;
+import io.helidon.json.binding.JsonDeserializer;
+import io.helidon.json.binding.JsonSerializer;
+import io.helidon.service.registry.Service;
+{{/vendorExtensions.x-use-polymorphic-converter}}{{/model}}
 {{#imports}}
 import {{import}};
 {{/imports}}
@@ -387,10 +402,12 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
         return Set.of({{classname}}.class);
     }
 }
-{{/vendorExtensions.x-use-union-converter}}{{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}@Json.Entity
+{{/vendorExtensions.x-use-union-converter}}{{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}{{#vendorExtensions.x-use-polymorphic-converter}}@Json.Converter({{classname}}.{{classname}}JsonConverter.class)
+{{/vendorExtensions.x-use-polymorphic-converter}}{{^vendorExtensions.x-use-polymorphic-converter}}@Json.Entity
 {{#vendorExtensions.x-has-polymorphic-subtypes}}@Json.Polymorphic(key = {{{vendorExtensions.x-polymorphic-key-literal}}})
 {{#vendorExtensions.x-polymorphic-subtypes}}@Json.Subtype(alias = {{{aliasLiteral}}}, value = {{name}}.class)
 {{/vendorExtensions.x-polymorphic-subtypes}}{{/vendorExtensions.x-has-polymorphic-subtypes}}
+{{/vendorExtensions.x-use-polymorphic-converter}}
 {{#isDeprecated}}@Deprecated
 {{/isDeprecated}}{{#vendorExtensions.x-has-validations}}@Validation.Validated
 {{/vendorExtensions.x-has-validations}}{{^vendorExtensions.x-abstract-polymorphic-base}}@Json.BuilderInfo({{classname}}.Builder.class)
@@ -654,6 +671,9 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
     }
 
 {{/vendorExtensions.x-extends-model}}
+{{#vendorExtensions.x-use-polymorphic-converter}}{{>polymorphicClassConverter}}
+
+{{/vendorExtensions.x-use-polymorphic-converter}}
 {{#vendorExtensions.x-inline-string-enums}}
 {{>nestedStringEnum}}
 
@@ -673,6 +693,8 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
 
 {{/vendorExtensions.x-enum-wire-constraints-validated}}{{/isEnum}}{{/vendorExtensions.x-render-vars}}
 }
+{{#vendorExtensions.x-use-polymorphic-converter}}{{>polymorphicClassConverterFactory}}
+{{/vendorExtensions.x-use-polymorphic-converter}}
 {{#vendorExtensions.x-inline-string-enums}}
 
 {{>stringEnumConverter}}

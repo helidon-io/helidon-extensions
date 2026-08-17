@@ -35,12 +35,27 @@ class AuthoritativeAllOfDiscriminatorTest {
 
         String json = jsonBinding.serialize((ConditionShapeDetails) changeFreeze, ConditionShapeDetails.class);
         assertThat(occurrences(json, "\"conditionShape\""), is(1));
-        assertThat(json.contains("\"conditionShape\":\"CHANGE_FREEZE\""), is(true));
+        assertThat(json.contains("\"conditionShape\":\"CHANGE.FREEZE\""), is(true));
         assertThat(changeFreeze.conditionShape(), is(ConditionShapeDetails.ConditionShapeEnum.CHANGE_FREEZE));
 
         ConditionShapeDetails restored = jsonBinding.deserialize(json, ConditionShapeDetails.class);
         assertThat(restored, instanceOf(ChangeFreezeConditionShape.class));
         assertThat(restored.conditionShape(), is(ConditionShapeDetails.ConditionShapeEnum.CHANGE_FREEZE));
+    }
+
+    @Test
+    void hyphenatedAliasRoundTrips() {
+        TimeWindowConstraintsConditionShape timeWindow = new TimeWindowConstraintsConditionShape();
+        timeWindow.timeWindowDetails("weekday");
+
+        String json = jsonBinding.serialize((ConditionShapeDetails) timeWindow, ConditionShapeDetails.class);
+        assertThat(occurrences(json, "\"conditionShape\""), is(1));
+        assertThat(json.contains("\"conditionShape\":\"TIME-WINDOW-CONSTRAINTS\""), is(true));
+
+        ConditionShapeDetails restored = jsonBinding.deserialize(json, ConditionShapeDetails.class);
+        assertThat(restored, instanceOf(TimeWindowConstraintsConditionShape.class));
+        assertThat(restored.conditionShape(),
+                   is(ConditionShapeDetails.ConditionShapeEnum.TIME_WINDOW_CONSTRAINTS));
     }
 
     @Test

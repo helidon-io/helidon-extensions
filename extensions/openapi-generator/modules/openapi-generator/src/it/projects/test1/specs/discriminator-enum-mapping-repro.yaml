@@ -28,14 +28,14 @@ components:
       discriminator:
         propertyName: conditionShape
         mapping:
-          CHANGE_FREEZE: '#/components/schemas/ChangeFreezeConditionShape'
-          TIME_WINDOW_CONSTRAINTS: '#/components/schemas/TimeWindowConstraintsConditionShape'
+          CHANGE.FREEZE: '#/components/schemas/ChangeFreezeConditionShape'
+          TIME-WINDOW-CONSTRAINTS: '#/components/schemas/TimeWindowConstraintsConditionShape'
       properties:
         conditionShape:
           type: string
           enum:
-            - CHANGE_FREEZE
-            - TIME_WINDOW_CONSTRAINTS
+            - CHANGE.FREEZE
+            - TIME-WINDOW-CONSTRAINTS
 
     ChangeFreezeConditionShape:
       allOf:

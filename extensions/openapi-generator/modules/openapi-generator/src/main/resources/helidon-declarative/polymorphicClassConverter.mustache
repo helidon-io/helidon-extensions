@@ -1,0 +1,105 @@
+{{!
+Copyright (c) 2026 Oracle and/or its affiliates.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+}}
+
+    /** Helidon JSON converter for the complete {{classname}} hierarchy. */
+    public static final class {{classname}}JsonConverter implements JsonConverter<{{classname}}> {
+{{#vendorExtensions.x-polymorphic-subtypes}}
+        private JsonDeserializer<{{name}}> {{deserializerField}};
+        private JsonSerializer<{{name}}> {{serializerField}};
+{{/vendorExtensions.x-polymorphic-subtypes}}
+
+        @Override
+        public GenericType<{{classname}}> type() {
+            return new GenericType<>() {
+            };
+        }
+
+        @Override
+        public void configure(JsonBindingConfigurator jsonBindingConfigurator) {
+{{#vendorExtensions.x-polymorphic-subtypes}}
+            this.{{deserializerField}} = jsonBindingConfigurator.deserializer({{name}}.class);
+            this.{{serializerField}} = jsonBindingConfigurator.serializer({{name}}.class);
+{{/vendorExtensions.x-polymorphic-subtypes}}
+        }
+
+        @Override
+        public {{classname}} deserialize(JsonParser parser) {
+            JsonValue jsonValue = parser.readJsonValue();
+            if (jsonValue.type() == JsonValueType.NULL) {
+                return null;
+            }
+            if (jsonValue.type() != JsonValueType.OBJECT) {
+                throw new IllegalArgumentException("Expected JSON object for {{classname}}, but found "
+                                                           + jsonValue.type());
+            }
+            JsonObject jsonObject = jsonValue.asObject();
+            String alias = jsonObject.stringValue({{{vendorExtensions.x-polymorphic-key-literal}}}).orElse(null);
+            if (alias == null) {
+                throw new IllegalArgumentException("Missing discriminator property "
+                                                           + {{{vendorExtensions.x-polymorphic-key-literal}}}
+                                                           + " for {{classname}}");
+            }
+            JsonObject modelObject = JsonObject.builder()
+                    .from(jsonObject)
+                    .unset({{{vendorExtensions.x-polymorphic-key-literal}}})
+                    .build();
+            return switch (alias) {
+{{#vendorExtensions.x-polymorphic-subtypes}}
+                case {{{aliasLiteral}}} -> {{deserializerField}}.deserialize(
+                        JsonParser.create(modelObject.toString()));
+{{/vendorExtensions.x-polymorphic-subtypes}}
+                default -> throw new IllegalArgumentException("Unsupported discriminator value '" + alias
+                                                                      + "' for {{classname}}");
+            };
+        }
+
+        @Override
+        public void serialize(JsonGenerator generator, {{classname}} instance, boolean writeNulls) {
+            if (instance == null) {
+                generator.writeNull();
+                return;
+            }
+            generator.write(serializeSubtype(instance, writeNulls));
+        }
+
+        private JsonObject serializeSubtype({{classname}} instance, boolean writeNulls) {
+{{#vendorExtensions.x-polymorphic-subtypes}}
+            if (instance instanceof {{name}} value) {
+                return withDiscriminator(serialize(value, {{serializerField}}, writeNulls), {{{aliasLiteral}}});
+            }
+{{/vendorExtensions.x-polymorphic-subtypes}}
+            throw new IllegalArgumentException("Unsupported subtype '" + instance.getClass().getName()
+                                                       + "' for {{classname}}");
+        }
+
+        private <T extends {{classname}}> JsonObject serialize(T instance,
+                                                               JsonSerializer<T> serializer,
+                                                               boolean writeNulls) {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            try (JsonGenerator delegate = JsonGenerator.create(outputStream)) {
+                serializer.serialize(delegate, instance, writeNulls);
+            }
+            return JsonParser.create(outputStream.toByteArray()).readJsonObject();
+        }
+
+        private JsonObject withDiscriminator(JsonObject jsonObject, String alias) {
+            return JsonObject.builder()
+                    .from(jsonObject)
+                    .unset({{{vendorExtensions.x-polymorphic-key-literal}}})
+                    .set({{{vendorExtensions.x-polymorphic-key-literal}}}, alias)
+                    .build();
+        }
+    }

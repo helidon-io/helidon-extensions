@@ -162,6 +162,10 @@ final class DiscriminatorSupport {
                 && (discriminatorKey.equals(property.baseName) || discriminatorKey.equals(property.name));
     }
 
+    static boolean requiresCustomConverter(String alias) {
+        return alias.codePoints().anyMatch(codePoint -> !Character.isJavaIdentifierPart(codePoint));
+    }
+
     @SuppressWarnings("unchecked")
     static void addAccessor(CodegenModel model, String extensionName, Map<String, Object> accessor) {
         if (model == null) {

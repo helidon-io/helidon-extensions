@@ -1175,10 +1175,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 }
             });
             List<Map<String, Object>> sortedSubtypes = concreteSubtypeNames.stream()
-                    .map(name -> new LinkedHashMap<String, Object>(Map.of(
-                            "alias", aliasesBySubtype.get(name),
-                            "aliasLiteral", JavaStringLiterals.toJavaStringLiteral(aliasesBySubtype.get(name)),
-                            "name", name)))
+                    .map(name -> polymorphicSubtype(name, aliasesBySubtype.get(name)))
                     .sorted((left, right) -> left.get("alias").toString().compareTo(right.get("alias").toString()))
                     .collect(Collectors.toCollection(ArrayList::new));
             for (int i = 0; i < sortedSubtypes.size(); i++) {
@@ -1191,6 +1188,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                                              JavaStringLiterals.toJavaStringLiteral(discriminatorKey));
             parentModel.vendorExtensions.put("x-polymorphic-subtypes", sortedSubtypes);
             parentModel.vendorExtensions.put("x-abstract-polymorphic-base", Boolean.TRUE);
+            if (aliasesBySubtype.values().stream().anyMatch(DiscriminatorSupport::requiresCustomConverter)) {
+                parentModel.vendorExtensions.put("x-use-polymorphic-converter", Boolean.TRUE);
+            }
 
             CodegenProperty discriminatorProperty = DiscriminatorSupport.property(parentModel, discriminatorKey);
             removeRenderedDiscriminatorProperty(parentModel, discriminatorKey);
@@ -1222,6 +1222,17 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 }
             }
         });
+    }
+
+    private Map<String, Object> polymorphicSubtype(String name, String alias) {
+        String fieldBase = toVarName(name);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("alias", alias);
+        result.put("aliasLiteral", JavaStringLiterals.toJavaStringLiteral(alias));
+        result.put("deserializerField", fieldBase + "Deserializer");
+        result.put("name", name);
+        result.put("serializerField", fieldBase + "Serializer");
+        return result;
     }
 
     private void applyUnionDiscriminatorRepresentation(CodegenModel unionModel,

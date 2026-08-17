@@ -49,9 +49,11 @@ class AuthoritativeDiscriminatorGenerationIT {
         String metadataChoice = model(output, "MetadataChoice");
 
         assertThat(base, containsString("public abstract class DeclaredBase"));
-        assertThat(base, containsString("@Json.Subtype(alias = \"weird.alias\", value = DeclaredCat.class)"));
-        assertThat(base, containsString("@Json.Subtype(alias = \"MixedCase-2\", value = DeclaredDog.class)"));
-        assertThat(base, containsString("@Json.Subtype(alias = \"DeclaredBird\", value = DeclaredBird.class)"));
+        assertThat(base, containsString("@Json.Converter(DeclaredBase.DeclaredBaseJsonConverter.class)"));
+        assertThat(base, containsString("case \"weird.alias\" -> declaredCatDeserializer.deserialize("));
+        assertThat(base, containsString("case \"MixedCase-2\" -> declaredDogDeserializer.deserialize("));
+        assertThat(base, containsString("case \"DeclaredBird\" -> declaredBirdDeserializer.deserialize("));
+        assertThat(base, not(containsString("@Json.Subtype")));
         assertThat(base, containsString("public abstract String kind();"));
         assertThat(base, not(containsString("private String kind;")));
         assertThat(base, not(containsString("void kind(")));
