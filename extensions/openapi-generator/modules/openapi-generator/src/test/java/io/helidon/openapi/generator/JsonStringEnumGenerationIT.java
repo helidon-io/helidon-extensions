@@ -112,6 +112,8 @@ class JsonStringEnumGenerationIT {
         assertThat(envelope, containsString("public enum NumericPriorityEnum"));
         assertThat(envelope, containsString("NUMBER_1"));
         assertThat(envelope, containsString("NUMBER_2"));
+        assertThat(envelope, not(containsString("@Validation.Validated")));
+        assertThat(envelope, not(containsString("@Validation.String.Length")));
     }
 
     @Test

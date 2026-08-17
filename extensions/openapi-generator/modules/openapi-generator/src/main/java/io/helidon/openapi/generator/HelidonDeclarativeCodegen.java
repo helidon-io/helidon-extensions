@@ -926,6 +926,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         normalizeComposedModels(models, modelsByClassname, unionInterfacesByMember);
         applyUnionInterfaces(models, unionInterfacesByMember);
         applyAllOfDiscriminatorHierarchy(models, modelsByClassname);
+
+        Set<String> topLevelStringEnums = jsonStringEnums.prepareModels(models);
         allOfValidationPropertiesBySchema = AllOfValidationSupport.validationProperties(
                 allOfValidationSnapshot, this::toModelName, (name, schema) -> fromProperty(name, schema, false),
                 property -> !buildValidationAnnotations(property).isEmpty());
@@ -941,16 +943,14 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             ModelsMap modelsMap = entry.getValue();
             for (ModelMap modelContainer : modelsMap.getModels()) {
                 var model = modelContainer.getModel();
-                if (jsonStringEnums.prepareTopLevelModel(model)) {
+                if (topLevelStringEnums.contains(model.classname)) {
                     continue;
                 }
                 if (Boolean.TRUE.equals(model.vendorExtensions.get("x-is-union-interface"))) {
-                    model.vendorExtensions.put("x-render-vars", List.of());
                     continue;
                 }
 
                 boolean modelHasValidation = cascadingValidation.participatingModels().contains(model.classname);
-                jsonStringEnums.prepareInlineModelEnums(model);
                 List<CodegenProperty> renderVars = cascadingValidation.propertiesByModel().get(model.classname);
 
                 for (CodegenProperty prop : renderVars) {

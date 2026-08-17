@@ -212,6 +212,20 @@ final class JsonStringEnumSupport {
         return true;
     }
 
+    Set<String> prepareModels(List<CodegenModel> models) {
+        Set<String> topLevelEnums = new LinkedHashSet<>();
+        for (CodegenModel model : models) {
+            if (prepareTopLevelModel(model)) {
+                topLevelEnums.add(model.classname);
+            } else if (Boolean.TRUE.equals(model.vendorExtensions.get("x-is-union-interface"))) {
+                model.vendorExtensions.put("x-render-vars", List.of());
+            } else {
+                prepareInlineModelEnums(model);
+            }
+        }
+        return Set.copyOf(topLevelEnums);
+    }
+
     List<CodegenProperty> prepareInlineModelEnums(CodegenModel model) {
         List<CodegenProperty> properties = renderVars(model);
         List<Map<String, Object>> definitions = new ArrayList<>();
