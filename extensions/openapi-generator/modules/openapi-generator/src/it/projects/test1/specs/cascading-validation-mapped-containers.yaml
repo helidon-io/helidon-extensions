@@ -1,0 +1,31 @@
+openapi: 3.0.3
+info:
+  title: Cascading Validation Mapped Containers
+  version: 1.0.0
+paths: {}
+components:
+  schemas:
+    MappedContainers:
+      type: object
+      required:
+        - optionalLeaf
+        - leafArray
+      properties:
+        optionalLeaf:
+          $ref: '#/components/schemas/OptionalLeaf'
+        leafArray:
+          $ref: '#/components/schemas/LeafArray'
+    OptionalLeaf:
+      type: object
+    LeafArray:
+      type: array
+      items:
+        $ref: '#/components/schemas/ConstrainedLeaf'
+    ConstrainedLeaf:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          minLength: 3

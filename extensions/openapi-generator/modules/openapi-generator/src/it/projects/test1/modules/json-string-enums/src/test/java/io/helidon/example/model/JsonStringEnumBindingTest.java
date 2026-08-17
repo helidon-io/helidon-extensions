@@ -68,6 +68,24 @@ class JsonStringEnumBindingTest {
     }
 
     @Test
+    void adversarialWireValuesRoundTripExactly() {
+        List<String> values = List.of("", "quote\"value", "back\\slash", "line\nbreak", "snowman-☃");
+
+        for (String value : values) {
+            EscapedMode mode = EscapedMode.fromValue(value);
+            String json = jsonBinding.serialize(mode, EscapedMode.class);
+            assertThat(jsonBinding.deserialize(json, EscapedMode.class), is(mode));
+            assertThat(jsonBinding.deserialize(json, EscapedMode.class).value(), is(value));
+        }
+
+        var envelope = new EnumEnvelope();
+        envelope.escapedInline(EnumEnvelope.EscapedInlineEnum.LINE_BREAK);
+        String inlineJson = jsonBinding.serialize(envelope, EnumEnvelope.class);
+        EnumEnvelope restored = jsonBinding.deserialize(inlineJson, EnumEnvelope.class);
+        assertThat(restored.escapedInline().value(), is("line\nbreak"));
+    }
+
+    @Test
     void sharedBindingConvertsAlternatingValuesConcurrently() {
         List<Mode> converted = IntStream.range(0, 2_000)
                 .parallel()

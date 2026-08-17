@@ -745,7 +745,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     param.vendorExtensions.put("x-validation-annotations", paramValidations);
                     anyParamValidation = true;
                 }
-                if (param.isBodyParam && CascadingValidationSupport.apply(param, cascadingValidation)) {
+                if (param.isBodyParam && CascadingValidationSupport.apply(param, cascadingValidation, modelPackage)) {
                     anyParamValidation = true;
                     anyRequestValidation = true;
                 }
@@ -976,8 +976,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
                     CascadingValidationSupport.apply(prop,
                                                       cascadingValidation.modelNames(),
-                                                      cascadingValidation.participatingModels());
-
+                                                      cascadingValidation.participatingModels(),
+                                                      modelPackage);
                     // Format default value as a Java literal for field initializer
                     String javaDefault = formatDefaultValue(prop);
                     if (javaDefault != null) {
@@ -985,7 +985,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     }
                 }
 
-                CascadingValidationSupport.applyInherited(model, cascadingValidation, inheritedProperty -> {
+                CascadingValidationSupport.applyInherited(model, cascadingValidation, modelPackage, inheritedProperty -> {
                     List<CodegenProperty> validationSources = new ArrayList<>(allOfValidationPropertiesBySchema
                                                                                       .getOrDefault(model.classname,
                                                                                                     Map.of())
@@ -1806,7 +1806,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         if (prop.isFloat) {
             return val + "f";
         }
-        if (prop.isArray || prop.isMap) {
+        if (prop.isArray || prop.isMap || ValidationTypeSupport.isJavaArray(prop.datatypeWithEnum)) {
             return null;  // skip — complex initialization
         }
         return val;  // integer, double, boolean — value as-is

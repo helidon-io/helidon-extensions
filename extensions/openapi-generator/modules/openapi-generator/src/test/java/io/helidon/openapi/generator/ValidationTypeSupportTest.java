@@ -33,16 +33,16 @@ class ValidationTypeSupportTest {
     void annotatesArrayElementsInsideNestedSupportedContainers() {
         String type = "Map<MapKeyModel, List<Optional<ConstrainedLeaf[]>>>";
 
-        assertThat(ValidationTypeSupport.annotatedType(type, MODELS, PARTICIPATING),
-                   is("Map<MapKeyModel, List<Optional<@Validation.Valid ConstrainedLeaf[]>>>"));
+        assertThat(ValidationTypeSupport.annotatedType(type, MODELS, PARTICIPATING, "io.example.model"),
+                   is("Map<MapKeyModel, List<Optional<io.example.model.@Validation.Valid ConstrainedLeaf[]>>>"));
     }
 
     @Test
     void supportsFullyQualifiedModelTypes() {
         String type = "java.util.Map<java.lang.String, io.example.ConstrainedLeaf[]>";
 
-        assertThat(ValidationTypeSupport.annotatedType(type, MODELS, PARTICIPATING),
-                   is("java.util.Map<java.lang.String, @Validation.Valid io.example.ConstrainedLeaf[]>"));
+        assertThat(ValidationTypeSupport.annotatedType(type, MODELS, PARTICIPATING, "io.example.model"),
+                   is("java.util.Map<java.lang.String, io.example.@Validation.Valid ConstrainedLeaf[]>"));
     }
 
     @Test
@@ -50,7 +50,7 @@ class ValidationTypeSupportTest {
         String type = "Map<ConstrainedLeaf, String>";
 
         assertThat(ValidationTypeSupport.referencedModels(type, MODELS), is(Set.of()));
-        assertThat(ValidationTypeSupport.annotatedType(type, MODELS, PARTICIPATING), is(type));
+        assertThat(ValidationTypeSupport.annotatedType(type, MODELS, PARTICIPATING, "io.example.model"), is(type));
     }
 
     @Test

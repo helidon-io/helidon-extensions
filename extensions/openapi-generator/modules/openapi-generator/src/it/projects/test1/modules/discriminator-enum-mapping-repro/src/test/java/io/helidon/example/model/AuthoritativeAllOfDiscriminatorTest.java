@@ -16,6 +16,9 @@
 
 package io.helidon.example.model;
 
+import java.util.List;
+import java.util.stream.IntStream;
+
 import io.helidon.json.binding.JsonBinding;
 import org.junit.jupiter.api.Test;
 
@@ -95,6 +98,25 @@ class AuthoritativeAllOfDiscriminatorTest {
         assertThat(occurrences(json, "\"kind\""), is(1));
         assertThat(json.contains("\"kind\":\"leaf\""), is(true));
         assertThat(jsonBinding.deserialize(json, TransitiveBase.class), instanceOf(TransitiveLeaf.class));
+    }
+
+    @Test
+    void sharedBindingRoundTripsDiscriminatorAliasesConcurrently() {
+        List<ConditionShapeDetails> restored = IntStream.range(0, 2_000)
+                .parallel()
+                .mapToObj(index -> index % 2 == 0
+                        ? new ChangeFreezeConditionShape()
+                        : new TimeWindowConstraintsConditionShape())
+                .map(value -> jsonBinding.serialize((ConditionShapeDetails) value, ConditionShapeDetails.class))
+                .peek(json -> assertThat(occurrences(json, "\"conditionShape\""), is(1)))
+                .map(json -> jsonBinding.deserialize(json, ConditionShapeDetails.class))
+                .toList();
+
+        for (int i = 0; i < restored.size(); i++) {
+            assertThat(restored.get(i), instanceOf(i % 2 == 0
+                                                           ? ChangeFreezeConditionShape.class
+                                                           : TimeWindowConstraintsConditionShape.class));
+        }
     }
 
     private int occurrences(String value, String token) {

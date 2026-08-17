@@ -177,6 +177,14 @@ components:
     ModeJsonConverter:
       type: string
       enum: [slow]
+    EscapedMode:
+      type: string
+      enum:
+        - ''
+        - 'quote"value'
+        - 'back\slash'
+        - "line\nbreak"
+        - "snowman-\u2603"
     EnumEnvelopeInlineModeEnumJsonConverter:
       type: string
       enum: [reserved]
@@ -187,6 +195,11 @@ components:
           type: string
           nullable: true
           enum: [on-hold, authZ]
+        escapedInline:
+          type: string
+          enum:
+            - 'quote"value'
+            - "line\nbreak"
         mode:
           $ref: '#/components/schemas/Mode'
         modes:

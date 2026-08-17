@@ -20,8 +20,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
@@ -37,6 +39,10 @@ final class ValidationTypeSupport {
         Set<String> references = new LinkedHashSet<>();
         parsed(javaType).ifPresent(type -> collectReferences(type, modelNames, references));
         return references;
+    }
+
+    static boolean isJavaArray(String javaType) {
+        return parsed(javaType).map(type -> type.arrayDimensions > 0).orElse(false);
     }
 
     static Optional<UnsupportedContainer> unsupportedContainer(String javaType,
@@ -61,20 +67,22 @@ final class ValidationTypeSupport {
 
     static String annotatedType(String javaType,
                                 Set<String> modelNames,
-                                Set<String> participating) {
+                                Set<String> participating,
+                                String modelPackage) {
         Optional<ParsedJavaType> parsed = parsed(javaType);
         if (parsed.isEmpty()) {
             return javaType;
         }
-        Set<Integer> insertions = new TreeSet<>();
-        collectInsertions(parsed.get(), modelNames, participating, insertions);
+        Map<Integer, String> insertions = new TreeMap<>();
+        collectInsertions(parsed.get(), modelNames, participating, modelPackage, insertions);
         if (insertions.isEmpty()) {
             return javaType;
         }
         StringBuilder result = new StringBuilder(javaType);
-        List<Integer> positions = new ArrayList<>(insertions);
-        for (int i = positions.size() - 1; i >= 0; i--) {
-            result.insert(positions.get(i), "@Validation.Valid ");
+        List<Map.Entry<Integer, String>> entries = new ArrayList<>(insertions.entrySet());
+        for (int i = entries.size() - 1; i >= 0; i--) {
+            Map.Entry<Integer, String> insertion = entries.get(i);
+            result.insert(insertion.getKey(), insertion.getValue());
         }
         return result.toString();
     }
@@ -134,22 +142,32 @@ final class ValidationTypeSupport {
     private static void collectInsertions(ParsedJavaType type,
                                           Set<String> modelNames,
                                           Set<String> participating,
-                                          Set<Integer> insertions) {
+                                          String modelPackage,
+                                          Map<Integer, String> insertions) {
         if (modelNames.contains(type.simpleName())) {
             if (participating.contains(type.simpleName())) {
-                insertions.add(type.rawStart);
+                if (type.arrayDimensions > 0) {
+                    int qualifier = type.rawType.lastIndexOf('.');
+                    if (qualifier >= 0) {
+                        insertions.put(type.rawStart + qualifier + 1, "@Validation.Valid ");
+                    } else {
+                        insertions.put(type.rawStart, modelPackage + ".@Validation.Valid ");
+                    }
+                } else {
+                    insertions.put(type.rawStart, "@Validation.Valid ");
+                }
             }
             return;
         }
         if ("Map".equals(type.simpleName())) {
             if (type.typeArguments.size() > 1) {
-                collectInsertions(type.typeArguments.get(1), modelNames, participating, insertions);
+                collectInsertions(type.typeArguments.get(1), modelNames, participating, modelPackage, insertions);
             }
             return;
         }
         if (type.arrayDimensions > 0 || SUPPORTED_CONTAINERS.contains(type.simpleName())) {
             for (ParsedJavaType argument : type.typeArguments) {
-                collectInsertions(argument, modelNames, participating, insertions);
+                collectInsertions(argument, modelNames, participating, modelPackage, insertions);
             }
         }
     }

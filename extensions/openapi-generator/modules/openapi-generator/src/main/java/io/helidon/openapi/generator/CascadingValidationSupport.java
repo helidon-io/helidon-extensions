@@ -349,12 +349,18 @@ final class CascadingValidationSupport {
                 + "recursive boundary to a non-validating DTO, or validate that boundary in application logic.");
     }
 
-    static void apply(CodegenProperty property, Set<String> modelNames, Set<String> participating) {
+    static void apply(CodegenProperty property,
+                      Set<String> modelNames,
+                      Set<String> participating,
+                      String modelPackage) {
         String javaType = propertyType(property);
         if (ValidationTypeSupport.isDirectParticipatingModel(javaType, modelNames, participating)) {
             property.vendorExtensions.put("x-cascade-validation", Boolean.TRUE);
         } else {
-            String annotatedType = ValidationTypeSupport.annotatedType(javaType, modelNames, participating);
+            String annotatedType = ValidationTypeSupport.annotatedType(javaType,
+                                                                        modelNames,
+                                                                        participating,
+                                                                        modelPackage);
             if (!annotatedType.equals(javaType)) {
                 property.vendorExtensions.put("x-validation-datatype", annotatedType);
             }
@@ -362,7 +368,8 @@ final class CascadingValidationSupport {
     }
 
     static boolean apply(CodegenParameter parameter,
-                         Analysis analysis) {
+                         Analysis analysis,
+                         String modelPackage) {
         String javaType = parameter.dataType;
         if (ValidationTypeSupport.referencedModels(javaType, analysis.modelNames).stream()
                 .anyMatch(analysis.participatingModels::contains)) {
@@ -393,7 +400,8 @@ final class CascadingValidationSupport {
         }
         String annotatedType = ValidationTypeSupport.annotatedType(javaType,
                                                                    analysis.modelNames,
-                                                                   analysis.participatingModels);
+                                                                   analysis.participatingModels,
+                                                                   modelPackage);
         if (!annotatedType.equals(javaType)) {
             parameter.vendorExtensions.put("x-validation-datatype", annotatedType);
             return true;
@@ -430,6 +438,7 @@ final class CascadingValidationSupport {
 
     static void applyInherited(CodegenModel model,
                                Analysis analysis,
+                               String modelPackage,
                                Function<CodegenProperty, List<Map<String, Object>>> validationAnnotations) {
         List<CodegenProperty> inherited = analysis.inheritedPropertiesByModel
                 .getOrDefault(model.classname, List.of());
@@ -438,7 +447,7 @@ final class CascadingValidationSupport {
             if (!annotations.isEmpty()) {
                 property.vendorExtensions.put("x-validation-annotations", annotations);
             }
-            apply(property, analysis.modelNames, analysis.participatingModels);
+            apply(property, analysis.modelNames, analysis.participatingModels, modelPackage);
         }
         if (!inherited.isEmpty()) {
             model.vendorExtensions.put("x-inherited-validation-vars", inherited);
@@ -472,6 +481,10 @@ final class CascadingValidationSupport {
         if (imports == null) {
             return;
         }
+        imports.removeIf(importEntry -> {
+            String importName = importEntry.get("import");
+            return importName != null && importName.indexOf('[') >= 0;
+        });
         Map<String, String> validationImport = Map.of("import", "io.helidon.validation.Validation");
         if (!imports.contains(validationImport)) {
             imports.add(validationImport);

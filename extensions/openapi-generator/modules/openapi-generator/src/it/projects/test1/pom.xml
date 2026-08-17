@@ -37,10 +37,12 @@
         <module>modules/fault-tolerance</module>
         <module>modules/validation</module>
         <module>modules/cascading-validation</module>
+        <module>modules/cascading-validation-mapped-containers</module>
         <module>modules/validation-private-field</module>
         <module>modules/discriminator-enum-mapping-repro</module>
         <module>modules/discriminator-enum-mapping-repro-2</module>
         <module>modules/composed-schemas</module>
         <module>modules/json-string-enums</module>
+        <module>modules/swagger2-contracts</module>
     </modules>
 </project>

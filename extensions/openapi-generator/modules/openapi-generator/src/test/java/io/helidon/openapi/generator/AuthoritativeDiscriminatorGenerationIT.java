@@ -220,6 +220,22 @@ class AuthoritativeDiscriminatorGenerationIT {
     }
 
     @Test
+    void generatedPolymorphicContractsNeedNoReflectiveOrThreadLocalAdapters() throws Exception {
+        Path output = generate("no-runtime-adapters", null);
+        Path sourceRoot = output.resolve("src/main/java");
+        StringBuilder sources = new StringBuilder();
+        try (var stream = Files.walk(sourceRoot)) {
+            for (Path source : stream.filter(Files::isRegularFile).sorted().toList()) {
+                sources.append(Files.readString(source));
+            }
+        }
+
+        assertThat(sources.toString(), not(containsString("ThreadLocal")));
+        assertThat(sources.toString(), not(containsString("java.lang.reflect")));
+        assertThat(sources.toString(), not(containsString("Class.forName")));
+    }
+
+    @Test
     void supportsExtensionValuesInheritedEnumTypesAndTransitiveHierarchies() throws Exception {
         URL resource = getClass().getClassLoader().getResource("authoritative-discriminator-adversarial.yaml");
         Path output = generate("adversarial", Paths.get(resource.toURI()).toAbsolutePath(), null);

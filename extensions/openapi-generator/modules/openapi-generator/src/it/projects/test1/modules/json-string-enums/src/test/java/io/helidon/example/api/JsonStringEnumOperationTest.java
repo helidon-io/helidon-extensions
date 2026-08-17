@@ -18,6 +18,7 @@ package io.helidon.example.api;
 
 import io.helidon.common.GenericType;
 import io.helidon.common.mapper.Mappers;
+import io.helidon.common.media.type.MediaTypes;
 import io.helidon.http.BadRequestException;
 import io.helidon.http.Status;
 import io.helidon.json.binding.JsonBinding;
@@ -55,6 +56,8 @@ class JsonStringEnumOperationTest {
                     .orElseThrow();
             response.send(value.toString());
         });
+        routing.post("/json-enum", (request, response) ->
+                response.send(request.content().as(EnumsApi.InspectModeBodyEnum.class)));
     }
 
     @Test
@@ -84,5 +87,16 @@ class JsonStringEnumOperationTest {
                    is("\"request-quick\""));
         assertThat(jsonBinding.deserialize("\"requestAuthZ\"", EnumsApi.InspectModeBodyEnum.class),
                    is(EnumsApi.InspectModeBodyEnum.REQUEST_AUTH_Z));
+    }
+
+    @Test
+    void generatedEnumCrossesHttpJsonRequestAndResponseBoundaries() {
+        try (var response = client.post("/json-enum")
+                .contentType(MediaTypes.APPLICATION_JSON)
+                .accept(MediaTypes.APPLICATION_JSON)
+                .submit("\"requestAuthZ\"")) {
+            assertThat(response.status(), is(Status.OK_200));
+            assertThat(response.as(String.class), is("\"requestAuthZ\""));
+        }
     }
 }

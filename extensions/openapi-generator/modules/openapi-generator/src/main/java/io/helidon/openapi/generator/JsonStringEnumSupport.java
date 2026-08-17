@@ -47,6 +47,7 @@ final class JsonStringEnumSupport {
     private final Set<String> allocatedModelTypes = new LinkedHashSet<>();
     private final Set<String> allocatedApiTypes = new LinkedHashSet<>();
     private Set<String> httpParameterEnumSchemas = Set.of();
+    private Map<String, List<String>> topLevelStringEnumValues = Map.of();
     private Map<String, List<String>> inlineRequestEntityEnumValues = Map.of();
     private Set<String> inlineRequestEntityEnumCollections = Set.of();
 
@@ -63,6 +64,16 @@ final class JsonStringEnumSupport {
             openAPI.getComponents().getSchemas().keySet().stream()
                     .map(modelNamer)
                     .forEach(allocatedModelTypes::add);
+            Map<String, List<String>> valuesBySchema = new LinkedHashMap<>();
+            openAPI.getComponents().getSchemas().forEach((name, schema) -> {
+                if ("string".equals(schema.getType()) && schema.getEnum() != null && !schema.getEnum().isEmpty()) {
+                    valuesBySchema.put(name,
+                                       declaredStringEnumValues("schema '" + name + "'", schema.getEnum()));
+                }
+            });
+            topLevelStringEnumValues = Map.copyOf(valuesBySchema);
+        } else {
+            topLevelStringEnumValues = Map.of();
         }
         captureInlineRequestEntityEnums(openAPI);
         httpParameterEnumSchemas = findHttpParameterEnumSchemas(openAPI);
@@ -137,10 +148,11 @@ final class JsonStringEnumSupport {
                 + javaName.apply(parameter.paramName)
                 + "Enum";
         CodegenProperty constraintSource = itemEnum ? item : null;
+        List<String> wireValues = constraintSource == null
+                ? wireValues(parameter._enum, allowableValues)
+                : wireValues(constraintSource._enum, allowableValues);
         validateEnumWireValues("operation parameter '" + parameter.baseName + "'",
-                               constraintSource == null
-                                       ? wireValues(parameter._enum, allowableValues)
-                                       : wireValues(constraintSource._enum, allowableValues),
+                               wireValues,
                                constraintSource == null ? parameter.minLength : constraintSource.minLength,
                                constraintSource == null ? parameter.maxLength : constraintSource.maxLength,
                                constraintSource == null ? parameter.pattern : constraintSource.pattern);
@@ -171,6 +183,7 @@ final class JsonStringEnumSupport {
                                                         apiClassname + "Api." + enumName,
                                                         converterName,
                                                         allowableValues,
+                                                        wireValues,
                                                         httpMapper);
         operationEnums.putIfAbsent(enumName, definition);
     }
@@ -190,8 +203,10 @@ final class JsonStringEnumSupport {
         if (!model.isEnum || !model.isString) {
             return false;
         }
+        List<String> wireValues = topLevelStringEnumValues.getOrDefault(
+                model.schemaName, wireValues(null, model.allowableValues));
         validateEnumWireValues("schema '" + model.schemaName + "'",
-                               wireValues(null, model.allowableValues),
+                               wireValues,
                                model.getMinLength(),
                                model.getMaxLength(),
                                model.getPattern());
@@ -200,6 +215,7 @@ final class JsonStringEnumSupport {
                                                         allocateTypeName(allocatedModelTypes,
                                                                          model.classname + "JsonConverter"),
                                                         model.allowableValues,
+                                                        wireValues,
                                                         Boolean.TRUE.equals(model.vendorExtensions
                                                                                     .get("x-http-parameter-enum")));
         if (definition != null) {
@@ -253,8 +269,9 @@ final class JsonStringEnumSupport {
                 continue;
             }
             String enumName = enumProperty.datatypeWithEnum;
+            List<String> wireValues = wireValues(enumProperty._enum, enumProperty.allowableValues);
             validateEnumWireValues("model property '" + model.classname + "." + property.baseName + "'",
-                                   wireValues(enumProperty._enum, enumProperty.allowableValues),
+                                   wireValues,
                                    enumProperty.minLength,
                                    enumProperty.maxLength,
                                    enumProperty.pattern);
@@ -266,6 +283,7 @@ final class JsonStringEnumSupport {
                                                                              model.classname + enumName
                                                                                      + "JsonConverter"),
                                                             enumProperty.allowableValues,
+                                                            wireValues,
                                                             false);
             if (definition != null) {
                 definitions.add(definition);
@@ -394,7 +412,9 @@ final class JsonStringEnumSupport {
                     || enumSchema.getEnum() == null || enumSchema.getEnum().isEmpty()) {
                 return;
             }
-            List<String> currentValues = enumSchema.getEnum().stream().map(Object::toString).toList();
+            List<String> currentValues = declaredStringEnumValues(
+                    "request entity for operation '" + operation.getOperationId() + "'",
+                    enumSchema.getEnum());
             if (capturedValues != null
                     && (!capturedValues.equals(currentValues) || collection != currentCollection)) {
                 return;
@@ -534,8 +554,11 @@ final class JsonStringEnumSupport {
                                                String qualifiedType,
                                                String converterName,
                                                Map<String, Object> allowableValues,
+                                               List<String> wireValues,
                                                boolean httpMapper) {
-        List<Map<String, String>> values = uniqueEnumValues(enumName, enumValues(allowableValues));
+        List<Map<String, String>> values = uniqueEnumValues(
+                enumName,
+                exactEnumValues(enumName, allowableValues, wireValues));
         if (values.isEmpty()) {
             return null;
         }
@@ -548,6 +571,37 @@ final class JsonStringEnumSupport {
             result.put("httpMapper", Boolean.TRUE);
         }
         return result;
+    }
+
+    private List<Map<String, String>> exactEnumValues(String enumName,
+                                                      Map<String, Object> allowableValues,
+                                                      List<String> wireValues) {
+        List<Map<String, String>> generatedValues = enumValues(allowableValues);
+        if (generatedValues.size() != wireValues.size()) {
+            throw new IllegalArgumentException("Cannot preserve the exact OpenAPI wire values for string enum '"
+                                                       + enumName + "': the generator produced "
+                                                       + generatedValues.size() + " constants for "
+                                                       + wireValues.size() + " declared values");
+        }
+        List<Map<String, String>> result = new ArrayList<>();
+        for (int i = 0; i < wireValues.size(); i++) {
+            String wireValue = wireValues.get(i);
+            String name = generatedValues.get(i).get("name");
+            result.add(Map.of("name", name, "value", JavaStringLiterals.toJavaStringLiteral(wireValue)));
+        }
+        return List.copyOf(result);
+    }
+
+    private List<String> declaredStringEnumValues(String location, List<?> declaredValues) {
+        List<String> result = new ArrayList<>();
+        for (Object value : declaredValues) {
+            if (value == null) {
+                throw new IllegalArgumentException("Unsupported null member in OpenAPI string enum on " + location
+                                                           + "; use nullable to allow a null value");
+            }
+            result.add(value.toString());
+        }
+        return List.copyOf(result);
     }
 
     private List<Map<String, String>> enumValues(Map<String, Object> allowableValues) {
