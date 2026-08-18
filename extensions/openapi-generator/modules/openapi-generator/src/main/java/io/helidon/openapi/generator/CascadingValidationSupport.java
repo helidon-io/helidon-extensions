@@ -449,9 +449,17 @@ final class CascadingValidationSupport {
     static boolean apply(CodegenParameter parameter,
                          Analysis analysis,
                          String modelPackage) {
-        String javaType = parameter.dataType;
-        if (ValidationTypeSupport.referencedModels(javaType, analysis.modelNames).stream()
-                .anyMatch(analysis.participatingModels::contains)) {
+        String javaType = effectiveRequestEntityType(parameter);
+        boolean participatingBoundary = ValidationTypeSupport.referencedModels(javaType, analysis.modelNames).stream()
+                .anyMatch(analysis.participatingModels::contains);
+        if (!javaType.equals(parameter.dataType)) {
+            parameter.dataType = javaType;
+            parameter.datatypeWithEnum = javaType;
+            parameter.baseType = javaType;
+            parameter.isPrimitiveType = false;
+            parameter.isFreeFormObject = false;
+        }
+        if (participatingBoundary) {
             validateRequestNullability(parameter, javaType);
         }
         Set<String> unsupportedPolymorphicTypes = ValidationTypeSupport.referencedModels(
@@ -487,6 +495,24 @@ final class CascadingValidationSupport {
             return true;
         }
         return false;
+    }
+
+    private static String effectiveRequestEntityType(CodegenParameter parameter) {
+        if (!"Object".equals(parameter.dataType) || parameter.getContent() == null) {
+            return parameter.dataType;
+        }
+        Set<String> contentTypes = parameter.getContent().values().stream()
+                .map(mediaType -> mediaType.getSchema())
+                .filter(java.util.Objects::nonNull)
+                .map(CascadingValidationSupport::propertyType)
+                .filter(type -> type != null && !type.isBlank() && !"Object".equals(type))
+                .collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
+        if (contentTypes.size() > 1) {
+            throw new IllegalArgumentException("Unsupported cascading validation request entity '"
+                    + parameter.baseName + "': content media types map to incompatible Java types "
+                    + contentTypes + '.');
+        }
+        return contentTypes.stream().findFirst().orElse(parameter.dataType);
     }
 
     private static void validateRequestNullability(CodegenParameter parameter, String javaType) {
@@ -544,16 +570,23 @@ final class CascadingValidationSupport {
         return List.copyOf(result);
     }
 
-    static void addRequestEntityImports(OperationsMap operations, List<CodegenOperation> operationList) {
+    static void addRequestEntityImports(OperationsMap operations,
+                                        List<CodegenOperation> operationList,
+                                        Analysis analysis,
+                                        String modelPackage) {
         removeArrayImports(operations.getImports());
-        boolean usesMap = operationList.stream()
+        Set<String> requestTypes = operationList.stream()
                 .flatMap(operation -> operation.allParams.stream())
+                .filter(parameter -> parameter.isBodyParam)
                 .map(parameter -> parameter.dataType)
-                .anyMatch(type -> type != null && (type.startsWith("Map<") || type.startsWith("java.util.Map<")));
-        Map<String, String> mapImport = Map.of("import", "java.util.Map");
-        if (usesMap && !operations.getImports().contains(mapImport)) {
-            operations.getImports().add(mapImport);
-        }
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
+        requestTypes.stream()
+                .flatMap(type -> ValidationTypeSupport.requiredJavaUtilImports(type).stream())
+                .forEach(importName -> addImport(operations.getImports(), importName));
+        requestTypes.stream()
+                .flatMap(type -> ValidationTypeSupport.referencedModels(type, analysis.modelNames).stream())
+                .forEach(modelName -> addImport(operations.getImports(), modelPackage + '.' + modelName));
     }
 
     static void addValidationImport(ModelsMap modelsMap) {
@@ -574,6 +607,12 @@ final class CascadingValidationSupport {
             String importName = importEntry.get("import");
             return importName != null && importName.indexOf('[') >= 0;
         });
+    }
+
+    private static void addImport(List<Map<String, String>> imports, String importName) {
+        if (imports.stream().noneMatch(importEntry -> importName.equals(importEntry.get("import")))) {
+            imports.add(Map.of("import", importName));
+        }
     }
 
     private static String propertyType(CodegenProperty property) {

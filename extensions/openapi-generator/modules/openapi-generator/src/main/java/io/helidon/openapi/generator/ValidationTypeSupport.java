@@ -50,6 +50,12 @@ final class ValidationTypeSupport {
         return parsed(javaType).map(type -> type.arrayDimensions > 0).orElse(false);
     }
 
+    static Set<String> requiredJavaUtilImports(String javaType) {
+        Set<String> imports = new TreeSet<>();
+        parsed(javaType).ifPresent(type -> collectJavaUtilImports(type, imports));
+        return Collections.unmodifiableSet(imports);
+    }
+
     static Optional<UnsupportedContainer> unsupportedContainer(String javaType,
                                                                Set<String> modelNames,
                                                                Set<String> participating) {
@@ -117,6 +123,15 @@ final class ValidationTypeSupport {
         for (ParsedJavaType argument : type.typeArguments) {
             collectReferences(argument, modelNames, references);
         }
+    }
+
+    private static void collectJavaUtilImports(ParsedJavaType type, Set<String> imports) {
+        if (SUPPORTED_MAPS.contains(type.rawType) || SUPPORTED_CONTAINERS.contains(type.rawType)) {
+            if (type.rawType.indexOf('.') < 0) {
+                imports.add("java.util." + type.rawType);
+            }
+        }
+        type.typeArguments.forEach(argument -> collectJavaUtilImports(argument, imports));
     }
 
     private static ParsedJavaType unsupportedContainer(ParsedJavaType type,

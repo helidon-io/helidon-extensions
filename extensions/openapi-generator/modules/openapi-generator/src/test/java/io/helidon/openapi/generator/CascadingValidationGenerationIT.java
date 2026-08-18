@@ -290,6 +290,21 @@ class CascadingValidationGenerationIT {
     }
 
     @Test
+    void supportsTopLevelSchemaMappedOptionalRequestBoundary() throws Exception {
+        Path target = outputDir.resolve("schema-mapped-optional-request");
+        URL resource = CascadingValidationGenerationIT.class.getClassLoader()
+                .getResource("schema-mapped-optional-request-validation.yaml");
+        CodegenConfigurator configurator = baseConfigurator(
+                target, Paths.get(resource.toURI()).toAbsolutePath().toString())
+                .addSchemaMapping("OptionalLeaf", "java.util.Optional<ConstrainedLeaf>");
+
+        new DefaultGenerator().opts(configurator.toClientOptInput()).generate();
+        String api = read(apiFile(target, "ValidationApi.java"));
+        assertThat(api, containsString("@Http.Entity java.util.Optional<@Validation.Valid ConstrainedLeaf>"));
+        assertThat(api, containsString("import io.helidon.example.model.ConstrainedLeaf;"));
+    }
+
+    @Test
     void rejectsSelfRecursiveParticipatingSchemaBeforeRendering() {
         Path recursiveOutput = outputDir.resolve("recursive");
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,

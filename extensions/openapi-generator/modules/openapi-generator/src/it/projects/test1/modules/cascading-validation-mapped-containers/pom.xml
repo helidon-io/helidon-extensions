@@ -35,6 +35,13 @@
         <skipGeneratedTests>false</skipGeneratedTests>
     </properties>
 
+    <dependencies>
+        <dependency>
+            <groupId>io.helidon.webserver</groupId>
+            <artifactId>helidon-webserver-validation</artifactId>
+        </dependency>
+    </dependencies>
+
     <build>
         <plugins>
             <plugin>

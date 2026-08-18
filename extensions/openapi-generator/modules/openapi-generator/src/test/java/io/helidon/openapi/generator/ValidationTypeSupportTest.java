@@ -83,6 +83,16 @@ class ValidationTypeSupportTest {
     }
 
     @Test
+    void identifiesImportsRequiredByUnqualifiedSupportedContainers() {
+        assertThat(ValidationTypeSupport.requiredJavaUtilImports(
+                           "Map<String, Optional<ConstrainedLeaf[]>>"),
+                   is(Set.of("java.util.Map", "java.util.Optional")));
+        assertThat(ValidationTypeSupport.requiredJavaUtilImports(
+                           "java.util.List<ConstrainedLeaf>"),
+                   is(Set.of()));
+    }
+
+    @Test
     void rejectsMalformedMappedTypesWithContext() {
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
                                                        () -> ValidationTypeSupport.referencedModels(

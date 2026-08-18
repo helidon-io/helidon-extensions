@@ -19,6 +19,34 @@ info:
   title: Cascading Validation Mapped Containers
   version: 1.0.0
 paths:
+  /validate-mapped-containers:
+    post:
+      operationId: validateMappedContainers
+      tags:
+        - validation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MappedContainers'
+      responses:
+        '204':
+          description: Valid
+  /validate-optional:
+    post:
+      operationId: validateOptional
+      tags:
+        - validation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OptionalLeaf'
+      responses:
+        '204':
+          description: Valid
   /validate-array:
     post:
       operationId: validateArray

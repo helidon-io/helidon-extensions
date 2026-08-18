@@ -768,7 +768,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             }
         }
 
-        CascadingValidationSupport.addRequestEntityImports(result, opList);
+        CascadingValidationSupport.addRequestEntityImports(result, opList, cascadingValidation, modelPackage);
 
         result.put("hasComputedHeaders", anyComputedHeaders);
         result.put("hasOptionalQueryParams", anyOptionalQuery);
