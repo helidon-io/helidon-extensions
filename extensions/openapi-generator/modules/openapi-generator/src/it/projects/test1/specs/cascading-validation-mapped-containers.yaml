@@ -18,7 +18,21 @@ openapi: 3.0.3
 info:
   title: Cascading Validation Mapped Containers
   version: 1.0.0
-paths: {}
+paths:
+  /validate-array:
+    post:
+      operationId: validateArray
+      tags:
+        - validation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeafArray'
+      responses:
+        '204':
+          description: Valid
 components:
   schemas:
     MappedContainers:

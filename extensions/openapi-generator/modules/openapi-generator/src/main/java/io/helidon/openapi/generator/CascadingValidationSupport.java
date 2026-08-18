@@ -545,6 +545,7 @@ final class CascadingValidationSupport {
     }
 
     static void addRequestEntityImports(OperationsMap operations, List<CodegenOperation> operationList) {
+        removeArrayImports(operations.getImports());
         boolean usesMap = operationList.stream()
                 .flatMap(operation -> operation.allParams.stream())
                 .map(parameter -> parameter.dataType)
@@ -561,14 +562,18 @@ final class CascadingValidationSupport {
         if (imports == null) {
             return;
         }
-        imports.removeIf(importEntry -> {
-            String importName = importEntry.get("import");
-            return importName != null && importName.indexOf('[') >= 0;
-        });
+        removeArrayImports(imports);
         Map<String, String> validationImport = Map.of("import", "io.helidon.validation.Validation");
         if (!imports.contains(validationImport)) {
             imports.add(validationImport);
         }
+    }
+
+    private static void removeArrayImports(List<Map<String, String>> imports) {
+        imports.removeIf(importEntry -> {
+            String importName = importEntry.get("import");
+            return importName != null && importName.indexOf('[') >= 0;
+        });
     }
 
     private static String propertyType(CodegenProperty property) {
