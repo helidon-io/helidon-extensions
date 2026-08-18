@@ -99,7 +99,7 @@ class CascadingValidationTest {
 
     @Test
     void validatesInheritedAllOfConstraintOnConcreteChild() {
-        ConstrainedChild child = new ConstrainedChild();
+        ConstrainedChild child = childWithRequiredModels();
         child.inheritedCode("x");
 
         ValidationResponse response = validation.validate(ConstrainedChild.class, child);
@@ -113,7 +113,7 @@ class CascadingValidationTest {
 
     @Test
     void validatesLocalAndInheritedConstraintsOnSameAllOfProperty() {
-        ConstrainedChild child = new ConstrainedChild();
+        ConstrainedChild child = childWithRequiredModels();
         child.inheritedCode("12345678901");
 
         ValidationResponse response = validation.validate(ConstrainedChild.class, child);
@@ -127,7 +127,7 @@ class CascadingValidationTest {
 
     @Test
     void validatesInheritedNullableDirectModelWhenPresent() {
-        ConstrainedChild child = new ConstrainedChild();
+        ConstrainedChild child = childWithRequiredModels();
         child.inheritedCode("valid");
         child.nestedLeaf(Optional.of(leaf("x", "y")));
 
@@ -138,6 +138,32 @@ class CascadingValidationTest {
                            .map(CascadingValidationTest::path)
                            .anyMatch(path -> path.contains("nestedLeaf") && path.contains("code")),
                    is(true));
+    }
+
+    @Test
+    void validatesChildLocalNullableDirectModelBuiltWithGeneratedBuilder() {
+        ConstrainedLeaf validLeaf = leaf("valid", "valid");
+        ConstrainedChild child = new ConstrainedChild.Builder()
+                .requiredNestedLeaf(validLeaf)
+                .requiredChildLeaf(validLeaf)
+                .childLeaf(Optional.of(leaf("x", "y")))
+                .build();
+
+        ValidationResponse response = validation.validate(ConstrainedChild.class, child);
+
+        assertThat(response.valid(), is(false));
+        assertThat(response.violations().stream()
+                           .map(CascadingValidationTest::path)
+                           .anyMatch(path -> path.contains("childLeaf") && path.contains("code")),
+                   is(true));
+    }
+
+    private static ConstrainedChild childWithRequiredModels() {
+        ConstrainedLeaf validLeaf = leaf("valid", "valid");
+        ConstrainedChild child = new ConstrainedChild();
+        child.requiredNestedLeaf(validLeaf);
+        child.requiredChildLeaf(validLeaf);
+        return child;
     }
 
     private static ConstrainedLeaf leaf(String code, String label) {

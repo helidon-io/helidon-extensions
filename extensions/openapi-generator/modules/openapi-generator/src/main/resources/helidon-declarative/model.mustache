@@ -418,7 +418,7 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
 {{#vendorExtensions.x-render-vars}}
     {{#description}}/** {{description}} */
     {{/description}}{{#vendorExtensions.x-json-required}}@Json.Required
-    {{/vendorExtensions.x-json-required}}{{^vendorExtensions.x-nullable-direct-cascade-validation}}private {{/vendorExtensions.x-nullable-direct-cascade-validation}}{{#vendorExtensions.x-nullable-direct-cascade-validation}}java.util.Optional<@Validation.Valid {{{datatypeWithEnum}}}>{{/vendorExtensions.x-nullable-direct-cascade-validation}}{{^vendorExtensions.x-nullable-direct-cascade-validation}}{{{datatypeWithEnum}}}{{/vendorExtensions.x-nullable-direct-cascade-validation}} {{name}}{{#vendorExtensions.x-nullable-direct-cascade-validation}} = java.util.Optional.{{#vendorExtensions.x-default-value}}ofNullable({{{vendorExtensions.x-default-value}}}){{/vendorExtensions.x-default-value}}{{^vendorExtensions.x-default-value}}empty(){{/vendorExtensions.x-default-value}}{{/vendorExtensions.x-nullable-direct-cascade-validation}}{{^vendorExtensions.x-nullable-direct-cascade-validation}}{{#vendorExtensions.x-default-value}} = {{{vendorExtensions.x-default-value}}}{{/vendorExtensions.x-default-value}}{{/vendorExtensions.x-nullable-direct-cascade-validation}};
+    {{/vendorExtensions.x-json-required}}private {{#vendorExtensions.x-nullable-direct-cascade-validation}}java.util.Optional<{{{datatypeWithEnum}}}>{{/vendorExtensions.x-nullable-direct-cascade-validation}}{{^vendorExtensions.x-nullable-direct-cascade-validation}}{{{datatypeWithEnum}}}{{/vendorExtensions.x-nullable-direct-cascade-validation}} {{name}}{{#vendorExtensions.x-nullable-direct-cascade-validation}} = java.util.Optional.{{#vendorExtensions.x-default-value}}ofNullable({{{vendorExtensions.x-default-value}}}){{/vendorExtensions.x-default-value}}{{^vendorExtensions.x-default-value}}empty(){{/vendorExtensions.x-default-value}}{{/vendorExtensions.x-nullable-direct-cascade-validation}}{{^vendorExtensions.x-nullable-direct-cascade-validation}}{{#vendorExtensions.x-default-value}} = {{{vendorExtensions.x-default-value}}}{{/vendorExtensions.x-default-value}}{{/vendorExtensions.x-nullable-direct-cascade-validation}};
 
 {{/vendorExtensions.x-render-vars}}
     /** No-arg constructor. */
@@ -449,7 +449,7 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
 {{#vendorExtensions.x-render-vars}}
 {{#vendorExtensions.x-validation-annotations}}    {{{annotation}}}
 {{/vendorExtensions.x-validation-annotations}}{{#vendorExtensions.x-cascade-validation}}    @Validation.Valid
-{{/vendorExtensions.x-cascade-validation}}    public {{#vendorExtensions.x-nullable-direct-cascade-validation}}java.util.Optional<{{{datatypeWithEnum}}}>{{/vendorExtensions.x-nullable-direct-cascade-validation}}{{^vendorExtensions.x-nullable-direct-cascade-validation}}{{#vendorExtensions.x-validation-datatype}}{{{vendorExtensions.x-validation-datatype}}}{{/vendorExtensions.x-validation-datatype}}{{^vendorExtensions.x-validation-datatype}}{{{datatypeWithEnum}}}{{/vendorExtensions.x-validation-datatype}}{{/vendorExtensions.x-nullable-direct-cascade-validation}} {{name}}() {
+{{/vendorExtensions.x-cascade-validation}}    public {{#vendorExtensions.x-validation-datatype}}{{{vendorExtensions.x-validation-datatype}}}{{/vendorExtensions.x-validation-datatype}}{{^vendorExtensions.x-validation-datatype}}{{{datatypeWithEnum}}}{{/vendorExtensions.x-validation-datatype}} {{name}}() {
         return {{name}};
     }
 
@@ -611,7 +611,7 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
          * @param {{name}} {{name}} value
          * @return updated builder
          */
-        public Builder {{name}}({{{datatypeWithEnum}}} {{name}}) {
+        public Builder {{name}}({{#vendorExtensions.x-nullable-direct-cascade-validation}}java.util.Optional<{{{datatypeWithEnum}}}>{{/vendorExtensions.x-nullable-direct-cascade-validation}}{{^vendorExtensions.x-nullable-direct-cascade-validation}}{{{datatypeWithEnum}}}{{/vendorExtensions.x-nullable-direct-cascade-validation}} {{name}}) {
             (({{classname}}) instance).{{name}}({{name}});
             return this;
         }
@@ -669,7 +669,7 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
          * @param {{name}} {{name}} value
          * @return updated builder
          */
-        public B {{name}}({{{datatypeWithEnum}}} {{name}}) {
+        public B {{name}}({{#vendorExtensions.x-nullable-direct-cascade-validation}}java.util.Optional<{{{datatypeWithEnum}}}>{{/vendorExtensions.x-nullable-direct-cascade-validation}}{{^vendorExtensions.x-nullable-direct-cascade-validation}}{{{datatypeWithEnum}}}{{/vendorExtensions.x-nullable-direct-cascade-validation}} {{name}}) {
             instance.{{name}}({{name}});
             return self();
         }

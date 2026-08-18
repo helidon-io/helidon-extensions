@@ -76,7 +76,7 @@ class CascadingValidationHttpTest {
     void invalidInheritedAllOfPropertyIsRejected() {
         try (var response = client.post("/validate-child")
                 .contentType(MediaTypes.APPLICATION_JSON)
-                .submit("{\"inheritedCode\":\"x\"}")) {
+                .submit("{\"inheritedCode\":\"x\"," + validRequiredChildModels() + "}")) {
             assertThat(response.status(), is(Status.BAD_REQUEST_400));
         }
     }
@@ -85,8 +85,30 @@ class CascadingValidationHttpTest {
     void invalidInheritedNullableDirectModelIsRejected() {
         try (var response = client.post("/validate-child")
                 .contentType(MediaTypes.APPLICATION_JSON)
-                .submit("{\"inheritedCode\":\"valid\",\"nestedLeaf\":{\"code\":\"x\",\"label\":\"y\"}}")) {
+                .submit("{\"inheritedCode\":\"valid\",\"nestedLeaf\":{\"code\":\"x\",\"label\":\"y\"},"
+                                + validRequiredChildModels() + "}")) {
             assertThat(response.status(), is(Status.BAD_REQUEST_400));
+        }
+    }
+
+    @Test
+    void invalidChildLocalNullableDirectModelIsRejected() {
+        try (var response = client.post("/validate-child")
+                .contentType(MediaTypes.APPLICATION_JSON)
+                .submit("{\"inheritedCode\":\"valid\",\"childLeaf\":{\"code\":\"x\",\"label\":\"y\"},"
+                                + validRequiredChildModels() + "}")) {
+            assertThat(response.status(), is(Status.BAD_REQUEST_400));
+        }
+    }
+
+    @Test
+    void validChildLocalNullableDirectModelReachesGeneratedEndpointLogic() {
+        try (var response = client.post("/validate-child")
+                .contentType(MediaTypes.APPLICATION_JSON)
+                .submit("{\"inheritedCode\":\"valid\","
+                                + "\"childLeaf\":{\"code\":\"valid\",\"label\":\"valid\"},"
+                                + validRequiredChildModels() + "}")) {
+            assertThat(response.status(), is(Status.INTERNAL_SERVER_ERROR_500));
         }
     }
 
@@ -106,5 +128,10 @@ class CascadingValidationHttpTest {
                 .submit("{\"production\":{\"code\":\"x\",\"label\":\"y\"}}")) {
             assertThat(response.status(), is(Status.BAD_REQUEST_400));
         }
+    }
+
+    private static String validRequiredChildModels() {
+        return "\"requiredNestedLeaf\":{\"code\":\"valid\",\"label\":\"valid\"},"
+                + "\"requiredChildLeaf\":{\"code\":\"valid\",\"label\":\"valid\"}";
     }
 }

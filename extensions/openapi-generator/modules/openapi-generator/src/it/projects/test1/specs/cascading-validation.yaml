@@ -114,18 +114,26 @@ components:
       allOf:
         - $ref: '#/components/schemas/ConstrainedBase'
         - type: object
+          required: [requiredChildLeaf]
           properties:
             inheritedCode:
               type: string
               maxLength: 10
             name:
               type: string
+            requiredChildLeaf:
+              $ref: '#/components/schemas/ConstrainedLeaf'
+            childLeaf:
+              $ref: '#/components/schemas/ConstrainedLeaf'
     ConstrainedBase:
       type: object
+      required: [requiredNestedLeaf]
       properties:
         inheritedCode:
           type: string
           minLength: 3
+        requiredNestedLeaf:
+          $ref: '#/components/schemas/ConstrainedLeaf'
         nestedLeaf:
           $ref: '#/components/schemas/ConstrainedLeaf'
     ConstrainedLeaf:

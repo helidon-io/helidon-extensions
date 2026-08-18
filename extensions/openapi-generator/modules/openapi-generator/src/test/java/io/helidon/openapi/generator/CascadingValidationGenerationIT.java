@@ -103,6 +103,27 @@ class CascadingValidationGenerationIT {
     }
 
     @Test
+    void rendersCompleteDirectModelValidationSignatureMatrix() throws IOException {
+        String intermediate = read(modelFile(outputDir, "ValidationIntermediate.java"));
+        assertRequiredLocalSignatures(intermediate, "leaf");
+
+        String root = read(modelFile(outputDir, "ValidationRoot.java"));
+        assertNullableLocalSignatures(root, "nullableLeaf");
+
+        String base = read(modelFile(outputDir, "ConstrainedBase.java"));
+        assertRequiredLocalSignatures(base, "requiredNestedLeaf");
+        assertNullableLocalSignatures(base, "nestedLeaf");
+
+        String child = read(modelFile(outputDir, "ConstrainedChild.java"));
+        assertRequiredLocalSignatures(child, "requiredChildLeaf");
+        assertNullableLocalSignatures(child, "childLeaf");
+        assertThat(child, containsString("@Validation.Valid\n"
+                                                 + "    public ConstrainedLeaf requiredNestedLeaf()"));
+        assertThat(child, containsString("public java.util.Optional<@Validation.Valid ConstrainedLeaf> "
+                                                 + "nestedLeaf()"));
+    }
+
+    @Test
     void annotatesRequestEntityInContractAndEndpoint() throws IOException {
         String expected = "@Validation.Valid @Http.Entity ValidationRoot validationRoot";
         assertThat(read(apiFile(outputDir, "ValidationApi.java")), containsString(expected));
@@ -153,11 +174,12 @@ class CascadingValidationGenerationIT {
         Path target = outputDir.resolve("nullable-direct");
         generate(target, "nullable-direct-cascading-validation.yaml", null);
         String parent = read(modelFile(target, "NullableParent.java"));
-        assertThat(parent, containsString("java.util.Optional<@Validation.Valid ConstrainedChild> child = "
+        assertThat(parent, containsString("private java.util.Optional<ConstrainedChild> child = "
                                                   + "java.util.Optional.empty()"));
-        assertThat(parent, containsString("public java.util.Optional<ConstrainedChild> child()"));
+        assertThat(parent, containsString("public java.util.Optional<@Validation.Valid ConstrainedChild> child()"));
         assertThat(parent, containsString("return child"));
         assertThat(parent, containsString("child == null ? java.util.Optional.empty() : child"));
+        assertThat(parent, not(containsString("java.util.Optional<@Validation.Valid ConstrainedChild> child =")));
     }
 
     @Test
@@ -440,6 +462,31 @@ class CascadingValidationGenerationIT {
 
     private static void assertValidated(String fileName) throws IOException {
         assertThat(read(modelFile(outputDir, fileName)), containsString("@Validation.Validated"));
+    }
+
+    private static void assertRequiredLocalSignatures(String model, String property) {
+        assertThat(model, containsString("private ConstrainedLeaf " + property + ";"));
+        assertThat(model, containsString("@Validation.Valid\n"
+                                                 + "    public ConstrainedLeaf " + property + "()"));
+        assertThat(model, containsString("public void " + property + "(ConstrainedLeaf " + property + ")"));
+        assertThat(model, containsString("public Builder " + property
+                                                 + "(ConstrainedLeaf " + property + ")"));
+        assertThat(model, containsString("public B " + property + "(ConstrainedLeaf " + property + ")"));
+    }
+
+    private static void assertNullableLocalSignatures(String model, String property) {
+        assertThat(model, containsString("private java.util.Optional<ConstrainedLeaf> " + property
+                                                 + " = java.util.Optional.empty();"));
+        assertThat(model, containsString("public java.util.Optional<@Validation.Valid ConstrainedLeaf> "
+                                                 + property + "()"));
+        assertThat(model, containsString("public void " + property
+                                                 + "(java.util.Optional<ConstrainedLeaf> " + property + ")"));
+        assertThat(model, containsString("public Builder " + property
+                                                 + "(java.util.Optional<ConstrainedLeaf> " + property + ")"));
+        assertThat(model, containsString("public B " + property
+                                                 + "(java.util.Optional<ConstrainedLeaf> " + property + ")"));
+        assertThat(model, not(containsString("java.util.Optional<@Validation.Valid ConstrainedLeaf> "
+                                                    + property + " =")));
     }
 
     private static void generate(Path target, String arrayMapping) throws Exception {
