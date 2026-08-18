@@ -42,6 +42,7 @@
     </modules>
 
     <properties>
+        <!-- Compatibility baseline for building the generator; generated projects default to 4.5.2. -->
         <helidon.version>4.4.1</helidon.version>
         <version.java>21</version.java>
 

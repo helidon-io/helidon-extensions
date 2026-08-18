@@ -30,7 +30,7 @@
     <name>OpenAPI Generator IT Swagger 2 Contracts</name>
 
     <properties>
-        <helidon.version>4.5.0</helidon.version>
+        <helidon.version>4.5.2</helidon.version>
         <inputSpec>${project.basedir}/../../specs/swagger2-contracts.yaml</inputSpec>
         <skipGeneratedTests>false</skipGeneratedTests>
     </properties>

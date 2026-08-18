@@ -184,8 +184,9 @@ class JsonStringEnumGenerationIT {
     }
 
     @Test
-    void generatedProjectUsesRequiredHelidonBaselineByDefault() throws IOException {
-        assertThat(read(outputDir.resolve("pom.xml")), containsString("<helidon.version>4.5.0</helidon.version>"));
+    void generatedProjectUsesLatestHelidonReleaseByDefault() throws IOException {
+        assertThat(read(outputDir.resolve("pom.xml")), containsString("<helidon.version>4.5.2</helidon.version>"));
+        assertThat(read(outputDir.resolve("build.gradle")), containsString("def helidonVersion = '4.5.2'"));
     }
 
     @Test

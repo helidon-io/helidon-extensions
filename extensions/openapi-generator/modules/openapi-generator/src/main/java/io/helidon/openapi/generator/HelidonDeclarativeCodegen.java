@@ -111,7 +111,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     static final String OPT_DISCRIMINATOR_REPRESENTATION = "discriminatorRepresentation";
     private static final String EXT_DISCRIMINATOR_REPRESENTATION =
             "x-helidon-discriminator-representation";
-    private String helidonVersion = "4.5.0";
+    private String helidonVersion = "4.5.2";
     private String javaVersion = "21";
     private boolean generateClient = true;
     private boolean generateErrorHandler = true;

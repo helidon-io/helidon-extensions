@@ -58,7 +58,7 @@ The module is packaged as a thin jar. Runtime dependencies are copied to
 
 In the examples below, `4.0.0-SNAPSHOT` is the version of this extension artifact.
 The separate `helidonVersion` option controls which Helidon version is written
-into generated Maven and Gradle projects, and its current default is `4.5.0`.
+into generated Maven and Gradle projects, and its current default is `4.5.2`.
 The `javaVersion` option controls the generated Maven compiler source and target
 values and the generated Gradle Java toolchain version, and its current default is
 `21`.
@@ -93,7 +93,7 @@ Add the generator as a dependency of `openapi-generator-maven-plugin`:
                 <inputSpec>${project.basedir}/src/main/resources/openapi.yaml</inputSpec>
                 <output>${project.build.directory}/generated-sources/openapi</output>
                 <configOptions>
-                    <helidonVersion>4.5.0</helidonVersion>
+                    <helidonVersion>4.5.2</helidonVersion>
                     <javaVersion>21</javaVersion>
                     <apiPackage>com.example.api</apiPackage>
                     <modelPackage>com.example.model</modelPackage>
@@ -121,7 +121,7 @@ mvn generate-sources
 In that example:
 
 - `4.0.0-SNAPSHOT` is the version of `helidon-extensions-openapi-generator`
-- `4.5.0` is the Helidon version used in the generated project
+- `4.5.2` is the Helidon version used in the generated project
 
 ## CLI Usage
 
@@ -133,11 +133,11 @@ java -jar openapi-generator/modules/openapi-generator/target/helidon-extensions-
   -g helidon-declarative \
   -i /path/to/openapi.yaml \
   -o /path/to/output \
-  --additional-properties helidonVersion=4.5.0,javaVersion=21,apiPackage=com.example.api,modelPackage=com.example.model,invokerPackage=com.example
+  --additional-properties helidonVersion=4.5.2,javaVersion=21,apiPackage=com.example.api,modelPackage=com.example.model,invokerPackage=com.example
 ```
 
 Here again, the jar version (`4.0.0-SNAPSHOT`) is the generator version, while
-`helidonVersion=4.5.0` controls the generated Helidon dependencies and
+`helidonVersion=4.5.2` controls the generated Helidon dependencies and
 `javaVersion=21` controls the generated project Java compilation level.
 
 Example with the optional-list flag enabled:
@@ -148,7 +148,7 @@ java -jar openapi-generator/modules/openapi-generator/target/helidon-extensions-
   -g helidon-declarative \
   -i /path/to/openapi.yaml \
   -o /tmp/generated-openapi \
-  --additional-properties helidonVersion=4.5.0,avoidOptionalListParams=true
+  --additional-properties helidonVersion=4.5.2,avoidOptionalListParams=true
 ```
 
 ## Generator Options
@@ -157,7 +157,7 @@ Set these under Maven `<configOptions>` or CLI `--additional-properties`.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `helidonVersion` | `4.5.0` | Helidon version written into generated Maven and Gradle builds |
+| `helidonVersion` | `4.5.2` | Helidon version written into generated Maven and Gradle builds |
 | `javaVersion` | `21` | Java version written into generated Maven compiler source/target and Gradle toolchain builds |
 | `apiPackage` | `io.helidon.example.api` | Package for generated API, endpoint, client, and error classes |
 | `modelPackage` | `io.helidon.example.model` | Package for generated model classes |
