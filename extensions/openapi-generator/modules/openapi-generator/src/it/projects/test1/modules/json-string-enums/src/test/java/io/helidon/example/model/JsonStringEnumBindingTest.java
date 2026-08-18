@@ -97,4 +97,15 @@ class JsonStringEnumBindingTest {
             assertThat(converted.get(i), is(i % 2 == 0 ? Mode.FAST_MODE : Mode.AUTH_Z));
         }
     }
+
+    @Test
+    void modelNamedServiceRoundTripsWithoutRegistryTypeCollision() {
+        Service service = new Service();
+        service.state(Service.StateEnum.READY_NOW);
+
+        String json = jsonBinding.serialize(service, Service.class);
+
+        assertThat(json, is("{\"state\":\"ready-now\"}"));
+        assertThat(jsonBinding.deserialize(json, Service.class).state(), is(Service.StateEnum.READY_NOW));
+    }
 }

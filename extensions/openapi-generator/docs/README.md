@@ -330,8 +330,10 @@ current validation API.
 
 Validation participation is computed transitively across generated model references.
 Participating models receive `@Validation.Validated`. Required, non-null direct model
-boundaries use method-level `@Validation.Valid`; `Optional`, collection, map-value, and
-array boundaries use type-use `@Validation.Valid`. Map keys are not cascade targets.
+boundaries use method-level `@Validation.Valid`. Nullable direct model properties use
+`Optional<T>` accessors backed by an `Optional<@Validation.Valid T>` validation field so
+validation skips absent values safely. `Optional`, collection, map-value, and array
+boundaries use type-use `@Validation.Valid`. Map keys are not cascade targets.
 Inherited `allOf` constraints and cascades are repeated on generated child overrides so
 the concrete child validator executes the complete parent contract. Constraints on a
 same-name child property are composed conjunctively with constraints from every `allOf`
@@ -342,10 +344,10 @@ follow Helidon's standard HTTP rejection behavior.
 
 Arbitrary `Iterable` or custom container mappings cannot guarantee Helidon cascade
 semantics and are rejected before source rendering with an actionable diagnostic,
-including request-entity containers. Optional or nullable direct model properties and
-schema-declared nullable request entities or nested request model values are
-also rejected because Helidon 4.5 does not null-guard a direct `@Validation.Valid`
-validator call; use `Optional`, a supported container, or a required non-null property.
+including request-entity containers. Schema-declared nullable request entities or nullable
+nested request model values are rejected because Helidon 4.5 does not null-guard a direct
+`@Validation.Valid` validator call; use `Optional`, a supported container, or a required
+non-null property.
 Helidon 4.5 also does not convert a contract-violating JSON `null` at a non-nullable
 `@Validation.Valid` boundary into a validation response. Rejecting that case requires a
 null guard in Helidon validation code generation and is outside this generator-only feature.

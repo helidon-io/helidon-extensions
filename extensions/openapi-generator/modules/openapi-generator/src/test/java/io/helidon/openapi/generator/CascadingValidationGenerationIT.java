@@ -149,17 +149,15 @@ class CascadingValidationGenerationIT {
     }
 
     @Test
-    void rejectsNullableDirectModelBoundaryBeforeRendering() {
+    void generatesNullSafeNullableDirectModelBoundary() throws Exception {
         Path target = outputDir.resolve("nullable-direct");
-        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
-                                                       () -> generate(target,
-                                                                      "nullable-direct-cascading-validation.yaml",
-                                                                      null));
-        assertThat(error.getMessage(), containsString("nullable direct cascading validation boundary"));
-        assertThat(error.getMessage(), containsString("schema 'NullableParent', property 'child'"));
-        assertThat(error.getMessage(), containsString("Make the property required and non-nullable"));
-        assertThat(Files.exists(modelFile(target, "NullableParent.java")),
-                   org.hamcrest.CoreMatchers.is(false));
+        generate(target, "nullable-direct-cascading-validation.yaml", null);
+        String parent = read(modelFile(target, "NullableParent.java"));
+        assertThat(parent, containsString("java.util.Optional<@Validation.Valid ConstrainedChild> child = "
+                                                  + "java.util.Optional.empty()"));
+        assertThat(parent, containsString("public java.util.Optional<ConstrainedChild> child()"));
+        assertThat(parent, containsString("return child"));
+        assertThat(parent, containsString("child == null ? java.util.Optional.empty() : child"));
     }
 
     @Test

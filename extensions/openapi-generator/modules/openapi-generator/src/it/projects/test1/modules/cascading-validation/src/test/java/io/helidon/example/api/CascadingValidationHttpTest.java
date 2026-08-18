@@ -54,10 +54,38 @@ class CascadingValidationHttpTest {
     }
 
     @Test
+    void invalidNullableDirectModelIsRejected() {
+        try (var response = client.post("/validate")
+                .contentType(MediaTypes.APPLICATION_JSON)
+                .submit("{\"intermediate\":{\"leaf\":{\"code\":\"valid\",\"label\":\"valid\"}},"
+                                + "\"nullableLeaf\":{\"code\":\"x\",\"label\":\"y\"}}")) {
+            assertThat(response.status(), is(Status.BAD_REQUEST_400));
+        }
+    }
+
+    @Test
+    void absentNullableDirectModelReachesGeneratedEndpointLogic() {
+        try (var response = client.post("/validate")
+                .contentType(MediaTypes.APPLICATION_JSON)
+                .submit("{\"intermediate\":{\"leaf\":{\"code\":\"valid\",\"label\":\"valid\"}}}")) {
+            assertThat(response.status(), is(Status.INTERNAL_SERVER_ERROR_500));
+        }
+    }
+
+    @Test
     void invalidInheritedAllOfPropertyIsRejected() {
         try (var response = client.post("/validate-child")
                 .contentType(MediaTypes.APPLICATION_JSON)
                 .submit("{\"inheritedCode\":\"x\"}")) {
+            assertThat(response.status(), is(Status.BAD_REQUEST_400));
+        }
+    }
+
+    @Test
+    void invalidInheritedNullableDirectModelIsRejected() {
+        try (var response = client.post("/validate-child")
+                .contentType(MediaTypes.APPLICATION_JSON)
+                .submit("{\"inheritedCode\":\"valid\",\"nestedLeaf\":{\"code\":\"x\",\"label\":\"y\"}}")) {
             assertThat(response.status(), is(Status.BAD_REQUEST_400));
         }
     }

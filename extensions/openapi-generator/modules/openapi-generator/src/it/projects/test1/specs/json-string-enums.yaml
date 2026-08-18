@@ -165,8 +165,25 @@ paths:
       responses:
         '204':
           description: Accepted
+  /service-name-collision:
+    get:
+      tags: [enums]
+      operationId: getServiceNameCollision
+      responses:
+        '200':
+          description: Model whose name collides with Helidon's Service annotation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
 components:
   schemas:
+    Service:
+      type: object
+      properties:
+        state:
+          type: string
+          enum: [ready-now, paused]
     Mode:
       type: string
       nullable: true

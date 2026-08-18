@@ -69,7 +69,7 @@ final class CascadingValidationSupport {
                                                                  directlyConstrained);
         Map<String, List<CodegenProperty>> effectiveProperties = effectiveProperties(propertiesByModel, inheritance);
         validateShapes(models, effectiveProperties, modelNames, participating);
-        validateDirectBoundaries(models, effectiveProperties, modelNames, participating);
+        validateNestedNullability(models, effectiveProperties, modelNames, participating);
         validateAcyclicGraph(effectiveProperties, modelNames, participating);
         Map<String, Set<String>> unsupportedPolymorphicTypes = unsupportedPolymorphicTypes(
                 models, participating, modelSpecificValidation);
@@ -137,21 +137,13 @@ final class CascadingValidationSupport {
         return Set.copyOf(result);
     }
 
-    private static void validateDirectBoundaries(List<CodegenModel> models,
-                                                 Map<String, List<CodegenProperty>> propertiesByModel,
-                                                 Set<String> modelNames,
-                                                 Set<String> participating) {
+    private static void validateNestedNullability(List<CodegenModel> models,
+                                                  Map<String, List<CodegenProperty>> propertiesByModel,
+                                                  Set<String> modelNames,
+                                                  Set<String> participating) {
         for (CodegenModel model : models) {
             for (CodegenProperty property : propertiesByModel.getOrDefault(model.classname, List.of())) {
                 String javaType = propertyType(property);
-                if (ValidationTypeSupport.isDirectParticipatingModel(javaType, modelNames, participating)
-                        && !property.requiredAndNotNullable()) {
-                    throw new IllegalArgumentException("Unsupported nullable direct cascading validation boundary for "
-                            + "schema '" + model.classname + "', property '" + property.baseName
-                            + "', mapped Java type '" + javaType + "'. Helidon 4.5 invokes direct @Validation.Valid "
-                            + "validators eagerly and does not guard null. Make the property required and non-nullable, "
-                            + "use Optional or a supported container boundary, or validate it in application logic.");
-                }
                 validateNestedModelNullability(model, property, javaType, modelNames, participating);
             }
         }
@@ -434,7 +426,13 @@ final class CascadingValidationSupport {
                       String modelPackage) {
         String javaType = propertyType(property);
         if (ValidationTypeSupport.isDirectParticipatingModel(javaType, modelNames, participating)) {
-            property.vendorExtensions.put("x-cascade-validation", Boolean.TRUE);
+            if (property.requiredAndNotNullable()) {
+                property.vendorExtensions.put("x-cascade-validation", Boolean.TRUE);
+            } else {
+                property.vendorExtensions.put("x-nullable-direct-cascade-validation", Boolean.TRUE);
+                property.vendorExtensions.put("x-validation-datatype",
+                                              "java.util.Optional<@Validation.Valid " + javaType + ">");
+            }
         } else {
             String annotatedType = ValidationTypeSupport.annotatedType(javaType,
                                                                         modelNames,

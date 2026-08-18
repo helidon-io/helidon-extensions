@@ -18,6 +18,7 @@ package io.helidon.example.model;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import io.helidon.service.registry.Services;
@@ -43,6 +44,7 @@ class CascadingValidationTest {
 
         ValidationRoot root = new ValidationRoot();
         root.intermediate(intermediate);
+        root.nullableLeaf(Optional.of(invalidLeaf));
         root.leaves(List.of(invalidLeaf));
         root.uniqueLeaves(Set.of(invalidLeaf));
         root.leavesByName(Map.of("production", invalidLeaf));
@@ -56,6 +58,7 @@ class CascadingValidationTest {
                 .map(CascadingValidationTest::path)
                 .reduce("", (left, right) -> left + "\n" + right);
         assertThat(paths, containsString("intermediate"));
+        assertThat(paths, containsString("nullableLeaf"));
         assertThat(paths, containsString("leaf"));
         assertThat(paths, containsString("leaves"));
         assertThat(paths, containsString("uniqueLeaves"));
@@ -74,11 +77,23 @@ class CascadingValidationTest {
         intermediate.leaf(validLeaf);
         ValidationRoot root = new ValidationRoot();
         root.intermediate(intermediate);
+        root.nullableLeaf(Optional.of(validLeaf));
         root.leaves(List.of(validLeaf));
         root.uniqueLeaves(Set.of(validLeaf));
         root.leavesByName(Map.of("production", validLeaf));
         root.nestedLeaves(List.of(List.of(validLeaf)));
 
+        assertThat(validation.validate(ValidationRoot.class, root).valid(), is(true));
+    }
+
+    @Test
+    void acceptsAbsentNullableDirectModel() {
+        ValidationIntermediate intermediate = new ValidationIntermediate();
+        intermediate.leaf(leaf("valid", "valid"));
+        ValidationRoot root = new ValidationRoot();
+        root.intermediate(intermediate);
+
+        assertThat(root.nullableLeaf(), is(Optional.empty()));
         assertThat(validation.validate(ValidationRoot.class, root).valid(), is(true));
     }
 
@@ -107,6 +122,21 @@ class CascadingValidationTest {
         assertThat(response.violations().stream()
                            .map(CascadingValidationTest::path)
                            .anyMatch(path -> path.contains("inheritedCode")),
+                   is(true));
+    }
+
+    @Test
+    void validatesInheritedNullableDirectModelWhenPresent() {
+        ConstrainedChild child = new ConstrainedChild();
+        child.inheritedCode("valid");
+        child.nestedLeaf(Optional.of(leaf("x", "y")));
+
+        ValidationResponse response = validation.validate(ConstrainedChild.class, child);
+
+        assertThat(response.valid(), is(false));
+        assertThat(response.violations().stream()
+                           .map(CascadingValidationTest::path)
+                           .anyMatch(path -> path.contains("nestedLeaf") && path.contains("code")),
                    is(true));
     }
 

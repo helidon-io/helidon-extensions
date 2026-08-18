@@ -17,7 +17,6 @@ limitations under the License.
 package {{package}};
 
 import io.helidon.http.Http;
-import io.helidon.service.registry.Service;
 import io.helidon.webserver.http.RestServer;
 {{#corsEnabled}}
 import io.helidon.webserver.cors.Cors;
@@ -53,7 +52,7 @@ import io.helidon.http.media.ReadableEntity;
  * processor to register HTTP routing without runtime reflection.</p>
  */
 @RestServer.Endpoint
-@Service.Singleton
+@io.helidon.service.registry.Service.Singleton
 {{#corsEnabled}}@Cors.Defaults
 {{/corsEnabled}}{{#tracingEnabled}}@Tracing.Traced
 {{/tracingEnabled}}public class {{classname}}Endpoint implements {{classname}}Api {

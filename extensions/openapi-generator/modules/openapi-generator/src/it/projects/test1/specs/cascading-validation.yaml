@@ -83,6 +83,8 @@ components:
       properties:
         intermediate:
           $ref: '#/components/schemas/ValidationIntermediate'
+        nullableLeaf:
+          $ref: '#/components/schemas/ConstrainedLeaf'
         leaves:
           type: array
           items:
@@ -124,6 +126,8 @@ components:
         inheritedCode:
           type: string
           minLength: 3
+        nestedLeaf:
+          $ref: '#/components/schemas/ConstrainedLeaf'
     ConstrainedLeaf:
       type: object
       properties:

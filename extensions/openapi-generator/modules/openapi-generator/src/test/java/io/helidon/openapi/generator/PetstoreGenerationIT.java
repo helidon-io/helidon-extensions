@@ -153,7 +153,8 @@ class PetstoreGenerationIT {
 
     @Test
     void endpointHasServiceSingletonAnnotation() throws IOException {
-        assertThat(read(apiFile("PetsEndpoint.java")), containsString("@Service.Singleton"));
+        assertThat(read(apiFile("PetsEndpoint.java")),
+                   containsString("@io.helidon.service.registry.Service.Singleton"));
     }
 
     @Test
