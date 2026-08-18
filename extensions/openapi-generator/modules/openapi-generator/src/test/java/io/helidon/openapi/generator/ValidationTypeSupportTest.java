@@ -64,6 +64,25 @@ class ValidationTypeSupportTest {
     }
 
     @Test
+    void distinguishesJavaUtilContainersFromQualifiedCustomTypesWithTheSameSimpleName() {
+        assertThat(ValidationTypeSupport.unsupportedContainer(
+                           "java.util.List<ConstrainedLeaf>", MODELS, PARTICIPATING),
+                   is(java.util.Optional.empty()));
+
+        var unsupportedList = ValidationTypeSupport.unsupportedContainer(
+                        "com.acme.List<ConstrainedLeaf>", MODELS, PARTICIPATING)
+                .orElseThrow();
+        assertThat(unsupportedList.rawType(), is("com.acme.List"));
+        assertThat(unsupportedList.participatingModels(), is(Set.of("ConstrainedLeaf")));
+
+        var unsupportedMap = ValidationTypeSupport.unsupportedContainer(
+                        "com.acme.Map<String, ConstrainedLeaf>", MODELS, PARTICIPATING)
+                .orElseThrow();
+        assertThat(unsupportedMap.rawType(), is("com.acme.Map"));
+        assertThat(unsupportedMap.participatingModels(), is(Set.of("ConstrainedLeaf")));
+    }
+
+    @Test
     void rejectsMalformedMappedTypesWithContext() {
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
                                                        () -> ValidationTypeSupport.referencedModels(

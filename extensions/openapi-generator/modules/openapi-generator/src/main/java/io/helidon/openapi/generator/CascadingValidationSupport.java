@@ -59,6 +59,9 @@ final class CascadingValidationSupport {
         }
         Set<String> participating = participatingModels(models, propertiesByModel,
                                                         modelNames, directlyConstrainedModels);
+        Set<String> modelSpecificValidation = modelSpecificValidationModels(propertiesByModel,
+                                                                             modelNames,
+                                                                             directlyConstrainedModels);
         Inheritance inheritance = inheritedValidationProperties(models,
                                                                  propertiesByModel,
                                                                  modelNames,
@@ -68,12 +71,13 @@ final class CascadingValidationSupport {
         validateShapes(models, effectiveProperties, modelNames, participating);
         validateDirectBoundaries(models, effectiveProperties, modelNames, participating);
         validateAcyclicGraph(effectiveProperties, modelNames, participating);
-        Set<String> unsupportedUnionTypes = unsupportedUnionTypes(models, participating);
-        validateUnionProperties(models, effectiveProperties, unsupportedUnionTypes);
+        Map<String, Set<String>> unsupportedPolymorphicTypes = unsupportedPolymorphicTypes(
+                models, participating, modelSpecificValidation);
+        validatePolymorphicProperties(models, effectiveProperties, unsupportedPolymorphicTypes);
         return new Analysis(modelNames,
                             Map.copyOf(propertiesByModel),
                             participating,
-                            unsupportedUnionTypes,
+                            unsupportedPolymorphicTypes,
                             inheritance.accessorsByModel,
                             inheritance.overriddenByModel);
     }
@@ -107,6 +111,30 @@ final class CascadingValidationSupport {
             }
         }
         return Set.copyOf(participating);
+    }
+
+    private static Set<String> modelSpecificValidationModels(
+            Map<String, List<CodegenProperty>> propertiesByModel,
+            Set<String> modelNames,
+            Set<String> directlyConstrainedModels) {
+        Set<String> result = new LinkedHashSet<>(directlyConstrainedModels);
+        Map<String, Set<String>> dependentsByTarget = new HashMap<>();
+        propertiesByModel.forEach((modelName, properties) -> properties.forEach(property ->
+                ValidationTypeSupport.referencedModels(propertyType(property), modelNames)
+                        .forEach(target -> dependentsByTarget
+                                .computeIfAbsent(target, ignored -> new LinkedHashSet<>())
+                                .add(modelName))));
+
+        var queue = new ArrayDeque<>(directlyConstrainedModels.stream().sorted().toList());
+        while (!queue.isEmpty()) {
+            String target = queue.removeFirst();
+            for (String dependent : dependentsByTarget.getOrDefault(target, Set.of()).stream().sorted().toList()) {
+                if (result.add(dependent)) {
+                    queue.addLast(dependent);
+                }
+            }
+        }
+        return Set.copyOf(result);
     }
 
     private static void validateDirectBoundaries(List<CodegenModel> models,
@@ -151,46 +179,97 @@ final class CascadingValidationSupport {
     }
 
     @SuppressWarnings("unchecked")
-    private static Set<String> unsupportedUnionTypes(List<CodegenModel> models, Set<String> participating) {
-        Set<String> result = new LinkedHashSet<>();
+    private static Map<String, Set<String>> unsupportedPolymorphicTypes(
+            List<CodegenModel> models,
+            Set<String> participating,
+            Set<String> modelSpecificValidation) {
+        Map<String, CodegenModel> modelsByName = models.stream()
+                .collect(java.util.stream.Collectors.toMap(model -> model.classname, model -> model));
+        Map<String, Set<String>> result = new LinkedHashMap<>();
         for (CodegenModel model : models) {
-            if (!Boolean.TRUE.equals(model.vendorExtensions.get("x-is-union-interface"))) {
-                continue;
+            if (Boolean.TRUE.equals(model.vendorExtensions.get("x-is-union-interface"))) {
+                Object membersValue = model.vendorExtensions.get("x-union-members");
+                if (membersValue instanceof List<?> members) {
+                    Set<String> constrainedMembers = members.stream()
+                            .filter(Map.class::isInstance)
+                            .map(Map.class::cast)
+                            .map(member -> member.get("name"))
+                            .filter(String.class::isInstance)
+                            .map(String.class::cast)
+                            .filter(participating::contains)
+                            .collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
+                    if (!constrainedMembers.isEmpty()) {
+                        result.put(model.classname, immutableSortedSet(constrainedMembers));
+                    }
+                }
             }
-            Object membersValue = model.vendorExtensions.get("x-union-members");
-            if (!(membersValue instanceof List<?> members)) {
-                continue;
-            }
-            boolean constrainedMember = members.stream()
-                    .filter(Map.class::isInstance)
-                    .map(Map.class::cast)
-                    .map(member -> member.get("name"))
-                    .filter(String.class::isInstance)
-                    .map(String.class::cast)
-                    .anyMatch(participating::contains);
-            if (constrainedMember) {
-                result.add(model.classname);
-            }
-        }
-        return Set.copyOf(result);
-    }
 
-    private static void validateUnionProperties(List<CodegenModel> models,
-                                                Map<String, List<CodegenProperty>> propertiesByModel,
-                                                Set<String> unsupportedUnionTypes) {
-        for (CodegenModel model : models) {
-            for (CodegenProperty property : propertiesByModel.getOrDefault(model.classname, List.of())) {
-                String javaType = propertyType(property);
-                Set<String> unions = ValidationTypeSupport.referencedModels(javaType, unsupportedUnionTypes);
-                if (!unions.isEmpty()) {
-                    throw new IllegalArgumentException("Unsupported cascading validation boundary for schema '"
-                            + model.classname + "', property '" + property.baseName + "', mapped Java type '"
-                            + javaType + "': composed schema type(s) " + unions + " contain constrained members, "
-                            + "but Helidon 4.5 cannot dispatch a static @Validation.Valid boundary to the runtime "
-                            + "subtype. Use a concrete property DTO or validate the union in application logic.");
+            if (Boolean.TRUE.equals(model.vendorExtensions.get("x-abstract-polymorphic-base"))) {
+                Set<String> constrainedSubtypes = models.stream()
+                        .filter(candidate -> modelSpecificValidation.contains(candidate.classname))
+                        .filter(candidate -> isDescendantOf(candidate, model.classname, modelsByName))
+                        .map(candidate -> candidate.classname)
+                        .collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
+                if (!constrainedSubtypes.isEmpty()) {
+                    result.merge(model.classname, immutableSortedSet(constrainedSubtypes), (left, right) -> {
+                        Set<String> merged = new java.util.TreeSet<>(left);
+                        merged.addAll(right);
+                        return immutableSortedSet(merged);
+                    });
                 }
             }
         }
+        return java.util.Collections.unmodifiableMap(result);
+    }
+
+    private static boolean isDescendantOf(CodegenModel candidate,
+                                          String ancestor,
+                                          Map<String, CodegenModel> modelsByName) {
+        Set<String> visited = new LinkedHashSet<>();
+        Object parent = candidate.vendorExtensions.get("x-extends-model");
+        while (parent != null && visited.add(parent.toString())) {
+            if (ancestor.equals(parent.toString())) {
+                return true;
+            }
+            CodegenModel parentModel = modelsByName.get(parent.toString());
+            parent = parentModel == null ? null : parentModel.vendorExtensions.get("x-extends-model");
+        }
+        return false;
+    }
+
+    private static void validatePolymorphicProperties(
+            List<CodegenModel> models,
+            Map<String, List<CodegenProperty>> propertiesByModel,
+            Map<String, Set<String>> unsupportedPolymorphicTypes) {
+        for (CodegenModel model : models) {
+            for (CodegenProperty property : propertiesByModel.getOrDefault(model.classname, List.of())) {
+                String javaType = propertyType(property);
+                Set<String> polymorphicTypes = ValidationTypeSupport.referencedModels(
+                        javaType, unsupportedPolymorphicTypes.keySet());
+                if (!polymorphicTypes.isEmpty()) {
+                    throw new IllegalArgumentException("Unsupported cascading validation boundary for schema '"
+                            + model.classname + "', property '" + property.baseName + "', mapped Java type '"
+                            + javaType + "': polymorphic schema type(s) " + polymorphicTypes
+                            + " contain constrained runtime subtype(s) "
+                            + constrainedRuntimeTypes(polymorphicTypes, unsupportedPolymorphicTypes) + ", "
+                            + "but Helidon 4.5 cannot dispatch a static @Validation.Valid boundary to the runtime "
+                            + "subtype. Use a concrete property DTO or validate the polymorphic value in "
+                            + "application logic.");
+                }
+            }
+        }
+    }
+
+    private static Set<String> constrainedRuntimeTypes(
+            Set<String> polymorphicTypes,
+            Map<String, Set<String>> unsupportedPolymorphicTypes) {
+        Set<String> result = new java.util.TreeSet<>();
+        polymorphicTypes.forEach(type -> result.addAll(unsupportedPolymorphicTypes.getOrDefault(type, Set.of())));
+        return immutableSortedSet(result);
+    }
+
+    private static Set<String> immutableSortedSet(Set<String> values) {
+        return java.util.Collections.unmodifiableSet(new java.util.TreeSet<>(values));
     }
 
     private static Inheritance inheritedValidationProperties(
@@ -375,14 +454,15 @@ final class CascadingValidationSupport {
                 .anyMatch(analysis.participatingModels::contains)) {
             validateRequestNullability(parameter, javaType);
         }
-        Set<String> unsupportedUnions = ValidationTypeSupport.referencedModels(javaType,
-                                                                                analysis.unsupportedUnionTypes);
-        if (!unsupportedUnions.isEmpty()) {
+        Set<String> unsupportedPolymorphicTypes = ValidationTypeSupport.referencedModels(
+                javaType, analysis.unsupportedPolymorphicTypes.keySet());
+        if (!unsupportedPolymorphicTypes.isEmpty()) {
             throw new IllegalArgumentException("Unsupported cascading validation request entity '"
-                    + parameter.baseName + "', mapped Java type '" + javaType + "': composed schema type(s) "
-                    + unsupportedUnions + " contain constrained members, but Helidon 4.5 cannot dispatch a static "
-                    + "@Validation.Valid boundary to the runtime subtype. Use a concrete request DTO or validate "
-                    + "the union in application logic.");
+                    + parameter.baseName + "', mapped Java type '" + javaType + "': polymorphic schema type(s) "
+                    + unsupportedPolymorphicTypes + " contain constrained runtime subtype(s) "
+                    + constrainedRuntimeTypes(unsupportedPolymorphicTypes, analysis.unsupportedPolymorphicTypes)
+                    + ", but Helidon 4.5 cannot dispatch a static @Validation.Valid boundary to the runtime subtype. "
+                    + "Use a concrete request DTO or validate the polymorphic value in application logic.");
         }
         ValidationTypeSupport.unsupportedContainer(javaType, analysis.modelNames, analysis.participatingModels)
                 .ifPresent(unsupported -> {
@@ -506,11 +586,11 @@ final class CascadingValidationSupport {
     record Analysis(Set<String> modelNames,
                     Map<String, List<CodegenProperty>> propertiesByModel,
                     Set<String> participatingModels,
-                    Set<String> unsupportedUnionTypes,
+                    Map<String, Set<String>> unsupportedPolymorphicTypes,
                     Map<String, List<CodegenProperty>> inheritedPropertiesByModel,
                     Map<String, Map<String, List<CodegenProperty>>> overriddenPropertiesByModel) {
         static Analysis empty() {
-            return new Analysis(Set.of(), Map.of(), Set.of(), Set.of(), Map.of(), Map.of());
+            return new Analysis(Set.of(), Map.of(), Set.of(), Map.of(), Map.of(), Map.of());
         }
     }
 

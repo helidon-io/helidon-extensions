@@ -30,7 +30,12 @@ import java.util.TreeSet;
  * Parses mapped Java types for supported cascading validation boundaries.
  */
 final class ValidationTypeSupport {
-    private static final Set<String> SUPPORTED_CONTAINERS = Set.of("Optional", "List", "Set", "Collection");
+    private static final Set<String> SUPPORTED_CONTAINERS = Set.of(
+            "Optional", "java.util.Optional",
+            "List", "java.util.List",
+            "Set", "java.util.Set",
+            "Collection", "java.util.Collection");
+    private static final Set<String> SUPPORTED_MAPS = Set.of("Map", "java.util.Map");
 
     private ValidationTypeSupport() {
     }
@@ -103,7 +108,7 @@ final class ValidationTypeSupport {
             references.add(type.simpleName());
             return;
         }
-        if ("Map".equals(type.simpleName())) {
+        if (SUPPORTED_MAPS.contains(type.rawType)) {
             if (type.typeArguments.size() > 1) {
                 collectReferences(type.typeArguments.get(1), modelNames, references);
             }
@@ -123,13 +128,12 @@ final class ValidationTypeSupport {
         if (type.arrayDimensions > 0) {
             return unsupportedContainer(type.withoutArray(), modelNames, participating);
         }
-        String simpleName = type.simpleName();
-        if ("Map".equals(simpleName)) {
+        if (SUPPORTED_MAPS.contains(type.rawType)) {
             return type.typeArguments.size() > 1
                     ? unsupportedContainer(type.typeArguments.get(1), modelNames, participating)
                     : null;
         }
-        if (SUPPORTED_CONTAINERS.contains(simpleName)) {
+        if (SUPPORTED_CONTAINERS.contains(type.rawType)) {
             return type.typeArguments.isEmpty()
                     ? null
                     : unsupportedContainer(type.typeArguments.get(0), modelNames, participating);
@@ -159,13 +163,13 @@ final class ValidationTypeSupport {
             }
             return;
         }
-        if ("Map".equals(type.simpleName())) {
+        if (SUPPORTED_MAPS.contains(type.rawType)) {
             if (type.typeArguments.size() > 1) {
                 collectInsertions(type.typeArguments.get(1), modelNames, participating, modelPackage, insertions);
             }
             return;
         }
-        if (type.arrayDimensions > 0 || SUPPORTED_CONTAINERS.contains(type.simpleName())) {
+        if (type.arrayDimensions > 0 || SUPPORTED_CONTAINERS.contains(type.rawType)) {
             for (ParsedJavaType argument : type.typeArguments) {
                 collectInsertions(argument, modelNames, participating, modelPackage, insertions);
             }

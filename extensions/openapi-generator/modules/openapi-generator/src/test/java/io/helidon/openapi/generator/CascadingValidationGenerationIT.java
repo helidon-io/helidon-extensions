@@ -216,8 +216,8 @@ class CascadingValidationGenerationIT {
                                                              "constrained-union-request-validation.yaml",
                                                              null));
         assertThat(rootMessage(error), containsString("Unsupported cascading validation request entity"));
-        assertThat(rootMessage(error), containsString("composed schema type(s) [ConstrainedChoice]"));
-        assertThat(rootMessage(error), containsString("constrained members"));
+        assertThat(rootMessage(error), containsString("polymorphic schema type(s) [ConstrainedChoice]"));
+        assertThat(rootMessage(error), containsString("constrained runtime subtype(s) [AlphaChoice]"));
         assertThat(rootMessage(error), containsString("concrete request DTO"));
     }
 
@@ -229,10 +229,63 @@ class CascadingValidationGenerationIT {
                                                                       "constrained-union-property-validation.yaml",
                                                                       null));
         assertThat(error.getMessage(), containsString("schema 'ChoiceHolder', property 'choice'"));
-        assertThat(error.getMessage(), containsString("composed schema type(s) [ConstrainedChoice]"));
-        assertThat(error.getMessage(), containsString("constrained members"));
+        assertThat(error.getMessage(), containsString("polymorphic schema type(s) [ConstrainedChoice]"));
+        assertThat(error.getMessage(), containsString("constrained runtime subtype(s) [AlphaChoice]"));
         assertThat(error.getMessage(), containsString("concrete property DTO"));
         assertThat(Files.exists(modelFile(target, "ChoiceHolder.java")),
+                   org.hamcrest.CoreMatchers.is(false));
+    }
+
+    @Test
+    void rejectsConstrainedAllOfPolymorphicRequestBoundaryBeforeRendering() {
+        Path target = outputDir.resolve("constrained-allof-request");
+        RuntimeException error = assertThrows(RuntimeException.class,
+                                              () -> generate(target,
+                                                             "constrained-allof-request-validation.yaml",
+                                                             null));
+        String message = rootMessage(error);
+        assertThat(message, containsString("Unsupported cascading validation request entity"));
+        assertThat(message, containsString("polymorphic schema type(s) [ConstrainedBase]"));
+        assertThat(message, containsString("constrained runtime subtype(s) [ConstrainedChild]"));
+        assertThat(message, containsString("concrete request DTO"));
+        assertThat(Files.exists(apiFile(target, "ValidationApi.java")),
+                   org.hamcrest.CoreMatchers.is(false));
+    }
+
+    @Test
+    void rejectsConstrainedAllOfPolymorphicPropertyBoundaryBeforeRendering() {
+        Path target = outputDir.resolve("constrained-allof-property");
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> generate(target, "constrained-allof-property-validation.yaml", null));
+        String message = error.getMessage();
+        assertThat(message, containsString("schema 'ConstrainedHolder', property 'value'"));
+        assertThat(message, containsString("polymorphic schema type(s) [ConstrainedBase]"));
+        assertThat(message, containsString("constrained runtime subtype(s) [ConstrainedChild]"));
+        assertThat(message, containsString("concrete property DTO"));
+        assertThat(Files.exists(modelFile(target, "ConstrainedHolder.java")),
+                   org.hamcrest.CoreMatchers.is(false));
+    }
+
+    @Test
+    void allowsAllOfPolymorphicBoundaryWhenOnlyBaseOwnsValidation() throws Exception {
+        Path target = outputDir.resolve("base-only-allof-validation");
+        generate(target, "base-only-allof-polymorphic-validation.yaml", null);
+
+        assertThat(read(apiFile(target, "ValidationApi.java")),
+                   containsString("@Validation.Valid @Http.Entity ConstrainedBase constrainedBase"));
+        assertThat(read(modelFile(target, "ConstrainedBase.java")),
+                   containsString("@Validation.String.Length(value = 10)"));
+    }
+
+    @Test
+    void rejectsQualifiedCustomContainerWithStandardSimpleName() {
+        Path target = outputDir.resolve("qualified-custom-list");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                                                       () -> generate(target, "com.acme.List"));
+        assertThat(error.getMessage(), containsString("mapped Java type 'com.acme.List<ConstrainedLeaf>'"));
+        assertThat(error.getMessage(), containsString("unsupported container 'com.acme.List'"));
+        assertThat(Files.exists(modelFile(target, "ValidationRoot.java")),
                    org.hamcrest.CoreMatchers.is(false));
     }
 
