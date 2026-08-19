@@ -42,8 +42,8 @@
     </modules>
 
     <properties>
-        <!-- Compatibility baseline for building the generator; generated projects default to 4.5.2. -->
-        <helidon.version>4.4.1</helidon.version>
+        <!-- Compatibility baseline for building the generator; generated projects default to 4.5.3. -->
+        <helidon.version>4.5.3</helidon.version>
         <version.java>21</version.java>
 
         <version.lib.openapi-generator>7.11.0</version.lib.openapi-generator>

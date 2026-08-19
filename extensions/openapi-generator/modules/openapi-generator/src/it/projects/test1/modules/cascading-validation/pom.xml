@@ -30,7 +30,7 @@
     <name>OpenAPI Generator IT Cascading Validation</name>
 
     <properties>
-        <helidon.version>4.5.2</helidon.version>
+        <helidon.version>4.5.3</helidon.version>
         <inputSpec>${project.basedir}/../../specs/cascading-validation.yaml</inputSpec>
         <skipGeneratedTests>false</skipGeneratedTests>
     </properties>

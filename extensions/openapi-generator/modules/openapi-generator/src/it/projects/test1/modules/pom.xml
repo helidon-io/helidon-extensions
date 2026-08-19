@@ -33,7 +33,7 @@
 
     <properties>
         <!-- Compatibility baseline; feature-specific modules override this when they require Helidon 4.5. -->
-        <helidon.version>4.4.1</helidon.version>
+        <helidon.version>4.5.3</helidon.version>
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <mainClass>io.helidon.example.Main</mainClass>
