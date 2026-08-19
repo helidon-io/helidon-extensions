@@ -39,6 +39,9 @@ final class MessagingTypes {
     static final TypeName EMITTER_REGISTRATION =
             TypeName.create("io.helidon.extensions.messaging.EmitterRegistration");
     static final TypeName ENTITY = TypeName.create("io.helidon.extensions.messaging.Messaging.Entity");
+    static final TypeName FAILURE_DISPOSITION =
+            TypeName.create("io.helidon.extensions.messaging.FailureDisposition");
+    static final TypeName FAILURE_POLICY = TypeName.create("io.helidon.extensions.messaging.FailurePolicy");
     static final TypeName GENERIC_TYPE = TypeName.create("io.helidon.common.GenericType");
     static final TypeName HEADER_PARAM =
             TypeName.create("io.helidon.extensions.messaging.Messaging.HeaderParam");
@@ -55,6 +58,7 @@ final class MessagingTypes {
             TypeName.create("io.helidon.extensions.messaging.MessagingException");
     static final TypeName MESSAGING_RUNTIME = TypeName.create("io.helidon.extensions.messaging.MessagingRuntime");
     static final TypeName OBJECTS = TypeName.create("java.util.Objects");
+    static final TypeName ON_FAILURE = TypeName.create("io.helidon.extensions.messaging.Messaging.OnFailure");
     static final TypeName RECEIVE_FROM = TypeName.create("io.helidon.extensions.messaging.Messaging.ReceiveFrom");
     static final TypeName OPTIONAL = TypeNames.OPTIONAL;
     static final TypeName SEND_TO = TypeName.create("io.helidon.extensions.messaging.Messaging.SendTo");

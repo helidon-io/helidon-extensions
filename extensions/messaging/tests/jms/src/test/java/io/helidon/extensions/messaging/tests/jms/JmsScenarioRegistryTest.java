@@ -24,8 +24,10 @@ import io.helidon.extensions.messaging.MessagingRuntime;
 import io.helidon.extensions.messaging.ProcessorRegistration;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.BytesReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.ForwardingReceiver;
+import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.FtRetryPoisonReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.TextReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.TextSender;
+import io.helidon.service.registry.Interception;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 
@@ -95,6 +97,24 @@ class JmsScenarioRegistryTest {
             assertThat(registry.all(EmitterRegistration.class).isEmpty(), is(true));
         } finally {
             processorManager.shutdown();
+        }
+    }
+
+    @Test
+    void retainsGeneratedFaultToleranceInterceptorOwnedBySelectedFixture() {
+        ServiceRegistryManager manager = JmsScenarioRegistry.create("{}",
+                                                                     UNUSED_CONNECTION_FACTORY,
+                                                                     FtRetryPoisonReceiver.class);
+        try {
+            ServiceRegistry registry = manager.registry();
+            assertThat(registry.all(Interception.ElementInterceptor.class)
+                               .stream()
+                               .anyMatch(interceptor -> interceptor.getClass()
+                                       .getName()
+                                       .contains("FtRetryPoisonReceiver_receive__Retry")),
+                       is(true));
+        } finally {
+            manager.shutdown();
         }
     }
 

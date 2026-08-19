@@ -74,6 +74,47 @@ public final class Messaging {
     }
 
     /**
+     * Declares default delivery failure handling for the incoming channel named by {@link ReceiveFrom}.
+     * The policy is channel- and delivery-scoped, so it covers sibling handlers and downstream outputs participating
+     * in the same source delivery rather than only the annotated method invocation. An explicitly configured
+     * {@code failure} key for the incoming channel overrides the corresponding annotation member.
+     */
+    @Documented
+    @Retention(RetentionPolicy.CLASS)
+    @Target(ElementType.METHOD)
+    public @interface OnFailure {
+        /**
+         * Delay before retrying a failed delivery, in {@link java.time.Duration} format.
+         *
+         * @return retry delay
+         */
+        String retryDelay() default "PT1S";
+
+        /**
+         * Maximum total delivery attempts, including the initial attempt. Zero means unlimited attempts and is only
+         * valid with {@link FailureDisposition#FAIL}.
+         *
+         * @return maximum delivery attempts, or zero for unlimited attempts
+         */
+        int maxAttempts() default 0;
+
+        /**
+         * Terminal disposition after delivery attempts are exhausted.
+         *
+         * @return terminal disposition
+         */
+        FailureDisposition onExhausted() default FailureDisposition.FAIL;
+
+        /**
+         * Logical channel used for dead-letter delivery. This is required for
+         * {@link FailureDisposition#DEAD_LETTER} and is not valid for other dispositions.
+         *
+         * @return dead-letter channel, or an empty string when none is declared
+         */
+        String deadLetterChannel() default "";
+    }
+
+    /**
      * Message header parameter.
      */
     @Retention(RetentionPolicy.CLASS)

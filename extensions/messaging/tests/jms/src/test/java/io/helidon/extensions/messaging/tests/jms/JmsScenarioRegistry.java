@@ -85,8 +85,8 @@ final class JmsScenarioRegistry {
         if (!serviceType.startsWith(GENERATED_FIXTURE_PREFIX)) {
             return true;
         }
-        int ownerEnd = serviceType.indexOf("__", GENERATED_FIXTURE_PREFIX.length());
-        return ownerEnd > 0
-                && scenarioTypes.contains(serviceType.substring(GENERATED_FIXTURE_PREFIX.length(), ownerEnd));
+        String generatedName = serviceType.substring(GENERATED_FIXTURE_PREFIX.length());
+        return scenarioTypes.stream()
+                .anyMatch(type -> generatedName.startsWith(type + "__") || generatedName.startsWith(type + "_"));
     }
 }

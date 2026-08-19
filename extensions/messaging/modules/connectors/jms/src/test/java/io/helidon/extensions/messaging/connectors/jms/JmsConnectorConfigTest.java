@@ -252,7 +252,7 @@ class JmsConnectorConfigTest {
         ConnectionFactory connectionFactory = mock(ConnectionFactory.class);
         JmsConnectorProvider provider = new JmsConnectorProvider(connectionFactory);
 
-        assertThat(provider.connectorType(), is("jms"));
+        assertThat(provider.connectorType(), is("helidon-jms"));
         assertThat(provider.createIncomingConnector(incomingBuilder().build()) != null, is(true));
         assertThat(provider.createOutgoingConnector(incomingBuilder()
                                                             .direction(ConnectorConfig.Direction.OUTGOING)

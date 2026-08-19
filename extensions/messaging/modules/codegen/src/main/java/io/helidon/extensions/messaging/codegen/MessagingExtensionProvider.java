@@ -40,7 +40,7 @@ public class MessagingExtensionProvider implements RegistryCodegenExtensionProvi
 
     @Override
     public Set<TypeName> supportedAnnotations() {
-        return Set.of(MessagingTypes.RECEIVE_FROM, MessagingTypes.SEND_TO);
+        return Set.of(MessagingTypes.ON_FAILURE, MessagingTypes.RECEIVE_FROM, MessagingTypes.SEND_TO);
     }
 
     @Override

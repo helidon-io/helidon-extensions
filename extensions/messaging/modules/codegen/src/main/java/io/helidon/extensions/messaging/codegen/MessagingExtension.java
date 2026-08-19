@@ -19,6 +19,8 @@ package io.helidon.extensions.messaging.codegen;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.time.format.DateTimeParseException;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -27,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import io.helidon.codegen.CodegenException;
@@ -63,6 +66,7 @@ class MessagingExtension implements RegistryCodegenExtension {
     public void process(RegistryRoundContext roundContext) {
         Collection<TypedElementInfo> elements = roundContext.annotatedElements(MessagingTypes.RECEIVE_FROM);
         validateSendToAnnotations(roundContext);
+        validateOnFailureAnnotations(roundContext);
         Map<ServiceChannel, TypedElementInfo> handlers = new LinkedHashMap<>();
         for (TypedElementInfo element : elements) {
             validateConsumerMethod(element);
@@ -91,7 +95,12 @@ class MessagingExtension implements RegistryCodegenExtension {
             }
             ConsumerMethod consumerMethod = consumerMethod(roundContext, element);
             validateConsumerTypes(roundContext, typeInfo, element, consumerMethod);
-            generateConsumerRegistration(roundContext, typeInfo, element, channel, consumerMethod);
+            generateConsumerRegistration(roundContext,
+                                         typeInfo,
+                                         element,
+                                         channel,
+                                         consumerMethod,
+                                         declaredFailurePolicy(element, channel));
         }
     }
 
@@ -99,7 +108,8 @@ class MessagingExtension implements RegistryCodegenExtension {
                                               TypeInfo typeInfo,
                                               TypedElementInfo element,
                                               String channel,
-                                              ConsumerMethod consumerMethod) {
+                                              ConsumerMethod consumerMethod,
+                                              Optional<FailurePolicyMetadata> failurePolicy) {
         TypeName payloadType = consumerMethod.payloadType();
         TypeName payloadMetadataType = payloadType.boxed();
         TypeName generatedType = TypeName.builder()
@@ -172,6 +182,8 @@ class MessagingExtension implements RegistryCodegenExtension {
 
         addLiteralMethod(classModel, "channel", channel);
 
+        failurePolicy.ifPresent(policy -> addFailurePolicyMetadata(classModel, policy));
+
         addGenericTypeField(classModel, "PAYLOAD_GENERIC_TYPE", payloadMetadataType);
         addGenericTypeField(classModel, "ENVELOPE_GENERIC_TYPE", consumerMethod.envelopeType());
 
@@ -216,6 +228,49 @@ class MessagingExtension implements RegistryCodegenExtension {
                 .addContent("return ")
                 .addContentLiteral(value)
                 .addContentLine(";"));
+    }
+
+    private void addFailurePolicyMetadata(ClassModel.Builder classModel, FailurePolicyMetadata policy) {
+        classModel.addField(field -> {
+            field.accessModifier(AccessModifier.PRIVATE)
+                    .isStatic(true)
+                    .isFinal(true)
+                    .type(MessagingTypes.FAILURE_POLICY)
+                    .name("DECLARED_FAILURE_POLICY")
+                    .addContent(MessagingTypes.FAILURE_POLICY)
+                    .addContentLine(".builder()")
+                    .increaseContentPadding()
+                    .addContent(".retryDelay(")
+                    .addContent(Duration.class)
+                    .addContent(".parse(")
+                    .addContentLiteral(policy.retryDelay())
+                    .addContentLine("))")
+                    .addContent(".maxAttempts(")
+                    .addContent(String.valueOf(policy.maxAttempts()))
+                    .addContentLine(")")
+                    .addContent(".onExhausted(")
+                    .addContent(MessagingTypes.FAILURE_DISPOSITION)
+                    .addContent(".")
+                    .addContent(policy.onExhausted())
+                    .addContentLine(")");
+            policy.deadLetterChannel().ifPresent(channel -> field
+                    .addContent(".deadLetterChannel(")
+                    .addContentLiteral(channel)
+                    .addContentLine(")"));
+            field.addContent(".build()")
+                    .decreaseContentPadding();
+        });
+
+        classModel.addMethod(method -> method
+                .addAnnotation(Annotations.OVERRIDE)
+                .accessModifier(AccessModifier.PUBLIC)
+                .returnType(TypeName.builder(MessagingTypes.OPTIONAL)
+                                    .addTypeArgument(MessagingTypes.FAILURE_POLICY)
+                                    .build())
+                .name("declaredFailurePolicy")
+                .addContent("return ")
+                .addContent(MessagingTypes.OPTIONAL)
+                .addContentLine(".of(DECLARED_FAILURE_POLICY);"));
     }
 
     private void addDispatchMethod(ClassModel.Builder classModel,
@@ -1193,11 +1248,100 @@ class MessagingExtension implements RegistryCodegenExtension {
         }
     }
 
+    private void validateOnFailureAnnotations(RegistryRoundContext roundContext) {
+        for (TypedElementInfo element : roundContext.annotatedElements(MessagingTypes.ON_FAILURE)) {
+            if (element.kind() != ElementKind.METHOD || !element.hasAnnotation(MessagingTypes.RECEIVE_FROM)) {
+                throw new CodegenException("@Messaging.OnFailure is only allowed on @Messaging.ReceiveFrom methods",
+                                           element.originatingElementValue());
+            }
+        }
+    }
+
+    private Optional<FailurePolicyMetadata> declaredFailurePolicy(TypedElementInfo element, String sourceChannel) {
+        if (!element.hasAnnotation(MessagingTypes.ON_FAILURE)) {
+            return Optional.empty();
+        }
+
+        Annotation annotation = element.annotation(MessagingTypes.ON_FAILURE);
+        String retryDelay = annotation.stringValue("retryDelay").orElse("PT1S");
+        Duration parsedRetryDelay;
+        try {
+            parsedRetryDelay = Duration.parse(retryDelay);
+        } catch (DateTimeParseException e) {
+            throw new CodegenException("@Messaging.OnFailure retryDelay must be a valid java.time.Duration: "
+                                               + retryDelay,
+                                       e,
+                                       element.originatingElementValue());
+        }
+        if (parsedRetryDelay.isZero() || parsedRetryDelay.isNegative()) {
+            throw new CodegenException("@Messaging.OnFailure retryDelay must be greater than zero",
+                                       element.originatingElementValue());
+        }
+
+        int maxAttempts = annotation.intValue("maxAttempts").orElse(0);
+        if (maxAttempts < 0) {
+            throw new CodegenException("@Messaging.OnFailure maxAttempts must be zero or greater",
+                                       element.originatingElementValue());
+        }
+
+        String onExhausted = annotation.stringValue("onExhausted").orElse("FAIL");
+        String declaredDeadLetterChannel = annotation.stringValue("deadLetterChannel").orElse("");
+        Optional<String> deadLetterChannel = Optional.empty();
+        switch (onExhausted) {
+        case "FAIL" -> {
+            if (!declaredDeadLetterChannel.isEmpty()) {
+                throw new CodegenException("@Messaging.OnFailure deadLetterChannel is only valid for DEAD_LETTER",
+                                           element.originatingElementValue());
+            }
+        }
+        case "DROP" -> {
+            if (maxAttempts == 0) {
+                throw new CodegenException("@Messaging.OnFailure maxAttempts must be greater than zero for DROP",
+                                           element.originatingElementValue());
+            }
+            if (!declaredDeadLetterChannel.isEmpty()) {
+                throw new CodegenException("@Messaging.OnFailure deadLetterChannel is only valid for DEAD_LETTER",
+                                           element.originatingElementValue());
+            }
+        }
+        case "DEAD_LETTER" -> {
+            if (maxAttempts == 0) {
+                throw new CodegenException("@Messaging.OnFailure maxAttempts must be greater than zero for DEAD_LETTER",
+                                           element.originatingElementValue());
+            }
+            if (declaredDeadLetterChannel.isEmpty()) {
+                throw new CodegenException("@Messaging.OnFailure deadLetterChannel must be configured for DEAD_LETTER",
+                                           element.originatingElementValue());
+            }
+            String channel = validateName(element,
+                                          declaredDeadLetterChannel,
+                                          "@Messaging.OnFailure deadLetterChannel");
+            if (sourceChannel.equals(channel)) {
+                throw new CodegenException("@Messaging.OnFailure deadLetterChannel must differ from the "
+                                                   + "@Messaging.ReceiveFrom channel",
+                                           element.originatingElementValue());
+            }
+            deadLetterChannel = Optional.of(channel);
+        }
+        default -> throw new CodegenException("Unsupported @Messaging.OnFailure onExhausted value " + onExhausted,
+                                              element.originatingElementValue());
+        }
+
+        return Optional.of(new FailurePolicyMetadata(retryDelay,
+                                                     maxAttempts,
+                                                     onExhausted,
+                                                     deadLetterChannel));
+    }
+
     private String annotationName(TypedElementInfo element, TypeName annotationType, String description) {
         String value = element.annotation(annotationType)
                 .stringValue()
                 .orElseThrow(() -> new CodegenException(description + " is required",
                                                         element.originatingElementValue()));
+        return validateName(element, value, description);
+    }
+
+    private String validateName(TypedElementInfo element, String value, String description) {
         if (value.isBlank()) {
             throw new CodegenException(description + " must not be blank", element.originatingElementValue());
         }
@@ -1289,6 +1433,12 @@ class MessagingExtension implements RegistryCodegenExtension {
     }
 
     private record BatchType(TypeName payloadType) {
+    }
+
+    private record FailurePolicyMetadata(String retryDelay,
+                                         int maxAttempts,
+                                         String onExhausted,
+                                         Optional<String> deadLetterChannel) {
     }
 
     private record ConsumerMethod(TypeName payloadType,

@@ -69,13 +69,13 @@ Do not combine `connection-factory` with `jndi.connection-factory`, or `destinat
 
 ## Configuration
 
-Connector defaults can be shared under `helidon.messaging.connector.jms`. Channel settings override them.
+Connector defaults can be shared under `helidon.messaging.connector.helidon-jms`. Channel settings override them.
 
 ```yaml
 helidon:
   messaging:
     connector:
-      jms:
+      helidon-jms:
         connection-factory: primary-jms
         reconnect:
           initial-delay: PT0.1S
@@ -86,14 +86,14 @@ helidon:
 
     incoming:
       orders:
-        connector: jms
+        connector: helidon-jms
         destination: orders
         destination-type: QUEUE
         message-selector: "region = 'EU'"
 
     outgoing:
       order-results:
-        connector: jms
+        connector: helidon-jms
         destination: order-results
         destination-type: QUEUE
 ```
@@ -123,7 +123,7 @@ helidon:
   messaging:
     incoming:
       notifications:
-        connector: jms
+        connector: helidon-jms
         destination: notifications
         destination-type: TOPIC
         durable: true

@@ -514,9 +514,9 @@ final class DeliveryEngine implements AutoCloseable {
         private final Deque<Object> admissionOrder = new ArrayDeque<>();
         private final Deque<Object> pendingReservationOrder = new ArrayDeque<>();
         private final Deque<DeliveryTask> queue = new ArrayDeque<>();
-        private final Set<DeliveryTask> active = new LinkedHashSet<>();
         private final Set<DeliveryTask> retained = new LinkedHashSet<>();
         private final Set<DeliveryReservation> reservations = new LinkedHashSet<>();
+        private DeliveryTask active;
         private long inFlightMessages;
         private long pendingMessages;
         private boolean dispatcherClosed;
@@ -949,12 +949,12 @@ final class DeliveryEngine implements AutoCloseable {
         private void admit(DeliveryTask task) {
             retained.add(task);
             reserve(task.messageCount());
-            if (active.size() < config.concurrency() && queue.isEmpty()) {
-                active.add(task);
+            if (active == null && queue.isEmpty()) {
+                active = task;
                 try {
                     startDispatch(task);
                 } catch (RuntimeException | Error e) {
-                    active.remove(task);
+                    active = null;
                     task.executionFinished = true;
                     release(task);
                     changed.signalAll();
@@ -966,15 +966,14 @@ final class DeliveryEngine implements AutoCloseable {
         }
 
         private boolean canAdmit(int messageCount) {
-            boolean executionCapacity = active.size() < config.concurrency()
-                    || queue.size() < config.queueCapacity();
+            boolean executionCapacity = active == null || queue.size() < config.queueCapacity();
             return executionCapacity
                     && messageCount <= config.maxInFlightMessages() - inFlightMessages;
         }
 
         private boolean canStartImmediately(int messageCount) {
             return queue.isEmpty()
-                    && active.size() < config.concurrency()
+                    && active == null
                     && messageCount <= config.maxInFlightMessages() - inFlightMessages;
         }
 
@@ -1039,9 +1038,10 @@ final class DeliveryEngine implements AutoCloseable {
             Throwable completionFailure;
             lock.lock();
             try {
-                if (!active.remove(task)) {
+                if (active != task) {
                     return;
                 }
+                active = null;
                 task.executionFinished = true;
                 completionFailure = task.cancellationFailure == null ? failure : task.cancellationFailure;
                 if (!task.connectorLease || task.releaseRequested) {
@@ -1049,14 +1049,14 @@ final class DeliveryEngine implements AutoCloseable {
                 }
                 while (!closed.get()
                         && !dispatcherClosed
-                        && active.size() < config.concurrency()
+                        && active == null
                         && !queue.isEmpty()) {
                     DeliveryTask next = queue.removeFirst();
-                    active.add(next);
+                    active = next;
                     try {
                         startDispatch(next);
                     } catch (RuntimeException | Error e) {
-                        active.remove(next);
+                        active = null;
                         next.executionFinished = true;
                         release(next);
                         next.complete(e);
@@ -1084,7 +1084,7 @@ final class DeliveryEngine implements AutoCloseable {
                     }
                     complete = true;
                     changed.signalAll();
-                } else if (active.contains(task)) {
+                } else if (active == task) {
                     task.requestCancellation(reason, message);
                     activeThread = task.thread();
                 }
@@ -1111,7 +1111,7 @@ final class DeliveryEngine implements AutoCloseable {
                     task.executionFinished = true;
                     release(task);
                     complete = true;
-                } else if (active.contains(task)) {
+                } else if (active == task) {
                     task.requestCancellation(MessagingRejectedException.Reason.CANCELLED,
                                              "Messaging delivery lease was released before processing completed");
                     activeThread = task.thread();
@@ -1166,14 +1166,14 @@ final class DeliveryEngine implements AutoCloseable {
             return admissionOrder.isEmpty()
                     && pendingReservationOrder.isEmpty()
                     && queue.isEmpty()
-                    && active.isEmpty()
+                    && active == null
                     && retained.isEmpty()
                     && reservations.isEmpty();
         }
 
         private void close() {
             List<DeliveryTask> queued;
-            List<Thread> running;
+            Thread running;
             lock.lock();
             try {
                 dispatcherClosed = true;
@@ -1195,18 +1195,16 @@ final class DeliveryEngine implements AutoCloseable {
                     task.executionFinished = true;
                     release(task);
                 }
-                active.forEach(task -> {
-                    task.releaseRequested = true;
-                    task.requestCancellation(MessagingRejectedException.Reason.SHUTDOWN,
-                                             "Messaging runtime is shutting down");
-                });
+                if (active != null) {
+                    active.releaseRequested = true;
+                    active.requestCancellation(MessagingRejectedException.Reason.SHUTDOWN,
+                                               "Messaging runtime is shutting down");
+                }
                 List<DeliveryTask> completedLeases = retained.stream()
-                        .filter(task -> !active.contains(task) && !queue.contains(task))
+                        .filter(task -> task != active && !queue.contains(task))
                         .toList();
                 completedLeases.forEach(this::release);
-                running = active.stream().map(DeliveryTask::thread)
-                        .filter(Objects::nonNull)
-                        .toList();
+                running = active == null ? null : active.thread();
                 changed.signalAll();
             } finally {
                 lock.unlock();
@@ -1216,7 +1214,9 @@ final class DeliveryEngine implements AutoCloseable {
                                        MessagingRejectedException.Reason.SHUTDOWN,
                                        "Messaging runtime is shutting down"));
             }
-            running.forEach(Thread::interrupt);
+            if (running != null) {
+                running.interrupt();
+            }
         }
 
         private void rejectIfNotAccepting() {

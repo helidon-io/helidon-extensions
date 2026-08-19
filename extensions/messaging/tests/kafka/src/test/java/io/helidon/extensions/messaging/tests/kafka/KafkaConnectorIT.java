@@ -20,6 +20,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -67,6 +69,7 @@ import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.RestartRe
 import io.helidon.extensions.messaging.tests.kafka.KafkaTestSerializers.BlockingStringSerializer;
 import io.helidon.extensions.messaging.tests.kafka.KafkaTestSerializers.FailingStringSerializer;
 import io.helidon.service.registry.ServiceRegistry;
+import io.helidon.service.registry.ServiceRegistryException;
 import io.helidon.service.registry.ServiceRegistryManager;
 
 import org.apache.kafka.clients.admin.Admin;
@@ -85,6 +88,7 @@ import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.GroupState;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.GroupIdNotFoundException;
+import org.apache.kafka.common.errors.SerializationException;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.apache.kafka.common.header.internals.RecordHeaders;
@@ -112,6 +116,7 @@ import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @Testcontainers(disabledWithoutDocker = true)
 class KafkaConnectorIT {
@@ -352,7 +357,10 @@ class KafkaConnectorIT {
             assertNoCommittedOffset(group, incomingTopic);
             assertNoRecords(outgoingTopic, Duration.ofMillis(500));
         } finally {
-            manager.shutdown();
+            ServiceRegistryException failure = assertThrows(ServiceRegistryException.class, manager::shutdown);
+            assertSingleTerminalFailure(failure,
+                                        SerializationException.class,
+                                        "Expected downstream serialization failure");
         }
     }
 
@@ -380,8 +388,14 @@ class KafkaConnectorIT {
             awaitNoActiveConsumerGroupMembers(group);
             assertNoCommittedOffset(group, topic);
         } finally {
-            firstManager.shutdown();
-            RestartReceiver.succeedDeliveries();
+            try {
+                ServiceRegistryException failure = assertThrows(ServiceRegistryException.class, firstManager::shutdown);
+                assertSingleTerminalFailure(failure,
+                                            IllegalStateException.class,
+                                            "Expected delivery to remain uncommitted before restart");
+            } finally {
+                RestartReceiver.succeedDeliveries();
+            }
         }
 
         ServiceRegistryManager secondManager = restartRegistryManager(topic, group);
@@ -818,7 +832,7 @@ class KafkaConnectorIT {
         String yaml = """
                 direction: OUTGOING
                 channel-name: %s
-                connector: kafka
+                connector: helidon-kafka
                 bootstrap.servers: "%s"
                 topic: "%s"
                 """.formatted(KafkaMessagingTypes.OUTGOING_CHANNEL,
@@ -833,7 +847,7 @@ class KafkaConnectorIT {
                   messaging:
                     outgoing:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                 """.formatted(KafkaMessagingTypes.OUTGOING_CHANNEL,
@@ -850,7 +864,7 @@ class KafkaConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         group.id: "%s"
@@ -863,7 +877,7 @@ class KafkaConnectorIT {
                           max.poll.records: "1"
                     outgoing:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         value.serializer: "%s"
@@ -886,7 +900,7 @@ class KafkaConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         group.id: "%s"
@@ -901,7 +915,7 @@ class KafkaConnectorIT {
                           max.poll.records: "1"
                     outgoing:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         value.serializer: "%s"
@@ -922,7 +936,7 @@ class KafkaConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         group.id: "%s"
@@ -948,7 +962,7 @@ class KafkaConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         group.id: "%s"
@@ -974,7 +988,7 @@ class KafkaConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         group.id: "%s"
@@ -998,7 +1012,7 @@ class KafkaConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         group.id: "%s"
@@ -1010,7 +1024,7 @@ class KafkaConnectorIT {
                           max.poll.records: "1"
                     outgoing:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         key.serializer: "%s"
@@ -1036,7 +1050,7 @@ class KafkaConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         group.id: "%s"
@@ -1061,7 +1075,7 @@ class KafkaConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         group.id: "%s"
@@ -1084,7 +1098,7 @@ class KafkaConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         group.id: "%s"
@@ -1111,7 +1125,7 @@ class KafkaConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         group.id: "%s"
@@ -1140,7 +1154,7 @@ class KafkaConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                         group.id: "%s"
@@ -1157,7 +1171,7 @@ class KafkaConnectorIT {
                           max.poll.records: "2"
                     outgoing:
                       %s:
-                        connector: kafka
+                        connector: helidon-kafka
                         bootstrap.servers: "%s"
                         topic: "%s"
                 """.formatted(KafkaMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL,
@@ -1491,6 +1505,47 @@ class KafkaConnectorIT {
             }
         }
         assertThat("active members in consumer group " + group, activeMembers, is(0));
+    }
+
+    private static void assertSingleTerminalFailure(Throwable failure,
+                                                    Class<? extends Throwable> expectedType,
+                                                    String expectedMessage) {
+        List<Throwable> terminalFailures = new ArrayList<>();
+        collectTerminalFailures(failure,
+                                Collections.newSetFromMap(new IdentityHashMap<>()),
+                                Collections.newSetFromMap(new IdentityHashMap<>()),
+                                terminalFailures);
+        assertThat("terminal failure count", terminalFailures.size(), is(1));
+        Throwable terminalFailure = terminalFailures.getFirst();
+        assertThat("terminal failure type", terminalFailure.getClass().getName(), is(expectedType.getName()));
+        assertThat("terminal failure message", terminalFailure.getMessage(), is(expectedMessage));
+    }
+
+    private static void collectTerminalFailures(Throwable failure,
+                                                Set<Throwable> visiting,
+                                                Set<Throwable> visited,
+                                                List<Throwable> terminalFailures) {
+        if (failure == null || visited.contains(failure)) {
+            return;
+        }
+        if (!visiting.add(failure)) {
+            throw new AssertionError("Throwable graph contains a cycle at " + failure, failure);
+        }
+        try {
+            Throwable cause = failure.getCause();
+            Throwable[] suppressed = failure.getSuppressed();
+            if (cause == null && suppressed.length == 0) {
+                terminalFailures.add(failure);
+                return;
+            }
+            collectTerminalFailures(cause, visiting, visited, terminalFailures);
+            for (Throwable suppressedFailure : suppressed) {
+                collectTerminalFailures(suppressedFailure, visiting, visited, terminalFailures);
+            }
+        } finally {
+            visiting.remove(failure);
+            visited.add(failure);
+        }
     }
 
     private static String uniqueName(String prefix) {

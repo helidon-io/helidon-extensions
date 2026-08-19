@@ -45,6 +45,19 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
+            <groupId>io.helidon.fault-tolerance</groupId>
+            <artifactId>helidon-fault-tolerance</artifactId>
+        </dependency>
+        <!-- Required by the generated application binding. -->
+        <dependency>
+            <groupId>io.helidon.http</groupId>
+            <artifactId>helidon-http</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.helidon.metrics</groupId>
+            <artifactId>helidon-metrics-api</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.helidon.config</groupId>
             <artifactId>helidon-config</artifactId>
         </dependency>
@@ -106,6 +119,11 @@
                             <version>${helidon.version}</version>
                         </path>
                         <path>
+                            <groupId>io.helidon.declarative</groupId>
+                            <artifactId>helidon-declarative-codegen</artifactId>
+                            <version>${helidon.version}</version>
+                        </path>
+                        <path>
                             <groupId>io.helidon.extensions.messaging</groupId>
                             <artifactId>helidon-extensions-messaging-codegen</artifactId>
                             <version>${project.version}</version>
@@ -126,6 +144,11 @@
                     <dependency>
                         <groupId>io.helidon.service</groupId>
                         <artifactId>helidon-service-codegen</artifactId>
+                        <version>${helidon.version}</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>io.helidon.declarative</groupId>
+                        <artifactId>helidon-declarative-codegen</artifactId>
                         <version>${helidon.version}</version>
                     </dependency>
                     <dependency>

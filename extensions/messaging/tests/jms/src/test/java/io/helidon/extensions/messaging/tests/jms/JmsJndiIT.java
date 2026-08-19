@@ -75,7 +75,7 @@ class JmsJndiIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         jndi:
                           connection-factory: cf
                           destination: orders
@@ -86,7 +86,7 @@ class JmsJndiIT {
                         receive-timeout: PT0.05S
                     outgoing:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         jndi:
                           connection-factory: cf
                           destination: orders

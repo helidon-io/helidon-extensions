@@ -18,6 +18,10 @@ module io.helidon.extensions.messaging.tests.jms {
     requires io.helidon.common;
     requires io.helidon.extensions.messaging;
     requires io.helidon.extensions.messaging.connectors.jms;
+    requires io.helidon.faulttolerance;
+    // required for generated binding
+    requires io.helidon.http;
+    requires io.helidon.metrics.api;
     requires io.helidon.service.registry;
 
     exports io.helidon.extensions.messaging.tests.jms to io.helidon.service.registry;

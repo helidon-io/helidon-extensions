@@ -16,6 +16,8 @@
 
 package io.helidon.extensions.messaging;
 
+import java.util.Optional;
+
 import io.helidon.common.GenericType;
 import io.helidon.service.registry.Service;
 
@@ -42,6 +44,16 @@ public interface ConsumerRegistration {
      * @return channel name
      */
     String channel();
+
+    /**
+     * Failure policy declared for this registration's incoming logical channel.
+     * The runtime reconciles declarations after applying explicit incoming-channel configuration.
+     *
+     * @return declared failure policy, if any
+     */
+    default Optional<FailurePolicy> declaredFailurePolicy() {
+        return Optional.empty();
+    }
 
     /**
      * Expected payload type.

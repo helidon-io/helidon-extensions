@@ -86,7 +86,7 @@ class FileConnectorTest {
     void testConnectorProviderTypeAndCapabilities() {
         FileConnectorProvider provider = new FileConnectorProvider();
 
-        assertThat(provider.connectorType(), is(FileConnectorProvider.CONNECTOR_TYPE));
+        assertThat(provider.connectorType(), is("helidon-file"));
         assertThat(provider, instanceOf(IncomingConnectorProvider.class));
         assertThat(provider, instanceOf(OutgoingConnectorProvider.class));
         assertThat(AutoCloseable.class.isAssignableFrom(provider.getClass()), is(false));
