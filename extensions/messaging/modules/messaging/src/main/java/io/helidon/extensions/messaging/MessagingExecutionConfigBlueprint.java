@@ -23,23 +23,11 @@ import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
 
 /**
- * Messaging admission, concurrency, and shutdown configuration.
+ * Messaging admission and shutdown configuration.
  */
 @Prototype.Blueprint(decorator = MessagingExecutionConfigBlueprint.BuilderDecorator.class)
 @Prototype.Configured
 interface MessagingExecutionConfigBlueprint {
-    /**
-     * Maximum number of concurrently executing messaging tasks.
-     * <p>
-     * A value of one preserves FIFO execution of admitted delivery units. Values greater than one preserve message
-     * order within each batch, but independent delivery units may execute and complete out of order.
-     *
-     * @return task concurrency
-     */
-    @Option.Configured("concurrency")
-    @Option.Default("1")
-    int concurrency();
-
     /**
      * Maximum number of admitted tasks that may wait for an execution slot.
      * <p>
@@ -118,9 +106,6 @@ interface MessagingExecutionConfigBlueprint {
     class BuilderDecorator implements Prototype.BuilderDecorator<MessagingExecutionConfig.BuilderBase<?, ?>> {
         @Override
         public void decorate(MessagingExecutionConfig.BuilderBase<?, ?> target) {
-            if (target.concurrency() <= 0) {
-                throw new IllegalArgumentException("messaging.execution.concurrency must be greater than zero");
-            }
             if (target.queueCapacity() < 0) {
                 throw new IllegalArgumentException("messaging.execution.queue-capacity must be zero or greater");
             }

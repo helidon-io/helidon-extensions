@@ -47,7 +47,6 @@ class ChannelRegistryFailurePolicyTest {
                 helidon:
                   messaging:
                     execution:
-                      concurrency: 2
                       queue-capacity: 3
                       max-pending-admissions: 4
                       max-pending-messages: 5
@@ -57,14 +56,12 @@ class ChannelRegistryFailurePolicyTest {
                     channel:
                       orders:
                         execution:
-                          concurrency: 11
                           queue-capacity: 12
                           max-pending-messages: 14
                           admission-timeout: PT0.018S
                 """);
 
         MessagingExecutionConfig global = ChannelRegistry.executionConfig(config, null);
-        assertThat(global.concurrency(), is(2));
         assertThat(global.queueCapacity(), is(3));
         assertThat(global.maxPendingAdmissions(), is(4));
         assertThat(global.maxPendingMessages(), is(5));
@@ -73,7 +70,6 @@ class ChannelRegistryFailurePolicyTest {
         assertThat(global.shutdownTimeout(), is(Duration.ofMillis(10)));
 
         MessagingExecutionConfig orders = ChannelRegistry.executionConfig(config, "orders");
-        assertThat(orders.concurrency(), is(11));
         assertThat(orders.queueCapacity(), is(12));
         assertThat(orders.maxPendingAdmissions(), is(4));
         assertThat(orders.maxPendingMessages(), is(14));
@@ -495,6 +491,76 @@ class ChannelRegistryFailurePolicyTest {
         assertThat(incoming.createdCount(), is(0));
         assertThat(outgoing.createdCount(), is(0));
         assertThat(incoming.awaitAnyStart(), is(false));
+    }
+
+    @Test
+    void testConflictingDeclaredFailurePoliciesAreRejectedAfterConfigMerge() {
+        TestIncomingConnector incoming = new TestIncomingConnector();
+        FailurePolicy firstPolicy = FailurePolicy.builder()
+                .maxAttempts(2)
+                .onExhausted(FailureDisposition.DROP)
+                .build();
+        FailurePolicy secondPolicy = FailurePolicy.builder()
+                .maxAttempts(3)
+                .onExhausted(FailureDisposition.DROP)
+                .build();
+
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> new ChannelRegistry(
+                        List.of(registration("first-handler", "orders", firstPolicy, ignored -> { }),
+                                registration("second-handler", "orders", secondPolicy, ignored -> { })),
+                        yaml("""
+                                helidon:
+                                  messaging:
+                                    incoming:
+                                      orders:
+                                        connector: test-in
+                                """),
+                        List.of(incoming)));
+
+        assertThat(failure.getMessage(), containsString("Incoming channel orders"));
+        assertThat(failure.getMessage(), containsString("first-handler"));
+        assertThat(failure.getMessage(), containsString("second-handler"));
+        assertThat(incoming.createdCount(), is(0));
+    }
+
+    @Test
+    void testConfigResolvesDeclaredPolicyConflictAndClearsInheritedDeadLetterChannels() {
+        TestIncomingConnector incoming = new TestIncomingConnector();
+        FailurePolicy firstPolicy = FailurePolicy.builder()
+                .retryDelay(Duration.ofMillis(7))
+                .maxAttempts(2)
+                .onExhausted(FailureDisposition.DEAD_LETTER)
+                .deadLetterChannel("first-dlq")
+                .build();
+        FailurePolicy secondPolicy = FailurePolicy.builder()
+                .retryDelay(Duration.ofMillis(7))
+                .maxAttempts(3)
+                .onExhausted(FailureDisposition.DEAD_LETTER)
+                .deadLetterChannel("second-dlq")
+                .build();
+
+        ChannelRegistry registry = new ChannelRegistry(
+                List.of(registration("first-handler", "orders", firstPolicy, ignored -> { }),
+                        registration("second-handler", "orders", secondPolicy, ignored -> { })),
+                yaml("""
+                        helidon:
+                          messaging:
+                            incoming:
+                              orders:
+                                connector: test-in
+                                failure:
+                                  retry:
+                                    max-attempts: 1
+                                  on-exhausted: DROP
+                        """),
+                List.of(incoming));
+        try {
+            assertThat(incoming.createdCount(), is(1));
+        } finally {
+            registry.close();
+        }
     }
 
     @Test
@@ -1137,6 +1203,20 @@ class ChannelRegistryFailurePolicyTest {
                             consumer);
     }
 
+    private static ConsumerRegistration registration(String handlerId,
+                                                     String channel,
+                                                     FailurePolicy failurePolicy,
+                                                     Consumer<Message<?>> consumer) {
+        return registration(handlerId,
+                            channel,
+                            String.class,
+                            new GenericType<String>() { },
+                            Message.class,
+                            new GenericType<Message<String>>() { },
+                            failurePolicy,
+                            consumer);
+    }
+
     private static ConsumerRegistration batchRegistration(String channel,
                                                           Consumer<MessageBatch<?>> consumer) {
         return new ConsumerRegistration() {
@@ -1191,7 +1271,30 @@ class ChannelRegistryFailurePolicyTest {
                                                      Class<?> envelopeType,
                                                      GenericType<?> envelopeGenericType,
                                                      Consumer<Message<?>> consumer) {
+        return registration(null,
+                            channel,
+                            payloadType,
+                            payloadGenericType,
+                            envelopeType,
+                            envelopeGenericType,
+                            null,
+                            consumer);
+    }
+
+    private static ConsumerRegistration registration(String handlerId,
+                                                     String channel,
+                                                     Class<?> payloadType,
+                                                     GenericType<?> payloadGenericType,
+                                                     Class<?> envelopeType,
+                                                     GenericType<?> envelopeGenericType,
+                                                     FailurePolicy failurePolicy,
+                                                     Consumer<Message<?>> consumer) {
         return new ConsumerRegistration() {
+            @Override
+            public String handlerId() {
+                return handlerId == null ? ConsumerRegistration.super.handlerId() : handlerId;
+            }
+
             @Override
             public String channel() {
                 return channel;
@@ -1215,6 +1318,11 @@ class ChannelRegistryFailurePolicyTest {
             @Override
             public GenericType<?> envelopeGenericType() {
                 return envelopeGenericType;
+            }
+
+            @Override
+            public java.util.Optional<FailurePolicy> declaredFailurePolicy() {
+                return java.util.Optional.ofNullable(failurePolicy);
             }
 
             @Override

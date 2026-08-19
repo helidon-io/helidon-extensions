@@ -76,51 +76,57 @@ class DeliveryEngineTest {
     }
 
     @Test
-    void enforcesMaximumConcurrency() throws Exception {
+    void serializesDeliveriesPerChannelWhileIndependentChannelsOverlap() throws Exception {
         MessagingExecutionConfig config = configBuilder()
-                .concurrency(2)
                 .queueCapacity(1)
-                .maxInFlightMessages(3)
+                .maxInFlightMessages(2)
                 .build();
-        try (DeliveryEngine engine = engine(config, "orders")) {
-            CountDownLatch activeStarted = new CountDownLatch(2);
-            CountDownLatch thirdStarted = new CountDownLatch(1);
-            CountDownLatch release = new CountDownLatch(1);
-            AtomicInteger active = new AtomicInteger();
-            AtomicInteger maximumActive = new AtomicInteger();
+        try (DeliveryEngine engine = engine(config, "orders", "payments")) {
+            CountDownLatch firstOrderStarted = new CountDownLatch(1);
+            CountDownLatch secondOrderStarted = new CountDownLatch(1);
+            CountDownLatch paymentStarted = new CountDownLatch(1);
+            CountDownLatch releaseFirstOrder = new CountDownLatch(1);
+            AtomicInteger activeOrders = new AtomicInteger();
+            AtomicInteger maximumActiveOrders = new AtomicInteger();
 
-            Runnable blockingAction = () -> {
-                int current = active.incrementAndGet();
-                maximumActive.accumulateAndGet(current, Math::max);
-                activeStarted.countDown();
+            Runnable firstOrderAction = () -> {
+                int current = activeOrders.incrementAndGet();
+                maximumActiveOrders.accumulateAndGet(current, Math::max);
+                firstOrderStarted.countDown();
                 try {
-                    await(release);
+                    await(releaseFirstOrder);
                 } finally {
-                    active.decrementAndGet();
+                    activeOrders.decrementAndGet();
                 }
             };
-            ConnectorDelivery first = submitConnectorDelivery(engine, "orders",
-                                                                      List.of(message(1)),
-                                                                      blockingAction);
-            ConnectorDelivery second = submitConnectorDelivery(engine, "orders",
-                                                                       List.of(message(1)),
-                                                                       blockingAction);
+            Runnable secondOrderAction = () -> {
+                int current = activeOrders.incrementAndGet();
+                maximumActiveOrders.accumulateAndGet(current, Math::max);
+                activeOrders.decrementAndGet();
+                secondOrderStarted.countDown();
+            };
+            ConnectorDelivery firstOrder = submitConnectorDelivery(engine, "orders",
+                                                                    List.of(message(1)),
+                                                                    firstOrderAction);
+            await(firstOrderStarted);
+            ConnectorDelivery secondOrder = submitConnectorDelivery(engine, "orders",
+                                                                     List.of(message(1)),
+                                                                     secondOrderAction);
+            ConnectorDelivery payment = submitConnectorDelivery(engine, "payments",
+                                                                 List.of(message(1)),
+                                                                 paymentStarted::countDown);
 
-            await(activeStarted);
-            ConnectorDelivery third = submitConnectorDelivery(engine, "orders",
-                                                                      List.of(message(1)),
-                                                                      thirdStarted::countDown);
+            await(paymentStarted);
+            assertEquals(1, secondOrderStarted.getCount());
+            assertFalse(secondOrder.isDone());
+            assertEquals(1, maximumActiveOrders.get());
 
-            assertEquals(2, maximumActive.get());
-            assertEquals(1, thirdStarted.getCount());
-            assertFalse(third.isDone());
-
-            release.countDown();
-            await(first);
-            await(second);
-            await(third);
-            assertEquals(2, maximumActive.get());
-            assertEquals(0, thirdStarted.getCount());
+            releaseFirstOrder.countDown();
+            await(firstOrder);
+            await(secondOrder);
+            await(payment);
+            assertEquals(0, secondOrderStarted.getCount());
+            assertEquals(1, maximumActiveOrders.get());
         }
     }
 
@@ -245,7 +251,6 @@ class DeliveryEngineTest {
     @Test
     void immediateAdmissionDoesNotConsumeOrRequirePendingCapacity() {
         MessagingExecutionConfig config = configBuilder()
-                .concurrency(2)
                 .maxPendingAdmissions(1)
                 .maxPendingMessages(1)
                 .maxInFlightMessages(2)
@@ -806,8 +811,6 @@ class DeliveryEngineTest {
     @Test
     void validatesExecutionLimitsAndDefaults() {
         assertThrows(IllegalArgumentException.class,
-                     () -> MessagingExecutionConfig.builder().concurrency(0).build());
-        assertThrows(IllegalArgumentException.class,
                      () -> MessagingExecutionConfig.builder().queueCapacity(-1).build());
         assertThrows(IllegalArgumentException.class,
                      () -> MessagingExecutionConfig.builder().maxPendingAdmissions(0).build());
@@ -833,7 +836,6 @@ class DeliveryEngineTest {
                              .build());
 
         MessagingExecutionConfig minimums = MessagingExecutionConfig.builder()
-                .concurrency(1)
                 .queueCapacity(0)
                 .maxPendingAdmissions(1)
                 .maxPendingMessages(1)
@@ -841,7 +843,6 @@ class DeliveryEngineTest {
                 .admissionTimeout(Duration.ofNanos(1))
                 .shutdownTimeout(Duration.ofNanos(1))
                 .build();
-        assertEquals(1, minimums.concurrency());
         assertEquals(0, minimums.queueCapacity());
         assertEquals(1, minimums.maxPendingAdmissions());
         assertEquals(1, minimums.maxPendingMessages());
@@ -850,7 +851,6 @@ class DeliveryEngineTest {
         assertEquals(Duration.ofNanos(1), minimums.shutdownTimeout());
 
         MessagingExecutionConfig defaults = MessagingExecutionConfig.builder().build();
-        assertEquals(1, defaults.concurrency());
         assertEquals(0, defaults.queueCapacity());
         assertEquals(64, defaults.maxPendingAdmissions());
         assertEquals(1024, defaults.maxPendingMessages());
@@ -860,7 +860,7 @@ class DeliveryEngineTest {
     }
 
     @Test
-    void dispatchesQueuedTasksInFifoOrderAtConcurrencyOne() throws Exception {
+    void dispatchesQueuedTasksInFifoOrder() throws Exception {
         MessagingExecutionConfig config = configBuilder()
                 .queueCapacity(2)
                 .maxInFlightMessages(3)
@@ -1345,7 +1345,6 @@ class DeliveryEngineTest {
 
     private static MessagingExecutionConfig.Builder configBuilder() {
         return MessagingExecutionConfig.builder()
-                .concurrency(1)
                 .queueCapacity(0)
                 .maxInFlightMessages(10)
                 .shutdownTimeout(WAIT);

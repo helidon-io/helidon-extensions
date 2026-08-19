@@ -24,7 +24,9 @@ import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 import io.helidon.codegen.testing.TestCompiler;
@@ -35,6 +37,7 @@ import io.helidon.service.registry.Service;
 
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -347,6 +350,255 @@ class MessagingExtensionTest {
         assertTrue(source.contains("typedMessage.header(\"optional\")"), source);
         assertTrue(source.contains("catch (RuntimeException | Error e)"), source);
         assertTrue(source.contains("catch (Exception e)"), source);
+    }
+
+    @Test
+    void generatedConsumerPublishesDeclaredFailurePolicy() throws Exception {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.FailureDisposition;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class FailurePolicyConsumer {
+                    @Messaging.ReceiveFrom("orders")
+                    @Messaging.OnFailure(
+                            retryDelay = "PT0.25S",
+                            maxAttempts = 3,
+                            onExhausted = FailureDisposition.DEAD_LETTER,
+                            deadLetterChannel = "orders-dlq")
+                    void consume(String value) {
+                    }
+                }
+                """);
+
+        assertCompilationSucceeded(result);
+        String source = generatedSource(result, "FailurePolicyConsumer__MessagingConsumer_");
+        assertTrue(source.contains("private static final FailurePolicy DECLARED_FAILURE_POLICY"), source);
+        assertTrue(source.contains(".retryDelay(Duration.parse(\"PT0.25S\"))"), source);
+        assertTrue(source.contains(".maxAttempts(3)"), source);
+        assertTrue(source.contains(".onExhausted(FailureDisposition.DEAD_LETTER)"), source);
+        assertTrue(source.contains(".deadLetterChannel(\"orders-dlq\")"), source);
+        assertTrue(source.contains("Optional<FailurePolicy> declaredFailurePolicy()"), source);
+        assertTrue(source.contains("return Optional.of(DECLARED_FAILURE_POLICY);"), source);
+
+        try (URLClassLoader classLoader = new URLClassLoader(new URL[] {
+                result.classOutput().toUri().toURL()
+        }, getClass().getClassLoader())) {
+            Class<?> registrationType = generatedClass(classLoader,
+                                                       result,
+                                                       "FailurePolicyConsumer__MessagingConsumer_");
+            Object registration = newRegistration(
+                    registrationType,
+                    (Supplier<Object>) () -> null,
+                    passthroughEntryPoints());
+            Optional<?> declared = (Optional<?>) invoke(registration, "declaredFailurePolicy");
+            Object policy = declared.orElseThrow();
+            assertEquals(Duration.ofMillis(250), invoke(policy, "retryDelay"));
+            assertEquals(3, invoke(policy, "maxAttempts"));
+            assertEquals("DEAD_LETTER", invoke(policy, "onExhausted").toString());
+            assertEquals(Optional.of("orders-dlq"), invoke(policy, "deadLetterChannel"));
+            assertSame(policy,
+                       ((Optional<?>) invoke(registration, "declaredFailurePolicy")).orElseThrow());
+        }
+    }
+
+    @Test
+    void bareOnFailureIsPresentWhileUnannotatedRegistrationUsesEmptyDefault() throws Exception {
+        TestCompiler.Result result = compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class BareFailurePolicyConsumer {
+                    @Messaging.ReceiveFrom("orders")
+                    @Messaging.OnFailure
+                    void consume(String value) {
+                    }
+                }
+
+                @Service.Singleton
+                class UnannotatedConsumer {
+                    @Messaging.ReceiveFrom("audit")
+                    void consume(String value) {
+                    }
+                }
+                """);
+
+        assertCompilationSucceeded(result);
+        String annotatedSource = generatedSource(result, "BareFailurePolicyConsumer__MessagingConsumer_");
+        assertTrue(annotatedSource.contains("DECLARED_FAILURE_POLICY"), annotatedSource);
+        assertTrue(annotatedSource.contains(".retryDelay(Duration.parse(\"PT1S\"))"), annotatedSource);
+        assertTrue(annotatedSource.contains(".maxAttempts(0)"), annotatedSource);
+        assertTrue(annotatedSource.contains(".onExhausted(FailureDisposition.FAIL)"), annotatedSource);
+
+        String unannotatedSource = generatedSource(result, "UnannotatedConsumer__MessagingConsumer_");
+        assertFalse(unannotatedSource.contains("DECLARED_FAILURE_POLICY"), unannotatedSource);
+        assertFalse(unannotatedSource.contains("declaredFailurePolicy()"), unannotatedSource);
+
+        try (URLClassLoader classLoader = new URLClassLoader(new URL[] {
+                result.classOutput().toUri().toURL()
+        }, getClass().getClassLoader())) {
+            Object annotated = newRegistration(
+                    generatedClass(classLoader, result, "BareFailurePolicyConsumer__MessagingConsumer_"),
+                    (Supplier<Object>) () -> null,
+                    passthroughEntryPoints());
+            Optional<?> declared = (Optional<?>) invoke(annotated, "declaredFailurePolicy");
+            Object policy = declared.orElseThrow();
+            assertEquals(Duration.ofSeconds(1), invoke(policy, "retryDelay"));
+            assertEquals(0, invoke(policy, "maxAttempts"));
+            assertEquals("FAIL", invoke(policy, "onExhausted").toString());
+            assertEquals(Optional.empty(), invoke(policy, "deadLetterChannel"));
+
+            Object unannotated = newRegistration(
+                    generatedClass(classLoader, result, "UnannotatedConsumer__MessagingConsumer_"),
+                    (Supplier<Object>) () -> null,
+                    passthroughEntryPoints());
+            assertEquals(Optional.empty(), invoke(unannotated, "declaredFailurePolicy"));
+        }
+    }
+
+    @Test
+    void rejectsOnFailureWithoutReceiveFrom() {
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class OrphanFailurePolicy {
+                    @Messaging.OnFailure(maxAttempts = 1)
+                    void consume(String value) {
+                    }
+                }
+                """),
+                         "@Messaging.OnFailure is only allowed on @Messaging.ReceiveFrom methods");
+    }
+
+    @Test
+    void rejectsInvalidOnFailureMembers() {
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class InvalidRetryDelay {
+                    @Messaging.ReceiveFrom("orders")
+                    @Messaging.OnFailure(retryDelay = "tomorrow")
+                    void consume(String value) {
+                    }
+                }
+                """),
+                         "retryDelay must be a valid java.time.Duration");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class ZeroRetryDelay {
+                    @Messaging.ReceiveFrom("orders")
+                    @Messaging.OnFailure(retryDelay = "PT0S")
+                    void consume(String value) {
+                    }
+                }
+                """),
+                         "retryDelay must be greater than zero");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class NegativeAttempts {
+                    @Messaging.ReceiveFrom("orders")
+                    @Messaging.OnFailure(maxAttempts = -1)
+                    void consume(String value) {
+                    }
+                }
+                """),
+                         "maxAttempts must be zero or greater");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.FailureDisposition;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class UnboundedDrop {
+                    @Messaging.ReceiveFrom("orders")
+                    @Messaging.OnFailure(onExhausted = FailureDisposition.DROP)
+                    void consume(String value) {
+                    }
+                }
+                """),
+                         "maxAttempts must be greater than zero for DROP");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.FailureDisposition;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class MissingDeadLetterChannel {
+                    @Messaging.ReceiveFrom("orders")
+                    @Messaging.OnFailure(maxAttempts = 1,
+                                         onExhausted = FailureDisposition.DEAD_LETTER)
+                    void consume(String value) {
+                    }
+                }
+                """),
+                         "deadLetterChannel must be configured for DEAD_LETTER");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class DeadLetterChannelWithoutDisposition {
+                    @Messaging.ReceiveFrom("orders")
+                    @Messaging.OnFailure(deadLetterChannel = "orders-dlq")
+                    void consume(String value) {
+                    }
+                }
+                """),
+                         "deadLetterChannel is only valid for DEAD_LETTER");
+
+        assertDiagnostic(compile("""
+                package com.example;
+
+                import io.helidon.extensions.messaging.FailureDisposition;
+                import io.helidon.extensions.messaging.Messaging;
+                import io.helidon.service.registry.Service;
+
+                @Service.Singleton
+                class SelfDeadLetterChannel {
+                    @Messaging.ReceiveFrom("orders")
+                    @Messaging.OnFailure(maxAttempts = 1,
+                                         onExhausted = FailureDisposition.DEAD_LETTER,
+                                         deadLetterChannel = "orders")
+                    void consume(String value) {
+                    }
+                }
+                """),
+                         "deadLetterChannel must differ from the @Messaging.ReceiveFrom channel");
     }
 
     @Test
@@ -1286,6 +1538,7 @@ class MessagingExtensionTest {
                 .currentRelease()
                 .addClasspath(COMPILER_CLASSPATH)
                 .addClasspath(loadClass("io.helidon.builder.api.Prototype"))
+                .addClasspath(loadClass("io.helidon.config.ConfigBuilderSupport"))
                 .addClasspath(loadClass("io.helidon.extensions.messaging.Messaging"))
                 .update(this::addProcessor)
                 .printDiagnostics(false)

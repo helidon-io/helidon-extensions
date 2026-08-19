@@ -33,6 +33,7 @@ import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.extensions.messaging.BatchDeliveryException;
 import io.helidon.extensions.messaging.BatchItemStatus;
+import io.helidon.extensions.messaging.DeadLetterMessage;
 import io.helidon.extensions.messaging.EmitterRegistration;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.MessageBatch;
@@ -41,6 +42,8 @@ import io.helidon.extensions.messaging.MessagingException;
 import io.helidon.extensions.messaging.MessagingGraph;
 import io.helidon.extensions.messaging.MessagingRuntime;
 import io.helidon.extensions.messaging.OutgoingConnector;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.AnnotatedFailureConsumer;
+import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.AnnotatedFailureDeadLetterConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.ArrayPayloadConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.BatchChannelOneConsumer;
 import io.helidon.extensions.messaging.tests.poc.ChannelMessagingTypes.BroadCustomMessageConsumer;
@@ -514,6 +517,44 @@ class DeclarativeMessagingPocTest {
         RuntimeException thrown = observer.deliveryFailure().orElseThrow();
 
         assertBatchFailure(consumer.failure(), thrown);
+    }
+
+    @Test
+    void testGeneratedOnFailureRetriesThenDeadLetters() throws InterruptedException {
+        String channelConfig = "helidon.messaging.incoming." + ChannelMessagingTypes.ANNOTATED_FAILURE_CHANNEL;
+        useConfig(Map.of(channelConfig + ".connector", ChannelMessagingTypes.TEST_CONNECTOR));
+        registry.get(MessagingRuntime.class);
+        var observer = registry.get(TestConnectorObserver.class);
+        var consumer = registry.get(AnnotatedFailureConsumer.class);
+        var deadLetterConsumer = registry.get(AnnotatedFailureDeadLetterConsumer.class);
+
+        assertThat(observer.awaitDelivery(), is(true));
+        assertThat(observer.deliveryFailure().isEmpty(), is(true));
+        assertThat(consumer.attempts(), is(2));
+        assertThat(deadLetterConsumer.messages(), hasSize(1));
+
+        DeadLetterMessage<String> deadLetter = deadLetterConsumer.messages().getFirst();
+        assertThat(deadLetter.entity(), is("connector message"));
+        assertThat(deadLetter.sourceChannel(), is(ChannelMessagingTypes.ANNOTATED_FAILURE_CHANNEL));
+        assertThat(deadLetter.attempts(), is(2));
+        assertThat(deadLetter.failureMessage(), is("annotated handler failed"));
+    }
+
+    @Test
+    void testFailureConfigOverridesGeneratedOnFailureWithDrop() throws InterruptedException {
+        String channelConfig = "helidon.messaging.incoming." + ChannelMessagingTypes.ANNOTATED_FAILURE_CHANNEL;
+        useConfig(Map.of(channelConfig + ".connector", ChannelMessagingTypes.TEST_CONNECTOR,
+                         channelConfig + ".failure.retry.max-attempts", "1",
+                         channelConfig + ".failure.on-exhausted", "DROP"));
+        registry.get(MessagingRuntime.class);
+        var observer = registry.get(TestConnectorObserver.class);
+        var consumer = registry.get(AnnotatedFailureConsumer.class);
+        var deadLetterConsumer = registry.get(AnnotatedFailureDeadLetterConsumer.class);
+
+        assertThat(observer.awaitDelivery(), is(true));
+        assertThat(observer.deliveryFailure().isEmpty(), is(true));
+        assertThat(consumer.attempts(), is(1));
+        assertThat(deadLetterConsumer.messages(), empty());
     }
 
     @Test

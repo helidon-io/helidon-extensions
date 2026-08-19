@@ -18,8 +18,8 @@ helidon:
   messaging:
     outgoing:
       audit:
-        connector: file
+        connector: helidon-file
         path: target/audit.log
     connector:
-      file:
+      helidon-file:
         line-separator: "\n"

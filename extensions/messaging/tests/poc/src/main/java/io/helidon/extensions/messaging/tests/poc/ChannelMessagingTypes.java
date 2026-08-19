@@ -26,10 +26,13 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.config.Config;
+import io.helidon.extensions.messaging.DeadLetterMessage;
 import io.helidon.extensions.messaging.Emitter;
+import io.helidon.extensions.messaging.FailureDisposition;
 import io.helidon.extensions.messaging.IncomingConnector;
 import io.helidon.extensions.messaging.IncomingConnectorContext;
 import io.helidon.extensions.messaging.IncomingConnectorProvider;
@@ -56,6 +59,8 @@ class ChannelMessagingTypes {
     static final String OPTIONAL_HEADER_CHANNEL = "optional-header-channel";
     static final String PER_LOOKUP_INTERCEPTED_CHANNEL = "per-lookup-intercepted-channel";
     static final String FAILING_CHANNEL = "failing-channel";
+    static final String ANNOTATED_FAILURE_CHANNEL = "annotated-failure-channel";
+    static final String ANNOTATED_FAILURE_DLQ_CHANNEL = "annotated-failure-dlq-channel";
     static final String TEST_CONNECTOR = "test";
     static final String SHUTDOWN_CHANNEL = "shutdown-channel";
     static final String SHUTDOWN_CONNECTOR = "shutdown-test";
@@ -329,6 +334,39 @@ class ChannelMessagingTypes {
 
         MessagingException failure() {
             return failure;
+        }
+    }
+
+    @Service.Singleton
+    static class AnnotatedFailureConsumer {
+        private final AtomicInteger attempts = new AtomicInteger();
+
+        @Messaging.ReceiveFrom(ANNOTATED_FAILURE_CHANNEL)
+        @Messaging.OnFailure(retryDelay = "PT0.001S",
+                             maxAttempts = 2,
+                             onExhausted = FailureDisposition.DEAD_LETTER,
+                             deadLetterChannel = ANNOTATED_FAILURE_DLQ_CHANNEL)
+        void consume(String payload) {
+            attempts.incrementAndGet();
+            throw new MessagingException("annotated handler failed");
+        }
+
+        int attempts() {
+            return attempts.get();
+        }
+    }
+
+    @Service.Singleton
+    static class AnnotatedFailureDeadLetterConsumer {
+        private final List<DeadLetterMessage<String>> messages = new CopyOnWriteArrayList<>();
+
+        @Messaging.ReceiveFrom(ANNOTATED_FAILURE_DLQ_CHANNEL)
+        void consume(DeadLetterMessage<String> message) {
+            messages.add(message);
+        }
+
+        List<DeadLetterMessage<String>> messages() {
+            return messages;
         }
     }
 

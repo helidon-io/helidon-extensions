@@ -859,7 +859,6 @@ class MessagingGraphTest {
 
     private static MessagingExecutionConfig config(Duration shutdownTimeout) {
         return MessagingExecutionConfig.builder()
-                .concurrency(1)
                 .queueCapacity(0)
                 .maxInFlightMessages(10)
                 .shutdownTimeout(shutdownTimeout)

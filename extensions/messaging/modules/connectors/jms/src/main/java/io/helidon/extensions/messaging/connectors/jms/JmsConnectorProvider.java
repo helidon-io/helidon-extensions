@@ -38,7 +38,7 @@ public final class JmsConnectorProvider
     /**
      * JMS connector type used in messaging configuration.
      */
-    public static final String CONNECTOR_TYPE = "jms";
+    public static final String CONNECTOR_TYPE = "helidon-jms";
 
     private final JmsConnectionFactoryResolver connectionFactoryResolver;
 

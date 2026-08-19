@@ -35,7 +35,7 @@ public final class KafkaConnectorProvider
     /**
      * Kafka connector type used in messaging configuration.
      */
-    public static final String CONNECTOR_TYPE = "kafka";
+    public static final String CONNECTOR_TYPE = "helidon-kafka";
 
     /**
      * Dead-letter header containing the original Kafka topic.

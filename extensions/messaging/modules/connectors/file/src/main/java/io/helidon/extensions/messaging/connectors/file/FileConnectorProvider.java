@@ -38,7 +38,7 @@ public final class FileConnectorProvider
     /**
      * Connector type used in messaging configuration.
      */
-    public static final String CONNECTOR_TYPE = "file";
+    public static final String CONNECTOR_TYPE = "helidon-file";
 
     @Override
     public String connectorType() {

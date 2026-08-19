@@ -74,7 +74,7 @@ class KafkaOutgoingConnectorTest {
     void testConnectorType() {
         KafkaConnectorProvider provider = new KafkaConnectorProvider();
 
-        assertThat(provider.connectorType(), is(KafkaConnectorProvider.CONNECTOR_TYPE));
+        assertThat(provider.connectorType(), is("helidon-kafka"));
     }
 
     @Test

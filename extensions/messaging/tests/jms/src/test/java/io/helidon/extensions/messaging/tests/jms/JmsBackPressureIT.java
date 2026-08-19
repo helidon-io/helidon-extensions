@@ -159,7 +159,7 @@ class JmsBackPressureIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         receive-timeout: PT0.05S
                 """.formatted(JmsMessagingTypes.BACK_PRESSURE_INCOMING_CHANNEL, destination);

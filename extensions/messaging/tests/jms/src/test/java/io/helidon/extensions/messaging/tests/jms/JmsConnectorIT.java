@@ -32,6 +32,7 @@ import io.helidon.extensions.messaging.MessagingRuntime;
 import io.helidon.extensions.messaging.connectors.jms.JmsMessage;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.BytesReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.ForwardingReceiver;
+import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.FtRetryPoisonReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.PoisonReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.SelectorReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.TextReceiver;
@@ -225,10 +226,49 @@ class JmsConnectorIT {
 
     @Test
     @Timeout(60)
+    void faultToleranceRetryExhaustionIsOneMessagingAttemptBeforeDeadLetter() throws Exception {
+        String incomingQueue = uniqueName("ft-dead-letter-source");
+        String deadLetterQueue = uniqueName("ft-dead-letter");
+        ServiceRegistryManager manager = registryManager(deadLetterConfig(incomingQueue, deadLetterQueue, 1),
+                                                         FtRetryPoisonReceiver.class);
+        ServiceRegistry registry = manager.registry();
+        FtRetryPoisonReceiver receiver = registry.get(FtRetryPoisonReceiver.class);
+        registry.get(MessagingRuntime.class);
+
+        JmsTestClient.sendText(connectionFactory(), incomingQueue, false, "poison", message -> {
+        });
+
+        TextMessage deadLetter = JmsTestClient.receiveText(connectionFactory(), deadLetterQueue, WAIT_TIMEOUT);
+        assertThat("physical fault-tolerance dead-letter message", deadLetter, notNullValue());
+        assertThat(deadLetter.getText(), is("poison"));
+        assertThat(deadLetter.getStringProperty(DeadLetterMessage.SOURCE_CHANNEL_HEADER),
+                   is(JmsMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL));
+        assertThat("one outer messaging attempt",
+                   deadLetter.getStringProperty(DeadLetterMessage.ATTEMPTS_HEADER),
+                   is("1"));
+        assertThat(deadLetter.getStringProperty(DeadLetterMessage.FAILURE_TYPE_HEADER),
+                   is(IllegalStateException.class.getName()));
+        assertThat(deadLetter.getStringProperty(DeadLetterMessage.FAILURE_MESSAGE_HEADER),
+                   is(FtRetryPoisonReceiver.FAILURE_MESSAGE));
+        await(() -> broker.queueDeliveringCount(incomingQueue) == 0
+                        && broker.queuePendingMessageCount(incomingQueue) == 0,
+              WAIT_TIMEOUT,
+              "source JMS delivery was not settled after fault-tolerance dead-letter publication");
+        assertThat("fault-tolerance method calls", receiver.attemptCount(), is(FtRetryPoisonReceiver.CALLS));
+        await(() -> broker.queueDeliveringCount(deadLetterQueue) == 0,
+              WAIT_TIMEOUT,
+              "fault-tolerance dead-letter delivery was not acknowledged");
+        assertThat("duplicate fault-tolerance dead-letter message",
+                   broker.queuePendingMessageCount(deadLetterQueue),
+                   is(0L));
+    }
+
+    @Test
+    @Timeout(60)
     void terminalDeadLetterPublishesPhysicalMessageThenContinues() throws Exception {
         String incomingQueue = uniqueName("dead-letter-source");
         String deadLetterQueue = uniqueName("dead-letter");
-        ServiceRegistryManager manager = registryManager(deadLetterConfig(incomingQueue, deadLetterQueue),
+        ServiceRegistryManager manager = registryManager(deadLetterConfig(incomingQueue, deadLetterQueue, 3),
                                                          PoisonReceiver.class);
         ServiceRegistry registry = manager.registry();
         PoisonReceiver receiver = registry.get(PoisonReceiver.class);
@@ -395,14 +435,14 @@ class JmsConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: QUEUE
                         receive-timeout: PT0.05S
                         close-timeout: PT2S
                     outgoing:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: QUEUE
                         close-timeout: PT2S
@@ -418,14 +458,14 @@ class JmsConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: QUEUE
                         receive-timeout: PT0.05S
                         close-timeout: PT2S
                     outgoing:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: QUEUE
                         close-timeout: PT2S
@@ -441,7 +481,7 @@ class JmsConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: TOPIC
                         message-selector: "region IN ('EU', 'CZ')"
@@ -456,14 +496,14 @@ class JmsConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: QUEUE
                         receive-timeout: PT0.05S
                         close-timeout: PT2S
                     outgoing:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: QUEUE
                         close-timeout: PT2S
@@ -473,13 +513,13 @@ class JmsConnectorIT {
                                outgoingQueue);
     }
 
-    private static String deadLetterConfig(String incomingQueue, String deadLetterQueue) {
+    private static String deadLetterConfig(String incomingQueue, String deadLetterQueue, int maxAttempts) {
         return """
                 helidon:
                   messaging:
                     incoming:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: QUEUE
                         receive-timeout: PT0.05S
@@ -487,18 +527,19 @@ class JmsConnectorIT {
                         failure:
                           retry:
                             delay: PT0.02S
-                            max-attempts: 3
+                            max-attempts: %d
                           on-exhausted: DEAD_LETTER
                           dead-letter:
                             channel: %s
                     outgoing:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: QUEUE
                         close-timeout: PT2S
                 """.formatted(JmsMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL,
                                incomingQueue,
+                               maxAttempts,
                                JmsMessagingTypes.DEAD_LETTER_OUTGOING_CHANNEL,
                                JmsMessagingTypes.DEAD_LETTER_OUTGOING_CHANNEL,
                                deadLetterQueue);
@@ -510,7 +551,7 @@ class JmsConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: QUEUE
                         receive-timeout: PT0.05S
@@ -529,7 +570,7 @@ class JmsConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: QUEUE
                         receive-timeout: PT0.05S
@@ -548,7 +589,7 @@ class JmsConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: QUEUE
                         transacted: true
@@ -568,7 +609,7 @@ class JmsConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: QUEUE
                         receive-timeout: PT0.05S
@@ -582,7 +623,7 @@ class JmsConnectorIT {
                   messaging:
                     incoming:
                       %s:
-                        connector: jms
+                        connector: helidon-jms
                         destination: "%s"
                         destination-type: QUEUE
                         transacted: true

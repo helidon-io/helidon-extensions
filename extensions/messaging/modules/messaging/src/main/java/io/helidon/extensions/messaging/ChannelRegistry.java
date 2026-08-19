@@ -134,7 +134,7 @@ class ChannelRegistry implements MessagingRuntime {
 
         Map<String, ConnectorProvider> providers = connectorProviders(connectorProviders);
         List<OutgoingBinding> outgoingBindings = prepareOutgoingBindings(config, providers);
-        List<IncomingDescriptor> incomingDescriptors = prepareIncomingDescriptors(config, providers);
+        List<IncomingDescriptor> incomingDescriptors = prepareIncomingDescriptors(config, providers, grouped);
         Set<String> outputChannels = new LinkedHashSet<>(grouped.keySet());
         outgoingBindings.stream().map(OutgoingBinding::channel).forEach(outputChannels::add);
         validateGeneratedProducerTargets(consumerRegistrations,
@@ -890,8 +890,10 @@ class ChannelRegistry implements MessagingRuntime {
         return List.copyOf(bindings);
     }
 
-    private List<IncomingDescriptor> prepareIncomingDescriptors(Config root,
-                                                                Map<String, ConnectorProvider> providers) {
+    private List<IncomingDescriptor> prepareIncomingDescriptors(
+            Config root,
+            Map<String, ConnectorProvider> providers,
+            Map<String, List<ConsumerRegistration>> registrations) {
         List<IncomingDescriptor> descriptors = new ArrayList<>();
         for (String channel : configuredChannels(root, ConnectorConfig.INCOMING_PREFIX)) {
             Config channelConfig = root.get(ConnectorConfig.INCOMING_PREFIX + channel);
@@ -914,7 +916,9 @@ class ChannelRegistry implements MessagingRuntime {
                                                      ConnectorConfig.Direction.INCOMING,
                                                      channel,
                                                      connectorType);
-            FailurePolicy failurePolicy = FailurePolicy.create(channelConfig.get("failure"));
+            FailurePolicy failurePolicy = failurePolicy(channel,
+                                                        channelConfig.get("failure"),
+                                                        registrations.getOrDefault(channel, List.of()));
             descriptors.add(new IncomingDescriptor(channel,
                                                    connectorType,
                                                    failurePolicy,
@@ -922,6 +926,46 @@ class ChannelRegistry implements MessagingRuntime {
                                                    connectorConfig));
         }
         return List.copyOf(descriptors);
+    }
+
+    private FailurePolicy failurePolicy(String channel,
+                                        Config failureConfig,
+                                        List<ConsumerRegistration> registrations) {
+        List<FailurePolicyContribution> contributions = registrations.stream()
+                .map(registration -> registration.declaredFailurePolicy()
+                        .map(policy -> new FailurePolicyContribution(registration.handlerId(), policy)))
+                .flatMap(Optional::stream)
+                .toList();
+        if (contributions.isEmpty()) {
+            return FailurePolicy.create(failureConfig);
+        }
+
+        FailurePolicyContribution first = contributions.getFirst();
+        FailurePolicy effective = mergeFailurePolicy(first.policy(), failureConfig);
+        for (int i = 1; i < contributions.size(); i++) {
+            FailurePolicyContribution candidate = contributions.get(i);
+            FailurePolicy candidateEffective = mergeFailurePolicy(candidate.policy(), failureConfig);
+            if (!effective.equals(candidateEffective)) {
+                throw new IllegalArgumentException("Incoming channel " + channel
+                                                           + " has conflicting effective failure policies declared by "
+                                                           + "handlers "
+                                                           + first.handlerId() + " and " + candidate.handlerId()
+                                                           + ": " + effective + " and " + candidateEffective);
+            }
+        }
+        return effective;
+    }
+
+    private FailurePolicy mergeFailurePolicy(FailurePolicy declared, Config failureConfig) {
+        FailurePolicy.Builder builder = FailurePolicy.builder(declared);
+        FailureDisposition configuredDisposition = failureConfig.get("on-exhausted")
+                .as(FailureDisposition.class)
+                .orElse(null);
+        if (configuredDisposition != null && configuredDisposition != FailureDisposition.DEAD_LETTER
+                && !failureConfig.get("dead-letter.channel").exists()) {
+            builder.clearDeadLetterChannel();
+        }
+        return builder.config(failureConfig).build();
     }
 
     private void configureOutgoingConnectors(List<OutgoingBinding> bindings) {
@@ -1564,6 +1608,9 @@ class ChannelRegistry implements MessagingRuntime {
                                    String connectorType,
                                    OutgoingConnectorProvider provider,
                                    Config config) {
+    }
+
+    private record FailurePolicyContribution(String handlerId, FailurePolicy policy) {
     }
 
     private record IncomingDescriptor(String channel,

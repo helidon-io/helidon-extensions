@@ -27,6 +27,9 @@ package io.helidon.extensions.messaging;
 public interface ConnectorProvider {
     /**
      * Connector type used to select this provider.
+     * <p>
+     * The type must be unique among the providers installed in an application. Helidon-provided connectors use the
+     * {@code helidon-} prefix; third-party providers should use a similarly distinctive namespace.
      *
      * @return connector type
      */

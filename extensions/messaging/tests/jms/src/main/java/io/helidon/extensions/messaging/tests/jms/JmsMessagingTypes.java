@@ -29,6 +29,7 @@ import io.helidon.extensions.messaging.Emitter;
 import io.helidon.extensions.messaging.Message;
 import io.helidon.extensions.messaging.Messaging;
 import io.helidon.extensions.messaging.connectors.jms.JmsMessage;
+import io.helidon.faulttolerance.Ft;
 import io.helidon.service.registry.Service;
 
 final class JmsMessagingTypes {
@@ -128,6 +129,25 @@ final class JmsMessagingTypes {
 
         JmsMessage<String> awaitDelivery(Duration timeout) throws InterruptedException {
             return deliveries.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }
+    }
+
+    @Service.Singleton
+    static class FtRetryPoisonReceiver {
+        static final int CALLS = 3;
+        static final String FAILURE_MESSAGE = "Expected fault-tolerance retry exhaustion";
+
+        private final AtomicInteger attempts = new AtomicInteger();
+
+        @Messaging.ReceiveFrom(DEAD_LETTER_INCOMING_CHANNEL)
+        @Ft.Retry(calls = CALLS, delay = "PT0S", overallTimeout = "PT5S")
+        void receive(JmsMessage<String> message) {
+            attempts.incrementAndGet();
+            throw new IllegalStateException(FAILURE_MESSAGE);
+        }
+
+        int attemptCount() {
+            return attempts.get();
         }
     }
 
