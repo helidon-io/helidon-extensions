@@ -22,7 +22,7 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 import io.helidon.builder.api.Prototype;
-import io.helidon.extensions.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorConfig;
 
 /**
  * Support methods and constants for {@link JmsConnectorConfig}.

@@ -16,7 +16,7 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
-import io.helidon.extensions.messaging.MessagingException;
+import io.helidon.messaging.MessagingException;
 
 /**
  * Failure to clean up a JMS connector resource.

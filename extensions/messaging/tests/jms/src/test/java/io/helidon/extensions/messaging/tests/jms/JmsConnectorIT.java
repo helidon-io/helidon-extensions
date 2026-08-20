@@ -27,8 +27,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 
-import io.helidon.extensions.messaging.DeadLetterMessage;
-import io.helidon.extensions.messaging.MessagingRuntime;
 import io.helidon.extensions.messaging.connectors.jms.JmsMessage;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.BytesReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.ForwardingReceiver;
@@ -37,6 +35,8 @@ import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.PoisonReceive
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.SelectorReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.TextReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.TextSender;
+import io.helidon.messaging.DeadLetterMessage;
+import io.helidon.messaging.MessagingRuntime;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryException;
 import io.helidon.service.registry.ServiceRegistryManager;

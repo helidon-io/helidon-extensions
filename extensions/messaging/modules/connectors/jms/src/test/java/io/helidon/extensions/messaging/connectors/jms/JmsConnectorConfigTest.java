@@ -23,8 +23,8 @@ import java.util.Optional;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
-import io.helidon.extensions.messaging.ConnectorConfig;
-import io.helidon.extensions.messaging.MessagingException;
+import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.MessagingException;
 import io.helidon.service.registry.ServiceRegistry;
 
 import jakarta.jms.ConnectionFactory;

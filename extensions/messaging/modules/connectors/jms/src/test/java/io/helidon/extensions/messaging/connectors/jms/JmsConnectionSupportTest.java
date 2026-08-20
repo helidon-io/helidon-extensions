@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import io.helidon.extensions.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorConfig;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;

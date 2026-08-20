@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
-import io.helidon.extensions.messaging.MessagingException;
+import io.helidon.messaging.MessagingException;
 
 import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;

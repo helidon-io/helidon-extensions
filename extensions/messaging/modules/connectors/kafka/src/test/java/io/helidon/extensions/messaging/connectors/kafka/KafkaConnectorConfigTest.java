@@ -20,9 +20,9 @@ import java.util.Map;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
-import io.helidon.extensions.messaging.ConnectorConfig;
-import io.helidon.extensions.messaging.IncomingConnector;
-import io.helidon.extensions.messaging.OutgoingConnector;
+import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.IncomingConnector;
+import io.helidon.messaging.OutgoingConnector;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.junit.jupiter.api.Test;

@@ -35,7 +35,7 @@
     <packaging>pom</packaging>
 
     <name>Helidon Extensions Messaging Project</name>
-    <description>Extension for declarative messaging</description>
+    <description>Connector implementations for Helidon messaging</description>
 
     <modules>
         <module>bom</module>
@@ -44,7 +44,6 @@
 
     <properties>
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
-        <messaging.extension.version>${project.version}</messaging.extension.version>
         <version.lib.artemis>2.55.0</version.lib.artemis>
         <version.lib.jakarta.jms-api>3.1.0</version.lib.jakarta.jms-api>
         <version.lib.kafka>4.3.1</version.lib.kafka>
@@ -124,12 +123,6 @@
             <id>tests</id>
             <modules>
                 <module>tests</module>
-            </modules>
-        </profile>
-        <profile>
-            <id>examples</id>
-            <modules>
-                <module>examples</module>
             </modules>
         </profile>
     </profiles>

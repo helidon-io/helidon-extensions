@@ -16,7 +16,7 @@
 
 module io.helidon.extensions.messaging.tests.jms {
     requires io.helidon.common;
-    requires io.helidon.extensions.messaging;
+    requires io.helidon.messaging;
     requires io.helidon.extensions.messaging.connectors.jms;
     requires io.helidon.faulttolerance;
     // required for generated binding

@@ -31,11 +31,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.helidon.extensions.messaging.Emitter;
-import io.helidon.extensions.messaging.Message;
-import io.helidon.extensions.messaging.MessageBatch;
-import io.helidon.extensions.messaging.Messaging;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaMessage;
+import io.helidon.messaging.Emitter;
+import io.helidon.messaging.Message;
+import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.Messaging;
 import io.helidon.service.registry.Service;
 
 final class KafkaMessagingTypes {

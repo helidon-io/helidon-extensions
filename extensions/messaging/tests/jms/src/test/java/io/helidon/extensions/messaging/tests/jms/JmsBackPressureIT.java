@@ -24,14 +24,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
-import io.helidon.extensions.messaging.ConnectorConfig;
-import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
-import io.helidon.extensions.messaging.IncomingConnector;
-import io.helidon.extensions.messaging.IncomingConnectorContext;
-import io.helidon.extensions.messaging.MessagingRuntime;
 import io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfig;
 import io.helidon.extensions.messaging.connectors.jms.JmsConnectorProvider;
 import io.helidon.extensions.messaging.connectors.jms.JmsMessage;
+import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDeliveryReservation;
+import io.helidon.messaging.IncomingConnector;
+import io.helidon.messaging.IncomingConnectorContext;
+import io.helidon.messaging.MessagingRuntime;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 

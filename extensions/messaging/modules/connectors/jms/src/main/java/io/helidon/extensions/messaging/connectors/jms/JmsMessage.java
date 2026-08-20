@@ -22,7 +22,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
-import io.helidon.extensions.messaging.Message;
+import io.helidon.messaging.Message;
 
 /**
  * JMS-specific message envelope with immutable metadata and property snapshots.

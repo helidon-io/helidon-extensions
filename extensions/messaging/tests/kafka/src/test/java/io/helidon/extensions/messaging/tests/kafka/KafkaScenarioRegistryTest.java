@@ -18,10 +18,6 @@ package io.helidon.extensions.messaging.tests.kafka;
 
 import java.util.List;
 
-import io.helidon.extensions.messaging.ConsumerRegistration;
-import io.helidon.extensions.messaging.EmitterRegistration;
-import io.helidon.extensions.messaging.MessagingRuntime;
-import io.helidon.extensions.messaging.ProcessorRegistration;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.ForwardingReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.IncomingAnnotatedReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.IncomingBatchReceiver;
@@ -29,6 +25,10 @@ import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.IncomingM
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.IncomingPayloadReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.IncomingReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.OutgoingSender;
+import io.helidon.messaging.ConsumerRegistration;
+import io.helidon.messaging.EmitterRegistration;
+import io.helidon.messaging.MessagingRuntime;
+import io.helidon.messaging.ProcessorRegistration;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 

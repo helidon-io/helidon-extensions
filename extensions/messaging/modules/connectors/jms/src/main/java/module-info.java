@@ -17,7 +17,7 @@
 module io.helidon.extensions.messaging.connectors.jms {
     requires transitive io.helidon.builder.api;
     requires transitive io.helidon.config;
-    requires transitive io.helidon.extensions.messaging;
+    requires transitive io.helidon.messaging;
     requires transitive jakarta.messaging;
 
     requires io.helidon.common;

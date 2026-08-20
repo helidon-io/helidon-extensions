@@ -19,7 +19,7 @@ module io.helidon.extensions.messaging.connectors.file {
     requires transitive io.helidon.config;
 
     requires io.helidon.common;
-    requires io.helidon.extensions.messaging;
+    requires transitive io.helidon.messaging;
     requires io.helidon.service.registry;
 
     requires static io.helidon.config.metadata;

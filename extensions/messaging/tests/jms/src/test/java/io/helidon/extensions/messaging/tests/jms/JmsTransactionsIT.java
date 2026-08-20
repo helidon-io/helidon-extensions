@@ -24,14 +24,14 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.helidon.extensions.messaging.BatchDeliveryException;
-import io.helidon.extensions.messaging.BatchItemStatus;
-import io.helidon.extensions.messaging.ConnectorConfig;
-import io.helidon.extensions.messaging.Message;
-import io.helidon.extensions.messaging.MessageBatch;
-import io.helidon.extensions.messaging.OutgoingConnector;
 import io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfig;
 import io.helidon.extensions.messaging.connectors.jms.JmsConnectorProvider;
+import io.helidon.messaging.BatchDeliveryException;
+import io.helidon.messaging.BatchItemStatus;
+import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.Message;
+import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.OutgoingConnector;
 
 import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;
