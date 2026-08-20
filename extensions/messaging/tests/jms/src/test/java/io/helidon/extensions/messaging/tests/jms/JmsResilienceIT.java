@@ -21,11 +21,11 @@ import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
-import io.helidon.extensions.messaging.MessagingRuntime;
 import io.helidon.extensions.messaging.connectors.jms.JmsMessage;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.DurableReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.ReconnectReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.ReconnectSender;
+import io.helidon.messaging.MessagingRuntime;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 

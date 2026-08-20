@@ -35,13 +35,6 @@ import java.util.concurrent.TimeoutException;
 
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
-import io.helidon.extensions.messaging.DeadLetterMessage;
-import io.helidon.extensions.messaging.Message;
-import io.helidon.extensions.messaging.MessageBatch;
-import io.helidon.extensions.messaging.MessagingChannel;
-import io.helidon.extensions.messaging.MessagingGraph;
-import io.helidon.extensions.messaging.MessagingRuntime;
-import io.helidon.extensions.messaging.OutgoingConnector;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorConfig;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaMessage;
@@ -68,6 +61,13 @@ import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.ReceivedM
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.RestartReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaTestSerializers.BlockingStringSerializer;
 import io.helidon.extensions.messaging.tests.kafka.KafkaTestSerializers.FailingStringSerializer;
+import io.helidon.messaging.DeadLetterMessage;
+import io.helidon.messaging.Message;
+import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessagingChannel;
+import io.helidon.messaging.MessagingGraph;
+import io.helidon.messaging.MessagingRuntime;
+import io.helidon.messaging.OutgoingConnector;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryException;
 import io.helidon.service.registry.ServiceRegistryManager;

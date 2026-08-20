@@ -20,7 +20,7 @@ module io.helidon.extensions.messaging.connectors.kafka {
     requires transitive io.helidon.config;
 
     requires io.helidon.common;
-    requires transitive io.helidon.extensions.messaging;
+    requires transitive io.helidon.messaging;
     requires io.helidon.service.registry;
     requires kafka.clients;
 

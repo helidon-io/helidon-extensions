@@ -16,12 +16,12 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
-import io.helidon.extensions.messaging.ConnectorConfig;
-import io.helidon.extensions.messaging.ConnectorProvider;
-import io.helidon.extensions.messaging.IncomingConnector;
-import io.helidon.extensions.messaging.IncomingConnectorProvider;
-import io.helidon.extensions.messaging.OutgoingConnector;
-import io.helidon.extensions.messaging.OutgoingConnectorProvider;
+import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorProvider;
+import io.helidon.messaging.IncomingConnector;
+import io.helidon.messaging.IncomingConnectorProvider;
+import io.helidon.messaging.OutgoingConnector;
+import io.helidon.messaging.OutgoingConnectorProvider;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryConfig;
 import io.helidon.service.registry.ServiceRegistryManager;

@@ -21,7 +21,7 @@ import java.util.Map;
 import java.util.Set;
 
 import io.helidon.builder.api.Prototype;
-import io.helidon.extensions.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorConfig;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 

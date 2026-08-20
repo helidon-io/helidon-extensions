@@ -16,9 +16,9 @@
 
 package io.helidon.extensions.messaging.connectors.kafka;
 
-import io.helidon.extensions.messaging.ConnectorProvider;
-import io.helidon.extensions.messaging.IncomingConnectorProvider;
-import io.helidon.extensions.messaging.OutgoingConnectorProvider;
+import io.helidon.messaging.ConnectorProvider;
+import io.helidon.messaging.IncomingConnectorProvider;
+import io.helidon.messaging.OutgoingConnectorProvider;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 

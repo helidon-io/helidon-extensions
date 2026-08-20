@@ -19,11 +19,11 @@ package io.helidon.extensions.messaging.connectors.file;
 import java.util.Objects;
 
 import io.helidon.config.Config;
-import io.helidon.extensions.messaging.ConnectorConfig;
-import io.helidon.extensions.messaging.IncomingConnector;
-import io.helidon.extensions.messaging.IncomingConnectorProvider;
-import io.helidon.extensions.messaging.OutgoingConnector;
-import io.helidon.extensions.messaging.OutgoingConnectorProvider;
+import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.IncomingConnector;
+import io.helidon.messaging.IncomingConnectorProvider;
+import io.helidon.messaging.OutgoingConnector;
+import io.helidon.messaging.OutgoingConnectorProvider;
 import io.helidon.service.registry.Service;
 
 /**

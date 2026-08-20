@@ -42,14 +42,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
-import io.helidon.extensions.messaging.ConnectorDelivery;
-import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
-import io.helidon.extensions.messaging.IncomingConnector;
-import io.helidon.extensions.messaging.IncomingConnectorContext;
-import io.helidon.extensions.messaging.Message;
-import io.helidon.extensions.messaging.MessageBatch;
-import io.helidon.extensions.messaging.MessagingException;
-import io.helidon.extensions.messaging.MessagingRejectedException;
+import io.helidon.messaging.ConnectorDelivery;
+import io.helidon.messaging.ConnectorDeliveryReservation;
+import io.helidon.messaging.IncomingConnector;
+import io.helidon.messaging.IncomingConnectorContext;
+import io.helidon.messaging.Message;
+import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessagingException;
+import io.helidon.messaging.MessagingRejectedException;
 
 import static java.nio.file.StandardOpenOption.APPEND;
 import static java.nio.file.StandardOpenOption.CREATE;

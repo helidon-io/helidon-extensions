@@ -19,8 +19,8 @@ package io.helidon.extensions.messaging.tests.jms;
 import java.nio.file.Path;
 import java.time.Duration;
 
-import io.helidon.extensions.messaging.MessagingRuntime;
 import io.helidon.extensions.messaging.connectors.jms.JmsMessage;
+import io.helidon.messaging.MessagingRuntime;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 

@@ -32,8 +32,6 @@
     <name>Helidon Extensions Messaging Modules Project</name>
 
     <modules>
-        <module>codegen</module>
-        <module>messaging</module>
         <module>connectors</module>
     </modules>
 </project>

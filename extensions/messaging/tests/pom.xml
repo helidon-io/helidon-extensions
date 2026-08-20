@@ -44,6 +44,5 @@
     <modules>
         <module>kafka</module>
         <module>jms</module>
-        <module>poc</module>
     </modules>
 </project>

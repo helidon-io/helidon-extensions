@@ -16,7 +16,7 @@
 
 module io.helidon.extensions.messaging.tests.kafka {
     requires io.helidon.common;
-    requires io.helidon.extensions.messaging;
+    requires io.helidon.messaging;
     requires io.helidon.extensions.messaging.connectors.kafka;
     requires io.helidon.service.registry;
 }

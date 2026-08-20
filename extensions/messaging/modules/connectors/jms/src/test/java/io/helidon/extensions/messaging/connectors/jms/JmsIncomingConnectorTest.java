@@ -28,14 +28,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import io.helidon.extensions.messaging.ConnectorConfig;
-import io.helidon.extensions.messaging.ConnectorDelivery;
-import io.helidon.extensions.messaging.ConnectorDeliveryReservation;
-import io.helidon.extensions.messaging.IncomingConnector;
-import io.helidon.extensions.messaging.IncomingConnectorContext;
-import io.helidon.extensions.messaging.MessageBatch;
-import io.helidon.extensions.messaging.MessagingException;
-import io.helidon.extensions.messaging.MessagingRejectedException;
+import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDelivery;
+import io.helidon.messaging.ConnectorDeliveryReservation;
+import io.helidon.messaging.IncomingConnector;
+import io.helidon.messaging.IncomingConnectorContext;
+import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessagingException;
+import io.helidon.messaging.MessagingRejectedException;
 
 import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;

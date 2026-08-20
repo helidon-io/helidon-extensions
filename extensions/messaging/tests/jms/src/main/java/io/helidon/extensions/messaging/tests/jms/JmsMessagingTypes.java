@@ -25,11 +25,11 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.helidon.extensions.messaging.Emitter;
-import io.helidon.extensions.messaging.Message;
-import io.helidon.extensions.messaging.Messaging;
 import io.helidon.extensions.messaging.connectors.jms.JmsMessage;
 import io.helidon.faulttolerance.Ft;
+import io.helidon.messaging.Emitter;
+import io.helidon.messaging.Message;
+import io.helidon.messaging.Messaging;
 import io.helidon.service.registry.Service;
 
 final class JmsMessagingTypes {

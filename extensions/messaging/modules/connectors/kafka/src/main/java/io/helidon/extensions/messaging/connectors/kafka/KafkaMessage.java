@@ -23,7 +23,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
-import io.helidon.extensions.messaging.Message;
+import io.helidon.messaging.Message;
 
 /**
  * Kafka-specific immutable message envelope.

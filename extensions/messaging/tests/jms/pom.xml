@@ -36,13 +36,8 @@
             <artifactId>helidon-extensions-messaging-connectors-jms</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.extensions.messaging</groupId>
-            <artifactId>helidon-extensions-messaging</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.helidon.extensions.messaging</groupId>
-            <artifactId>helidon-extensions-messaging-codegen</artifactId>
-            <scope>provided</scope>
+            <groupId>io.helidon.messaging</groupId>
+            <artifactId>helidon-messaging</artifactId>
         </dependency>
         <dependency>
             <groupId>io.helidon.fault-tolerance</groupId>
@@ -124,11 +119,6 @@
                             <version>${helidon.version}</version>
                         </path>
                         <path>
-                            <groupId>io.helidon.extensions.messaging</groupId>
-                            <artifactId>helidon-extensions-messaging-codegen</artifactId>
-                            <version>${project.version}</version>
-                        </path>
-                        <path>
                             <groupId>io.helidon.codegen</groupId>
                             <artifactId>helidon-codegen-helidon-copyright</artifactId>
                             <version>${helidon.version}</version>
@@ -150,11 +140,6 @@
                         <groupId>io.helidon.declarative</groupId>
                         <artifactId>helidon-declarative-codegen</artifactId>
                         <version>${helidon.version}</version>
-                    </dependency>
-                    <dependency>
-                        <groupId>io.helidon.extensions.messaging</groupId>
-                        <artifactId>helidon-extensions-messaging-codegen</artifactId>
-                        <version>${project.version}</version>
                     </dependency>
                     <dependency>
                         <groupId>io.helidon.codegen</groupId>

@@ -31,15 +31,15 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
-import io.helidon.extensions.messaging.BatchAtomicity;
-import io.helidon.extensions.messaging.BatchDeliveryException;
-import io.helidon.extensions.messaging.BatchItemOutcome;
-import io.helidon.extensions.messaging.ConnectorConfig;
-import io.helidon.extensions.messaging.DeadLetterMessage;
-import io.helidon.extensions.messaging.Message;
-import io.helidon.extensions.messaging.MessageBatch;
-import io.helidon.extensions.messaging.MessagingException;
-import io.helidon.extensions.messaging.OutgoingConnector;
+import io.helidon.messaging.BatchAtomicity;
+import io.helidon.messaging.BatchDeliveryException;
+import io.helidon.messaging.BatchItemOutcome;
+import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.DeadLetterMessage;
+import io.helidon.messaging.Message;
+import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessagingException;
+import io.helidon.messaging.OutgoingConnector;
 
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;

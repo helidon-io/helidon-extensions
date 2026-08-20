@@ -36,13 +36,8 @@
             <artifactId>helidon-extensions-messaging-connectors-kafka</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.extensions.messaging</groupId>
-            <artifactId>helidon-extensions-messaging</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.helidon.extensions.messaging</groupId>
-            <artifactId>helidon-extensions-messaging-codegen</artifactId>
-            <scope>provided</scope>
+            <groupId>io.helidon.messaging</groupId>
+            <artifactId>helidon-messaging</artifactId>
         </dependency>
         <dependency>
             <groupId>io.helidon.config</groupId>
@@ -111,9 +106,9 @@
                             <version>${helidon.version}</version>
                         </path>
                         <path>
-                            <groupId>io.helidon.extensions.messaging</groupId>
-                            <artifactId>helidon-extensions-messaging-codegen</artifactId>
-                            <version>${project.version}</version>
+                            <groupId>io.helidon.declarative</groupId>
+                            <artifactId>helidon-declarative-codegen</artifactId>
+                            <version>${helidon.version}</version>
                         </path>
                         <path>
                             <groupId>io.helidon.codegen</groupId>
@@ -134,9 +129,9 @@
                         <version>${helidon.version}</version>
                     </dependency>
                     <dependency>
-                        <groupId>io.helidon.extensions.messaging</groupId>
-                        <artifactId>helidon-extensions-messaging-codegen</artifactId>
-                        <version>${project.version}</version>
+                        <groupId>io.helidon.declarative</groupId>
+                        <artifactId>helidon-declarative-codegen</artifactId>
+                        <version>${helidon.version}</version>
                     </dependency>
                     <dependency>
                         <groupId>io.helidon.codegen</groupId>

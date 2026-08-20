@@ -30,9 +30,9 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.helidon.extensions.messaging.DeadLetterMessage;
-import io.helidon.extensions.messaging.MessageBatch;
-import io.helidon.extensions.messaging.MessagingException;
+import io.helidon.messaging.DeadLetterMessage;
+import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessagingException;
 
 import jakarta.jms.BytesMessage;
 import jakarta.jms.MapMessage;
@@ -105,7 +105,7 @@ class JmsMessageTest {
         when(session.createTextMessage("body")).thenReturn(nativeMessage);
         RuntimeException processingFailure = new RuntimeException("failed");
         DeadLetterMessage<String> deadLetter = DeadLetterMessage.create(
-                io.helidon.extensions.messaging.Message.create("body"),
+                io.helidon.messaging.Message.create("body"),
                 "orders",
                 2,
                 processingFailure);
@@ -178,7 +178,7 @@ class JmsMessageTest {
                                               .build(),
                                       false);
         JmsMessageMapper.toJmsMessage(session,
-                                      io.helidon.extensions.messaging.Message.builder("portable")
+                                      io.helidon.messaging.Message.builder("portable")
                                               .header("JMSXGroupID", "orders")
                                               .header("JMSXGroupSeq", "8")
                                               .build(),
@@ -190,7 +190,7 @@ class JmsMessageTest {
         verify(portableNativeMessage).setIntProperty("JMSXGroupSeq", 8);
         assertThrows(MessagingException.class,
                      () -> JmsMessageMapper.copyPortableHeaders(portableNativeMessage,
-                                                                io.helidon.extensions.messaging.Message.builder("bad")
+                                                                io.helidon.messaging.Message.builder("bad")
                                                                         .header("JMSXGroupSeq", "not-an-integer")
                                                                         .build()));
     }
@@ -240,7 +240,7 @@ class JmsMessageTest {
         when(bodyless.getPropertyNames()).thenReturn(java.util.Collections.emptyEnumeration());
 
         assertThat(JmsMessageMapper.toJmsMessage(session,
-                                                 io.helidon.extensions.messaging.Message.create(null),
+                                                 io.helidon.messaging.Message.create(null),
                                                  false),
                    is(bodyless));
         assertThat(JmsMessageMapper.fromJmsMessage(bodyless, false).entity(), is((Object) null));
@@ -330,8 +330,8 @@ class JmsMessageTest {
         when(session.createMapMessage()).thenReturn(outgoingMap);
         when(session.createStreamMessage()).thenReturn(outgoingStream);
 
-        JmsMessageMapper.toJmsMessage(session, io.helidon.extensions.messaging.Message.create(mappedBody), false);
-        JmsMessageMapper.toJmsMessage(session, io.helidon.extensions.messaging.Message.create(streamBody), false);
+        JmsMessageMapper.toJmsMessage(session, io.helidon.messaging.Message.create(mappedBody), false);
+        JmsMessageMapper.toJmsMessage(session, io.helidon.messaging.Message.create(streamBody), false);
 
         verify(outgoingMap).setObject("bytes", new byte[]{1, 2});
         verify(outgoingMap).setObject("missing", null);
@@ -348,12 +348,12 @@ class JmsMessageTest {
 
         assertThrows(MessagingException.class,
                      () -> JmsMessageMapper.toJmsMessage(session,
-                                                         io.helidon.extensions.messaging.Message.create(
+                                                         io.helidon.messaging.Message.create(
                                                                  Map.of("", "empty-name")),
                                                          false));
         assertThrows(MessagingException.class,
                      () -> JmsMessageMapper.toJmsMessage(session,
-                                                         io.helidon.extensions.messaging.Message.create(nullName),
+                                                         io.helidon.messaging.Message.create(nullName),
                                                          false));
         verify(session, never()).createMapMessage();
 
@@ -411,7 +411,7 @@ class JmsMessageTest {
         when(session.createObjectMessage(any(Serializable.class))).thenReturn(outgoing);
 
         assertThat(JmsMessageMapper.toJmsMessage(session,
-                                                 io.helidon.extensions.messaging.Message.create(payload),
+                                                 io.helidon.messaging.Message.create(payload),
                                                  true),
                    is(outgoing));
         verify(session).createObjectMessage(payload);

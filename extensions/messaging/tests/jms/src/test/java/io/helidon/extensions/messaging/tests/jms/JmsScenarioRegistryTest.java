@@ -18,15 +18,15 @@ package io.helidon.extensions.messaging.tests.jms;
 
 import java.util.List;
 
-import io.helidon.extensions.messaging.ConsumerRegistration;
-import io.helidon.extensions.messaging.EmitterRegistration;
-import io.helidon.extensions.messaging.MessagingRuntime;
-import io.helidon.extensions.messaging.ProcessorRegistration;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.BytesReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.ForwardingReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.FtRetryPoisonReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.TextReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.TextSender;
+import io.helidon.messaging.ConsumerRegistration;
+import io.helidon.messaging.EmitterRegistration;
+import io.helidon.messaging.MessagingRuntime;
+import io.helidon.messaging.ProcessorRegistration;
 import io.helidon.service.registry.Interception;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
