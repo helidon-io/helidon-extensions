@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+ * Copyright (c) 2026 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,26 +14,24 @@
  * limitations under the License.
  */
 
-package io.helidon.extensions.langchain4j.providers.openai;
+package io.helidon.extensions.langchain4j.providers.oci.genai;
 
 import java.util.Optional;
 
 import io.helidon.builder.api.Option;
 import io.helidon.extensions.langchain4j.AiProvider;
 
-import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
-
-@AiProvider.ModelConfig(value = OpenAiChatModel.class)
-@AiProvider.ModelConfig(value = OpenAiStreamingChatModel.class)
-interface OpenAiLc4jProvider {
+/**
+ * Test provider whose configuration selects an observable model-construction plan.
+ */
+@AiProvider.ModelConfig(LifecycleTestModel.class)
+interface LifecycleTestLc4jProvider extends AiProvider.ModelLifecycle {
 
     /**
-     * Enable a "JSON mode" in the model configuration. This way, the LLM will be forced to respond with a valid JSON.
-     * For newer models that support Structured Outputs use supported-capabilities.
+     * Model construction plan registered by the lifecycle test.
      *
-     * @return "json_object" to enable JSON mode on older models like gpt-3.5-turbo or gpt-4
+     * @return plan name
      */
     @Option.Configured
-    Optional<String> responseFormat();
+    Optional<String> plan();
 }

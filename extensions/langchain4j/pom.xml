@@ -51,8 +51,8 @@
         - change it in all example POM files in parent section, as that cannot use a property
         -->
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
-        <version.lib.langchain4j>1.12.1</version.lib.langchain4j>
-        <version.lib.langchain4j-community>1.12.1-beta21</version.lib.langchain4j-community>
+        <version.lib.langchain4j>1.18.1</version.lib.langchain4j>
+        <version.lib.langchain4j-community>1.18.0-beta28</version.lib.langchain4j-community>
         <version.lib.coherence>25.03.1</version.lib.coherence>
         <langchain4j.extension.version>${project.version}</langchain4j.extension.version>
         <!-- Force upgrade for dependency convergence -->

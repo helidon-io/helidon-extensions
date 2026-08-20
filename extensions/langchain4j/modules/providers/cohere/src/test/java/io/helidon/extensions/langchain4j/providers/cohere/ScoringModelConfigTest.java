@@ -16,26 +16,34 @@
 
 package io.helidon.extensions.langchain4j.providers.cohere;
 
+import java.io.IOException;
 import java.net.Proxy;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Map;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
+import io.helidon.service.registry.Qualifier;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.testing.junit5.Testing;
 
+import dev.langchain4j.http.client.HttpClientBuilder;
 import org.junit.jupiter.api.Test;
 
 import static io.helidon.common.media.type.MediaTypes.APPLICATION_X_YAML;
 import static io.helidon.common.testing.junit5.OptionalMatcher.optionalEmpty;
-import static io.helidon.common.testing.junit5.OptionalMatcher.optionalValue;
 import static io.helidon.extensions.langchain4j.providers.cohere.CohereConstants.ConfigCategory.MODEL;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
-@Testing.Test
+@Testing.Test(perMethod = true)
 class ScoringModelConfigTest {
 
     @Test
@@ -57,52 +65,150 @@ class ScoringModelConfigTest {
         assertThat(config.logRequests().get(), is(true));
         assertThat(config.logResponses().isPresent(), is(true));
         assertThat(config.logResponses().get(), is(true));
-        assertThat(config.proxy().map(Proxy::toString), optionalValue(equalTo("defaultProxy")));
+        assertThat(config.httpClientBuilder().orElseThrow(),
+                   instanceOf(MockHttpClientFactory.TrackingHttpClientBuilder.class));
+        assertThat(config.configuredBuilder().build(), is(notNullValue()));
     }
 
     @Test
-    void testCustomProxy(ServiceRegistry registry) {
-
+    void testNamedHttpClientBuilder(ServiceRegistry registry) {
         // language=YAML
         var yaml = """
                 langchain4j:
                   models:
                     test-model:
                       provider: cohere
-                
+
                   providers:
                     cohere:
-                      proxy.service-registry.named: customProxy
+                      api-key: api-key
+                      http-client-builder.service-registry.named: customHttpClient
                 """;
 
         var config = CohereScoringModelConfig.builder()
                 .serviceRegistry(registry)
-                .config(CohereConstants.create(Config.just(ConfigSources.create(yaml, APPLICATION_X_YAML)), MODEL, "test-model"))
+                .config(CohereConstants.create(Config.just(ConfigSources.create(yaml, APPLICATION_X_YAML)),
+                                               MODEL,
+                                               "test-model"))
                 .build();
+        var namedBuilder = registry.first(HttpClientBuilder.class, Qualifier.createNamed("customHttpClient"))
+                .orElseThrow();
 
-        assertThat(config.proxy().map(Proxy::toString), optionalValue(equalTo("customProxy")));
+        assertThat(config.httpClientBuilder().orElseThrow(), is(namedBuilder));
+        var trackingBuilder = (MockHttpClientFactory.TrackingHttpClientBuilder) namedBuilder;
+        var buildCount = trackingBuilder.buildCount();
+        config.configuredBuilder().build();
+        assertThat(trackingBuilder.buildCount(), is(buildCount + 1));
     }
 
     @Test
-    void testNoProxy(ServiceRegistry registry) {
-
+    void testHttpClientBuilderDiscoveryCanBeDisabled(ServiceRegistry registry) {
         // language=YAML
         var yaml = """
-                langchain4j:
-                  models:
-                    test-model:
-                      provider: cohere
-                
-                  providers:
-                    cohere:
-                      proxy.service-registry.named:
+                api-key: api-key
+                http-client-builder-discover-services: false
                 """;
 
         var config = CohereScoringModelConfig.builder()
                 .serviceRegistry(registry)
-                .config(CohereConstants.create(Config.just(ConfigSources.create(yaml, APPLICATION_X_YAML)), MODEL, "test-model"))
+                .config(Config.just(ConfigSources.create(yaml, APPLICATION_X_YAML)))
                 .build();
 
-        assertThat(config.proxy().map(Proxy::toString), optionalEmpty());
+        assertThat(config.httpClientBuilder(), optionalEmpty());
+    }
+
+    @Test
+    void testDirectConfiguredHttpClientBuilderPreservesSetterOrder() {
+        var configuredBuilder = new MockHttpClientFactory.TrackingHttpClientBuilder();
+        var programmaticBuilder = new MockHttpClientFactory.TrackingHttpClientBuilder();
+        var config = Config.builder()
+                .sources(ConfigSources.create(Map.of("http-client-builder", "configured")))
+                .addMapper(HttpClientBuilder.class, ignored -> configuredBuilder)
+                .build();
+
+        var programmaticWins = CohereScoringModelConfig.builder()
+                .config(config)
+                .httpClientBuilder(programmaticBuilder)
+                .build();
+        var configWins = CohereScoringModelConfig.builder()
+                .httpClientBuilder(programmaticBuilder)
+                .config(config)
+                .build();
+
+        assertThat(programmaticWins.httpClientBuilder().orElseThrow(), is(programmaticBuilder));
+        assertThat(configWins.httpClientBuilder().orElseThrow(), is(configuredBuilder));
+    }
+
+    @Test
+    void testProgrammaticHttpClientBuilderIsApplied() {
+        var httpClientBuilder = new MockHttpClientFactory.TrackingHttpClientBuilder();
+        var config = CohereScoringModelConfig.builder()
+                .apiKey("api-key")
+                .httpClientBuilderDiscoverServices(false)
+                .httpClientBuilder(httpClientBuilder)
+                .build();
+
+        assertThat(config.httpClientBuilder().orElseThrow(), is(httpClientBuilder));
+        var buildCount = httpClientBuilder.buildCount();
+        config.configuredBuilder().build();
+        assertThat(httpClientBuilder.buildCount(), is(buildCount + 1));
+    }
+
+    @Test
+    void testBuilderAndPrototypeCopiesKeepProgrammaticHttpClientBuilder() {
+        var httpClientBuilder = new MockHttpClientFactory.TrackingHttpClientBuilder();
+        var source = CohereScoringModelConfig.builder()
+                .apiKey("api-key")
+                .httpClientBuilderDiscoverServices(false)
+                .httpClientBuilder(httpClientBuilder);
+
+        var builderCopy = CohereScoringModelConfig.builder()
+                .from(source)
+                .build();
+        var prototypeCopy = CohereScoringModelConfig.builder(source.build())
+                .build();
+
+        assertThat(builderCopy.httpClientBuilder().orElseThrow(), is(httpClientBuilder));
+        assertThat(prototypeCopy.httpClientBuilder().orElseThrow(), is(httpClientBuilder));
+        builderCopy.configuredBuilder().build();
+        prototypeCopy.configuredBuilder().build();
+        assertThat(httpClientBuilder.buildCount(), is(2));
+    }
+
+    @Test
+    void testHttpClientMetadataReplacesLegacyProxyOption() throws IOException {
+        try (var metadataResource = getClass().getResourceAsStream("/META-INF/helidon/config-metadata.json")) {
+            assertThat(metadataResource, is(notNullValue()));
+            var metadata = new String(metadataResource.readAllBytes(), StandardCharsets.UTF_8);
+
+            assertThat(metadata, not(containsString("\"key\":\"proxy\"")));
+            assertThat(metadata, containsString("\"key\":\"http-client-builder\","));
+            assertThat(metadata, containsString("\"type\":\"dev.langchain4j.http.client.HttpClientBuilder\""));
+            assertThat(metadata, containsString("\"description\":\"HTTP client builder to use\""));
+            assertThat(metadata, containsString("\"key\":\"http-client-builder-discover-services\""));
+        }
+    }
+
+    @Test
+    void testLegacyProxyApiIsNotGenerated() {
+        assertThrows(NoSuchMethodException.class,
+                     () -> CohereScoringModelConfig.class.getDeclaredMethod("proxy"));
+        assertThrows(NoSuchMethodException.class,
+                     () -> CohereScoringModelConfig.BuilderBase.class.getDeclaredMethod("proxy"));
+        assertThrows(NoSuchMethodException.class,
+                     () -> CohereScoringModelConfig.BuilderBase.class.getDeclaredMethod("proxy", Proxy.class));
+        assertThrows(NoSuchMethodException.class,
+                     () -> CohereScoringModelConfig.BuilderBase.class.getDeclaredMethod("clearProxy"));
+        assertThrows(NoSuchMethodException.class,
+                     () -> CohereScoringModelConfig.BuilderBase.class.getDeclaredMethod("proxyDiscoverServices"));
+    }
+
+    @Test
+    void testHttpClientDiscoveryFlagRemainsBuilderOnly() throws NoSuchMethodException {
+        assertThrows(NoSuchMethodException.class,
+                     () -> CohereScoringModelConfig.class.getDeclaredMethod("httpClientBuilderDiscoverServices"));
+        assertThat(CohereScoringModelConfig.BuilderBase.class
+                           .getDeclaredMethod("httpClientBuilderDiscoverServices"),
+                   is(notNullValue()));
     }
 }
