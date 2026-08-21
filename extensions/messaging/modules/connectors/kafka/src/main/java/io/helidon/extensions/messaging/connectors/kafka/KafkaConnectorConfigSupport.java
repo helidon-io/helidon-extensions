@@ -166,6 +166,18 @@ final class KafkaConnectorConfigSupport {
     private KafkaConnectorConfigSupport() {
     }
 
+    /**
+     * Validates Kafka connector configuration.
+     */
+    static final class BuilderDecorator implements Prototype.BuilderDecorator<KafkaConnectorConfig.BuilderBase<?, ?>> {
+        @Override
+        public void decorate(KafkaConnectorConfig.BuilderBase<?, ?> target) {
+            if (target.closeTimeout().isNegative()) {
+                throw new IllegalArgumentException(CLOSE_TIMEOUT_PROPERTY + " must not be negative");
+            }
+        }
+    }
+
     static Map<String, Object> producerProperties(KafkaConnectorConfig config) {
         Map<String, Object> properties = kafkaProperties(config);
         properties.put(BOOTSTRAP_SERVERS_PROPERTY, config.bootstrapServers());

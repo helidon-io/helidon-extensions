@@ -81,6 +81,7 @@ helidon:
           initial-delay: PT0.1S
           max-delay: PT30S
           jitter: 0.2
+        max-body-bytes: 1048576
         receive-timeout: PT0.1S
         close-timeout: PT10S
 
@@ -190,6 +191,10 @@ JMS metadata: message and String correlation identifiers, type, timestamp, expir
 redelivery state. They never expose the live native `Message`, `Session`, or `Connection`. Portable message headers
 are the string representation of JMS application properties.
 
+Incoming `BytesMessage` bodies are rejected before allocation when their declared length exceeds `max-body-bytes`,
+which defaults to one MiB. Set this limit to the largest byte-array payload the application is prepared to retain.
+Other JMS body types do not expose a portable encoded byte length and are not governed by this option.
+
 ## Body and property mapping
 
 | Helidon payload | JMS message |
@@ -238,6 +243,13 @@ For a non-transacted session, the connector uses `CLIENT_ACKNOWLEDGE` and acknow
 including configured retry, drop, or dead-letter handling, has completed. For `transacted: true`, it commits the local
 JMS transaction at the same point. A terminal processing failure recovers or rolls back the session so the broker can
 redeliver the message according to its policy.
+
+A message rejected while its body is being mapped, including a disabled `ObjectMessage` or an oversized
+`BytesMessage`, also enters the configured runtime failure policy. Retries remain runtime-owned and do not deserialize
+or reread the rejected body. Drop and successful dead-letter handling acknowledge or commit the source only after the
+policy completes; a terminal `FAIL` recovers or rolls back it. Because an unsafe or invalid body cannot be retained, its
+dead-letter envelope is bodyless. Safe JMS application properties and native metadata are retained when the provider
+allows them to be read without touching the body.
 
 This provides at-least-once delivery. If the connection is lost after application processing but before acknowledgment
 or commit is confirmed, the message can be delivered again. Consumers should be idempotent when duplicates matter.

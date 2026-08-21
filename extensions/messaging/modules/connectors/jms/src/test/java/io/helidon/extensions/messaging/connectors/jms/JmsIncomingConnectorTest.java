@@ -414,12 +414,62 @@ class JmsIncomingConnectorTest {
     }
 
     @Test
-    void poisonBodyMappingRecoversWithoutAcknowledgingOrReconnecting() throws Exception {
+    @Timeout(5)
+    void poisonBodyMappingUsesFailurePolicyBeforeAcknowledging() throws Exception {
         JmsClient client = client();
         ObjectMessage nativeMessage = mock(ObjectMessage.class);
+        when(nativeMessage.getPropertyNames()).thenReturn(Collections.emptyEnumeration());
+        when(nativeMessage.getJMSMessageID()).thenReturn("ID:poison");
         when(client.consumer.receive(anyLong())).thenReturn(nativeMessage);
         AtomicInteger resolutions = new AtomicInteger();
-        TestReservation reservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
+        CountDownLatch policyStarted = new CountDownLatch(1);
+        CountDownLatch releasePolicy = new CountDownLatch(1);
+        TestReservation reservation = new TestReservation(
+                new ArrayList<>(),
+                new TestDelivery(policyStarted, releasePolicy, null));
+        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> {
+            resolutions.incrementAndGet();
+            return client.factory;
+        });
+        doAnswer(invocation -> {
+            connector.drain();
+            return null;
+        }).when(nativeMessage).acknowledge();
+        AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
+        Thread source = Thread.ofVirtual().start(() -> capture(
+                () -> connector.run(new TestContext(new ArrayList<>(), reservation)),
+                sourceFailure));
+
+        assertThat(policyStarted.await(1, TimeUnit.SECONDS), is(true));
+        assertThat(reservation.starts(), is(0));
+        assertThat(reservation.failedStarts(), is(1));
+        assertThat(reservation.failure().getMessage(), containsString("ObjectMessage is disabled"));
+        JmsMessage<?> rejectedMessage = (JmsMessage<?>) reservation.failedBatch().get(0);
+        assertThat(rejectedMessage.entity(), nullValue());
+        assertThat(rejectedMessage.messageId().orElseThrow(), is("ID:poison"));
+        verify(nativeMessage, never()).getObject();
+        verify(nativeMessage, never()).acknowledge();
+
+        releasePolicy.countDown();
+        source.join(Duration.ofSeconds(1));
+
+        assertThat(source.isAlive(), is(false));
+        assertThat(sourceFailure.get(), nullValue());
+        assertThat(resolutions.get(), is(1));
+        verify(nativeMessage).acknowledge();
+        verify(client.session, never()).recover();
+    }
+
+    @Test
+    void terminalJmsBodyMappingFailureRecoversWithoutReconnecting() throws Exception {
+        JmsClient client = client();
+        TextMessage nativeMessage = mock(TextMessage.class);
+        when(nativeMessage.getText()).thenThrow(new JMSException("malformed provider message"));
+        when(nativeMessage.getPropertyNames()).thenReturn(Collections.emptyEnumeration());
+        when(client.consumer.receive(anyLong())).thenReturn(nativeMessage);
+        AtomicInteger resolutions = new AtomicInteger();
+        MessagingException terminalFailure = new MessagingException("Failure policy exhausted");
+        TestReservation reservation = new TestReservation(new ArrayList<>(), TestDelivery.failed(terminalFailure));
         IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> {
             resolutions.incrementAndGet();
             return client.factory;
@@ -429,36 +479,53 @@ class JmsIncomingConnectorTest {
                 MessagingException.class,
                 () -> connector.run(new TestContext(new ArrayList<>(), reservation)));
 
-        assertThat(failure.getMessage(), containsString("ObjectMessage is disabled"));
+        assertThat(failure, is(terminalFailure));
+        assertThat(reservation.failure().getMessage(), containsString("Cannot snapshot incoming JMS message"));
         assertThat(resolutions.get(), is(1));
         assertThat(reservation.starts(), is(0));
-        assertThat(reservation.closed(), is(true));
+        assertThat(reservation.failedStarts(), is(1));
         verify(client.session).recover();
         verify(nativeMessage, never()).acknowledge();
     }
 
     @Test
-    void jmsBodyMappingFailureRecoversWithoutReconnectingUnlessConnectionIsBroken() throws Exception {
-        JmsClient client = client();
-        TextMessage nativeMessage = mock(TextMessage.class);
-        when(nativeMessage.getText()).thenThrow(new JMSException("malformed provider message"));
-        when(client.consumer.receive(anyLong())).thenReturn(nativeMessage);
-        AtomicInteger resolutions = new AtomicInteger();
-        TestReservation reservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> {
-            resolutions.incrementAndGet();
-            return client.factory;
+    void connectionFailureDuringBodyMappingReconnectsWithoutStartingFailurePolicy() throws Exception {
+        JmsClient first = client();
+        JmsClient second = client();
+        AtomicReference<ExceptionListener> listener = new AtomicReference<>();
+        doAnswer(invocation -> {
+            listener.set(invocation.getArgument(0));
+            return null;
+        }).when(first.connection).setExceptionListener(any(ExceptionListener.class));
+        TextMessage malformed = mock(TextMessage.class);
+        when(malformed.getText()).thenAnswer(invocation -> {
+            listener.get().onException(new JMSException("connection lost during body mapping"));
+            throw new JMSException("body unavailable after connection loss");
         });
+        when(first.consumer.receive(anyLong())).thenReturn(malformed);
+        TextMessage delivered = textMessage("after-reconnect");
+        when(second.consumer.receive(anyLong())).thenReturn(delivered);
+        ConnectionFactory factory = mock(ConnectionFactory.class);
+        when(factory.createConnection()).thenReturn(first.connection, second.connection);
+        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
+        doAnswer(invocation -> {
+            connectorReference.get().drain();
+            return null;
+        }).when(delivered).acknowledge();
+        TestReservation firstReservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
+        TestReservation secondReservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
+        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> factory);
+        connectorReference.set(connector);
 
-        MessagingException failure = assertThrows(
-                MessagingException.class,
-                () -> connector.run(new TestContext(new ArrayList<>(), reservation)));
+        connector.run(new TestContext(new ArrayList<>(), firstReservation, secondReservation));
 
-        assertThat(failure.getMessage(), containsString("Cannot snapshot incoming JMS message"));
-        assertThat(resolutions.get(), is(1));
-        assertThat(reservation.starts(), is(0));
-        verify(client.session).recover();
-        verify(nativeMessage, never()).acknowledge();
+        assertThat(firstReservation.starts(), is(0));
+        assertThat(firstReservation.failedStarts(), is(0));
+        assertThat(secondReservation.starts(), is(1));
+        verify(first.session, never()).recover();
+        verify(first.connection).close();
+        verify(second.connection).start();
+        verify(delivered).acknowledge();
     }
 
     @Test
@@ -1258,6 +1325,9 @@ class JmsIncomingConnectorTest {
         private final List<String> events;
         private final ConnectorDelivery delivery;
         private final AtomicInteger starts = new AtomicInteger();
+        private final AtomicInteger failedStarts = new AtomicInteger();
+        private final AtomicReference<MessageBatch<?>> failedBatch = new AtomicReference<>();
+        private final AtomicReference<RuntimeException> failure = new AtomicReference<>();
         private final AtomicBoolean closed = new AtomicBoolean();
 
         private TestReservation(List<String> events, ConnectorDelivery delivery) {
@@ -1277,6 +1347,15 @@ class JmsIncomingConnectorTest {
         }
 
         @Override
+        public ConnectorDelivery startFailed(MessageBatch<?> batch, RuntimeException failure) {
+            failedStarts.incrementAndGet();
+            events.add("start-failed");
+            failedBatch.set(batch);
+            this.failure.set(failure);
+            return delivery;
+        }
+
+        @Override
         public void close() {
             closed.set(true);
         }
@@ -1290,6 +1369,18 @@ class JmsIncomingConnectorTest {
             return starts.get();
         }
 
+        private int failedStarts() {
+            return failedStarts.get();
+        }
+
+        private MessageBatch<?> failedBatch() {
+            return failedBatch.get();
+        }
+
+        private RuntimeException failure() {
+            return failure.get();
+        }
+
         private boolean closed() {
             return closed.get();
         }
@@ -1299,19 +1390,32 @@ class JmsIncomingConnectorTest {
         private final CountDownLatch started;
         private final CountDownLatch release;
         private final AtomicReference<Thread> owner;
+        private final RuntimeException failure;
         private final AtomicBoolean cancelled = new AtomicBoolean();
         private final AtomicBoolean closed = new AtomicBoolean();
 
         private TestDelivery(CountDownLatch started,
                              CountDownLatch release,
                              AtomicReference<Thread> owner) {
+            this(started, release, owner, null);
+        }
+
+        private TestDelivery(CountDownLatch started,
+                             CountDownLatch release,
+                             AtomicReference<Thread> owner,
+                             RuntimeException failure) {
             this.started = started;
             this.release = release;
             this.owner = owner;
+            this.failure = failure;
         }
 
         private static TestDelivery completed() {
             return new TestDelivery(new CountDownLatch(0), new CountDownLatch(0), null);
+        }
+
+        private static TestDelivery failed(RuntimeException failure) {
+            return new TestDelivery(new CountDownLatch(0), new CountDownLatch(0), null, failure);
         }
 
         @Override
@@ -1328,12 +1432,19 @@ class JmsIncomingConnectorTest {
         public void await() throws InterruptedException {
             started.countDown();
             release.await();
+            if (failure != null) {
+                throw failure;
+            }
         }
 
         @Override
         public boolean await(Duration timeout) throws InterruptedException {
             started.countDown();
-            return release.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+            boolean completed = release.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+            if (completed && failure != null) {
+                throw failure;
+            }
+            return completed;
         }
 
         @Override

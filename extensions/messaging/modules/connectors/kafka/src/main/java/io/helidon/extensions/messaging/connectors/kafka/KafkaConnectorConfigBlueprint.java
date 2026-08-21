@@ -27,7 +27,7 @@ import io.helidon.messaging.ConnectorConfig;
 /**
  * Kafka connector configuration.
  */
-@Prototype.Blueprint
+@Prototype.Blueprint(decorator = KafkaConnectorConfigSupport.BuilderDecorator.class)
 @Prototype.Configured
 @Prototype.CustomMethods(KafkaConnectorConfigSupport.class)
 interface KafkaConnectorConfigBlueprint extends ConnectorConfig {
@@ -133,11 +133,13 @@ interface KafkaConnectorConfigBlueprint extends ConnectorConfig {
     Duration closeTimeout();
 
     /**
-     * Additional Kafka client properties not modeled as typed options.
+     * Additional Kafka client properties not modeled as typed options. These properties are treated as confidential
+     * because they may contain credentials.
      *
      * @return additional Kafka client properties
      */
     @Option.Configured("properties")
+    @Option.Confidential
     @Option.Singular("property")
     Map<String, String> properties();
 

@@ -30,6 +30,7 @@ import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.Watchable;
 import java.nio.file.attribute.FileTime;
+import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -80,6 +81,7 @@ import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class FileConnectorTest {
     @Test
@@ -189,7 +191,7 @@ class FileConnectorTest {
     }
 
     @Test
-    void testOutgoingConnectorsAreResourceFreeAndLifecycleIndependent(@TempDir Path tempDir) throws IOException {
+    void testOutgoingConnectorsValidateTargetsAndRemainLifecycleIndependent(@TempDir Path tempDir) throws IOException {
         Path firstPath = tempDir.resolve("first.log");
         Path secondPath = tempDir.resolve("second.log");
         Path thirdPath = tempDir.resolve("third.log");
@@ -207,8 +209,8 @@ class FileConnectorTest {
 
         first.start();
         second.start();
-        assertThat(Files.exists(firstPath), is(false));
-        assertThat(Files.exists(secondPath), is(false));
+        assertThat(Files.exists(firstPath), is(true));
+        assertThat(Files.exists(secondPath), is(true));
 
         first.close();
         first.close();
@@ -228,6 +230,35 @@ class FileConnectorTest {
         second.close();
 
         assertThat(Files.readString(thirdPath), is("provider remains available\n"));
+    }
+
+    @Test
+    void testOutgoingStartRejectsInvalidTarget(@TempDir Path tempDir) throws IOException {
+        Path parentFile = tempDir.resolve("not-a-directory");
+        Files.writeString(parentFile, "content");
+        OutgoingConnector connector = new FileConnectorProvider()
+                .createOutgoingConnector(config(parentFile.resolve("audit.log")));
+
+        MessagingException failure = assertThrows(MessagingException.class, connector::start);
+
+        assertThat(failure.getMessage(), is("File outgoing connector failed to initialize"));
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("not written")));
+        BatchDeliveryException sendFailure = assertThrows(BatchDeliveryException.class,
+                                                          () -> connector.sendBatch(batch));
+        assertThat(sendFailure.outcome(0).status(), is(BatchItemStatus.NOT_ATTEMPTED));
+    }
+
+    @Test
+    void testOutgoingStartRejectsNonRegularTarget(@TempDir Path tempDir) throws IOException {
+        Path directoryTarget = Files.createDirectory(tempDir.resolve("target-directory"));
+        OutgoingConnector connector = new FileConnectorProvider()
+                .createOutgoingConnector(config(directoryTarget));
+
+        MessagingException failure = assertThrows(MessagingException.class, connector::start);
+
+        assertThat(failure.getMessage(),
+                   is("File outgoing connector target is not a regular file: " + directoryTarget));
+        assertThat(failure.getCause(), nullValue());
     }
 
     @Test
@@ -384,6 +415,36 @@ class FileConnectorTest {
     }
 
     @Test
+    @Timeout(value = 5)
+    void testExistingReadOnlyInputCanStart(@TempDir Path tempDir) throws Exception {
+        assumeTrue(Files.getFileStore(tempDir).supportsFileAttributeView("posix"));
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "existing content is tailed\n");
+        Set<PosixFilePermission> originalPermissions = Files.getPosixFilePermissions(input);
+        Files.setPosixFilePermissions(input, Set.of(PosixFilePermission.OWNER_READ,
+                                                   PosixFilePermission.GROUP_READ,
+                                                   PosixFilePermission.OTHERS_READ));
+        assumeTrue(!Files.isWritable(input));
+
+        CountDownLatch ready = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        IncomingConnector source = new FileConnectorProvider().createIncomingConnector(incomingConfig(input));
+        Thread sourceThread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
+                .start(() -> source.run(incomingContext(ignored -> { }, ready)));
+        try {
+            assertThat(ready.await(1, TimeUnit.SECONDS), is(true));
+        } finally {
+            source.close();
+            sourceThread.join(TimeUnit.SECONDS.toMillis(1));
+            Files.setPosixFilePermissions(input, originalPermissions);
+        }
+
+        assertThat(sourceThread.isAlive(), is(false));
+        assertThat(failure.get(), nullValue());
+    }
+
+    @Test
     void testDefaultLineSeparatorWritesOneMessagePerLine(@TempDir Path tempDir) throws IOException {
         Path auditLog = tempDir.resolve("audit.log");
         var sink = outgoingConnector(config(auditLog));
@@ -403,6 +464,50 @@ class FileConnectorTest {
         sink.send(Message.create("second audit event"));
 
         assertThat(Files.readString(auditLog), is("first audit event|second audit event|"));
+    }
+
+    @Test
+    void testPayloadContainingLineSeparatorIsRejectedBeforeWrite(@TempDir Path tempDir) throws IOException {
+        Path auditLog = tempDir.resolve("audit.log");
+        OutgoingConnector sink = outgoingConnector(config(auditLog, "|"));
+        MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("safe"),
+                                                                 Message.create("injected|record")));
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class, () -> sink.sendBatch(batch));
+
+        assertThat(failure.getCause(), instanceOf(MessagingException.class));
+        assertThat(failure.getCause().getMessage(),
+                   is("File message payload cannot be framed with the configured line separator"));
+        assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
+                   is(List.of(BatchItemStatus.NOT_ATTEMPTED, BatchItemStatus.NOT_ATTEMPTED)));
+        assertThat(Files.readString(auditLog), is(""));
+    }
+
+    @Test
+    void testOverlappingLineSeparatorCannotShiftIncomingRecordBoundary(@TempDir Path tempDir) throws Exception {
+        Path auditLog = tempDir.resolve("audit.log");
+        OutgoingConnector sink = outgoingConnector(config(auditLog, "aba"));
+        sink.send(Message.create("a"));
+        MessageBatch<String> ambiguous = MessageBatch.create(List.of(Message.create("ab")));
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                        () -> sink.sendBatch(ambiguous));
+
+        assertThat(failure.getCause(), instanceOf(MessagingException.class));
+        assertThat(failure.outcome(0).status(), is(BatchItemStatus.NOT_ATTEMPTED));
+        assertThat(Files.readString(auditLog), is("aaba"));
+
+        List<List<String>> deliveries = new ArrayList<>();
+        IncomingConnectorContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(auditLog, "aba"),
+                                                             context,
+                                                             new AtomicBoolean());
+        FileIncomingConnector.FileCursor cursor = source.currentCursor(auditLog, 0);
+
+        cursor = source.emitAppendedLines(auditLog, cursor);
+
+        assertThat(deliveries, is(List.of(List.of("a"))));
+        assertThat(cursor.offset(), is(Files.size(auditLog)));
     }
 
     @Test
@@ -507,7 +612,7 @@ class FileConnectorTest {
     }
 
     @Test
-    void testBatchEncodingFailureReportsEveryItemNotAttempted(@TempDir Path tempDir) {
+    void testBatchEncodingFailureReportsEveryItemNotAttempted(@TempDir Path tempDir) throws IOException {
         RuntimeException expectedFailure = new RuntimeException("expected encoding failure");
         Object invalidPayload = new Object() {
             @Override
@@ -526,7 +631,7 @@ class FileConnectorTest {
         assertThat(failure.getCause(), sameInstance(expectedFailure));
         assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
                    is(List.of(BatchItemStatus.NOT_ATTEMPTED, BatchItemStatus.NOT_ATTEMPTED)));
-        assertThat(Files.exists(auditLog), is(false));
+        assertThat(Files.readString(auditLog), is(""));
     }
 
     @Test
@@ -793,6 +898,27 @@ class FileConnectorTest {
         cursor = source.emitAppendedLines(input, cursor);
         append(input, "old");
         cursor = source.emitAppendedLines(input, cursor);
+        Files.writeString(input, "good\nnew\n");
+        cursor = source.emitAppendedLines(input, cursor);
+
+        assertThat(deliveries, is(List.of(List.of("good"), List.of("new"))));
+        assertThat(cursor.offset(), is(Files.size(input)));
+    }
+
+    @Test
+    void testSameSizeIncompleteTailCorrectionIsDelivered(@TempDir Path tempDir) throws Exception {
+        Path input = tempDir.resolve("events.log");
+        Files.writeString(input, "good\noldx");
+        List<List<String>> deliveries = new ArrayList<>();
+        IncomingConnectorContext context = boundedContext(10, messages -> deliveries.add(entities(messages)));
+        var source = new FileIncomingConnector.FileConnector(incomingConfig(input),
+                                                             context,
+                                                             new AtomicBoolean());
+        FileIncomingConnector.FileCursor cursor = source.currentCursor(input, 0);
+
+        cursor = source.emitAppendedLines(input, cursor);
+        assertThat(deliveries, is(List.of(List.of("good"))));
+
         Files.writeString(input, "good\nnew\n");
         cursor = source.emitAppendedLines(input, cursor);
 
@@ -2038,6 +2164,41 @@ class FileConnectorTest {
         assertThat(sourceThread.isAlive(), is(false));
         assertThat(failure.get(), nullValue());
         assertThat(deliveries, is(List.of(List.of("first"), List.of("second"))));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testWatchServiceObservesSymbolicLinkTarget(@TempDir Path tempDir) throws Exception {
+        assumeTrue(Files.getFileStore(tempDir).supportsFileAttributeView("posix"));
+        Path targetDirectory = Files.createDirectory(tempDir.resolve("target"));
+        Path target = targetDirectory.resolve("events.log");
+        Files.writeString(target, "existing content is tailed\n");
+        Path symbolicLink = tempDir.resolve("events-link.log");
+        Files.createSymbolicLink(symbolicLink, target);
+        List<List<String>> deliveries = new CopyOnWriteArrayList<>();
+        CountDownLatch ready = new CountDownLatch(1);
+        CountDownLatch delivered = new CountDownLatch(1);
+        IncomingConnectorContext context = incomingContext(messages -> {
+            deliveries.add(entities(messages));
+            delivered.countDown();
+        }, ready);
+        IncomingConnector source = new FileConnectorProvider().createIncomingConnector(incomingConfig(symbolicLink));
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread sourceThread = Thread.ofVirtual()
+                .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
+                .start(() -> source.run(context));
+        try {
+            assertThat(ready.await(1, TimeUnit.SECONDS), is(true));
+            append(target, "through-target\n");
+            assertThat(delivered.await(1, TimeUnit.SECONDS), is(true));
+        } finally {
+            source.close();
+            sourceThread.join(TimeUnit.SECONDS.toMillis(1));
+        }
+
+        assertThat(sourceThread.isAlive(), is(false));
+        assertThat(failure.get(), nullValue());
+        assertThat(deliveries, is(List.of(List.of("through-target"))));
     }
 
     @Test

@@ -36,6 +36,7 @@ import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.SelectorRecei
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.TextReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.TextSender;
 import io.helidon.messaging.DeadLetterMessage;
+import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRuntime;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryException;
@@ -43,6 +44,8 @@ import io.helidon.service.registry.ServiceRegistryManager;
 
 import jakarta.jms.ConnectionFactory;
 import jakarta.jms.JMSException;
+import jakarta.jms.Message;
+import jakarta.jms.ObjectMessage;
 import jakarta.jms.TextMessage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,6 +53,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
+import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
@@ -336,6 +340,69 @@ class JmsConnectorIT {
         } finally {
             receiver.allowFinalPoisonFailure();
         }
+    }
+
+    @Test
+    @Timeout(60)
+    void disabledObjectMessageDropSettlesAndContinues() throws Exception {
+        String queue = uniqueName("disabled-object-drop");
+        ServiceRegistryManager manager = registryManager(dropConfig(queue), PoisonReceiver.class);
+        ServiceRegistry registry = manager.registry();
+        PoisonReceiver receiver = registry.get(PoisonReceiver.class);
+        registry.get(MessagingRuntime.class);
+
+        JmsTestClient.sendObject(connectionFactory(), queue, "untrusted-object", message -> {
+        });
+        JmsTestClient.sendText(connectionFactory(), queue, false, "after disabled object", message -> {
+        });
+
+        JmsMessage<String> continued = receiver.awaitSuccessfulMessage(WAIT_TIMEOUT);
+        assertThat("delivery after dropped ObjectMessage", continued, notNullValue());
+        assertThat(continued.entity(), is("after disabled object"));
+        assertThat("disabled ObjectMessage did not reach the handler", receiver.poisonAttemptCount(), is(0));
+        await(() -> broker.queueDeliveringCount(queue) == 0
+                        && broker.queuePendingMessageCount(queue) == 0,
+              WAIT_TIMEOUT,
+              "disabled ObjectMessage was not settled after drop");
+    }
+
+    @Test
+    @Timeout(60)
+    void disabledObjectMessageDeadLettersMetadataAndContinues() throws Exception {
+        String incomingQueue = uniqueName("disabled-object-dead-letter-source");
+        String deadLetterQueue = uniqueName("disabled-object-dead-letter");
+        ServiceRegistryManager manager = registryManager(deadLetterConfig(incomingQueue, deadLetterQueue, 3),
+                                                         PoisonReceiver.class);
+        ServiceRegistry registry = manager.registry();
+        PoisonReceiver receiver = registry.get(PoisonReceiver.class);
+        registry.get(MessagingRuntime.class);
+
+        JmsTestClient.sendObject(connectionFactory(), incomingQueue, "untrusted-object",
+                                 message -> message.setStringProperty("source_prop", "source-value"));
+        JmsTestClient.sendText(connectionFactory(), incomingQueue, false, "after disabled object", message -> {
+        });
+
+        Message deadLetter = JmsTestClient.receive(connectionFactory(), deadLetterQueue, false, WAIT_TIMEOUT);
+        assertThat("physical ObjectMessage dead letter", deadLetter, notNullValue());
+        assertThat("unsafe dead-letter body was not propagated", deadLetter instanceof ObjectMessage, is(false));
+        assertThat("metadata-only dead letter has no text body", deadLetter instanceof TextMessage, is(false));
+        assertThat(deadLetter.getStringProperty("source_prop"), is("source-value"));
+        assertThat(deadLetter.getStringProperty(DeadLetterMessage.SOURCE_CHANNEL_HEADER),
+                   is(JmsMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL));
+        assertThat(deadLetter.getStringProperty(DeadLetterMessage.ATTEMPTS_HEADER), is("3"));
+        assertThat(deadLetter.getStringProperty(DeadLetterMessage.FAILURE_TYPE_HEADER),
+                   is(MessagingException.class.getName()));
+        assertThat(deadLetter.getStringProperty(DeadLetterMessage.FAILURE_MESSAGE_HEADER),
+                   containsString("ObjectMessage is disabled"));
+
+        JmsMessage<String> continued = receiver.awaitSuccessfulMessage(WAIT_TIMEOUT);
+        assertThat("delivery after dead-lettered ObjectMessage", continued, notNullValue());
+        assertThat(continued.entity(), is("after disabled object"));
+        assertThat("disabled ObjectMessage did not reach the handler", receiver.poisonAttemptCount(), is(0));
+        await(() -> broker.queueDeliveringCount(incomingQueue) == 0
+                        && broker.queuePendingMessageCount(incomingQueue) == 0,
+              WAIT_TIMEOUT,
+              "disabled ObjectMessage was not settled after dead-letter publication");
     }
 
     @Test

@@ -227,8 +227,35 @@ class JmsMessageTest {
                     return 2;
                 });
 
-        assertThat((byte[]) JmsMessageMapper.fromJmsMessage(nativeMessage, false).entity(),
+        assertThat((byte[]) JmsMessageMapper.fromJmsMessage(nativeMessage, false, 4).entity(),
                    is(new byte[]{1, 2, 3, 4}));
+    }
+
+    @Test
+    void testOversizedBytesMessageIsRejectedBeforeReadingOrAllocatingBody() throws Exception {
+        BytesMessage nativeMessage = mock(BytesMessage.class);
+        when(nativeMessage.getBodyLength()).thenReturn(1025L);
+
+        MessagingException failure = assertThrows(
+                MessagingException.class,
+                () -> JmsMessageMapper.fromJmsMessage(nativeMessage, false, 1024));
+
+        assertThat(failure.getMessage(), is("JMS bytes message body length 1025 exceeds max-body-bytes 1024"));
+        verify(nativeMessage, never()).reset();
+        verify(nativeMessage, never()).readBytes(any(byte[].class), anyInt());
+    }
+
+    @Test
+    void testNegativeBytesMessageLengthIsRejectedBeforeReading() throws Exception {
+        BytesMessage nativeMessage = mock(BytesMessage.class);
+        when(nativeMessage.getBodyLength()).thenReturn(-1L);
+
+        MessagingException failure = assertThrows(
+                MessagingException.class,
+                () -> JmsMessageMapper.fromJmsMessage(nativeMessage, false, 1024));
+
+        assertThat(failure.getMessage(), is("JMS bytes message declared a negative body length: -1"));
+        verify(nativeMessage, never()).reset();
     }
 
     @Test
@@ -243,7 +270,7 @@ class JmsMessageTest {
                                                  io.helidon.messaging.Message.create(null),
                                                  false),
                    is(bodyless));
-        assertThat(JmsMessageMapper.fromJmsMessage(bodyless, false).entity(), is((Object) null));
+        assertThat(JmsMessageMapper.fromJmsMessage(bodyless, false, 1024).entity(), is((Object) null));
     }
 
     @Test
@@ -272,7 +299,7 @@ class JmsMessageTest {
         when(nativeMessage.getJMSPriority()).thenReturn(7);
         when(nativeMessage.getJMSRedelivered()).thenReturn(true);
 
-        JmsMessage<?> message = JmsMessageMapper.fromJmsMessage(nativeMessage, false);
+        JmsMessage<?> message = JmsMessageMapper.fromJmsMessage(nativeMessage, false, 1024);
 
         assertThat(message.entity(), is("body"));
         assertThat(message.jmsProperties(), is(Map.of("attempt", 2,
@@ -303,7 +330,9 @@ class JmsMessageTest {
         when(incomingMap.getPropertyNames()).thenReturn(Collections.emptyEnumeration());
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> mappedBody = (Map<String, Object>) JmsMessageMapper.fromJmsMessage(incomingMap, false).entity();
+        Map<String, Object> mappedBody = (Map<String, Object>) JmsMessageMapper.fromJmsMessage(incomingMap,
+                                                                                             false,
+                                                                                             1024).entity();
         mapBytes[0] = 9;
         assertThat((byte[]) mappedBody.get("bytes"), is(new byte[]{1, 2}));
         assertThat(mappedBody.containsKey("missing"), is(true));
@@ -318,7 +347,7 @@ class JmsMessageTest {
         when(incomingStream.getPropertyNames()).thenReturn(Collections.emptyEnumeration());
 
         @SuppressWarnings("unchecked")
-        List<Object> streamBody = (List<Object>) JmsMessageMapper.fromJmsMessage(incomingStream, false).entity();
+        List<Object> streamBody = (List<Object>) JmsMessageMapper.fromJmsMessage(incomingStream, false, 1024).entity();
         streamBytes[0] = 9;
         assertThat(streamBody.get(0), is("first"));
         assertThat(streamBody.get(1), is((Object) null));
@@ -359,7 +388,7 @@ class JmsMessageTest {
 
         MapMessage incomingMap = mock(MapMessage.class);
         when(incomingMap.getMapNames()).thenReturn(Collections.enumeration(List.of("")));
-        assertThrows(MessagingException.class, () -> JmsMessageMapper.fromJmsMessage(incomingMap, false));
+        assertThrows(MessagingException.class, () -> JmsMessageMapper.fromJmsMessage(incomingMap, false, 1024));
     }
 
     @Test
@@ -404,7 +433,7 @@ class JmsMessageTest {
         when(incoming.getObject()).thenReturn(payload);
         when(incoming.getPropertyNames()).thenReturn(Collections.emptyEnumeration());
 
-        assertThat(JmsMessageMapper.fromJmsMessage(incoming, true).entity(), is(payload));
+        assertThat(JmsMessageMapper.fromJmsMessage(incoming, true, 1024).entity(), is(payload));
 
         Session session = mock(Session.class);
         ObjectMessage outgoing = mock(ObjectMessage.class);

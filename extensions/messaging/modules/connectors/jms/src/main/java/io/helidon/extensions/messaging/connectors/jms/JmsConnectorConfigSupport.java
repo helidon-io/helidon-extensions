@@ -59,6 +59,8 @@ final class JmsConnectorConfigSupport {
     @Prototype.Constant
     static final String ALLOW_OBJECT_MESSAGES_PROPERTY = "allow-object-messages";
     @Prototype.Constant
+    static final String MAX_BODY_BYTES_PROPERTY = "max-body-bytes";
+    @Prototype.Constant
     static final String RECEIVE_TIMEOUT_PROPERTY = "receive-timeout";
     @Prototype.Constant
     static final String CLOSE_TIMEOUT_PROPERTY = "close-timeout";
@@ -77,6 +79,8 @@ final class JmsConnectorConfigSupport {
     static final String DEFAULT_RECONNECT_INITIAL_DELAY = "PT0.1S";
     @Prototype.Constant
     static final String DEFAULT_RECONNECT_MAX_DELAY = "PT30S";
+    @Prototype.Constant
+    static final int DEFAULT_MAX_BODY_BYTES = 1_048_576;
 
     private JmsConnectorConfigSupport() {
     }
@@ -192,6 +196,9 @@ final class JmsConnectorConfigSupport {
             }
             if (target.noLocal() && target.destinationType() != JmsDestinationType.TOPIC) {
                 throw new IllegalArgumentException(NO_LOCAL_PROPERTY + " requires destination-type TOPIC");
+            }
+            if (target.maxBodyBytes() < 1) {
+                throw new IllegalArgumentException(MAX_BODY_BYTES_PROPERTY + " must be greater than zero");
             }
 
             requirePositive(RECEIVE_TIMEOUT_PROPERTY, target.receiveTimeout());

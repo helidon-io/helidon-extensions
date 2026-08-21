@@ -24,6 +24,7 @@ import java.nio.channels.FileChannel;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.MalformedInputException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.WatchEvent;
@@ -51,8 +52,6 @@ import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
 
-import static java.nio.file.StandardOpenOption.APPEND;
-import static java.nio.file.StandardOpenOption.CREATE;
 import static java.nio.file.StandardOpenOption.READ;
 import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
 import static java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY;
@@ -272,13 +271,20 @@ final class FileIncomingConnector {
         }
 
         private void tailFile() throws IOException, InterruptedException {
-            Path path = config.path().toAbsolutePath().normalize();
-            Path directory = path.getParent();
+            Path configuredPath = config.path().toAbsolutePath().normalize();
+            Path directory = configuredPath.getParent();
             Files.createDirectories(directory);
-            try (var ignored = Files.newOutputStream(path, CREATE, APPEND)) {
-                // Create the file without truncating it.
+            if (Files.notExists(configuredPath)) {
+                try {
+                    Files.createFile(configuredPath);
+                } catch (FileAlreadyExistsException ignored) {
+                    // Another process created the path after the existence check.
+                }
             }
 
+            // Watch the resolved target so writes through a symbolic link are observed in the target directory.
+            Path path = configuredPath.toRealPath();
+            directory = path.getParent();
             FileCursor cursor = currentEndCursor(path);
             try (WatchService watcher = path.getFileSystem().newWatchService()) {
                 watchRegistrationListener.beforeRegistration(path);
@@ -524,6 +530,16 @@ final class FileIncomingConnector {
             IncompleteLineState incompleteLine = cursor.incompleteLineValid(channel.size())
                     ? cursor.incompleteLineCopy()
                     : null;
+            if (incompleteLine != null
+                    && channel.size() == incompleteLine.scanOffset()
+                    && !validateReadSnapshot(path,
+                                             channel,
+                                             new FileReadSnapshot(cursor.offset(),
+                                                                  incompleteLine.scanOffset(),
+                                                                  incompleteLine.lineDigestCopy().digest()))) {
+                // No bytes were appended, so the event can only make progress if the incomplete tail was rewritten.
+                incompleteLine = null;
+            }
             return new CursorState(cursor.offset(),
                                    cursor.guard(),
                                    incompleteLine);

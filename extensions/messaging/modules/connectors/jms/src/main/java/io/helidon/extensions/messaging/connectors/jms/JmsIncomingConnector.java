@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
@@ -301,20 +302,31 @@ final class JmsIncomingConnector {
                     return closed.get() || draining.get() ? DeliveryResult.STOP : DeliveryResult.RECONNECT;
                 }
 
-                JmsMessage<?> message;
+                MessageBatch<?> batch;
+                RuntimeException mappingFailure = null;
                 try {
-                    message = JmsMessageMapper.fromJmsMessage(nativeMessage, config.allowObjectMessages());
+                    JmsMessage<?> message = JmsMessageMapper.fromJmsMessage(nativeMessage,
+                                                                           config.allowObjectMessages(),
+                                                                           config.maxBodyBytes());
+                    batch = MessageBatch.create(message);
                 } catch (RuntimeException e) {
-                    abandon(resources, e);
                     if (resources.broken()) {
+                        abandon(resources, e);
                         return DeliveryResult.RECONNECT;
                     }
-                    throw e;
+                    mappingFailure = e;
+                    batch = failedMappingBatch(nativeMessage, e);
+                    if (resources.broken()) {
+                        abandon(resources, e);
+                        return DeliveryResult.RECONNECT;
+                    }
                 }
 
                 ConnectorDelivery delivery;
                 try {
-                    delivery = startDelivery(reservation, MessageBatch.create(message));
+                    delivery = mappingFailure == null
+                            ? startDelivery(reservation, batch)
+                            : startFailedDelivery(reservation, batch, mappingFailure);
                 } catch (RuntimeException | Error e) {
                     abandon(resources, e);
                     throw e;
@@ -363,6 +375,16 @@ final class JmsIncomingConnector {
 
         private ConnectorDelivery startDelivery(ConnectorDeliveryReservation reservation,
                                                  MessageBatch<?> batch) {
+            return startDelivery(() -> reservation.start(batch));
+        }
+
+        private ConnectorDelivery startFailedDelivery(ConnectorDeliveryReservation reservation,
+                                                       MessageBatch<?> batch,
+                                                       RuntimeException failure) {
+            return startDelivery(() -> reservation.startFailed(batch, failure));
+        }
+
+        private ConnectorDelivery startDelivery(Supplier<ConnectorDelivery> starter) {
             deliveryLock.lock();
             try {
                 if (closed.get() || draining.get()) {
@@ -378,7 +400,7 @@ final class JmsIncomingConnector {
 
             ConnectorDelivery delivery;
             try {
-                delivery = reservation.start(batch);
+                delivery = starter.get();
             } catch (RuntimeException | Error e) {
                 finishDeliveryStart();
                 throw e;
@@ -400,6 +422,18 @@ final class JmsIncomingConnector {
                 deliveryStateChanged.signalAll();
                 deliveryLock.unlock();
             }
+        }
+
+        private MessageBatch<?> failedMappingBatch(jakarta.jms.Message nativeMessage,
+                                                   RuntimeException mappingFailure) {
+            io.helidon.messaging.Message<?> rejectedMessage;
+            try {
+                rejectedMessage = JmsMessageMapper.metadataOnly(nativeMessage);
+            } catch (RuntimeException metadataFailure) {
+                mappingFailure.addSuppressed(metadataFailure);
+                rejectedMessage = io.helidon.messaging.Message.create(null);
+            }
+            return MessageBatch.create(rejectedMessage);
         }
 
         private void finishDeliveryStart() {
