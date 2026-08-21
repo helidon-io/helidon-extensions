@@ -1,13 +1,7 @@
 <!--@frontmatter
 site:
-  title: "Helidon LangChain4j Integration"
+  title: "Helidon LangChain4j Extension"
   version: "27.0.0"
-  sourceUrl: "https://github.com/helidon-io/helidon-extensions/\
-    tree/main/extensions/langchain4j"
-  editRef: "main"
-  editUrlTemplate: "https://github.com/helidon-io/helidon-extensions/\
-    edit/{editRef}/{repoPath}"
-  issueUrlTemplate: "https://github.com/helidon-io/helidon-extensions/issues"
 pages:
   - config/manifest.md
 -->
