@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.messaging.connectors.kafka;
 
+import java.time.Duration;
 import java.util.Map;
 
 import io.helidon.config.Config;
@@ -27,7 +28,9 @@ import io.helidon.messaging.OutgoingConnector;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.junit.jupiter.api.Test;
 
+import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -62,6 +65,54 @@ class KafkaConnectorConfigTest {
         assertThat(config.topic(), is(TOPIC));
         assertThat(config.properties(), is(Map.of("compression.type", "zstd",
                                                   "client.rack", "rack-a")));
+    }
+
+    @Test
+    void testAdditionalPropertiesAreConfidential() {
+        String password = "super-secret-password";
+        String jaasConfig = "org.apache.kafka.common.security.plain.PlainLoginModule required "
+                + "username=\"client\" password=\"" + password + "\";";
+        KafkaConnectorConfig.Builder builder = builder()
+                .bootstrapServers("broker:9092")
+                .topic(TOPIC)
+                .properties(Map.of("sasl.jaas.config", jaasConfig,
+                                   "ssl.keystore.password", password,
+                                   "sasl.mechanism", "PLAIN"));
+
+        String builderDescription = builder.toString();
+        assertThat(builderDescription, containsString("properties=****"));
+        assertThat(builderDescription, not(containsString("sasl.jaas.config")));
+        assertThat(builderDescription, not(containsString(password)));
+        KafkaConnectorConfig config = builder.build();
+        String configDescription = config.toString();
+        assertThat(configDescription, containsString("properties=****"));
+        assertThat(configDescription, not(containsString("sasl.mechanism")));
+        assertThat(configDescription, not(containsString(password)));
+        assertThat(configDescription, not(containsString(jaasConfig)));
+        assertThat(config.properties().get("sasl.jaas.config"), is(jaasConfig));
+    }
+
+    @Test
+    void testNegativeCloseTimeoutIsRejected() {
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                                                         () -> builder()
+                                                                 .bootstrapServers("broker:9092")
+                                                                 .topic(TOPIC)
+                                                                 .closeTimeout(Duration.ofNanos(-1))
+                                                                 .build());
+
+        assertThat(failure.getMessage(), is("close.timeout must not be negative"));
+    }
+
+    @Test
+    void testZeroCloseTimeoutIsAccepted() {
+        KafkaConnectorConfig config = builder()
+                .bootstrapServers("broker:9092")
+                .topic(TOPIC)
+                .closeTimeout(Duration.ZERO)
+                .build();
+
+        assertThat(config.closeTimeout(), is(Duration.ZERO));
     }
 
     @Test

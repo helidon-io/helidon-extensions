@@ -77,6 +77,25 @@ final class FileOutgoingConnector {
         }
     }
 
+    private static void initialize(Path path) {
+        Path parent = path.getParent();
+        try {
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            if (Files.exists(path) && !Files.isRegularFile(path)) {
+                throw new MessagingException("File outgoing connector target is not a regular file: " + path);
+            }
+            try (var ignored = Files.newOutputStream(path,
+                                                     StandardOpenOption.CREATE,
+                                                     StandardOpenOption.APPEND)) {
+                // Validate and create the target without truncating existing content.
+            }
+        } catch (IOException e) {
+            throw new MessagingException("File outgoing connector failed to initialize", e);
+        }
+    }
+
     private static final class FileConnector implements OutgoingConnector {
         private final FileConnectorConfig config;
         private final Path path;
@@ -103,7 +122,10 @@ final class FileOutgoingConnector {
                 if (state == State.CLOSED) {
                     throw new IllegalStateException("File outgoing connector is closed");
                 }
-                state = State.STARTED;
+                if (state == State.NEW) {
+                    initialize(path);
+                    state = State.STARTED;
+                }
             } finally {
                 lifecycleLock.unlock();
             }
@@ -125,10 +147,16 @@ final class FileOutgoingConnector {
             }
             try {
                 StringBuilder content = new StringBuilder();
+                String separator = config.lineSeparator();
                 try {
                     for (Message<?> message : batch.messages()) {
-                        content.append(message.entity())
-                                .append(config.lineSeparator());
+                        String payload = String.valueOf(message.entity());
+                        String frame = payload + separator;
+                        if (frame.indexOf(separator) != payload.length()) {
+                            throw new MessagingException(
+                                    "File message payload cannot be framed with the configured line separator");
+                        }
+                        content.append(frame);
                     }
                 } catch (RuntimeException failure) {
                     throw BatchDeliveryException.notAttempted("File batch encoding", batch, failure);

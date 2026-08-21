@@ -39,7 +39,8 @@ interface FileConnectorConfigBlueprint extends ConnectorConfig {
     Path path();
 
     /**
-     * Line separator appended after each message.
+     * Line separator appended after each message. An outgoing message payload that cannot be framed unambiguously
+     * with this separator is rejected because it would change record boundaries for an incoming file connector.
      *
      * @return line separator appended after each message
      */

@@ -60,6 +60,7 @@ class JmsConnectorConfigTest {
         assertThat(config.reconnectInitialDelay(), is(Duration.ofSeconds(1)));
         assertThat(config.reconnectMaxDelay(), is(Duration.ofSeconds(10)));
         assertThat(config.allowObjectMessages(), is(false));
+        assertThat(config.maxBodyBytes(), is(JmsConnectorConfig.DEFAULT_MAX_BODY_BYTES));
         assertThat(config.jndiEnvironment(),
                    is(Map.of("java.naming.factory.initial", "example.Factory")));
     }
@@ -305,6 +306,13 @@ class JmsConnectorConfigTest {
                      () -> incomingBuilder().reconnectJitter(1).build());
         assertThrows(IllegalArgumentException.class,
                      () -> incomingBuilder().reconnectJitter(Double.NaN).build());
+    }
+
+    @Test
+    void testMaximumBodyBytesValidation() {
+        assertThat(incomingBuilder().maxBodyBytes(2048).build().maxBodyBytes(), is(2048));
+        assertThrows(IllegalArgumentException.class, () -> incomingBuilder().maxBodyBytes(0).build());
+        assertThrows(IllegalArgumentException.class, () -> incomingBuilder().maxBodyBytes(-1).build());
     }
 
     private static JmsConnectorConfig.Builder incomingBuilder() {

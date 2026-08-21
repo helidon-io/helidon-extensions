@@ -189,6 +189,18 @@ interface JmsConnectorConfigBlueprint extends ConnectorConfig {
     boolean allowObjectMessages();
 
     /**
+     * Maximum number of bytes retained for one incoming JMS message body.
+     * <p>
+     * The limit is checked against a {@link jakarta.jms.BytesMessage} declared body length before allocating its body
+     * snapshot. Other JMS body types do not expose a portable encoded byte length.
+     *
+     * @return maximum incoming bytes-message body size
+     */
+    @Option.Configured(JmsConnectorConfigSupport.MAX_BODY_BYTES_PROPERTY)
+    @Option.DefaultCode("JmsConnectorConfigSupport.DEFAULT_MAX_BODY_BYTES")
+    int maxBodyBytes();
+
+    /**
      * Maximum duration of one incoming synchronous receive call.
      *
      * @return receive timeout

@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.messaging.tests.jms;
 
+import java.io.Serializable;
 import java.time.Duration;
 import java.util.Objects;
 
@@ -26,6 +27,7 @@ import jakarta.jms.JMSException;
 import jakarta.jms.Message;
 import jakarta.jms.MessageConsumer;
 import jakarta.jms.MessageProducer;
+import jakarta.jms.ObjectMessage;
 import jakarta.jms.Queue;
 import jakarta.jms.Session;
 import jakarta.jms.TextMessage;
@@ -42,6 +44,17 @@ final class JmsTestClient {
                          MessageCustomizer<TextMessage> customizer) throws JMSException {
         send(factory, destination, topic, session -> {
             TextMessage message = session.createTextMessage(text);
+            customizer.customize(message);
+            return message;
+        });
+    }
+
+    static void sendObject(ConnectionFactory factory,
+                           String destination,
+                           Serializable object,
+                           MessageCustomizer<ObjectMessage> customizer) throws JMSException {
+        send(factory, destination, false, session -> {
+            ObjectMessage message = session.createObjectMessage(object);
             customizer.customize(message);
             return message;
         });

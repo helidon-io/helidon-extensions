@@ -40,13 +40,24 @@ final class JmsMessageMapper {
     private JmsMessageMapper() {
     }
 
-    static JmsMessage<?> fromJmsMessage(jakarta.jms.Message message, boolean allowObjectMessages) {
+    static JmsMessage<?> fromJmsMessage(jakarta.jms.Message message,
+                                        boolean allowObjectMessages,
+                                        int maxBodyBytes) {
         try {
-            Object body = readBody(message, allowObjectMessages);
+            Object body = readBody(message, allowObjectMessages, maxBodyBytes);
             Map<String, Object> properties = readProperties(message);
             return JmsMessageImpl.incoming(body, properties, message, allowObjectMessages);
         } catch (JMSException e) {
             throw new MessagingException("Cannot snapshot incoming JMS message", e);
+        }
+    }
+
+    static JmsMessage<?> metadataOnly(jakarta.jms.Message message) {
+        try {
+            Map<String, Object> properties = readProperties(message);
+            return JmsMessageImpl.incoming(null, properties, message, false);
+        } catch (JMSException e) {
+            throw new MessagingException("Cannot snapshot rejected incoming JMS message metadata", e);
         }
     }
 
@@ -78,14 +89,19 @@ final class JmsMessageMapper {
     }
 
     private static Object readBody(jakarta.jms.Message message,
-                                   boolean allowObjectMessages) throws JMSException {
+                                   boolean allowObjectMessages,
+                                   int maxBodyBytes) throws JMSException {
         if (message instanceof TextMessage textMessage) {
             return textMessage.getText();
         }
         if (message instanceof BytesMessage bytesMessage) {
             long bodyLength = bytesMessage.getBodyLength();
-            if (bodyLength > Integer.MAX_VALUE) {
-                throw new MessagingException("JMS bytes message is too large to retain: " + bodyLength);
+            if (bodyLength < 0) {
+                throw new MessagingException("JMS bytes message declared a negative body length: " + bodyLength);
+            }
+            if (bodyLength > maxBodyBytes) {
+                throw new MessagingException("JMS bytes message body length " + bodyLength
+                                                     + " exceeds max-body-bytes " + maxBodyBytes);
             }
             byte[] body = new byte[(int) bodyLength];
             bytesMessage.reset();
