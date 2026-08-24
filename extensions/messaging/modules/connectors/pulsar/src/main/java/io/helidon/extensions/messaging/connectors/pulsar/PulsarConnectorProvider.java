@@ -16,7 +16,10 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 import io.helidon.config.Config;
 import io.helidon.messaging.ConnectorConfig;
@@ -47,26 +50,44 @@ public final class PulsarConnectorProvider
     /** Dead-letter property containing the original redelivery count. */
     public static final String DLQ_ORIGINAL_REDELIVERY_COUNT_HEADER = "dlq-orig-redelivery-count";
 
+    private final Supplier<List<PulsarSchemaProvider>> schemaProviders;
     private final PulsarIncomingConnector incomingFactory;
     private final PulsarOutgoingConnector outgoingFactory;
 
     /**
-     * Create the connector provider.
+     * Create an imperative connector provider using only built-in schemas.
      */
-    @Service.Inject
     public PulsarConnectorProvider() {
-        this(new PulsarIncomingConnector(), new PulsarOutgoingConnector());
+        this(List::of);
+    }
+
+    /**
+     * Create an imperative connector provider with custom named schemas.
+     *
+     * @param schemaProviders custom schema providers
+     */
+    public PulsarConnectorProvider(PulsarSchemaProvider... schemaProviders) {
+        this(fixedProviders(schemaProviders));
+    }
+
+    @Service.Inject
+    PulsarConnectorProvider(Supplier<List<PulsarSchemaProvider>> schemaProviders) {
+        this(schemaProviders, new PulsarIncomingConnector(), new PulsarOutgoingConnector());
     }
 
     PulsarConnectorProvider(PulsarIncomingConnector.ClientFactory incomingClientFactory,
                             PulsarOutgoingConnector.ClientFactory outgoingClientFactory) {
-        this(new PulsarIncomingConnector(incomingClientFactory), new PulsarOutgoingConnector(outgoingClientFactory));
+        this(List::of,
+             new PulsarIncomingConnector(incomingClientFactory),
+             new PulsarOutgoingConnector(outgoingClientFactory));
     }
 
-    private PulsarConnectorProvider(PulsarIncomingConnector incomingFactory,
+    private PulsarConnectorProvider(Supplier<List<PulsarSchemaProvider>> schemaProviders,
+                                    PulsarIncomingConnector incomingFactory,
                                     PulsarOutgoingConnector outgoingFactory) {
-        this.incomingFactory = incomingFactory;
-        this.outgoingFactory = outgoingFactory;
+        this.schemaProviders = Objects.requireNonNull(schemaProviders);
+        this.incomingFactory = Objects.requireNonNull(incomingFactory);
+        this.outgoingFactory = Objects.requireNonNull(outgoingFactory);
     }
 
     @Override
@@ -87,7 +108,10 @@ public final class PulsarConnectorProvider
      */
     public IncomingConnector createIncomingConnector(PulsarConnectorConfig config) {
         requireDirection(config, ConnectorConfig.Direction.INCOMING);
-        return incomingFactory.createIncomingConnector(config);
+        PulsarSchemaResolver.ResolvedSchema schema = PulsarSchemaResolver.resolve(config,
+                                                                                  ConnectorConfig.Direction.INCOMING,
+                                                                                  schemaProviders);
+        return incomingFactory.createIncomingConnector(config, schema);
     }
 
     @Override
@@ -103,7 +127,10 @@ public final class PulsarConnectorProvider
      */
     public OutgoingConnector createOutgoingConnector(PulsarConnectorConfig config) {
         requireDirection(config, ConnectorConfig.Direction.OUTGOING);
-        return outgoingFactory.createOutgoingConnector(config);
+        PulsarSchemaResolver.ResolvedSchema schema = PulsarSchemaResolver.resolve(config,
+                                                                                  ConnectorConfig.Direction.OUTGOING,
+                                                                                  schemaProviders);
+        return outgoingFactory.createOutgoingConnector(config, schema);
     }
 
     private static void requireDirection(PulsarConnectorConfig config, ConnectorConfig.Direction expected) {
@@ -113,5 +140,11 @@ public final class PulsarConnectorProvider
                                                        + " has direction " + config.direction()
                                                        + ", expected " + expected);
         }
+    }
+
+    private static Supplier<List<PulsarSchemaProvider>> fixedProviders(PulsarSchemaProvider[] schemaProviders) {
+        Objects.requireNonNull(schemaProviders, "schemaProviders");
+        List<PulsarSchemaProvider> providers = List.copyOf(Arrays.asList(schemaProviders.clone()));
+        return () -> providers;
     }
 }

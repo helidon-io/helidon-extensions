@@ -16,19 +16,26 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
+import io.helidon.messaging.ConnectorConfig;
 import io.helidon.messaging.ConnectorProvider;
 import io.helidon.messaging.IncomingConnectorProvider;
 import io.helidon.messaging.OutgoingConnectorProvider;
+import io.helidon.service.registry.Service;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 
 import org.apache.pulsar.client.api.PulsarClient;
+import org.apache.pulsar.client.api.Schema;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 class PulsarConnectorServiceTest {
+    private static final AtomicInteger SCHEMA_INVOCATIONS = new AtomicInteger();
+
     @Test
     void shadedRuntimeImplementationLoadsOnClasspath() throws Exception {
         PulsarClient client = PulsarClient.builder()
@@ -58,6 +65,41 @@ class PulsarConnectorServiceTest {
             assertThat(provider instanceof OutgoingConnectorProvider, is(true));
         } finally {
             manager.shutdown();
+        }
+    }
+
+    @Test
+    void schemaProviderIsInjectedFromServiceRegistry() {
+        SCHEMA_INVOCATIONS.set(0);
+        ServiceRegistryManager manager = ServiceRegistryManager.create();
+        try {
+            PulsarConnectorProvider provider = manager.registry().get(PulsarConnectorProvider.class);
+            provider.createOutgoingConnector(PulsarConnectorConfig.builder()
+                                                       .direction(ConnectorConfig.Direction.OUTGOING)
+                                                       .channel("registry-schema")
+                                                       .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
+                                                       .serviceUrl("pulsar://127.0.0.1:6650")
+                                                       .topic("persistent://public/default/registry-schema")
+                                                       .schemaProvider("registry-int32")
+                                                       .build());
+
+            assertThat(SCHEMA_INVOCATIONS.get(), is(1));
+        } finally {
+            manager.shutdown();
+        }
+    }
+
+    @Service.Singleton
+    static final class RegistrySchemaProvider implements PulsarSchemaProvider {
+        @Override
+        public String name() {
+            return "registry-int32";
+        }
+
+        @Override
+        public Schema<?> schema() {
+            SCHEMA_INVOCATIONS.incrementAndGet();
+            return Schema.INT32;
         }
     }
 }

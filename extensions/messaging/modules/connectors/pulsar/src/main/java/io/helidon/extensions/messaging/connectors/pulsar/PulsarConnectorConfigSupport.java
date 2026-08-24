@@ -47,6 +47,9 @@ final class PulsarConnectorConfigSupport {
     /** Schema configuration property. */
     @Prototype.Constant
     static final String SCHEMA_PROPERTY = "schema";
+    /** Custom schema provider configuration property. */
+    @Prototype.Constant
+    static final String SCHEMA_PROVIDER_PROPERTY = "schema-provider";
     /** Subscription name configuration property. */
     @Prototype.Constant
     static final String SUBSCRIPTION_NAME_PROPERTY = "subscription-name";
@@ -121,9 +124,10 @@ final class PulsarConnectorConfigSupport {
 
     static Consumer<Object> createConsumer(PulsarClient client,
                                            PulsarConnectorConfig config,
+                                           PulsarSchemaResolver.ResolvedSchema schema,
                                            int maxDeliveryMessages) throws PulsarClientException {
         int queueSize = Math.min(config.receiverQueueSize(), maxDeliveryMessages);
-        ConsumerBuilder<Object> builder = client.newConsumer(config.schema().schema())
+        ConsumerBuilder<Object> builder = client.newConsumer(schema.schema())
                 .loadConf(objectProperties(config.consumerProperties()))
                 .topic(config.topic())
                 .subscriptionName(config.subscriptionName().orElse(config.channel()))
@@ -141,8 +145,10 @@ final class PulsarConnectorConfigSupport {
         return builder.subscribe();
     }
 
-    static ProducerBuilder<Object> producerBuilder(PulsarClient client, PulsarConnectorConfig config) {
-        return client.newProducer(config.schema().schema())
+    static ProducerBuilder<Object> producerBuilder(PulsarClient client,
+                                                   PulsarConnectorConfig config,
+                                                   PulsarSchemaResolver.ResolvedSchema schema) {
+        return client.newProducer(schema.schema())
                 .loadConf(objectProperties(config.producerProperties()))
                 .topic(config.topic())
                 .sendTimeout(durationMillisInt(config.sendTimeout(), SEND_TIMEOUT_PROPERTY), TimeUnit.MILLISECONDS);
@@ -204,6 +210,7 @@ final class PulsarConnectorConfigSupport {
         public void decorate(PulsarConnectorConfig.BuilderBase<?, ?> target) {
             requireNonBlank(SERVICE_URL_PROPERTY, target.serviceUrl());
             requireNonBlank(TOPIC_PROPERTY, target.topic());
+            requireNonBlank(SCHEMA_PROVIDER_PROPERTY, target.schemaProvider());
             requireNonBlank(SUBSCRIPTION_NAME_PROPERTY, target.subscriptionName());
             if (target.receiverQueueSize() < 1) {
                 throw new IllegalArgumentException(RECEIVER_QUEUE_SIZE_PROPERTY + " must be greater than zero");

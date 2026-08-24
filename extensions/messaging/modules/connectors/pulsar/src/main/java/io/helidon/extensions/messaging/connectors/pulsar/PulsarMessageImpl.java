@@ -16,8 +16,10 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -212,8 +214,17 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
     }
 
     @SuppressWarnings("unchecked")
-    private static <T> T snapshotEntity(T entity) {
-        return entity instanceof byte[] bytes ? (T) bytes.clone() : entity;
+    static <T> T snapshotEntity(T entity) {
+        if (entity instanceof byte[] bytes) {
+            return (T) bytes.clone();
+        }
+        if (entity instanceof ByteBuffer buffer) {
+            return (T) copy(buffer);
+        }
+        if (entity instanceof Date date) {
+            return (T) date.clone();
+        }
+        return entity;
     }
 
     private static Map<String, String> immutableHeaders(Map<String, String> headers) {
@@ -225,6 +236,15 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
 
     private static byte[] copy(byte[] value) {
         return value == null ? null : value.clone();
+    }
+
+    private static ByteBuffer copy(ByteBuffer value) {
+        ByteBuffer source = value.duplicate();
+        source.position(0);
+        ByteBuffer result = ByteBuffer.allocate(source.remaining()).order(value.order());
+        result.put(source);
+        result.flip();
+        return result;
     }
 
     private static Optional<byte[]> optionalCopy(byte[] value) {

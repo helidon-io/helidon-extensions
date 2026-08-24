@@ -52,9 +52,69 @@ Pulsar's durable subscription mode, `EXCLUSIVE` subscription type, and `LATEST` 
 initial position applies only when the broker creates a new subscription; reconnecting an existing durable subscription
 continues at its stored cursor.
 
-The connector uses `Schema.STRING` by default. The `schema` option also accepts `BYTES` for raw byte-array payloads.
-Configure the same compatible schema for every producer and consumer of a topic. Other primitive schemas and record
-schemas such as JSON, Avro, Protobuf, and key/value schemas are not selected by this connector version.
+The connector uses `Schema.STRING` by default. The `schema` option supports these Pulsar built-in schemas:
+
+| Connector value | Pulsar schema | Java payload |
+| --- | --- | --- |
+| `AUTO` | Incoming `AUTO_CONSUME`; outgoing `AUTO_PRODUCE_BYTES` | Incoming `GenericRecord`; outgoing encoded `byte[]` |
+| `STRING` | `STRING` | `String` |
+| `BYTES` | `BYTES` | `byte[]` |
+| `BYTEBUFFER` | `BYTEBUFFER` | `ByteBuffer` |
+| `BOOLEAN` | `BOOL` | `Boolean` |
+| `INT8` | `INT8` | `Byte` |
+| `INT16` | `INT16` | `Short` |
+| `INT32` | `INT32` | `Integer` |
+| `INT64` | `INT64` | `Long` |
+| `FLOAT` | `FLOAT` | `Float` |
+| `DOUBLE` | `DOUBLE` | `Double` |
+| `DATE` | `DATE` | `java.util.Date` |
+| `TIME` | `TIME` | `java.sql.Time` |
+| `TIMESTAMP` | `TIMESTAMP` | `java.sql.Timestamp` |
+| `INSTANT` | `INSTANT` | `Instant` |
+| `LOCAL_DATE` | `LOCAL_DATE` | `LocalDate` |
+| `LOCAL_TIME` | `LOCAL_TIME` | `LocalTime` |
+| `LOCAL_DATE_TIME` | `LOCAL_DATE_TIME` | `LocalDateTime` |
+
+Outgoing `AUTO` does not infer a schema or serialize an object. It uses the schema already registered for the topic and
+requires the application to supply its encoded `byte[]` representation. Incoming `AUTO` exposes Pulsar's
+`GenericRecord`, including for topics whose registered schema is a scalar type.
+
+Use a named `PulsarSchemaProvider` for JSON, Avro, Protobuf, key/value, or application-defined schemas:
+
+```java
+@Service.Singleton
+class OrderSchemaProvider implements PulsarSchemaProvider {
+    @Override
+    public String name() {
+        return "orders-json";
+    }
+
+    @Override
+    public Schema<?> schema() {
+        return Schema.JSON(Order.class);
+    }
+}
+```
+
+```yaml
+helidon:
+  messaging:
+    outgoing:
+      orders:
+        connector: helidon-pulsar
+        service-url: pulsar://pulsar.example:6650
+        topic: persistent://commerce/orders/order-events
+        schema-provider: orders-json
+```
+
+Provider names are exact and case-sensitive. `schema-provider` overrides `schema`; missing or duplicate providers fail
+when the binding is created, before a Pulsar client is allocated. The connector invokes `schema()` once per binding, so
+the returned schema must be safe for that binding. Imperative applications can pass providers to
+`new PulsarConnectorProvider(provider1, provider2)`.
+
+Configure a compatible schema for every producer and consumer of a topic. The connector validates built-in payload
+types without numeric widening or string coercion. It defensively snapshots mutable built-in values (`byte[]`,
+`ByteBuffer`, and legacy date/time types); custom schema payloads otherwise retain their application-defined mutability.
 
 Incoming buffering defaults to `receiver-queue-size: 1` per topic partition. Pulsar may prefetch that many messages for
 each partition, while the connector acquires only one message after reserving Helidon retained-delivery capacity.
@@ -75,9 +135,11 @@ class OrderConsumer {
 }
 ```
 
-An incoming `PulsarMessage` is an immutable snapshot of the decoded value, key, properties, topic, message identifier,
+An incoming `PulsarMessage` is an immutable snapshot of its metadata: key, properties, topic, message identifier,
 publish and event times, producer name, sequence identifier, ordering key, and redelivery count exposed by the Pulsar
-client. Pulsar string properties are also exposed as portable Helidon message headers.
+client. Built-in mutable payloads are also defensively copied. Values decoded by `AUTO` or a custom schema are retained
+as supplied by that schema and can remain mutable. Pulsar string properties are also exposed as portable Helidon message
+headers.
 
 Use the Pulsar message builder when an outgoing message needs a key, ordering key, event time, or native properties.
 Ordinary Helidon message headers are written as Pulsar string properties.

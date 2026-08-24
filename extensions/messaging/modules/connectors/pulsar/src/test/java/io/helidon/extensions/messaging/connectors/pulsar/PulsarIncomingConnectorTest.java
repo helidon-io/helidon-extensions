@@ -16,7 +16,9 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
+import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -35,12 +37,20 @@ import io.helidon.messaging.MessageBatch;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.ConsumerBuilder;
 import org.apache.pulsar.client.api.PulsarClient;
+import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionMode;
+import org.apache.pulsar.client.api.schema.GenericObject;
+import org.apache.pulsar.client.api.schema.GenericRecord;
+import org.apache.pulsar.common.schema.KeyValue;
+import org.apache.pulsar.common.schema.SchemaType;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
+import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 
 class PulsarIncomingConnectorTest {
     private static final Duration WAIT = Duration.ofSeconds(5);
@@ -150,6 +160,117 @@ class PulsarIncomingConnectorTest {
         assertThat(gatedSource.closed.get(), is(true));
     }
 
+    @Test
+    void passesResolvedBuiltInSchemaAndTypedPayloadFromPulsar() throws Exception {
+        TestContext context = new TestContext(false);
+        FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage(42, Integer.BYTES), context.reserved);
+        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
+                .createIncomingConnector(config(PulsarSchemaType.INT32, 1024));
+        AtomicReference<Throwable> runFailure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
+
+        assertThat(source.acknowledged.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+        connector.drain();
+        owner.join(WAIT.toMillis());
+        connector.close();
+
+        PulsarMessage<?> message = deliveredMessage(context);
+        assertThat(source.schema.get(), sameInstance(Schema.INT32));
+        assertThat(message.entity(), is(42));
+        assertThat(message.headers(), is(java.util.Map.of("trace-id", "pulsar-trace")));
+        assertThat(runFailure.get(), nullValue());
+    }
+
+    @Test
+    void selectsAutoConsumeSchemaAndPreservesGenericObjectAndMetadata() throws Exception {
+        GenericRecord payload = PulsarTestSupport.proxy(GenericRecord.class,
+                                                        (ignored, method, args) -> switch (method.getName()) {
+                                                        case "getSchemaType" -> SchemaType.INT32;
+                                                        case "getNativeObject" -> 42;
+                                                        case "getSchemaVersion" -> new byte[] {4, 5};
+                                                        default -> PulsarTestSupport.defaultValue(method);
+                                                        });
+        TestContext context = new TestContext(false);
+        FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage(payload, Integer.BYTES), context.reserved);
+        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
+                .createIncomingConnector(config(PulsarSchemaType.AUTO, 1024));
+        AtomicReference<Throwable> runFailure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
+
+        assertThat(source.acknowledged.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+        connector.drain();
+        owner.join(WAIT.toMillis());
+        connector.close();
+
+        PulsarMessage<?> message = deliveredMessage(context);
+        assertThat(source.schema.get().getClass().equals(Schema.AUTO_CONSUME().getClass()), is(true));
+        assertThat(message.entity(), sameInstance(payload));
+        assertThat(((GenericObject) message.entity()).getNativeObject(), is(42));
+        assertThat(message.schemaVersion().isPresent(), is(true));
+        assertThat(message.headers(), is(java.util.Map.of("trace-id", "pulsar-trace")));
+        assertThat(runFailure.get(), nullValue());
+    }
+
+    @Test
+    void passesResolvedCustomKeyValueSchemaAndPayloadFromPulsar() throws Exception {
+        Schema<KeyValue<String, Integer>> customSchema = Schema.KeyValue(Schema.STRING, Schema.INT32);
+        PulsarConnectorConfig config = configBuilder(PulsarSchemaType.STRING, 1024)
+                .schemaProvider("custom-key-value")
+                .build();
+        PulsarSchemaResolver.ResolvedSchema resolved = PulsarSchemaResolver.resolve(
+                config,
+                ConnectorConfig.Direction.INCOMING,
+                () -> List.of(schemaProvider("custom-key-value", customSchema)));
+        KeyValue<String, Integer> payload = new KeyValue<>("order", 7);
+        TestContext context = new TestContext(false);
+        FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage(payload, 16), context.reserved);
+        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
+                .createIncomingConnector(config, resolved);
+        AtomicReference<Throwable> runFailure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
+
+        assertThat(source.acknowledged.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+        connector.drain();
+        owner.join(WAIT.toMillis());
+        connector.close();
+
+        PulsarMessage<?> message = deliveredMessage(context);
+        assertThat(source.schema.get(), sameInstance(customSchema));
+        assertThat(message.entity(), sameInstance(payload));
+        assertThat(message.headers(), is(java.util.Map.of("trace-id", "pulsar-trace")));
+        assertThat(runFailure.get(), nullValue());
+    }
+
+    @Test
+    void byteBufferMappingSnapshotsPayloadWithoutChangingSourceCursor() throws Exception {
+        ByteBuffer payload = ByteBuffer.wrap(new byte[] {0, 1, 2, 3, 4, 5});
+        payload.position(2);
+        payload.limit(5);
+        TestContext context = new TestContext(false);
+        FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage(payload, 5), context.reserved);
+        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
+                .createIncomingConnector(config(PulsarSchemaType.BYTEBUFFER, 1024));
+        AtomicReference<Throwable> runFailure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
+
+        assertThat(source.acknowledged.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+        connector.drain();
+        owner.join(WAIT.toMillis());
+        connector.close();
+
+        PulsarMessage<?> message = deliveredMessage(context);
+        ByteBuffer delivered = (ByteBuffer) message.entity();
+        assertThat(source.schema.get(), sameInstance(Schema.BYTEBUFFER));
+        assertNotSame(payload, delivered);
+        assertThat(payload.position(), is(2));
+        assertThat(payload.limit(), is(5));
+        payload.put(0, (byte) 9);
+        assertArrayEquals(new byte[] {0, 1, 2, 3, 4}, Schema.BYTEBUFFER.encode(delivered));
+        assertThat(payload.position(), is(2));
+        assertThat(payload.limit(), is(5));
+        assertThat(runFailure.get(), nullValue());
+    }
+
     private static void run(IncomingConnector connector,
                             IncomingConnectorContext context,
                             AtomicReference<Throwable> failure) {
@@ -160,15 +281,43 @@ class PulsarIncomingConnectorTest {
         }
     }
 
+    private static PulsarMessage<?> deliveredMessage(TestContext context) {
+        MessageBatch<?> batch = context.deliveredBatch.get();
+        assertThat(batch == null ? 0 : batch.size(), is(1));
+        return (PulsarMessage<?>) batch.get(0);
+    }
+
     private static PulsarConnectorConfig config(int maxMessageBytes) {
+        return config(PulsarSchemaType.STRING, maxMessageBytes);
+    }
+
+    private static PulsarConnectorConfig config(PulsarSchemaType schema, int maxMessageBytes) {
+        return configBuilder(schema, maxMessageBytes).build();
+    }
+
+    private static PulsarConnectorConfig.Builder configBuilder(PulsarSchemaType schema, int maxMessageBytes) {
         return PulsarConnectorConfig.builder()
                 .direction(ConnectorConfig.Direction.INCOMING)
                 .channel("in")
                 .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
                 .serviceUrl("pulsar://localhost:6650")
                 .topic("persistent://public/default/in")
-                .maxMessageBytes(maxMessageBytes)
-                .build();
+                .schema(schema)
+                .maxMessageBytes(maxMessageBytes);
+    }
+
+    private static PulsarSchemaProvider schemaProvider(String name, Schema<?> schema) {
+        return new PulsarSchemaProvider() {
+            @Override
+            public String name() {
+                return name;
+            }
+
+            @Override
+            public Schema<?> schema() {
+                return schema;
+            }
+        };
     }
 
     private static final class TestContext implements IncomingConnectorContext {
@@ -178,6 +327,7 @@ class PulsarIncomingConnectorTest {
         private final AtomicInteger awaitRunningCalls = new AtomicInteger();
         private final AtomicInteger started = new AtomicInteger();
         private final AtomicInteger failedStarts = new AtomicInteger();
+        private final AtomicReference<MessageBatch<?>> deliveredBatch = new AtomicReference<>();
         private final CountDownLatch deliveryEntered = new CountDownLatch(1);
         private final CountDownLatch allowDelivery = new CountDownLatch(1);
 
@@ -221,6 +371,7 @@ class PulsarIncomingConnectorTest {
             return new ConnectorDeliveryReservation() {
                 @Override
                 public ConnectorDelivery start(MessageBatch<?> batch) {
+                    deliveredBatch.set(batch);
                     started.incrementAndGet();
                     return delivery();
                 }
@@ -364,6 +515,7 @@ class PulsarIncomingConnectorTest {
         private final CountDownLatch negativelyAcknowledged = new CountDownLatch(1);
         private final CountDownLatch receiveEntered = new CountDownLatch(1);
         private final AtomicBoolean blockReceive = new AtomicBoolean();
+        private final AtomicReference<Schema<?>> schema = new AtomicReference<>();
         private final Consumer<Object> consumer = consumer();
         private final ConsumerBuilder<Object> consumerBuilder = consumerBuilder();
         private final PulsarClient client = clientProxy();
@@ -379,7 +531,10 @@ class PulsarIncomingConnectorTest {
 
         private PulsarClient clientProxy() {
             return PulsarTestSupport.proxy(PulsarClient.class, (ignored, method, args) -> switch (method.getName()) {
-            case "newConsumer" -> consumerBuilder;
+            case "newConsumer" -> {
+                schema.set((Schema<?>) args[0]);
+                yield consumerBuilder;
+            }
             case "closeAsync" -> {
                 closed.set(true);
                 yield CompletableFuture.completedFuture(null);
