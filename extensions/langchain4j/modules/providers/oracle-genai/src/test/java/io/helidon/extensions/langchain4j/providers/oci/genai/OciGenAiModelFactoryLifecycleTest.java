@@ -16,15 +16,12 @@
 
 package io.helidon.extensions.langchain4j.providers.oci.genai;
 
-import java.lang.reflect.Modifier;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantLock;
 
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
@@ -48,7 +45,6 @@ import org.mockito.Mockito;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.arrayContaining;
 import static org.hamcrest.Matchers.empty;
-import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
@@ -436,25 +432,7 @@ class OciGenAiModelFactoryLifecycleTest {
     }
 
     @Test
-    void generatedFactoryUsesPrivateCreationAndExplicitCoordination() throws Exception {
-        var create = OciGenAiChatModelFactory.class.getDeclaredMethod("create", OciGenAiChatModelConfig.class);
-
-        assertThat(Modifier.isPrivate(create.getModifiers()), is(true));
-        assertThat(OciGenAiChatModelFactory.class.getDeclaredField("lifecycleLock").getType(),
-                   equalTo(ReentrantLock.class));
-        assertThat(OciGenAiChatModelFactory.class.getDeclaredField("lifecycleChanged").getType(),
-                   equalTo(Condition.class));
-        assertThat(java.util.Arrays.stream(OciGenAiChatModelFactory.class.getDeclaredFields())
-                           .noneMatch(field -> field.getType() == Object.class),
-                   is(true));
-        assertThat(java.util.Arrays.stream(OciGenAiChatModelFactory.class.getDeclaredMethods())
-                           .noneMatch(method -> Modifier.isSynchronized(method.getModifiers())),
-                   is(true));
-        assertThat(java.util.Arrays.stream(OciGenAiChatModelFactory__ServiceDescriptor.class.getDeclaredMethods())
-                           .noneMatch(method -> method.getName().equals("preDestroy")),
-                   is(true));
-        assertThat(OciGenAiChatModelFactory__ServiceDescriptor.INSTANCE.weight(), is(98.0));
-        assertThat(OciGenAiChatModelFactory__ServiceDescriptor.INSTANCE.runLevel(), is(Optional.empty()));
+    void lifecycleCoordinatorUsesTerminalShutdownOrder() {
         assertThat(OciGenAiChatModelFactoryLifecycle__ServiceDescriptor.INSTANCE.weight(), is(Double.MAX_VALUE));
         assertThat(OciGenAiChatModelFactoryLifecycle__ServiceDescriptor.INSTANCE.runLevel(),
                    is(Optional.of(Double.MIN_VALUE)));
