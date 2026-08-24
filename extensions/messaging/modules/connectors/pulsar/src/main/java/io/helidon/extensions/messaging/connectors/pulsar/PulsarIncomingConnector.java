@@ -17,6 +17,7 @@
 package io.helidon.extensions.messaging.connectors.pulsar;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
@@ -58,13 +59,26 @@ final class PulsarIncomingConnector {
     }
 
     IncomingConnector createIncomingConnector(PulsarConnectorConfig config) {
+        validateDirection(config);
+        return createIncomingConnector(config,
+                                       PulsarSchemaResolver.resolve(config,
+                                                                    ConnectorConfig.Direction.INCOMING,
+                                                                    List::of));
+    }
+
+    IncomingConnector createIncomingConnector(PulsarConnectorConfig config,
+                                               PulsarSchemaResolver.ResolvedSchema schema) {
+        validateDirection(config);
+        return new Connector(config, Objects.requireNonNull(schema));
+    }
+
+    private static void validateDirection(PulsarConnectorConfig config) {
         Objects.requireNonNull(config);
         if (config.direction() != ConnectorConfig.Direction.INCOMING) {
             throw new IllegalArgumentException("Pulsar connector configuration for channel " + config.channel()
                                                        + " has direction " + config.direction()
                                                        + ", expected " + ConnectorConfig.Direction.INCOMING);
         }
-        return new Connector(config);
     }
 
     @FunctionalInterface
@@ -74,6 +88,7 @@ final class PulsarIncomingConnector {
 
     private final class Connector implements IncomingConnector {
         private final PulsarConnectorConfig config;
+        private final PulsarSchemaResolver.ResolvedSchema schema;
         private final AtomicBoolean draining = new AtomicBoolean();
         private final AtomicBoolean closeRequested = new AtomicBoolean();
         private final AtomicBoolean forceCloseRequested = new AtomicBoolean();
@@ -94,8 +109,9 @@ final class PulsarIncomingConnector {
         private volatile IncomingConnectorContext context;
         private boolean deliveryStarting;
 
-        private Connector(PulsarConnectorConfig config) {
+        private Connector(PulsarConnectorConfig config, PulsarSchemaResolver.ResolvedSchema schema) {
             this.config = config;
+            this.schema = schema;
         }
 
         @Override
@@ -124,6 +140,7 @@ final class PulsarIncomingConnector {
                 Consumer<Object> consumer = PulsarConnectorConfigSupport.createConsumer(
                         client,
                         config,
+                        schema,
                         runContext.maxDeliveryMessages());
                 activeConsumer.set(consumer);
                 if (stopping()) {
@@ -279,7 +296,7 @@ final class PulsarIncomingConnector {
             MessageBatch<?> batch;
             RuntimeException mappingFailure = null;
             try {
-                batch = MessageBatch.create(PulsarMessageMapper.fromPulsarMessage(nativeMessage, config));
+                batch = MessageBatch.create(PulsarMessageMapper.fromPulsarMessage(nativeMessage, config, schema));
             } catch (RuntimeException e) {
                 mappingFailure = e;
                 try {

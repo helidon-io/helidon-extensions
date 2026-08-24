@@ -43,6 +43,7 @@ class PulsarConnectorConfigTest {
 
         PulsarConnectorConfig config = completeBuilder().build();
         assertThat(config.schema(), is(PulsarSchemaType.STRING));
+        assertThat(config.schemaProvider().isEmpty(), is(true));
         assertThat(config.subscriptionType(), is(PulsarSubscriptionType.EXCLUSIVE));
         assertThat(config.subscriptionInitialPosition(), is(PulsarSubscriptionInitialPosition.LATEST));
         assertThat(config.batchIndexAcknowledgmentEnabled(), is(false));
@@ -61,12 +62,14 @@ class PulsarConnectorConfigTest {
                 Map.entry(PulsarConnectorConfig.SERVICE_URL_PROPERTY, "pulsar://broker:6650"),
                 Map.entry(PulsarConnectorConfig.TOPIC_PROPERTY, TOPIC),
                 Map.entry(PulsarConnectorConfig.SCHEMA_PROPERTY, "BYTES"),
+                Map.entry(PulsarConnectorConfig.SCHEMA_PROVIDER_PROPERTY, "orders-json"),
                 Map.entry(PulsarConnectorConfig.SUBSCRIPTION_NAME_PROPERTY, "orders-subscription"),
                 Map.entry("client-properties.authPluginClassName", "example.Auth"),
                 Map.entry("consumer-properties.consumerName", "orders-consumer"),
                 Map.entry("producer-properties.producerName", "orders-producer")))));
 
         assertThat(config.schema(), is(PulsarSchemaType.BYTES));
+        assertThat(config.schemaProvider().orElseThrow(), is("orders-json"));
         assertThat(config.subscriptionName().orElseThrow(), is("orders-subscription"));
         assertThat(config.clientProperties(), is(Map.of("authPluginClassName", "example.Auth")));
         assertThat(config.consumerProperties(), is(Map.of("consumerName", "orders-consumer")));
@@ -105,6 +108,8 @@ class PulsarConnectorConfigTest {
                      () -> completeBuilder().negativeAckRedeliveryDelay(Duration.ofNanos(-1)).build());
         assertThrows(IllegalArgumentException.class,
                      () -> completeBuilder().closeTimeout(Duration.ofNanos(-1)).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> completeBuilder().schemaProvider(" ").build());
         assertDoesNotThrow(() -> completeBuilder().closeTimeout(Duration.ZERO).build());
 
         PulsarConnectorProvider provider = new PulsarConnectorProvider();

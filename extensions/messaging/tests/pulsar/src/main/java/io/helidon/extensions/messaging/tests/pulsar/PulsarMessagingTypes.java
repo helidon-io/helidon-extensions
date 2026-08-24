@@ -24,16 +24,24 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarMessage;
+import io.helidon.extensions.messaging.connectors.pulsar.PulsarSchemaProvider;
 import io.helidon.messaging.Emitter;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.Messaging;
 import io.helidon.service.registry.Service;
 
+import org.apache.pulsar.client.api.Schema;
+import org.apache.pulsar.client.api.schema.GenericRecord;
+
 final class PulsarMessagingTypes {
     static final String OUTGOING_CHANNEL = "pulsar-out";
+    static final String AUTO_OUTGOING_CHANNEL = "pulsar-auto-out";
+    static final String JSON_OUTGOING_CHANNEL = "pulsar-json-out";
     static final String INCOMING_CHANNEL = "pulsar-in";
+    static final String AUTO_INCOMING_CHANNEL = "pulsar-auto-in";
     static final String REDELIVERY_CHANNEL = "pulsar-redelivery-in";
+    static final String JSON_SCHEMA_PROVIDER = "json-orders";
 
     private PulsarMessagingTypes() {
     }
@@ -58,6 +66,28 @@ final class PulsarMessagingTypes {
     }
 
     @Service.Singleton
+    static class AutoOutgoingSender {
+        @Service.Named(AUTO_OUTGOING_CHANNEL)
+        @Service.Inject
+        Emitter<byte[]> emitter;
+
+        void send(byte[] payload) {
+            emitter.emit(payload);
+        }
+    }
+
+    @Service.Singleton
+    static class JsonOutgoingSender {
+        @Service.Named(JSON_OUTGOING_CHANNEL)
+        @Service.Inject
+        Emitter<PulsarTestPayload> emitter;
+
+        void send(PulsarTestPayload payload) {
+            emitter.emit(payload);
+        }
+    }
+
+    @Service.Singleton
     static class IncomingReceiver {
         private final BlockingQueue<PulsarMessage<String>> messages = new LinkedBlockingQueue<>();
 
@@ -68,6 +98,33 @@ final class PulsarMessagingTypes {
 
         PulsarMessage<String> awaitMessage(Duration timeout) throws InterruptedException {
             return messages.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }
+    }
+
+    @Service.Singleton
+    static class AutoIncomingReceiver {
+        private final BlockingQueue<PulsarMessage<GenericRecord>> messages = new LinkedBlockingQueue<>();
+
+        @Messaging.ReceiveFrom(AUTO_INCOMING_CHANNEL)
+        void receive(PulsarMessage<GenericRecord> message) {
+            messages.add(message);
+        }
+
+        PulsarMessage<GenericRecord> awaitMessage(Duration timeout) throws InterruptedException {
+            return messages.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }
+    }
+
+    @Service.Singleton
+    static class JsonSchemaProvider implements PulsarSchemaProvider {
+        @Override
+        public String name() {
+            return JSON_SCHEMA_PROVIDER;
+        }
+
+        @Override
+        public Schema<?> schema() {
+            return Schema.JSON(PulsarTestPayload.class);
         }
     }
 

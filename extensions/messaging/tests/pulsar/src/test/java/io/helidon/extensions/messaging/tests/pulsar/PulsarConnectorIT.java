@@ -16,21 +16,43 @@
 
 package io.helidon.extensions.messaging.tests.pulsar;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.sql.Time;
+import java.sql.Timestamp;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
+import io.helidon.config.Config;
+import io.helidon.config.ConfigSources;
+import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorConfig;
+import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorProvider;
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarMessage;
+import io.helidon.extensions.messaging.connectors.pulsar.PulsarSchemaType;
+import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.AutoIncomingReceiver;
+import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.AutoOutgoingSender;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.FailOnceReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.IncomingReceiver;
+import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonOutgoingSender;
+import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonSchemaProvider;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.OutgoingSender;
+import io.helidon.messaging.ConnectorConfig;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingRuntime;
+import io.helidon.messaging.OutgoingConnector;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 
@@ -39,6 +61,8 @@ import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionInitialPosition;
+import org.apache.pulsar.client.api.schema.GenericRecord;
+import org.apache.pulsar.common.schema.SchemaType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.testcontainers.containers.PulsarContainer;
@@ -101,6 +125,211 @@ class PulsarConnectorIT {
                 assertNativeMessage(messages.get(2), "native-key", "native");
                 assertNativeMessage(messages.get(3), "batch-key-1", "batch-1");
                 assertNativeMessage(messages.get(4), "batch-key-2", "batch-2");
+            } finally {
+                manager.shutdown();
+            }
+        }
+    }
+
+    @Test
+    @Timeout(180)
+    void testConfiguredBuiltInSchemasRoundTripThroughBroker() throws Exception {
+        List<SchemaRoundTrip<?>> schemaCases = fixedSchemaCases();
+        assertThat(schemaCases.stream().map(SchemaRoundTrip::type).toList(),
+                   is(Stream.of(PulsarSchemaType.values())
+                              .filter(type -> type != PulsarSchemaType.AUTO)
+                              .toList()));
+
+        try (PulsarClient client = newClient()) {
+            for (SchemaRoundTrip<?> schemaCase : schemaCases) {
+                try {
+                    roundTrip(client, schemaCase);
+                } catch (Exception | AssertionError e) {
+                    throw new AssertionError("Pulsar " + schemaCase.type() + " broker round trip failed", e);
+                }
+            }
+        }
+    }
+
+    @Test
+    @Timeout(90)
+    void testAutoOutgoingUsesTopicSchema() throws Exception {
+        String autoTopic = uniqueName("auto-outgoing");
+
+        try (PulsarClient client = newClient()) {
+            try (Producer<String> ignored = client.newProducer(Schema.STRING).topic(autoTopic).create()) {
+                // Producer creation registers the topic schema used by AUTO_PRODUCE_BYTES.
+            }
+            try (Consumer<String> autoConsumer = consumer(client,
+                                                          Schema.STRING,
+                                                          autoTopic,
+                                                          uniqueName("auto-reader"))) {
+                ServiceRegistryManager autoManager = PulsarScenarioRegistry.create("""
+                        helidon:
+                          messaging:
+                            outgoing:
+                              %s:
+                                connector: helidon-pulsar
+                                service-url: "%s"
+                                topic: "%s"
+                                schema: AUTO
+                        """.formatted(PulsarMessagingTypes.AUTO_OUTGOING_CHANNEL,
+                                       PULSAR.getPulsarBrokerUrl(),
+                                       autoTopic),
+                                                                                    AutoOutgoingSender.class);
+                try {
+                    AutoOutgoingSender sender = autoManager.registry().get(AutoOutgoingSender.class);
+                    autoManager.registry().get(MessagingRuntime.class);
+                    sender.send("serialized payload".getBytes(StandardCharsets.UTF_8));
+                    assertThat(receiveOne(autoConsumer).getValue(), is("serialized payload"));
+                } finally {
+                    autoManager.shutdown();
+                }
+            }
+        }
+    }
+
+    private static List<SchemaRoundTrip<?>> fixedSchemaCases() {
+        ByteBuffer byteBuffer = ByteBuffer.wrap(new byte[] {4, 5, 6, 7, 8});
+        byteBuffer.position(2);
+        byteBuffer.limit(4);
+        // Pulsar TIMESTAMP stores epoch milliseconds, so sub-millisecond nanos are intentionally truncated.
+        Timestamp timestamp = Timestamp.from(Instant.parse("2026-08-24T12:34:56.123456789Z"));
+        return List.of(
+                schemaCase(PulsarSchemaType.STRING, Schema.STRING, "schema-value"),
+                schemaCase(PulsarSchemaType.BYTES, Schema.BYTES, new byte[] {1, 2, 3}),
+                schemaCase(PulsarSchemaType.BYTEBUFFER,
+                           Schema.BYTEBUFFER,
+                           byteBuffer,
+                           ByteBuffer.wrap(new byte[] {4, 5, 6, 7})),
+                schemaCase(PulsarSchemaType.BOOLEAN, Schema.BOOL, true),
+                schemaCase(PulsarSchemaType.INT8, Schema.INT8, (byte) -12),
+                schemaCase(PulsarSchemaType.INT16, Schema.INT16, (short) 12_345),
+                schemaCase(PulsarSchemaType.INT32, Schema.INT32, 123_456),
+                schemaCase(PulsarSchemaType.INT64, Schema.INT64, 9_876_543_210L),
+                schemaCase(PulsarSchemaType.FLOAT, Schema.FLOAT, 1.25F),
+                schemaCase(PulsarSchemaType.DOUBLE, Schema.DOUBLE, -4.5D),
+                schemaCase(PulsarSchemaType.DATE, Schema.DATE, new Date(1_725_000_000_123L)),
+                schemaCase(PulsarSchemaType.TIME, Schema.TIME, new Time(45_296_000L)),
+                schemaCase(PulsarSchemaType.TIMESTAMP,
+                           Schema.TIMESTAMP,
+                           timestamp,
+                           new Timestamp(timestamp.getTime())),
+                schemaCase(PulsarSchemaType.INSTANT,
+                           Schema.INSTANT,
+                           Instant.parse("2026-08-24T12:34:56.123456789Z")),
+                schemaCase(PulsarSchemaType.LOCAL_DATE, Schema.LOCAL_DATE, LocalDate.of(2026, 8, 24)),
+                schemaCase(PulsarSchemaType.LOCAL_TIME,
+                           Schema.LOCAL_TIME,
+                           LocalTime.of(12, 34, 56, 123_456_789)),
+                schemaCase(PulsarSchemaType.LOCAL_DATE_TIME,
+                           Schema.LOCAL_DATE_TIME,
+                           LocalDateTime.of(2026, 8, 24, 12, 34, 56, 123_456_789)));
+    }
+
+    private static <T> SchemaRoundTrip<T> schemaCase(PulsarSchemaType type, Schema<T> schema, T payload) {
+        return schemaCase(type, schema, payload, payload);
+    }
+
+    private static <T> SchemaRoundTrip<T> schemaCase(PulsarSchemaType type,
+                                                     Schema<T> schema,
+                                                     T payload,
+                                                     T expected) {
+        return new SchemaRoundTrip<>(type, schema, payload, expected);
+    }
+
+    private static <T> void roundTrip(PulsarClient client, SchemaRoundTrip<T> schemaCase) throws Exception {
+        String topic = uniqueName("schema-" + schemaCase.type());
+        Config config = Config.just(ConfigSources.create(Map.ofEntries(
+                Map.entry("direction", ConnectorConfig.Direction.OUTGOING.name()),
+                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, uniqueName("schema-out")),
+                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, PulsarConnectorProvider.CONNECTOR_TYPE),
+                Map.entry(PulsarConnectorConfig.SERVICE_URL_PROPERTY, PULSAR.getPulsarBrokerUrl()),
+                Map.entry(PulsarConnectorConfig.TOPIC_PROPERTY, topic),
+                Map.entry(PulsarConnectorConfig.SCHEMA_PROPERTY, schemaCase.type().name()))));
+
+        try (OutgoingConnector connector = new PulsarConnectorProvider().createOutgoingConnector(config)) {
+            connector.start();
+            try (Consumer<T> consumer = consumer(client,
+                                                 schemaCase.schema(),
+                                                 topic,
+                                                 uniqueName("schema-reader"))) {
+                connector.send(schemaCase.payload());
+                schemaCase.assertPayload(receiveOne(consumer).getValue());
+            }
+        }
+    }
+
+    @Test
+    @Timeout(90)
+    void testAutoIncomingUsesTopicSchema() throws Exception {
+        String topic = uniqueName("auto-incoming");
+        String subscription = uniqueName("auto-incoming-reader");
+        String yaml = """
+                helidon:
+                  messaging:
+                    incoming:
+                      %s:
+                        connector: helidon-pulsar
+                        service-url: "%s"
+                        topic: "%s"
+                        schema: AUTO
+                        subscription-name: "%s"
+                        subscription-initial-position: EARLIEST
+                """.formatted(PulsarMessagingTypes.AUTO_INCOMING_CHANNEL,
+                               PULSAR.getPulsarBrokerUrl(),
+                               topic,
+                               subscription);
+
+        try (PulsarClient client = newClient();
+                Producer<Integer> producer = client.newProducer(Schema.INT32).topic(topic).create()) {
+            ServiceRegistryManager manager = PulsarScenarioRegistry.create(yaml, AutoIncomingReceiver.class);
+            try {
+                AutoIncomingReceiver receiver = manager.registry().get(AutoIncomingReceiver.class);
+                manager.registry().get(MessagingRuntime.class);
+                producer.send(42);
+
+                PulsarMessage<GenericRecord> message = receiver.awaitMessage(WAIT_TIMEOUT);
+                assertThat(message, notNullValue());
+                assertThat(message.entity().getSchemaType(), is(SchemaType.INT32));
+                assertThat(message.entity().getNativeObject(), is(42));
+            } finally {
+                manager.shutdown();
+            }
+        }
+    }
+
+    @Test
+    @Timeout(90)
+    void testServiceRegistryCustomJsonSchemaProvider() throws Exception {
+        String topic = uniqueName("json-outgoing");
+        PulsarTestPayload payload = new PulsarTestPayload("order-42", 3);
+
+        try (PulsarClient client = newClient();
+                Consumer<PulsarTestPayload> consumer = consumer(client,
+                                                                Schema.JSON(PulsarTestPayload.class),
+                                                                topic,
+                                                                uniqueName("json-reader"))) {
+            ServiceRegistryManager manager = PulsarScenarioRegistry.create("""
+                    helidon:
+                      messaging:
+                        outgoing:
+                          %s:
+                            connector: helidon-pulsar
+                            service-url: "%s"
+                            topic: "%s"
+                            schema-provider: %s
+                    """.formatted(PulsarMessagingTypes.JSON_OUTGOING_CHANNEL,
+                                   PULSAR.getPulsarBrokerUrl(),
+                                   topic,
+                                   PulsarMessagingTypes.JSON_SCHEMA_PROVIDER),
+                                                                               JsonOutgoingSender.class,
+                                                                               JsonSchemaProvider.class);
+            try {
+                JsonOutgoingSender sender = manager.registry().get(JsonOutgoingSender.class);
+                manager.registry().get(MessagingRuntime.class);
+                sender.send(payload);
+                assertThat(receiveOne(consumer).getValue(), is(payload));
             } finally {
                 manager.shutdown();
             }
@@ -277,11 +506,26 @@ class PulsarConnectorIT {
     private static Consumer<String> stringConsumer(PulsarClient client,
                                                    String topic,
                                                    String subscription) throws Exception {
-        return client.newConsumer(Schema.STRING)
+        return consumer(client, Schema.STRING, topic, subscription);
+    }
+
+    private static <T> Consumer<T> consumer(PulsarClient client,
+                                            Schema<T> schema,
+                                            String topic,
+                                            String subscription) throws Exception {
+        return client.newConsumer(schema)
                 .topic(topic)
                 .subscriptionName(subscription)
                 .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
                 .subscribe();
+    }
+
+    private static <T> org.apache.pulsar.client.api.Message<T> receiveOne(Consumer<T> consumer) throws Exception {
+        org.apache.pulsar.client.api.Message<T> message = consumer.receive((int) WAIT_TIMEOUT.toMillis(),
+                                                                           TimeUnit.MILLISECONDS);
+        assertThat(message, notNullValue());
+        consumer.acknowledge(message);
+        return message;
     }
 
     private static List<org.apache.pulsar.client.api.Message<String>> receive(Consumer<String> consumer,
@@ -329,5 +573,25 @@ class PulsarConnectorIT {
 
     private static String uniqueName(String prefix) {
         return prefix + "-" + UUID.randomUUID();
+    }
+
+    private record SchemaRoundTrip<T>(PulsarSchemaType type, Schema<T> schema, T payload, T expected) {
+        private void assertPayload(T actual) {
+            if (expected instanceof byte[] expectedBytes && actual instanceof byte[] actualBytes) {
+                assertArrayEquals(expectedBytes, actualBytes);
+            } else if (expected instanceof ByteBuffer expectedBuffer && actual instanceof ByteBuffer actualBuffer) {
+                assertArrayEquals(bytes(expectedBuffer), bytes(actualBuffer));
+            } else {
+                assertThat(actual, is(expected));
+            }
+        }
+
+        private static byte[] bytes(ByteBuffer value) {
+            ByteBuffer source = value.duplicate();
+            source.position(0);
+            byte[] result = new byte[source.remaining()];
+            source.get(result);
+            return result;
+        }
     }
 }
