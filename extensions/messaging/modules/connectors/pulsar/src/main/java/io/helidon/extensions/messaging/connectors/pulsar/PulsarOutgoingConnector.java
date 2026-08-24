@@ -53,13 +53,26 @@ final class PulsarOutgoingConnector {
     }
 
     OutgoingConnector createOutgoingConnector(PulsarConnectorConfig config) {
+        validateDirection(config);
+        return createOutgoingConnector(config,
+                                       PulsarSchemaResolver.resolve(config,
+                                                                    ConnectorConfig.Direction.OUTGOING,
+                                                                    List::of));
+    }
+
+    OutgoingConnector createOutgoingConnector(PulsarConnectorConfig config,
+                                               PulsarSchemaResolver.ResolvedSchema schema) {
+        validateDirection(config);
+        return new Connector(config, Objects.requireNonNull(schema));
+    }
+
+    private static void validateDirection(PulsarConnectorConfig config) {
         Objects.requireNonNull(config);
         if (config.direction() != ConnectorConfig.Direction.OUTGOING) {
             throw new IllegalArgumentException("Pulsar connector configuration for channel " + config.channel()
                                                        + " has direction " + config.direction()
                                                        + ", expected " + ConnectorConfig.Direction.OUTGOING);
         }
-        return new Connector(config);
     }
 
     @FunctionalInterface
@@ -69,6 +82,7 @@ final class PulsarOutgoingConnector {
 
     private final class Connector implements OutgoingConnector {
         private final PulsarConnectorConfig config;
+        private final PulsarSchemaResolver.ResolvedSchema schema;
         private final ReentrantLock lifecycleLock = new ReentrantLock();
         private final Condition lifecycleChanged = lifecycleLock.newCondition();
         private State state = State.NEW;
@@ -80,8 +94,9 @@ final class PulsarOutgoingConnector {
         private Throwable startupFailure;
         private volatile RuntimeException closeFailure;
 
-        private Connector(PulsarConnectorConfig config) {
+        private Connector(PulsarConnectorConfig config, PulsarSchemaResolver.ResolvedSchema schema) {
             this.config = config;
+            this.schema = schema;
         }
 
         @Override
@@ -120,7 +135,7 @@ final class PulsarOutgoingConnector {
                 } finally {
                     lifecycleLock.unlock();
                 }
-                producer = PulsarConnectorConfigSupport.producerBuilder(client, config).create();
+                producer = PulsarConnectorConfigSupport.producerBuilder(client, config, schema).create();
                 if (!producer.isConnected()) {
                     throw new MessagingException("Pulsar producer for topic " + config.topic() + " is not connected");
                 }
@@ -313,7 +328,7 @@ final class PulsarOutgoingConnector {
             int enqueueFailureIndex = -1;
             for (int i = 0; i < batch.size(); i++) {
                 try {
-                    futures.add(PulsarMessageMapper.send(producer, batch.get(i), config.schema()));
+                    futures.add(PulsarMessageMapper.send(producer, batch.get(i), schema));
                 } catch (RuntimeException e) {
                     enqueueFailure = e;
                     enqueueFailureIndex = i;

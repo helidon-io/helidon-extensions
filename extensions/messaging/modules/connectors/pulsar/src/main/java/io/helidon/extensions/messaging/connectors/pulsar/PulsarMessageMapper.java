@@ -54,7 +54,8 @@ final class PulsarMessageMapper {
     }
 
     static PulsarMessage<Object> fromPulsarMessage(org.apache.pulsar.client.api.Message<Object> message,
-                                                   PulsarConnectorConfig config) {
+                                                   PulsarConnectorConfig config,
+                                                   PulsarSchemaResolver.ResolvedSchema schema) {
         Objects.requireNonNull(message);
         int size = message.size();
         if (size < 0) {
@@ -64,7 +65,7 @@ final class PulsarMessageMapper {
             throw new MessagingException("Pulsar message payload size " + size
                                                  + " exceeds max-message-bytes " + config.maxMessageBytes());
         }
-        Object entity = config.schema().snapshot(message.getValue());
+        Object entity = schema.snapshot(message.getValue());
         return PulsarMessageImpl.incoming(entity, message);
     }
 
@@ -74,7 +75,7 @@ final class PulsarMessageMapper {
 
     static CompletableFuture<MessageId> send(Producer<Object> producer,
                                              Message<?> message,
-                                             PulsarSchemaType schema) {
+                                             PulsarSchemaResolver.ResolvedSchema schema) {
         Objects.requireNonNull(producer);
         OutgoingMapping mapping = outgoingMapping(Objects.requireNonNull(message));
         TypedMessageBuilder<Object> builder = producer.newMessage()

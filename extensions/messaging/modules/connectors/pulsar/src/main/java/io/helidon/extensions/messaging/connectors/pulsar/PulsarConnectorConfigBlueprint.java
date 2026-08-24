@@ -59,6 +59,15 @@ interface PulsarConnectorConfigBlueprint extends ConnectorConfig {
     PulsarSchemaType schema();
 
     /**
+     * Name of a custom {@link PulsarSchemaProvider} in the Helidon Service Registry. When present, the provider schema
+     * overrides {@link #schema()}.
+     *
+     * @return custom schema provider name
+     */
+    @Option.Configured(PulsarConnectorConfigSupport.SCHEMA_PROVIDER_PROPERTY)
+    Optional<String> schemaProvider();
+
+    /**
      * Incoming durable subscription name. The channel name is used when absent.
      *
      * @return configured subscription name
