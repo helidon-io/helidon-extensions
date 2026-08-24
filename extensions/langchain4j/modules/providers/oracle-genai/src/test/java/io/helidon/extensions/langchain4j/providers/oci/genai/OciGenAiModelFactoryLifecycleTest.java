@@ -186,7 +186,7 @@ class OciGenAiModelFactoryLifecycleTest {
     }
 
     @Test
-    void closesEarlierOwnedModelsWhenLaterConstructionFails() {
+    void retainsFailedRollbackAsTerminalFailure() {
         var constructionFailure = new IllegalArgumentException("model construction failed");
         var cleanupFailure = new IllegalStateException("model cleanup failed");
         var closeAttempt = new AtomicInteger();
@@ -209,16 +209,19 @@ class OciGenAiModelFactoryLifecycleTest {
         assertThat(model.closeCount(), is(1));
         assertThat(LifecycleTestModel.buildCount(), is(2));
 
-        var cleanupPending = assertThrows(IllegalStateException.class, factory::services);
-        assertThat(cleanupPending.getCause(), sameInstance(cleanupFailure));
+        var cleanupFailed = assertThrows(IllegalStateException.class, factory::services);
+        assertThat(cleanupFailed.getCause(), sameInstance(cleanupFailure));
         assertThat(LifecycleTestModel.buildCount(), is(2));
 
-        lifecycle.preDestroy();
-        assertThat(model.closeCount(), is(2));
-        assertThat(model.closed(), is(true));
+        var firstShutdown = assertThrows(IllegalStateException.class, lifecycle::preDestroy);
+        assertThat(firstShutdown.getMessage(), is("Failed to close LangChain4j model instances."));
+        assertThat(firstShutdown.getCause(), sameInstance(cleanupFailure));
+        assertThat(model.closeCount(), is(1));
 
-        lifecycle.preDestroy();
-        assertThat(model.closeCount(), is(2));
+        var repeatedShutdown = assertThrows(IllegalStateException.class, lifecycle::preDestroy);
+        assertThat(repeatedShutdown.getMessage(), is("Failed to close LangChain4j model instances."));
+        assertThat(repeatedShutdown.getCause(), sameInstance(cleanupFailure));
+        assertThat(model.closeCount(), is(1));
     }
 
     @Test
@@ -258,17 +261,16 @@ class OciGenAiModelFactoryLifecycleTest {
     }
 
     @Test
-    void reportsShutdownFailureAndRetriesOnlyPendingModels() {
+    void doesNotRetryShutdownCloseAfterResourcesWereReleased() {
         var cleanupFailure = new IllegalStateException("shutdown cleanup failed");
-        var closeAttempt = new AtomicInteger();
+        var resourceReleaseCount = new AtomicInteger();
         var closedModel = LifecycleTestModel.create();
-        var pendingModel = LifecycleTestModel.create(() -> {
-            if (closeAttempt.getAndIncrement() == 0) {
-                throw cleanupFailure;
-            }
+        var failedModel = LifecycleTestModel.create(() -> {
+            resourceReleaseCount.incrementAndGet();
+            throw cleanupFailure;
         });
         LifecycleTestModel.plan("first-plan", () -> closedModel);
-        LifecycleTestModel.plan("second-plan", () -> pendingModel);
+        LifecycleTestModel.plan("second-plan", () -> failedModel);
         var lifecycle = new LifecycleTestModelFactoryLifecycle();
         var factory = new LifecycleTestModelFactory(twoLifecycleModelConfig(), lifecycle);
 
@@ -279,33 +281,26 @@ class OciGenAiModelFactoryLifecycleTest {
         assertThat(actual.getCause(), sameInstance(cleanupFailure));
         assertThat(closedModel.closeCount(), is(1));
         assertThat(closedModel.closed(), is(true));
-        assertThat(pendingModel.closeCount(), is(1));
-        assertThat(pendingModel.closed(), is(false));
+        assertThat(failedModel.closeCount(), is(1));
+        assertThat(failedModel.closed(), is(false));
+        assertThat(resourceReleaseCount.get(), is(1));
 
-        lifecycle.preDestroy();
-        assertThat(closedModel.closeCount(), is(1));
-        assertThat(pendingModel.closeCount(), is(2));
-        assertThat(pendingModel.closed(), is(true));
-        assertThat(factory.services(), is(empty()));
+        var cleanupFailed = assertThrows(IllegalStateException.class, factory::services);
+        assertThat(cleanupFailed.getCause(), sameInstance(cleanupFailure));
 
-        lifecycle.preDestroy();
+        var repeatedShutdown = assertThrows(IllegalStateException.class, lifecycle::preDestroy);
+        assertThat(repeatedShutdown.getMessage(), is("Failed to close LangChain4j model instances."));
+        assertThat(repeatedShutdown.getCause(), sameInstance(cleanupFailure));
         assertThat(closedModel.closeCount(), is(1));
-        assertThat(pendingModel.closeCount(), is(2));
+        assertThat(failedModel.closeCount(), is(1));
+        assertThat(resourceReleaseCount.get(), is(1));
     }
 
     @Test
-    void propagatesErrorFromShutdownRetry() {
-        var firstFailure = new IllegalStateException("first shutdown cleanup failed");
-        var retryFailure = new AssertionError("shutdown retry failed");
-        var closeAttempt = new AtomicInteger();
+    void rethrowsShutdownErrorWithoutRetryingClose() {
+        var cleanupError = new AssertionError("shutdown cleanup failed");
         var model = LifecycleTestModel.create(() -> {
-            int attempt = closeAttempt.getAndIncrement();
-            if (attempt == 0) {
-                throw firstFailure;
-            }
-            if (attempt == 1) {
-                throw retryFailure;
-            }
+            throw cleanupError;
         });
         LifecycleTestModel.plan("ordered-plan", () -> model);
         var lifecycle = new LifecycleTestModelFactoryLifecycle();
@@ -313,49 +308,24 @@ class OciGenAiModelFactoryLifecycleTest {
 
         assertThat(factory.services(), hasSize(1));
 
-        var first = assertThrows(IllegalStateException.class, lifecycle::preDestroy);
-        assertThat(first.getCause(), sameInstance(firstFailure));
+        var first = assertThrows(AssertionError.class, lifecycle::preDestroy);
+        assertThat(first, sameInstance(cleanupError));
+        assertThat(model.closeCount(), is(1));
 
-        var retry = assertThrows(AssertionError.class, lifecycle::preDestroy);
-        assertThat(retry, sameInstance(retryFailure));
-        assertThat(retry.getSuppressed(), arrayContaining(firstFailure));
-        assertThat(model.closed(), is(false));
-        assertThat(model.closeCount(), is(2));
-
-        lifecycle.preDestroy();
-        assertThat(model.closed(), is(true));
-        assertThat(model.closeCount(), is(3));
-        assertThat(factory.services(), is(empty()));
-
-        lifecycle.preDestroy();
-        assertThat(model.closeCount(), is(3));
+        var repeated = assertThrows(AssertionError.class, lifecycle::preDestroy);
+        assertThat(repeated, sameInstance(cleanupError));
+        assertThat(model.closeCount(), is(1));
     }
 
     @Test
-    void propagatesErrorWhenAnotherPendingModelFailsFirstOnRetry() {
-        var firstInitialFailure = new IllegalStateException("first initial cleanup failed");
-        var secondInitialFailure = new IllegalArgumentException("second initial cleanup failed");
-        var retryRuntimeFailure = new IllegalStateException("first retry cleanup failed");
-        var retryError = new AssertionError("second retry cleanup failed");
-        var firstCloseAttempt = new AtomicInteger();
-        var secondCloseAttempt = new AtomicInteger();
+    void aggregatesShutdownFailuresWithoutRetryingModels() {
+        var firstFailure = new IllegalStateException("first cleanup failed");
+        var secondFailure = new AssertionError("second cleanup failed");
         var firstModel = LifecycleTestModel.create(() -> {
-            int attempt = firstCloseAttempt.getAndIncrement();
-            if (attempt == 0) {
-                throw firstInitialFailure;
-            }
-            if (attempt == 1) {
-                throw retryRuntimeFailure;
-            }
+            throw firstFailure;
         });
         var secondModel = LifecycleTestModel.create(() -> {
-            int attempt = secondCloseAttempt.getAndIncrement();
-            if (attempt == 0) {
-                throw secondInitialFailure;
-            }
-            if (attempt == 1) {
-                throw retryError;
-            }
+            throw secondFailure;
         });
         LifecycleTestModel.plan("first-plan", () -> firstModel);
         LifecycleTestModel.plan("second-plan", () -> secondModel);
@@ -364,28 +334,17 @@ class OciGenAiModelFactoryLifecycleTest {
 
         assertThat(factory.services(), hasSize(2));
 
-        var first = assertThrows(IllegalStateException.class, lifecycle::preDestroy);
-        assertThat(first.getCause(), sameInstance(firstInitialFailure));
-        assertThat(firstInitialFailure.getSuppressed(), arrayContaining(secondInitialFailure));
+        var first = assertThrows(AssertionError.class, lifecycle::preDestroy);
+        assertThat(first, sameInstance(secondFailure));
+        assertThat(first.getSuppressed(), arrayContaining(firstFailure));
+        assertThat(firstModel.closeCount(), is(1));
+        assertThat(secondModel.closeCount(), is(1));
 
-        var retry = assertThrows(AssertionError.class, lifecycle::preDestroy);
-        assertThat(retry, sameInstance(retryError));
-        assertThat(retry.getSuppressed(), arrayContaining(retryRuntimeFailure, firstInitialFailure));
-        assertThat(firstModel.closed(), is(false));
-        assertThat(firstModel.closeCount(), is(2));
-        assertThat(secondModel.closed(), is(false));
-        assertThat(secondModel.closeCount(), is(2));
-
-        lifecycle.preDestroy();
-        assertThat(firstModel.closed(), is(true));
-        assertThat(firstModel.closeCount(), is(3));
-        assertThat(secondModel.closed(), is(true));
-        assertThat(secondModel.closeCount(), is(3));
-        assertThat(factory.services(), is(empty()));
-
-        lifecycle.preDestroy();
-        assertThat(firstModel.closeCount(), is(3));
-        assertThat(secondModel.closeCount(), is(3));
+        var repeated = assertThrows(AssertionError.class, lifecycle::preDestroy);
+        assertThat(repeated, sameInstance(secondFailure));
+        assertThat(repeated.getSuppressed(), arrayContaining(firstFailure));
+        assertThat(firstModel.closeCount(), is(1));
+        assertThat(secondModel.closeCount(), is(1));
     }
 
     @Test
