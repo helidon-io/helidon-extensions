@@ -35,5 +35,6 @@
         <module>file</module>
         <module>kafka</module>
         <module>jms</module>
+        <module>pulsar</module>
     </modules>
 </project>

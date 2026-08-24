@@ -1,0 +1,201 @@
+/*
+ * Copyright (c) 2026 Oracle and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.helidon.extensions.messaging.connectors.pulsar;
+
+import java.lang.reflect.Proxy;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import io.helidon.messaging.BatchDeliveryException;
+import io.helidon.messaging.BatchItemStatus;
+import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.Message;
+import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.OutgoingConnector;
+
+import org.apache.pulsar.client.api.MessageId;
+import org.apache.pulsar.client.api.Producer;
+import org.apache.pulsar.client.api.ProducerBuilder;
+import org.apache.pulsar.client.api.PulsarClient;
+import org.apache.pulsar.client.api.TypedMessageBuilder;
+import org.junit.jupiter.api.Test;
+
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+class PulsarOutgoingConnectorTest {
+    @Test
+    void sendsPayloadMetadataAndCompleteBatchBeforeReturning() {
+        FakeTransport transport = new FakeTransport();
+        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
+                .createOutgoingConnector(config(PulsarSchemaType.STRING));
+
+        connector.start();
+        connector.sendBatch(MessageBatch.create(List.of(
+                PulsarMessage.builder("first")
+                        .key("key-1")
+                        .orderingKey(new byte[] {1, 2})
+                        .header("trace-id", "first-trace")
+                        .eventTime(123)
+                        .build(),
+                Message.builder("second").header("trace-id", "second-trace").build())));
+        connector.close();
+
+        assertThat(transport.values, is(List.of("first", "second")));
+        assertThat(transport.properties.get(0), is(Map.of("trace-id", "first-trace")));
+        assertThat(transport.properties.get(1), is(Map.of("trace-id", "second-trace")));
+        assertThat(transport.keys, is(List.of("key-1", "")));
+        assertThat(transport.eventTimes, is(List.of(123L, -1L)));
+        assertThat(transport.closed.get(), is(true));
+    }
+
+    @Test
+    void reportsSuccessfulPrefixSchemaFailureAndUntouchedSuffix() {
+        FakeTransport transport = new FakeTransport();
+        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
+                .createOutgoingConnector(config(PulsarSchemaType.STRING));
+        connector.start();
+        MessageBatch<Object> batch = MessageBatch.create(List.of(Message.create("first"),
+                                                                  Message.create(42),
+                                                                  Message.create("third")));
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                       () -> connector.sendBatch(batch));
+
+        assertThat(failure.outcome(0).status(), is(BatchItemStatus.SUCCEEDED));
+        assertThat(failure.outcome(1).status(), is(BatchItemStatus.FAILED));
+        assertThat(failure.outcome(2).status(), is(BatchItemStatus.NOT_ATTEMPTED));
+        assertThat(transport.values, is(List.of("first")));
+        connector.forceClose();
+        assertThat(transport.shutdowns.get(), is(1));
+    }
+
+    private static PulsarConnectorConfig config(PulsarSchemaType schema) {
+        return PulsarConnectorConfig.builder()
+                .direction(ConnectorConfig.Direction.OUTGOING)
+                .channel("out")
+                .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
+                .serviceUrl("pulsar://localhost:6650")
+                .topic("persistent://public/default/out")
+                .schema(schema)
+                .build();
+    }
+
+    private static final class FakeTransport {
+        private final List<Object> values = new ArrayList<>();
+        private final List<Map<String, String>> properties = new ArrayList<>();
+        private final List<String> keys = new ArrayList<>();
+        private final List<Long> eventTimes = new ArrayList<>();
+        private final AtomicBoolean closed = new AtomicBoolean();
+        private final AtomicInteger shutdowns = new AtomicInteger();
+        private final MessageId messageId = PulsarTestSupport.proxy(MessageId.class,
+                                                                    (ignored, method, args) -> method.getName()
+                                                                            .equals("compareTo")
+                                                                            ? 0
+                                                                            : PulsarTestSupport.defaultValue(method));
+        private final Producer<Object> producer = producer();
+        private final ProducerBuilder<Object> producerBuilder = producerBuilder();
+        private final PulsarClient client = clientProxy();
+
+        private PulsarClient client() {
+            return client;
+        }
+
+        private PulsarClient clientProxy() {
+            return PulsarTestSupport.proxy(PulsarClient.class, (ignored, method, args) -> switch (method.getName()) {
+            case "newProducer" -> producerBuilder;
+            case "closeAsync" -> {
+                closed.set(true);
+                yield CompletableFuture.completedFuture(null);
+            }
+            case "shutdown" -> {
+                shutdowns.incrementAndGet();
+                closed.set(true);
+                yield null;
+            }
+            case "isClosed" -> closed.get();
+            default -> PulsarTestSupport.defaultValue(method);
+            });
+        }
+
+        @SuppressWarnings("unchecked")
+        private ProducerBuilder<Object> producerBuilder() {
+            final ProducerBuilder<Object>[] reference = new ProducerBuilder[1];
+            reference[0] = PulsarTestSupport.proxy(ProducerBuilder.class,
+                                                   (ignored, method, args) -> method.getName().equals("create")
+                                                           ? producer
+                                                           : reference[0]);
+            return reference[0];
+        }
+
+        @SuppressWarnings("unchecked")
+        private Producer<Object> producer() {
+            return PulsarTestSupport.proxy(Producer.class, (ignored, method, args) -> switch (method.getName()) {
+            case "isConnected" -> true;
+            case "newMessage" -> messageBuilder();
+            case "closeAsync" -> CompletableFuture.completedFuture(null);
+            default -> PulsarTestSupport.defaultValue(method);
+            });
+        }
+
+        @SuppressWarnings("unchecked")
+        private TypedMessageBuilder<Object> messageBuilder() {
+            Map<String, String> messageProperties = new LinkedHashMap<>();
+            Object[] value = new Object[1];
+            String[] key = {""};
+            long[] eventTime = {-1};
+            final TypedMessageBuilder<Object>[] reference = new TypedMessageBuilder[1];
+            reference[0] = (TypedMessageBuilder<Object>) Proxy.newProxyInstance(
+                    TypedMessageBuilder.class.getClassLoader(),
+                    new Class<?>[] {TypedMessageBuilder.class},
+                    (ignored, method, args) -> switch (method.getName()) {
+                    case "value" -> {
+                        value[0] = args[0];
+                        yield reference[0];
+                    }
+                    case "properties" -> {
+                        messageProperties.putAll((Map<String, String>) args[0]);
+                        yield reference[0];
+                    }
+                    case "key" -> {
+                        key[0] = (String) args[0];
+                        yield reference[0];
+                    }
+                    case "keyBytes", "orderingKey" -> reference[0];
+                    case "eventTime" -> {
+                        eventTime[0] = (long) args[0];
+                        yield reference[0];
+                    }
+                    case "sendAsync" -> {
+                        values.add(value[0]);
+                        properties.add(Map.copyOf(messageProperties));
+                        keys.add(key[0]);
+                        eventTimes.add(eventTime[0]);
+                        yield CompletableFuture.completedFuture(messageId);
+                    }
+                    default -> PulsarTestSupport.defaultValue(method);
+                    });
+            return reference[0];
+        }
+    }
+}

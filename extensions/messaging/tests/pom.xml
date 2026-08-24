@@ -44,5 +44,6 @@
     <modules>
         <module>kafka</module>
         <module>jms</module>
+        <module>pulsar</module>
     </modules>
 </project>
