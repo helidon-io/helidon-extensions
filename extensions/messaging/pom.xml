@@ -47,6 +47,7 @@
         <version.lib.artemis>2.55.0</version.lib.artemis>
         <version.lib.jakarta.jms-api>3.1.0</version.lib.jakarta.jms-api>
         <version.lib.kafka>4.3.1</version.lib.kafka>
+        <version.lib.pulsar>4.0.13</version.lib.pulsar>
     </properties>
 
     <dependencyManagement>
@@ -69,6 +70,16 @@
                 <version>${version.lib.kafka}</version>
             </dependency>
             <dependency>
+                <groupId>org.apache.pulsar</groupId>
+                <artifactId>pulsar-client-api</artifactId>
+                <version>${version.lib.pulsar}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.pulsar</groupId>
+                <artifactId>pulsar-client</artifactId>
+                <version>${version.lib.pulsar}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.testcontainers</groupId>
                 <artifactId>junit-jupiter</artifactId>
                 <version>${version.lib.testcontainers}</version>
@@ -76,6 +87,11 @@
             <dependency>
                 <groupId>org.testcontainers</groupId>
                 <artifactId>kafka</artifactId>
+                <version>${version.lib.testcontainers}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>pulsar</artifactId>
                 <version>${version.lib.testcontainers}</version>
             </dependency>
             <dependency>

@@ -801,6 +801,139 @@ Copyright 2008 Google Inc. All rights reserved.
 These versions are identified by Apache Kafka's 4.3.1 binary license inventory.
 See the full Apache-2.0 and Protocol Buffers BSD-3-Clause license texts below.
 
+
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+Apache Pulsar Java Client API (org.apache.pulsar:pulsar-client-api:4.0.13)
+Apache Pulsar Shaded Java Client (org.apache.pulsar:pulsar-client:4.0.13)
+Project: https://pulsar.apache.org/
+License: Apache-2.0
+Used by: [helidon-extensions-messaging-connectors-pulsar]
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+Pulsar Client :: API
+Copyright 2017-2026 Apache Software Foundation
+
+This product includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
+
+See the full Apache-2.0 license text below.
+
+The published `pulsar-client` artifact is the upstream shaded client. It contains the Pulsar client implementation and
+relocated portions of its runtime dependencies. The shaded JAR removes the dependency `META-INF/LICENSE` and
+`META-INF/NOTICE` resources, so the attribution below is derived from Apache Pulsar's official 4.0.13 source-release
+`distribution/server/src/assemble/LICENSE.bin.txt` and `NOTICE.bin.txt`, together with the published 4.0.13 client POM.
+
+Official sources:
+  * https://archive.apache.org/dist/pulsar/pulsar-4.0.13/apache-pulsar-4.0.13-src.tar.gz
+  * https://github.com/apache/pulsar/blob/v4.0.13/distribution/server/src/assemble/LICENSE.bin.txt
+  * https://github.com/apache/pulsar/blob/v4.0.13/distribution/server/src/assemble/NOTICE.bin.txt
+  * https://repo.maven.apache.org/maven2/org/apache/pulsar/pulsar-client/4.0.13/pulsar-client-4.0.13.pom
+
+--------------------------------------------
+Production dependencies retained outside the shaded client
+--------------------------------------------
+
+Apache-2.0:
+  * Apache Pulsar Client Admin API (org.apache.pulsar:pulsar-client-admin-api:4.0.13)
+  * Apache Pulsar Bouncy Castle loader (org.apache.pulsar:bouncy-castle-bc:4.0.13, `pkg` classifier)
+  * OpenTelemetry API, Context, Common, and API Incubator 1.62.0
+  * Bean Validation API (javax.validation:validation-api:1.1.0.Final)
+  * Jackson Annotations 2.21 (version selected by the Helidon dependency BOM)
+  * JSpecify 1.0.0
+
+Bouncy Castle License:
+  * org.bouncycastle:bcpkix-jdk18on:1.84
+  * org.bouncycastle:bcprov-jdk18on:1.84
+  * org.bouncycastle:bcutil-jdk18on:1.84
+
+MIT:
+  * SLF4J API 2.0.17; its attribution and full license text already appear in the Kafka section and below.
+
+Maven dependency management may mediate a transitive dependency to the compatible version selected by the Helidon
+dependency BOM. The component identities and licenses do not change as a result.
+
+--------------------------------------------
+Components incorporated into pulsar-client 4.0.13
+--------------------------------------------
+
+Apache-2.0 components include the Pulsar client implementation and common code, Jackson core/data formats/data types,
+Caffeine, Gson, Guava, Google Error Prone and J2ObjC annotations, RE2/J, Spotify Completable Futures, Paranamer, Netty
+Reactive Streams, DataSketches, Apache Commons, Airlift compression, Netty (including native transports and tc-native),
+PerfMark, Swagger, Apache Avro, Apache BookKeeper client utilities, AsyncHttpClient, Jetty, Javassist under its
+Apache-2.0 option, Objenesis, SnakeYAML, RoaringBitmap, and Prometheus client code. The full Apache-2.0 text appears
+below.
+
+Additional incorporated components use these licenses:
+  * com.sun.activation:jakarta.activation:1.2.2 - CDDL-1.1
+  * Jakarta Activation API and Jakarta XML Binding API - Eclipse Distribution License 1.0
+  * Jakarta Annotations API and Jakarta RESTful Web Services API - Eclipse Public License 2.0
+  * Reactive Streams 1.0.4 - CC0 1.0 Universal
+  * JCIP Annotations 1.0 - Creative Commons Attribution 2.5
+  * Checker Framework annotations - MIT
+  * JSR-305 annotations - BSD-3-Clause
+
+The full EPL-2.0, MIT, and BSD-3-Clause texts already appear in this file. The remaining exact license texts distributed
+by Apache Pulsar 4.0.13 are available at:
+  * CDDL-1.1: https://github.com/apache/pulsar/blob/v4.0.13/distribution/licenses/LICENSE-CDDL-1.1.txt
+  * EDL-1.0: https://github.com/apache/pulsar/blob/v4.0.13/distribution/licenses/LICENSE-EDL-1.0.txt
+  * CC0-1.0: https://github.com/apache/pulsar/blob/v4.0.13/distribution/licenses/LICENSE-CC0.txt
+  * JCIP: https://github.com/apache/pulsar/blob/v4.0.13/distribution/licenses/LICENSE-jcip.txt
+  * Bouncy Castle: https://github.com/apache/pulsar/blob/v4.0.13/distribution/licenses/LICENSE-bouncycastle.txt
+
+Required upstream notices for incorporated components:
+
+Bouncy Castle
+Copyright (c) 2000-2015 The Legion Of The Bouncy Castle Inc. (http://www.bouncycastle.org)
+
+Jackson
+Copyright (c) 2009 FasterXML, LLC
+
+Caffeine
+Copyright 2015 Ben Manes. All Rights Reserved.
+
+Gson
+Copyright 2008 Google Inc.
+
+Guava
+Copyright (C) 2010 The Guava Authors
+
+DataSketches
+Copyright 2017, Yahoo! Inc.
+
+AsyncHttpClient
+Copyright 2014-2016 AsyncHttpClient Project
+
+Javassist
+Copyright (C) 1999- by Shigeru Chiba, All rights reserved.
+
+Netty
+Copyright 2014 The Netty Project
+
+Netty tc-native
+Copyright 2016 The Netty Project
+
+JCIP
+Copyright (c) 2005 Brian Goetz and Tim Peierls
+Released under the Creative Commons Attribution License
+(http://creativecommons.org/licenses/by/2.5)
+
+Bouncy Castle License text:
+
+Copyright (c) 2000-2020 The Legion of the Bouncy Castle Inc. (https://www.bouncycastle.org)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
+persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 ===============================================================================
 Apache License 2.0
 ===============================================================================
