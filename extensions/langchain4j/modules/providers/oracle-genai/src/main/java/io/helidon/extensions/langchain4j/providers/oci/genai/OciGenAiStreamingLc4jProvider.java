@@ -17,6 +17,7 @@
 package io.helidon.extensions.langchain4j.providers.oci.genai;
 
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
@@ -31,6 +32,16 @@ import dev.langchain4j.community.model.oracle.oci.genai.OciGenAiStreamingChatMod
         skip = "logitBias\\(java\\.lang\\.Object\\)")
 @Prototype.CustomMethods(OciFactoryMethods.class)
 interface OciGenAiStreamingLc4jProvider extends OciGenAiLc4jProvider {
+
+    /**
+     * Custom executor for asynchronous request startup and stream processing.
+     * The executor is not shut down when the model is closed.
+     *
+     * @return the executor service
+     */
+    @Option.Configured
+    @Option.RegistryService
+    Optional<ExecutorService> executorService();
 
     /**
      * Custom asynchronous OCI GenAI client.

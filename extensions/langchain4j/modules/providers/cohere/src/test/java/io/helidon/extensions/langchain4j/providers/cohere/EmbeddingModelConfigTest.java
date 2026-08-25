@@ -18,16 +18,21 @@ package io.helidon.extensions.langchain4j.providers.cohere;
 
 import java.time.Duration;
 
+import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
+import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.testing.junit5.Testing;
 
+import dev.langchain4j.model.embedding.listener.EmbeddingModelListener;
 import org.junit.jupiter.api.Test;
 
 import static io.helidon.extensions.langchain4j.providers.cohere.CohereConstants.ConfigCategory.MODEL;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.sameInstance;
 
 @Testing.Test
 class EmbeddingModelConfigTest {
@@ -53,5 +58,32 @@ class EmbeddingModelConfigTest {
         assertThat(config.logResponses().get(), is(true));
         assertThat(config.maxSegmentsPerBatch().isPresent(), is(true));
         assertThat(config.maxSegmentsPerBatch().get(), is(10));
+    }
+
+    @Test
+    void testNamedEmbeddingListener(ServiceRegistry registry) {
+        // language=YAML
+        var yaml = """
+                langchain4j:
+                  models:
+                    test-embedding-model:
+                      provider: cohere
+                      http-client-builder-discover-services: false
+                      listeners.service-registry.named: test-embedding-listener
+                  providers:
+                    cohere:
+                      api-key: api-key
+                """;
+
+        var config = CohereEmbeddingModelConfig.builder()
+                .serviceRegistry(registry)
+                .config(CohereConstants.create(Config.just(yaml, MediaTypes.APPLICATION_X_YAML),
+                                               MODEL,
+                                               "test-embedding-model"))
+                .build();
+        var listener = registry.getNamed(EmbeddingModelListener.class, "test-embedding-listener");
+
+        assertThat(config.listeners(), contains(sameInstance(listener)));
+        assertThat(config.configuredBuilder().build(), is(notNullValue()));
     }
 }

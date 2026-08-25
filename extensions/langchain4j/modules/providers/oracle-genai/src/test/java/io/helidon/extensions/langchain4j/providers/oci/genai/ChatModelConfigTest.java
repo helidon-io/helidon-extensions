@@ -19,6 +19,7 @@ package io.helidon.extensions.langchain4j.providers.oci.genai;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
 
 import io.helidon.common.Errors;
 import io.helidon.common.media.type.MediaTypes;
@@ -42,6 +43,7 @@ import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.sameInstance;
 
 @Testing.Test(perMethod = true)
 class ChatModelConfigTest {
@@ -125,6 +127,41 @@ class ChatModelConfigTest {
 
         assertThat(config.authProvider().map(BasicAuthenticationDetailsProvider::getKeyId), is(Optional.of("mockNamed2")));
         assertThat(config.region(), is(Region.AP_TOKYO_1));
+    }
+
+    @Test
+    void testNamedStreamingExecutor(ServiceRegistry registry) {
+        // language=YAML
+        var yaml = """
+                langchain4j:
+                  providers:
+                    oci-gen-ai:
+                      model-name: model-name
+                      compartment-id: compartment-id
+                      region: us-ashburn-1
+                      executor-service.service-registry.named: mockExecutor
+                    oci-gen-ai-cohere:
+                      model-name: model-name
+                      compartment-id: compartment-id
+                      region: us-ashburn-1
+                      executor-service.service-registry.named: mockExecutor
+                """;
+        var root = Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
+        var expectedExecutor = registry.getNamed(ExecutorService.class, "mockExecutor");
+
+        var genericConfig = OciGenAiStreamingChatModelConfig.builder()
+                .serviceRegistry(registry)
+                .config(root.get(OciGenAiStreamingChatModelConfig.CONFIG_ROOT))
+                .build();
+        var cohereConfig = OciGenAiCohereStreamingChatModelConfig.builder()
+                .serviceRegistry(registry)
+                .config(root.get(OciGenAiCohereStreamingChatModelConfig.CONFIG_ROOT))
+                .build();
+
+        assertThat(genericConfig.executorService().orElseThrow(), sameInstance(expectedExecutor));
+        assertThat(cohereConfig.executorService().orElseThrow(), sameInstance(expectedExecutor));
+        assertThat(genericConfig.configuredBuilder().build(), is(notNullValue()));
+        assertThat(cohereConfig.configuredBuilder().build(), is(notNullValue()));
     }
 
     @Test
