@@ -16,18 +16,25 @@
 
 package io.helidon.extensions.langchain4j.providers.openai;
 
+import java.io.IOException;
 import java.time.Duration;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
+import io.helidon.config.metadata.model.CmModel;
 
 import org.junit.jupiter.api.Test;
 
 import static io.helidon.extensions.langchain4j.providers.openai.OpenAiConstants.ConfigCategory.MODEL;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ImageModelConfigTest {
     public static final String MODEL_NAME = "test-image-model";
@@ -71,5 +78,50 @@ class ImageModelConfigTest {
         assertThat(config.customHeaders().size(), is(2));
         assertThat(config.customHeaders().get("header1"), is(equalTo("value1")));
         assertThat(config.customHeaders().get("header2"), is(equalTo("value2")));
+    }
+
+    @Test
+    void testLegacyImageApiIsNotGenerated() throws NoSuchMethodException {
+        assertNoPublicMethod(OpenAiImageModelConfig.class, "style");
+        assertNoPublicMethod(OpenAiImageModelConfig.class, "responseFormat");
+        assertNoPublicMethod(OpenAiImageModelConfig.Builder.class, "style");
+        assertNoPublicMethod(OpenAiImageModelConfig.Builder.class, "style", String.class);
+        assertNoPublicMethod(OpenAiImageModelConfig.Builder.class, "clearStyle");
+        assertNoPublicMethod(OpenAiImageModelConfig.Builder.class, "responseFormat");
+        assertNoPublicMethod(OpenAiImageModelConfig.Builder.class, "responseFormat", String.class);
+        assertNoPublicMethod(OpenAiImageModelConfig.Builder.class, "clearResponseFormat");
+
+        assertThat(OpenAiChatModelConfig.class.getMethod("responseFormat"), is(notNullValue()));
+    }
+
+    @Test
+    void testLegacyImageOptionsAreAbsentFromMetadata() throws IOException {
+        try (var metadataResource = getClass().getResourceAsStream("/META-INF/helidon/config-metadata.json")) {
+            assertThat(metadataResource, is(notNullValue()));
+            var metadata = CmModel.fromJson(metadataResource);
+            var imageOptions = optionKeys(metadata, OpenAiImageModelConfig.class);
+
+            assertThat(imageOptions, not(hasItem("style")));
+            assertThat(imageOptions, not(hasItem("response-format")));
+            assertThat(optionKeys(metadata, OpenAiChatModelConfig.class), hasItem("response-format"));
+            assertThat(optionKeys(metadata, OpenAiStreamingChatModelConfig.class), hasItem("response-format"));
+        }
+    }
+
+    private static void assertNoPublicMethod(Class<?> type, String name, Class<?>... parameterTypes) {
+        assertThrows(NoSuchMethodException.class, () -> type.getMethod(name, parameterTypes));
+    }
+
+    private static Set<String> optionKeys(CmModel metadata, Class<?> configType) {
+        return metadata.modules()
+                .stream()
+                .flatMap(module -> module.types().stream())
+                .filter(type -> type.typeName().equals(configType.getName()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Missing metadata for " + configType.getName()))
+                .options()
+                .stream()
+                .flatMap(option -> option.key().stream())
+                .collect(Collectors.toUnmodifiableSet());
     }
 }
