@@ -70,12 +70,15 @@ final class PulsarMessageMapper {
                                                  + " exceeds max-message-bytes " + config.maxMessageBytes());
         }
         Object entity = schema.snapshot(message.getValue());
+        if (entity == null) {
+            throw new MessagingException("Pulsar message payload is null");
+        }
         return PulsarMessageImpl.incoming(entity, message);
     }
 
     static PulsarMessage<Object> metadataOnly(org.apache.pulsar.client.api.Message<?> message) {
         Objects.requireNonNull(message);
-        return PulsarMessageImpl.incoming(Objects.requireNonNull(message.getData(), "Pulsar message data"), message);
+        return PulsarMessageImpl.rejected(message);
     }
 
     static CompletableFuture<MessageId> send(Producer<Object> producer,
@@ -83,10 +86,15 @@ final class PulsarMessageMapper {
                                              PulsarSchemaResolver.ResolvedSchema schema) {
         Objects.requireNonNull(producer);
         OutgoingMapping mapping = outgoingMapping(Objects.requireNonNull(message));
-        TypedMessageBuilder<Object> builder = producer.newMessage()
-                .value(schema.snapshot(message.entity()))
-                .properties(mapping.properties());
         PulsarMessage<?> pulsarMessage = mapping.pulsarMessage();
+        Object entity = message instanceof DeadLetterMessage<?>
+                && pulsarMessage instanceof PulsarMessageImpl<?> implementation
+                && !implementation.entityAvailable()
+                ? null
+                : schema.snapshot(message.entity());
+        TypedMessageBuilder<Object> builder = producer.newMessage()
+                .value(entity)
+                .properties(mapping.properties());
         if (pulsarMessage != null) {
             if (pulsarMessage.base64EncodedKey()) {
                 pulsarMessage.keyBytes().ifPresent(builder::keyBytes);

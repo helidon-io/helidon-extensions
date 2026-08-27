@@ -27,9 +27,11 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 
 import io.helidon.messaging.MessageHeaders;
+import io.helidon.messaging.MessagingException;
 
 final class PulsarMessageImpl<T> implements PulsarMessage<T> {
     private final T entity;
+    private final boolean entityAvailable;
     private final MessageHeaders headers;
     private final String key;
     private final byte[] keyBytes;
@@ -47,6 +49,7 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
     private final Long index;
 
     private PulsarMessageImpl(T entity,
+                              boolean entityAvailable,
                               MessageHeaders headers,
                               String key,
                               byte[] keyBytes,
@@ -62,7 +65,9 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
                               byte[] schemaVersion,
                               Long brokerPublishTime,
                               Long index) {
-        this.entity = snapshotEntity(Objects.requireNonNull(entity, "entity"));
+        T actualEntity = Objects.requireNonNull(entity, "entity");
+        this.entity = entityAvailable ? snapshotEntity(actualEntity) : actualEntity;
+        this.entityAvailable = entityAvailable;
         this.headers = Objects.requireNonNull(headers);
         this.key = key;
         this.keyBytes = copy(keyBytes);
@@ -91,6 +96,7 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
             actualKey = Base64.getEncoder().encodeToString(keyBytes);
         }
         return new PulsarMessageImpl<>(entity,
+                                       true,
                                        headers,
                                        actualKey,
                                        keyBytes == null && key != null
@@ -111,12 +117,43 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
     }
 
     static <T> PulsarMessage<T> incoming(T entity, org.apache.pulsar.client.api.Message<?> message) {
+        return incoming(entity, message, true);
+    }
+
+    static PulsarMessage<Object> rejected(org.apache.pulsar.client.api.Message<?> message) {
+        return incoming(UnavailableEntity.INSTANCE, message, false);
+    }
+
+    static PulsarMessage<Object> rejected() {
+        return new PulsarMessageImpl<>(UnavailableEntity.INSTANCE,
+                                       false,
+                                       MessageHeaders.empty(),
+                                       null,
+                                       null,
+                                       false,
+                                       null,
+                                       null,
+                                       null,
+                                       null,
+                                       null,
+                                       null,
+                                       null,
+                                       null,
+                                       null,
+                                       null,
+                                       null);
+    }
+
+    private static <T> PulsarMessage<T> incoming(T entity,
+                                                  org.apache.pulsar.client.api.Message<?> message,
+                                                  boolean entityAvailable) {
         Objects.requireNonNull(message);
         boolean hasKey = message.hasKey();
         long eventTime = message.getEventTime();
         long sequenceId = message.getSequenceId();
         byte[] schemaVersion = message.getSchemaVersion();
         return new PulsarMessageImpl<>(entity,
+                                       entityAvailable,
                                        messageHeaders(message.getProperties()),
                                        hasKey ? message.getKey() : null,
                                        hasKey ? message.getKeyBytes() : null,
@@ -136,7 +173,14 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
 
     @Override
     public T entity() {
+        if (!entityAvailable) {
+            throw new MessagingException("Pulsar message entity is unavailable");
+        }
         return snapshotEntity(entity);
+    }
+
+    boolean entityAvailable() {
+        return entityAvailable;
     }
 
     @Override
@@ -254,5 +298,9 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
 
     private static OptionalLong optionalLong(Long value) {
         return value == null ? OptionalLong.empty() : OptionalLong.of(value);
+    }
+
+    private enum UnavailableEntity {
+        INSTANCE
     }
 }

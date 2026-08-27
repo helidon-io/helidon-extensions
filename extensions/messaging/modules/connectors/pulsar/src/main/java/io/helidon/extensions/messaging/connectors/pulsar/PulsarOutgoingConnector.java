@@ -443,9 +443,6 @@ final class PulsarOutgoingConnector {
                                             RuntimeException primary) {
             try {
                 long remaining = remainingNanos(deadline);
-                if (remaining == 0) {
-                    throw new TimeoutException();
-                }
                 future.get(remaining, TimeUnit.NANOSECONDS);
                 return primary;
             } catch (InterruptedException e) {

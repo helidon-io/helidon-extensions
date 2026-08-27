@@ -22,6 +22,7 @@ import java.lang.reflect.Proxy;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 import io.helidon.messaging.ConnectorDelivery;
 
@@ -39,6 +40,25 @@ final class PulsarTestSupport {
     static org.apache.pulsar.client.api.Message<Object> nativeMessage(Object value,
                                                                      int size,
                                                                      Map<String, String> properties) {
+        return nativeMessage(value,
+                             size,
+                             properties,
+                             () -> value instanceof byte[] bytes ? bytes.clone() : String.valueOf(value).getBytes());
+    }
+
+    @SuppressWarnings("unchecked")
+    static org.apache.pulsar.client.api.Message<Object> nativeMessage(Object value,
+                                                                     int size,
+                                                                     Map<String, String> properties,
+                                                                     Supplier<byte[]> dataSupplier) {
+        return nativeMessage(value, size, () -> properties, dataSupplier);
+    }
+
+    @SuppressWarnings("unchecked")
+    static org.apache.pulsar.client.api.Message<Object> nativeMessage(Object value,
+                                                                     int size,
+                                                                     Supplier<Map<String, String>> propertiesSupplier,
+                                                                     Supplier<byte[]> dataSupplier) {
         byte[] messageId = {1, 2, 3};
         MessageId id = proxy(MessageId.class, (ignored, method, args) -> switch (method.getName()) {
         case "toByteArray" -> messageId.clone();
@@ -48,9 +68,9 @@ final class PulsarTestSupport {
         });
         return proxy(org.apache.pulsar.client.api.Message.class, (ignored, method, args) -> switch (method.getName()) {
         case "getValue" -> value;
-        case "getData" -> value instanceof byte[] bytes ? bytes.clone() : String.valueOf(value).getBytes();
+        case "getData" -> dataSupplier.get();
         case "size" -> size;
-        case "getProperties" -> properties;
+        case "getProperties" -> propertiesSupplier.get();
         case "hasKey", "hasOrderingKey", "hasBrokerPublishTime", "hasIndex", "isReplicated" -> false;
         case "getMessageId" -> id;
         case "getTopicName" -> "persistent://public/default/input";

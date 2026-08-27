@@ -16,12 +16,14 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.messaging.MessageHeader;
+import io.helidon.messaging.MessagingException;
 
 import org.junit.jupiter.api.Test;
 
@@ -36,15 +38,22 @@ class PulsarMessageTest {
     }
 
     @Test
-    void failedMappingEnvelopeUsesDefensiveRawWirePayload() {
+    void failedMappingEnvelopeRetainsMetadataWithoutReadingRawPayload() {
+        AtomicInteger dataReads = new AtomicInteger();
         PulsarMessage<Object> message = PulsarMessageMapper.metadataOnly(
-                PulsarTestSupport.nativeMessage("undecodable", 11));
+                PulsarTestSupport.nativeMessage("undecodable",
+                                                11,
+                                                Map.of("trace-id", "pulsar-trace"),
+                                                () -> {
+                                                    dataReads.incrementAndGet();
+                                                    return new byte[11];
+                                                }));
 
-        byte[] first = (byte[]) message.entity();
-        assertThat(new String(first, StandardCharsets.UTF_8), is("undecodable"));
-        first[0] = 0;
-        assertThat(new String((byte[]) message.entity(), StandardCharsets.UTF_8), is("undecodable"));
+        assertThat(((PulsarMessageImpl<?>) message).entityAvailable(), is(false));
+        assertThrows(MessagingException.class, message::entity);
+        assertThat(dataReads.get(), is(0));
         assertThat(message.header("trace-id").orElseThrow(), is("pulsar-trace"));
+        assertThat(message.topic().orElseThrow(), is("persistent://public/default/input"));
     }
 
     @Test
