@@ -21,6 +21,7 @@ See README for individual extensions.
 * [OpenAPI UI](extensions/openapi-ui/docs/README.md)
 * [gson](extensions/gson/docs/README.md)
 * [toml](extensions/toml/docs/README.md)
+* [Chaos](extensions/chaos/docs/README.md)
 
 ## Examples
 
