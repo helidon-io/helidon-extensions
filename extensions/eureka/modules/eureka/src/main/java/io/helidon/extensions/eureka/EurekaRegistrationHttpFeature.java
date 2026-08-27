@@ -651,7 +651,7 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
     private JsonObject json(JsonObject json, JsonString status) {
         // https://github.com/Netflix/eureka/blob/v2.0.4/eureka-client/src/main/java/com/netflix/appinfo/InstanceInfo.java#L55
         JsonObject instance = json.objectValue("instance", null);
-        if (instance.stringValue("status", null).equals(Objects.requireNonNull(status, "status"))) {
+        if (instance.stringValue("status", null).equals(Objects.requireNonNull(status, "status").value())) {
             return json;
         }
         var b = JsonObject.builder();
