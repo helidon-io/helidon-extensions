@@ -332,13 +332,14 @@ class KafkaOutgoingConnectorTest {
         wrapperHeaders.put(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER, "forged");
         wrapperHeaders.put(KafkaConnectorProvider.DLQ_ORIGINAL_LEADER_EPOCH_HEADER, "forged");
         DeadLetterMessage<String> deadLetter = customDeadLetter(KafkaMessageImpl.create(sourceRecord),
+                                                                "wrapped event",
                                                                 wrapperHeaders);
 
         start(connector, config()).send(deadLetter);
 
         ProducerRecord<Object, Object> record = producer.history().getFirst();
         assertThat(record.key(), is("source-key"));
-        assertThat(record.value(), is("audit event"));
+        assertThat(record.value(), is("wrapped event"));
         assertThat(headerValues(record, "trace-id"), is(List.of("first", "second", "wrapper")));
         assertThat(headerValue(record, "wrapper-only"), is("portable"));
         assertArrayEquals(new byte[] {0x00, (byte) 0xFF}, record.headers().lastHeader("binary").value());
@@ -864,6 +865,7 @@ class KafkaOutgoingConnectorTest {
     }
 
     private static <T> DeadLetterMessage<T> customDeadLetter(Message<T> originalMessage,
+                                                             T entity,
                                                              Map<String, String> additionalHeaders) {
         MessageHeaders.Builder headers = MessageHeaders.builder().addAll(originalMessage.headers());
         additionalHeaders.forEach(headers::set);
@@ -896,7 +898,7 @@ class KafkaOutgoingConnectorTest {
 
             @Override
             public T entity() {
-                return originalMessage.entity();
+                return entity;
             }
 
             @Override

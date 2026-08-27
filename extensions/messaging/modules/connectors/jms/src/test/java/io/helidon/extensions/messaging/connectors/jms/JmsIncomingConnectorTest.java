@@ -41,6 +41,7 @@ import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;
 import jakarta.jms.ExceptionListener;
 import jakarta.jms.JMSException;
+import jakarta.jms.JMSRuntimeException;
 import jakarta.jms.MessageConsumer;
 import jakarta.jms.ObjectMessage;
 import jakarta.jms.Queue;
@@ -54,6 +55,7 @@ import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
+import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -446,8 +448,8 @@ class JmsIncomingConnectorTest {
         assertThat(reservation.failedStarts(), is(1));
         assertThat(reservation.failure().getMessage(), containsString("ObjectMessage is disabled"));
         JmsMessage<?> rejectedMessage = (JmsMessage<?>) reservation.failedBatch().get(0);
-        assertThat(rejectedMessage.entity(), notNullValue());
-        assertThat(((JmsMessageImpl<?>) rejectedMessage).bodyAvailable(), is(false));
+        assertThat(rejectedMessage.bodyAvailable(), is(false));
+        assertThrows(MessagingException.class, rejectedMessage::entity);
         assertThat(rejectedMessage.messageId().orElseThrow(), is("ID:poison"));
         verify(nativeMessage, never()).getObject();
         verify(nativeMessage, never()).acknowledge();
@@ -460,6 +462,38 @@ class JmsIncomingConnectorTest {
         assertThat(resolutions.get(), is(1));
         verify(nativeMessage).acknowledge();
         verify(client.session, never()).recover();
+    }
+
+    @Test
+    @Timeout(5)
+    void sameBodyAndMetadataFailureInstanceReachesFailurePolicyUnchanged() throws Exception {
+        JmsClient client = client();
+        TextMessage nativeMessage = mock(TextMessage.class);
+        IllegalStateException rootCause = new IllegalStateException("provider root cause");
+        JMSRuntimeException providerFailure = new JMSRuntimeException("provider failure", "CODE", rootCause);
+        IllegalStateException priorSuppressed = new IllegalStateException("prior suppressed failure");
+        providerFailure.addSuppressed(priorSuppressed);
+        when(nativeMessage.getText()).thenThrow(providerFailure);
+        when(nativeMessage.getPropertyNames()).thenThrow(providerFailure);
+        when(client.consumer.receive(anyLong())).thenReturn(nativeMessage);
+        TestReservation reservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
+        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        doAnswer(invocation -> {
+            connector.drain();
+            return null;
+        }).when(nativeMessage).acknowledge();
+
+        connector.run(new TestContext(new ArrayList<>(), reservation));
+
+        assertThat(reservation.starts(), is(0));
+        assertThat(reservation.failedStarts(), is(1));
+        assertThat(reservation.failure(), sameInstance(providerFailure));
+        assertThat(providerFailure.getCause(), sameInstance(rootCause));
+        assertArrayEquals(new Throwable[] {priorSuppressed}, providerFailure.getSuppressed());
+        JmsMessage<?> rejectedMessage = (JmsMessage<?>) reservation.failedBatch().get(0);
+        assertThat(rejectedMessage.bodyAvailable(), is(false));
+        assertThrows(MessagingException.class, rejectedMessage::entity);
+        verify(nativeMessage).acknowledge();
     }
 
     @Test

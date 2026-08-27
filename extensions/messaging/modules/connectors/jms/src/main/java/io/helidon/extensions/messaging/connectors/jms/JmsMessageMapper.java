@@ -78,8 +78,11 @@ final class JmsMessageMapper {
                 && deadLetterMessage.originalMessage() instanceof JmsMessage<?> originalMessage) {
             return toJmsDeadLetterMessage(session, deadLetterMessage, originalMessage, allowObjectMessages);
         }
-        Object entity = message instanceof JmsMessageImpl<?> jmsMessage
-                ? jmsMessage.entityForMapping(allowObjectMessages)
+        if (message instanceof JmsMessage<?> jmsMessage && !jmsMessage.bodyAvailable()) {
+            throw new MessagingException("JMS message body is unavailable");
+        }
+        Object entity = message instanceof JmsMessageImpl<?> implementation
+                ? implementation.entityForMapping(allowObjectMessages)
                 : message.entity();
         jakarta.jms.Message result = createBodyMessage(session, entity, allowObjectMessages);
         if (message instanceof JmsMessage<?> jmsMessage) {
@@ -119,8 +122,10 @@ final class JmsMessageMapper {
         wrapperHeaders.forEach((name, value) -> portableProperties.put(name, portableProperty(name, value)));
 
         Object entity;
-        if (originalMessage instanceof JmsMessageImpl<?> originalImpl) {
-            entity = originalImpl.bodyAvailable() ? originalImpl.entityForMapping(allowObjectMessages) : null;
+        if (!originalMessage.bodyAvailable()) {
+            entity = null;
+        } else if (originalMessage instanceof JmsMessageImpl<?> originalImpl) {
+            entity = originalImpl.entityForMapping(allowObjectMessages);
         } else {
             entity = originalMessage.entity();
         }

@@ -200,7 +200,23 @@ Other JMS body types do not expose a portable encoded byte length and are not go
 
 Helidon message payloads are non-null. A provider bodyless JMS message enters the configured pre-dispatch failure
 policy; DROP can settle it, while DEAD_LETTER publishes a metadata-only bodyless JMS message without exposing an
-unsafe or unavailable source body.
+unsafe or unavailable source body. Such a metadata-only `JmsMessage` reports `bodyAvailable() == false`; calling
+`entity()` then throws instead of exposing an internal placeholder. A local dead-letter consumer can inspect it safely:
+
+```java
+void onDeadLetter(DeadLetterMessage<String> deadLetter) {
+    if (deadLetter.originalMessage() instanceof JmsMessage<?> jmsMessage
+            && !jmsMessage.bodyAvailable()) {
+        recordFailure(deadLetter.failureType(), deadLetter.failureMessage(), jmsMessage.jmsProperties());
+        return;
+    }
+    recover(deadLetter.entity());
+}
+```
+
+A JMS dead-letter target preserves this as a native bodyless JMS message. A connector that does not support unavailable
+bodies fails before its transport success point; use a local dead-letter consumer to transform the metadata into an
+explicit transport-compatible payload before routing it to another connector.
 
 | Helidon payload | JMS message |
 | --- | --- |

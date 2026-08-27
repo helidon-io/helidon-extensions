@@ -17,6 +17,7 @@
 package io.helidon.extensions.messaging.connectors.jms;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -38,6 +39,15 @@ import io.helidon.messaging.Message;
  * so the disabled security gate can reject it without invoking serialization callbacks. The connector defensively
  * snapshots an enabled object body before giving it to the JMS provider; the application must not mutate that body
  * between building and sending the message.
+ * Map and list factory overloads normalize their generic payload to the {@link Map} and {@link List} interfaces because
+ * immutable snapshots do not preserve a caller's concrete collection implementation. A map or list hidden behind an
+ * unconstrained generic or {@link Object} type is rejected at construction; expose it as {@code Map} or {@code List}
+ * so the corresponding normalized overload can be selected.
+ * <p>
+ * A metadata-only envelope created after body mapping fails reports {@link #bodyAvailable()} as {@code false}.
+ * Its native metadata and properties remain readable, but {@link #entity()} throws a messaging exception instead of
+ * exposing an internal placeholder. A local dead-letter consumer can inspect {@link #bodyAvailable()} on the original
+ * JMS message before accessing its body.
  * <p>
  * Portable {@link #headers()} retain the JMS Boolean, integer, floating-point, and String value kinds. JMS integer
  * width is available through {@link #jmsProperties()}, because the portable integer representation intentionally does
@@ -55,6 +65,35 @@ public interface JmsMessage<T> extends Message<T> {
      * @throws NullPointerException if {@code entity} is {@code null}
      */
     static <T> Builder<T> builder(T entity) {
+        T actualEntity = Objects.requireNonNull(entity, "entity");
+        if (actualEntity instanceof Map<?, ?> || actualEntity instanceof List<?>) {
+            throw new IllegalArgumentException("JMS map and list bodies must use the Map- or List-typed factory overload");
+        }
+        return new Builder<>(actualEntity);
+    }
+
+    /**
+     * Create an outgoing JMS map-message builder while normalizing the payload type to the {@link Map} contract.
+     *
+     * @param entity non-null map payload
+     * @param <K> map key type
+     * @param <V> map value type
+     * @return builder
+     * @throws NullPointerException if {@code entity} is {@code null}
+     */
+    static <K, V> Builder<Map<K, V>> builder(Map<K, V> entity) {
+        return new Builder<>(entity);
+    }
+
+    /**
+     * Create an outgoing JMS stream-message builder while normalizing the payload type to the {@link List} contract.
+     *
+     * @param entity non-null list payload
+     * @param <E> list element type
+     * @return builder
+     * @throws NullPointerException if {@code entity} is {@code null}
+     */
+    static <E> Builder<List<E>> builder(List<E> entity) {
         return new Builder<>(entity);
     }
 
@@ -68,6 +107,40 @@ public interface JmsMessage<T> extends Message<T> {
      */
     static <T> JmsMessage<T> create(T entity) {
         return builder(entity).build();
+    }
+
+    /**
+     * Create an outgoing JMS map message while normalizing the payload type to the {@link Map} contract.
+     *
+     * @param entity non-null map payload
+     * @param <K> map key type
+     * @param <V> map value type
+     * @return JMS message
+     * @throws NullPointerException if {@code entity} is {@code null}
+     */
+    static <K, V> JmsMessage<Map<K, V>> create(Map<K, V> entity) {
+        return JmsMessage.<K, V>builder(entity).build();
+    }
+
+    /**
+     * Create an outgoing JMS stream message while normalizing the payload type to the {@link List} contract.
+     *
+     * @param entity non-null list payload
+     * @param <E> list element type
+     * @return JMS message
+     * @throws NullPointerException if {@code entity} is {@code null}
+     */
+    static <E> JmsMessage<List<E>> create(List<E> entity) {
+        return JmsMessage.<E>builder(entity).build();
+    }
+
+    /**
+     * Whether the native JMS body was retained in this immutable envelope.
+     *
+     * @return whether {@link #entity()} can return the body
+     */
+    default boolean bodyAvailable() {
+        return true;
     }
 
     /**

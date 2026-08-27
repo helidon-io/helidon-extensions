@@ -33,6 +33,7 @@ import java.util.OptionalLong;
 
 import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.MessageHeaders;
+import io.helidon.messaging.MessagingException;
 
 import jakarta.jms.JMSException;
 
@@ -303,15 +304,24 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
 
     @Override
     public T entity() {
+        requireBodyAvailable();
         return snapshotBody(entity, snapshotSerializableOnAccess);
     }
 
     T entityForMapping(boolean allowObjectMessages) {
+        requireBodyAvailable();
         return snapshotBody(entity, allowObjectMessages);
     }
 
-    boolean bodyAvailable() {
+    @Override
+    public boolean bodyAvailable() {
         return bodyAvailable;
+    }
+
+    private void requireBodyAvailable() {
+        if (!bodyAvailable) {
+            throw new MessagingException("JMS message body is unavailable");
+        }
     }
 
     @Override
