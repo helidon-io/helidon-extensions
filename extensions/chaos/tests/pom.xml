@@ -18,33 +18,28 @@
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
-                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.helidon.extensions</groupId>
-        <artifactId>helidon-extensions-project</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
-        <relativePath>../pom.xml</relativePath>
+        <groupId>io.helidon.extensions.chaos</groupId>
+        <artifactId>helidon-extensions-chaos-project</artifactId>
+        <version>27.0.0-SNAPSHOT</version>
     </parent>
-
-    <artifactId>helidon-extensions-modules-project</artifactId>
-
     <packaging>pom</packaging>
 
-    <name>Helidon Extensions Modules Project</name>
+    <groupId>io.helidon.extensions.chaos.tests</groupId>
+    <artifactId>helidon-extensions-chaos-tests-project</artifactId>
+    <name>Helidon Extensions Chaos Tests Project</name>
+
+    <properties>
+        <spotbugs.skip>true</spotbugs.skip>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.sources.skip>true</maven.sources.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <dependency-check.skip>true</dependency-check.skip>
+    </properties>
 
     <modules>
-        <module>chaos</module>
-        <module>hashicorp-vault</module>
-        <module>neo4j</module>
-        <module>oci-v3</module>
-        <module>langchain4j</module>
-        <module>eureka</module>
-        <module>crac</module>
-        <module>openapi-ui</module>
-        <module>openapi-generator</module>
-        <module>gson</module>
-        <module>toml</module>
+        <module>extension</module>
     </modules>
 </project>
