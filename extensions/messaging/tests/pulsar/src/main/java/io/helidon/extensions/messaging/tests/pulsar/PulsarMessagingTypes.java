@@ -57,11 +57,11 @@ final class PulsarMessagingTypes {
         }
 
         void send(Message<String> message) {
-            emitter.emitMessage(message);
+            emitter.emit(message);
         }
 
         void sendBatch(MessageBatch<String> batch) {
-            emitter.emitBatch(batch);
+            emitter.emit(batch);
         }
     }
 
