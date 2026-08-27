@@ -25,6 +25,7 @@ import java.util.OptionalLong;
 
 import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.MessageHeaders;
+import io.helidon.messaging.MessagingException;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 
@@ -127,6 +128,9 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
 
     @Override
     public V entity() {
+        if (!entityAvailable) {
+            throw new MessagingException("Kafka message entity is unavailable");
+        }
         return entity;
     }
 

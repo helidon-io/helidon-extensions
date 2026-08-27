@@ -430,7 +430,9 @@ final class JmsIncomingConnector {
             try {
                 rejectedMessage = JmsMessageMapper.metadataOnly(nativeMessage);
             } catch (RuntimeException metadataFailure) {
-                mappingFailure.addSuppressed(metadataFailure);
+                if (metadataFailure != mappingFailure) {
+                    mappingFailure.addSuppressed(metadataFailure);
+                }
                 rejectedMessage = JmsMessageImpl.rejected();
             }
             return MessageBatch.create(rejectedMessage);

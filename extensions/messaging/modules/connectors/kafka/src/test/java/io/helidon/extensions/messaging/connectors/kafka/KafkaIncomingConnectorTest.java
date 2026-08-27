@@ -845,6 +845,7 @@ class KafkaIncomingConnectorTest {
         assertThat(batch.size(), is(2));
         KafkaMessageImpl<?, ?> tombstone = (KafkaMessageImpl<?, ?>) batch.get(0);
         assertThat(tombstone.entityAvailable(), is(false));
+        assertThrows(MessagingException.class, tombstone::entity);
         assertThat(tombstone.key().orElseThrow(), is("tombstone-key"));
         assertArrayEquals(new byte[] {1, 2},
                           ((HeaderValue.BinaryValue) tombstone.headerValue("trace").orElseThrow()).value());

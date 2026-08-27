@@ -21,7 +21,9 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serial;
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,7 +49,6 @@ import jakarta.jms.TextMessage;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -130,7 +131,8 @@ class JmsMessageTest {
     @Test
     void testMapAndStreamValuesAreValidatedAndCopied() {
         byte[] bytes = {1, 2};
-        JmsMessage<Map<String, Object>> message = JmsMessage.<Map<String, Object>>builder(Map.of("bytes", bytes)).build();
+        Map<String, Object> body = Map.of("bytes", bytes);
+        JmsMessage<Map<String, Object>> message = JmsMessage.builder(body).build();
         bytes[0] = 9;
         byte[] returned = (byte[]) message.entity().get("bytes");
         returned[0] = 8;
@@ -152,6 +154,45 @@ class JmsMessageTest {
     }
 
     @Test
+    void testConcreteMapAndListFactoriesNormalizeTheirGenericTypes() {
+        byte[] bytes = {1, 2};
+        HashMap<String, Object> mapBody = new HashMap<>();
+        mapBody.put("bytes", bytes);
+        ArrayList<Object> listBody = new ArrayList<>(List.of("first", 2));
+
+        JmsMessage<Map<String, Object>> mapMessage = JmsMessage.create(mapBody);
+        JmsMessage<List<Object>> listMessage = JmsMessage.builder(listBody).build();
+        mapBody.put("later", "mutation");
+        listBody.add("later");
+        bytes[0] = 9;
+
+        assertThat(mapMessage.entity().keySet(), is(java.util.Set.of("bytes")));
+        assertThat(((byte[]) mapMessage.entity().get("bytes"))[0], is((byte) 1));
+        assertThat(listMessage.entity(), is(List.of("first", 2)));
+        assertThrows(UnsupportedOperationException.class,
+                     () -> mapMessage.entity().put("forbidden", "mutation"));
+        assertThrows(UnsupportedOperationException.class,
+                     () -> listMessage.entity().add("forbidden"));
+    }
+
+    @Test
+    void testGenericFactoriesRejectCollectionTypesBeforeBuildingAnUnsoundMessage() {
+        HashMap<String, Object> mapBody = new HashMap<>();
+        ArrayList<Object> listBody = new ArrayList<>();
+        Object hiddenMap = mapBody;
+        Object hiddenList = listBody;
+
+        assertThrows(IllegalArgumentException.class,
+                     () -> JmsMessage.<HashMap<String, Object>>create(mapBody));
+        assertThrows(IllegalArgumentException.class,
+                     () -> JmsMessage.<ArrayList<Object>>builder(listBody));
+        assertThrows(IllegalArgumentException.class, () -> genericMessage(mapBody));
+        assertThrows(IllegalArgumentException.class, () -> genericMessage(listBody));
+        assertThrows(IllegalArgumentException.class, () -> JmsMessage.create(hiddenMap));
+        assertThrows(IllegalArgumentException.class, () -> JmsMessage.builder(hiddenList));
+    }
+
+    @Test
     void testTextMessageMapping() throws Exception {
         Session session = mock(Session.class);
         TextMessage nativeMessage = mock(TextMessage.class);
@@ -167,6 +208,10 @@ class JmsMessageTest {
         verify(nativeMessage).setObjectProperty("attempt", 2);
         verify(nativeMessage).setJMSCorrelationID("correlation");
         verify(nativeMessage).setJMSType("kind");
+    }
+
+    private static <T> JmsMessage<T> genericMessage(T entity) {
+        return JmsMessage.create(entity);
     }
 
     @Test
@@ -321,18 +366,19 @@ class JmsMessageTest {
         when(bodyless.getBody(Object.class)).thenReturn(null);
         when(bodyless.getPropertyNames()).thenReturn(java.util.Collections.emptyEnumeration());
 
-        assertThrows(NullPointerException.class, () -> JmsMessage.create(null));
+        assertThrows(NullPointerException.class, () -> JmsMessage.create((Object) null));
         assertThrows(NullPointerException.class, () -> JmsMessageMapper.fromJmsMessage(bodyless, false, 1024));
 
         JmsMessage<Object> rejected = (JmsMessage<Object>) JmsMessageMapper.metadataOnly(bodyless);
-        assertThat(rejected.entity(), notNullValue());
-        assertThat(((JmsMessageImpl<?>) rejected).bodyAvailable(), is(false));
+        assertThat(rejected.bodyAvailable(), is(false));
+        assertThrows(MessagingException.class, rejected::entity);
 
         DeadLetterMessage<Object> deadLetter = DeadLetterMessage.create(
                 rejected,
                 "orders",
                 1,
                 new MessagingException("body unavailable"));
+        assertThrows(MessagingException.class, deadLetter::entity);
         assertThat(JmsMessageMapper.toJmsMessage(session, deadLetter, false), is(bodyless));
         verify(bodyless).setStringProperty(DeadLetterMessage.SOURCE_CHANNEL_HEADER, "orders");
     }
