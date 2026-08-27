@@ -43,6 +43,7 @@ import io.helidon.extensions.messaging.connectors.pulsar.PulsarMessage;
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarSchemaType;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.AutoIncomingReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.AutoOutgoingSender;
+import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.FailedMappingReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.FailOnceReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.IncomingReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonOutgoingSender;
@@ -50,6 +51,7 @@ import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonSch
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.OutgoingSender;
 import io.helidon.messaging.ConnectorConfig;
 import io.helidon.messaging.ConnectorDirection;
+import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingRuntime;
@@ -399,6 +401,68 @@ class PulsarConnectorIT {
     }
 
     @Test
+    @Timeout(120)
+    void testNullAndOversizedMappingFailuresDeadLetterAndSettleAcrossRestart() throws Exception {
+        String sourceTopic = uniqueName("failed-mapping-source");
+        String deadLetterTopic = uniqueName("failed-mapping-dlq");
+        String sourceSubscription = uniqueName("failed-mapping-subscription");
+        String yaml = failedMappingYaml(sourceTopic, deadLetterTopic, sourceSubscription);
+
+        try (PulsarClient client = newClient();
+                Producer<String> producer = client.newProducer(Schema.STRING).topic(sourceTopic).create();
+                Consumer<String> deadLetterConsumer = stringConsumer(client,
+                                                                     deadLetterTopic,
+                                                                     uniqueName("failed-mapping-dlq-reader"))) {
+            ServiceRegistryManager firstManager = PulsarScenarioRegistry.create(yaml, FailedMappingReceiver.class);
+            try {
+                FailedMappingReceiver receiver = firstManager.registry().get(FailedMappingReceiver.class);
+                firstManager.registry().get(MessagingRuntime.class);
+
+                producer.newMessage()
+                        .key("null-key")
+                        .property("kind", "null")
+                        .value(null)
+                        .send();
+                producer.newMessage()
+                        .key("oversized-key")
+                        .property("kind", "oversized")
+                        .value("oversized")
+                        .send();
+
+                org.apache.pulsar.client.api.Message<String> nullDeadLetter = receiveOne(deadLetterConsumer);
+                org.apache.pulsar.client.api.Message<String> oversizedDeadLetter = receiveOne(deadLetterConsumer);
+                assertFailedMappingDeadLetter(nullDeadLetter, "null-key", "null", sourceTopic, "payload is null");
+                assertFailedMappingDeadLetter(oversizedDeadLetter,
+                                              "oversized-key",
+                                              "oversized",
+                                              sourceTopic,
+                                              "exceeds max-message-bytes 1");
+                assertThat("failed mappings must not reach the application handler",
+                           receiver.awaitMessage(NO_MESSAGE_TIMEOUT),
+                           nullValue());
+            } finally {
+                firstManager.shutdown();
+            }
+
+            ServiceRegistryManager secondManager = PulsarScenarioRegistry.create(yaml, FailedMappingReceiver.class);
+            try {
+                FailedMappingReceiver receiver = secondManager.registry().get(FailedMappingReceiver.class);
+                secondManager.registry().get(MessagingRuntime.class);
+
+                assertThat("settled mapping failures must not be dead-lettered again after restart",
+                           deadLetterConsumer.receive((int) NO_MESSAGE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS),
+                           nullValue());
+                producer.send("x");
+                PulsarMessage<String> valid = receiver.awaitMessage(WAIT_TIMEOUT);
+                assertThat(valid, notNullValue());
+                assertThat(valid.entity(), is("x"));
+            } finally {
+                secondManager.shutdown();
+            }
+        }
+    }
+
+    @Test
     @Timeout(90)
     void testTerminalFailOnceDeliveryIsRedeliveredByBroker() throws Exception {
         String topic = uniqueName("redelivery");
@@ -498,6 +562,44 @@ class PulsarConnectorIT {
                                subscription);
     }
 
+    private static String failedMappingYaml(String sourceTopic,
+                                            String deadLetterTopic,
+                                            String sourceSubscription) {
+        return """
+                helidon:
+                  messaging:
+                    incoming:
+                      %s:
+                        connector: helidon-pulsar
+                        service-url: "%s"
+                        topic: "%s"
+                        schema: STRING
+                        max-message-bytes: 1
+                        subscription-name: "%s"
+                        subscription-initial-position: EARLIEST
+                        receive-timeout: PT0.1S
+                        failure:
+                          retry:
+                            max-attempts: 1
+                          on-exhausted: DEAD_LETTER
+                          dead-letter:
+                            channel: %s
+                    outgoing:
+                      %s:
+                        connector: helidon-pulsar
+                        service-url: "%s"
+                        topic: "%s"
+                        schema: STRING
+                """.formatted(PulsarMessagingTypes.FAILED_MAPPING_INCOMING_CHANNEL,
+                               PULSAR.getPulsarBrokerUrl(),
+                               sourceTopic,
+                               sourceSubscription,
+                               PulsarMessagingTypes.FAILED_MAPPING_DEAD_LETTER_CHANNEL,
+                               PulsarMessagingTypes.FAILED_MAPPING_DEAD_LETTER_CHANNEL,
+                               PULSAR.getPulsarBrokerUrl(),
+                               deadLetterTopic);
+    }
+
     private static PulsarClient newClient() throws Exception {
         return PulsarClient.builder()
                 .serviceUrl(PULSAR.getPulsarBrokerUrl())
@@ -558,6 +660,21 @@ class PulsarConnectorIT {
         assertThat(message.hasKey(), is(true));
         assertThat(message.getKey(), is(expectedKey));
         assertThat(message.getProperty("kind"), is(expectedKind));
+    }
+
+    private static void assertFailedMappingDeadLetter(org.apache.pulsar.client.api.Message<String> message,
+                                                      String expectedKey,
+                                                      String expectedKind,
+                                                      String sourceTopic,
+                                                      String failureMessagePart) {
+        assertThat(message.getValue(), nullValue());
+        assertThat(message.getKey(), is(expectedKey));
+        assertThat(message.getProperty("kind"), is(expectedKind));
+        assertThat(message.getProperty(DeadLetterMessage.SOURCE_CHANNEL_HEADER),
+                   is(PulsarMessagingTypes.FAILED_MAPPING_INCOMING_CHANNEL));
+        assertThat(message.getProperty(DeadLetterMessage.FAILURE_MESSAGE_HEADER).contains(failureMessagePart), is(true));
+        assertThat(message.getProperty(PulsarConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER),
+                   is(canonicalTopic(sourceTopic)));
     }
 
     private static void shutdownAfterExpectedSourceFailure(ServiceRegistryManager manager) {

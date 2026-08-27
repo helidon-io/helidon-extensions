@@ -19,6 +19,7 @@ package io.helidon.extensions.messaging.connectors.pulsar;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -33,6 +34,7 @@ import io.helidon.messaging.ConnectorDeliveryReservation;
 import io.helidon.messaging.IncomingConnector;
 import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessagingException;
 
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.ConsumerBuilder;
@@ -45,12 +47,14 @@ import org.apache.pulsar.common.schema.KeyValue;
 import org.apache.pulsar.common.schema.SchemaType;
 import org.junit.jupiter.api.Test;
 
+import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PulsarIncomingConnectorTest {
     private static final Duration WAIT = Duration.ofSeconds(5);
@@ -90,7 +94,15 @@ class PulsarIncomingConnectorTest {
     @Test
     void oversizedMappingFailureUsesStartFailedThenAcknowledgesTerminalPolicy() throws Exception {
         TestContext context = new TestContext(false);
-        FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage("oversized", 9), context.reserved);
+        AtomicInteger dataReads = new AtomicInteger();
+        FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage("oversized",
+                                                                           9,
+                                                                           Map.of("trace-id", "pulsar-trace"),
+                                                                           () -> {
+                                                                               dataReads.incrementAndGet();
+                                                                               return new byte[9];
+                                                                           }),
+                                           context.reserved);
         IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
                 .createIncomingConnector(config(1));
         AtomicReference<Throwable> runFailure = new AtomicReference<>();
@@ -106,6 +118,83 @@ class PulsarIncomingConnectorTest {
         assertThat(context.failedStarts.get(), is(1));
         assertThat(source.acks.get(), is(1));
         assertThat(source.negativeAcks.get(), is(0));
+        assertThat(dataReads.get(), is(0));
+        assertThat(context.mappingFailure.get().getMessage(), containsString("exceeds max-message-bytes 1"));
+        PulsarMessage<?> rejected = (PulsarMessage<?>) context.failedBatch.get().get(0);
+        assertThat(((PulsarMessageImpl<?>) rejected).entityAvailable(), is(false));
+        assertThrows(MessagingException.class, rejected::entity);
+        assertThat(rejected.header("trace-id").orElseThrow(), is("pulsar-trace"));
+    }
+
+    @Test
+    void nullPayloadAndRawDataUseStartFailedThenAcknowledgeTerminalPolicy() throws Exception {
+        TestContext context = new TestContext(false);
+        AtomicInteger dataReads = new AtomicInteger();
+        FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage(null,
+                                                                           0,
+                                                                           Map.of("trace-id", "null-trace"),
+                                                                           () -> {
+                                                                               dataReads.incrementAndGet();
+                                                                               return null;
+                                                                           }),
+                                           context.reserved);
+        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
+                .createIncomingConnector(config(1024));
+        AtomicReference<Throwable> runFailure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
+
+        assertThat(source.acknowledged.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+        connector.drain();
+        owner.join(WAIT.toMillis());
+        connector.close();
+
+        assertThat(runFailure.get(), nullValue());
+        assertThat(context.started.get(), is(0));
+        assertThat(context.failedStarts.get(), is(1));
+        assertThat(source.acks.get(), is(1));
+        assertThat(source.negativeAcks.get(), is(0));
+        assertThat(dataReads.get(), is(0));
+        assertThat(context.mappingFailure.get().getMessage(), is("Pulsar message payload is null"));
+        PulsarMessage<?> rejected = (PulsarMessage<?>) context.failedBatch.get().get(0);
+        assertThat(((PulsarMessageImpl<?>) rejected).entityAvailable(), is(false));
+        assertThrows(MessagingException.class, rejected::entity);
+        assertThat(rejected.header("trace-id").orElseThrow(), is("null-trace"));
+    }
+
+    @Test
+    void metadataSnapshotFailureStillUsesStartFailedWithBodylessFallback() throws Exception {
+        TestContext context = new TestContext(false);
+        RuntimeException metadataFailure = new IllegalStateException("metadata unavailable");
+        FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage(null,
+                                                                           0,
+                                                                           () -> {
+                                                                               throw metadataFailure;
+                                                                           },
+                                                                           () -> {
+                                                                               throw new AssertionError(
+                                                                                       "Raw data must not be read");
+                                                                           }),
+                                           context.reserved);
+        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
+                .createIncomingConnector(config(1024));
+        AtomicReference<Throwable> runFailure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
+
+        assertThat(source.acknowledged.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+        connector.drain();
+        owner.join(WAIT.toMillis());
+        connector.close();
+
+        assertThat(runFailure.get(), nullValue());
+        assertThat(context.failedStarts.get(), is(1));
+        assertThat(source.acks.get(), is(1));
+        assertThat(source.negativeAcks.get(), is(0));
+        assertArrayEquals(new Throwable[] {metadataFailure}, context.mappingFailure.get().getSuppressed());
+        PulsarMessage<?> rejected = (PulsarMessage<?>) context.failedBatch.get().get(0);
+        assertThat(((PulsarMessageImpl<?>) rejected).entityAvailable(), is(false));
+        assertThrows(MessagingException.class, rejected::entity);
+        assertThat(rejected.headers().entries().isEmpty(), is(true));
+        assertThat(rejected.topic().isEmpty(), is(true));
     }
 
     @Test
@@ -158,6 +247,27 @@ class PulsarIncomingConnectorTest {
         assertThat(gatedOwner.isAlive(), is(false));
         assertThat(gatedFailure.get(), nullValue());
         assertThat(gatedSource.closed.get(), is(true));
+    }
+
+    @Test
+    void zeroCloseTimeoutAcceptsCompletedConsumerAndClientCloses() throws Exception {
+        TestContext context = new TestContext(false);
+        FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage("payload", 7), context.reserved);
+        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
+                .createIncomingConnector(configBuilder(PulsarSchemaType.STRING, 1024)
+                                                 .closeTimeout(Duration.ZERO)
+                                                 .build());
+        AtomicReference<Throwable> runFailure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
+
+        assertThat(source.acknowledged.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+        connector.drain();
+        owner.join(WAIT.toMillis());
+        connector.close();
+
+        assertThat(owner.isAlive(), is(false));
+        assertThat(runFailure.get(), nullValue());
+        assertThat(source.closed.get(), is(true));
     }
 
     @Test
@@ -328,6 +438,8 @@ class PulsarIncomingConnectorTest {
         private final AtomicInteger started = new AtomicInteger();
         private final AtomicInteger failedStarts = new AtomicInteger();
         private final AtomicReference<MessageBatch<?>> deliveredBatch = new AtomicReference<>();
+        private final AtomicReference<MessageBatch<?>> failedBatch = new AtomicReference<>();
+        private final AtomicReference<RuntimeException> mappingFailure = new AtomicReference<>();
         private final CountDownLatch deliveryEntered = new CountDownLatch(1);
         private final CountDownLatch allowDelivery = new CountDownLatch(1);
 
@@ -378,6 +490,8 @@ class PulsarIncomingConnectorTest {
 
                 @Override
                 public ConnectorDelivery startFailed(MessageBatch<?> batch, RuntimeException failure) {
+                    failedBatch.set(batch);
+                    mappingFailure.set(failure);
                     failedStarts.incrementAndGet();
                     return PulsarTestSupport.completedDelivery();
                 }

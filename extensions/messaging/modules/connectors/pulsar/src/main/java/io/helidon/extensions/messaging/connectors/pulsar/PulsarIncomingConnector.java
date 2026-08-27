@@ -305,8 +305,7 @@ final class PulsarIncomingConnector {
                     if (metadataFailure != e) {
                         e.addSuppressed(metadataFailure);
                     }
-                    negativeAcknowledge(consumer, nativeMessage, e);
-                    throw e;
+                    batch = MessageBatch.create(PulsarMessageImpl.rejected());
                 }
             }
 
@@ -542,9 +541,6 @@ final class PulsarIncomingConnector {
                                             RuntimeException primary) {
             try {
                 long remaining = remainingNanos(deadline);
-                if (remaining == 0) {
-                    throw new TimeoutException();
-                }
                 closeFuture.get(remaining, TimeUnit.NANOSECONDS);
                 return primary;
             } catch (InterruptedException e) {

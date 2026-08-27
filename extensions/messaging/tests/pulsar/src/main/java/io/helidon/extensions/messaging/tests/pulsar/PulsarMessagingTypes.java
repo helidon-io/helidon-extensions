@@ -41,6 +41,8 @@ final class PulsarMessagingTypes {
     static final String INCOMING_CHANNEL = "pulsar-in";
     static final String AUTO_INCOMING_CHANNEL = "pulsar-auto-in";
     static final String REDELIVERY_CHANNEL = "pulsar-redelivery-in";
+    static final String FAILED_MAPPING_INCOMING_CHANNEL = "pulsar-failed-mapping-in";
+    static final String FAILED_MAPPING_DEAD_LETTER_CHANNEL = "pulsar-failed-mapping-dlq";
     static final String JSON_SCHEMA_PROVIDER = "json-orders";
 
     private PulsarMessagingTypes() {
@@ -111,6 +113,20 @@ final class PulsarMessagingTypes {
         }
 
         PulsarMessage<GenericRecord> awaitMessage(Duration timeout) throws InterruptedException {
+            return messages.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }
+    }
+
+    @Service.Singleton
+    static class FailedMappingReceiver {
+        private final BlockingQueue<PulsarMessage<String>> messages = new LinkedBlockingQueue<>();
+
+        @Messaging.ReceiveFrom(FAILED_MAPPING_INCOMING_CHANNEL)
+        void receive(PulsarMessage<String> message) {
+            messages.add(message);
+        }
+
+        PulsarMessage<String> awaitMessage(Duration timeout) throws InterruptedException {
             return messages.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
         }
     }

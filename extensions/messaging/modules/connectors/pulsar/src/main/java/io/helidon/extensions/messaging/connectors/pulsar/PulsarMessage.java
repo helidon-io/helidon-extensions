@@ -29,6 +29,9 @@ import io.helidon.messaging.MessageHeaders;
  * Pulsar string properties are exposed as ordered portable text headers. Pulsar properties cannot represent typed
  * values or duplicate names, so the outgoing connector rejects those header shapes instead of stringifying or
  * dropping them.
+ * A metadata-only envelope created after payload mapping fails retains available native metadata but does not retain
+ * the raw payload. Its {@link #entity()} method throws a messaging exception. Such envelopes are routed only through
+ * failed-delivery policy and may be inspected by local dead-letter envelope consumers.
  *
  * @param <T> payload type
  */
