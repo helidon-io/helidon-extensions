@@ -20,16 +20,17 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Date;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
+import io.helidon.messaging.MessageHeaders;
+
 final class PulsarMessageImpl<T> implements PulsarMessage<T> {
     private final T entity;
-    private final Map<String, String> headers;
+    private final MessageHeaders headers;
     private final String key;
     private final byte[] keyBytes;
     private final boolean base64EncodedKey;
@@ -46,7 +47,7 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
     private final Long index;
 
     private PulsarMessageImpl(T entity,
-                              Map<String, String> headers,
+                              MessageHeaders headers,
                               String key,
                               byte[] keyBytes,
                               boolean base64EncodedKey,
@@ -61,8 +62,8 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
                               byte[] schemaVersion,
                               Long brokerPublishTime,
                               Long index) {
-        this.entity = snapshotEntity(entity);
-        this.headers = immutableHeaders(headers);
+        this.entity = snapshotEntity(Objects.requireNonNull(entity, "entity"));
+        this.headers = Objects.requireNonNull(headers);
         this.key = key;
         this.keyBytes = copy(keyBytes);
         this.base64EncodedKey = base64EncodedKey;
@@ -80,7 +81,7 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
     }
 
     static <T> PulsarMessage<T> outgoing(T entity,
-                                         Map<String, String> headers,
+                                         MessageHeaders headers,
                                          String key,
                                          byte[] keyBytes,
                                          byte[] orderingKey,
@@ -116,7 +117,7 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
         long sequenceId = message.getSequenceId();
         byte[] schemaVersion = message.getSchemaVersion();
         return new PulsarMessageImpl<>(entity,
-                                       message.getProperties(),
+                                       messageHeaders(message.getProperties()),
                                        hasKey ? message.getKey() : null,
                                        hasKey ? message.getKeyBytes() : null,
                                        hasKey && message.hasBase64EncodedKey(),
@@ -139,7 +140,7 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
     }
 
     @Override
-    public Map<String, String> headers() {
+    public MessageHeaders headers() {
         return headers;
     }
 
@@ -227,11 +228,11 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
         return entity;
     }
 
-    private static Map<String, String> immutableHeaders(Map<String, String> headers) {
-        Map<String, String> result = new LinkedHashMap<>();
-        Objects.requireNonNull(headers).forEach((name, value) -> result.put(Objects.requireNonNull(name),
-                                                                           Objects.requireNonNull(value)));
-        return Map.copyOf(result);
+    private static MessageHeaders messageHeaders(Map<String, String> properties) {
+        MessageHeaders.Builder result = MessageHeaders.builder();
+        Objects.requireNonNull(properties).forEach((name, value) -> result.add(Objects.requireNonNull(name),
+                                                                               Objects.requireNonNull(value)));
+        return result.build();
     }
 
     private static byte[] copy(byte[] value) {

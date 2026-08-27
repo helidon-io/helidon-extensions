@@ -19,7 +19,7 @@ package io.helidon.extensions.messaging.connectors.kafka;
 import java.util.Objects;
 
 import io.helidon.config.Config;
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnector;
 import io.helidon.messaging.IncomingConnectorProvider;
 import io.helidon.messaging.OutgoingConnector;
@@ -108,7 +108,7 @@ public final class KafkaConnectorProvider
      * @return incoming connector
      */
     public IncomingConnector createIncomingConnector(KafkaConnectorConfig config) {
-        requireDirection(config, ConnectorConfig.Direction.INCOMING);
+        requireDirection(config, ConnectorDirection.INCOMING);
         return incomingFactory.createIncomingConnector(config);
     }
 
@@ -124,11 +124,11 @@ public final class KafkaConnectorProvider
      * @return outgoing connector
      */
     public OutgoingConnector createOutgoingConnector(KafkaConnectorConfig config) {
-        requireDirection(config, ConnectorConfig.Direction.OUTGOING);
+        requireDirection(config, ConnectorDirection.OUTGOING);
         return outgoingFactory.createOutgoingConnector(config);
     }
 
-    private static void requireDirection(KafkaConnectorConfig config, ConnectorConfig.Direction expected) {
+    private static void requireDirection(KafkaConnectorConfig config, ConnectorDirection expected) {
         Objects.requireNonNull(config);
         if (config.direction() != expected) {
             throw new IllegalArgumentException("Kafka connector configuration for channel " + config.channel()

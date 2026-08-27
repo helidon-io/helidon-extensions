@@ -31,6 +31,9 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
+import io.helidon.messaging.HeaderValue;
+import io.helidon.messaging.MessageHeaders;
+
 import jakarta.jms.JMSException;
 
 final class JmsMessageImpl<T> implements JmsMessage<T> {
@@ -38,9 +41,10 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
     static final String JMSX_GROUP_SEQ = "JMSXGroupSeq";
 
     private final T entity;
+    private final boolean bodyAvailable;
     private final boolean snapshotSerializableOnAccess;
     private final Map<String, Object> properties;
-    private final Map<String, String> headers;
+    private final MessageHeaders headers;
     private final Optional<String> messageId;
     private final Optional<String> correlationId;
     private final Optional<String> type;
@@ -60,8 +64,10 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
                            OptionalLong deliveryTime,
                            OptionalInt priority,
                            Optional<Boolean> redelivered,
+                           boolean bodyAvailable,
                            boolean snapshotSerializable) {
-        this.entity = snapshotBody(entity, snapshotSerializable);
+        this.entity = snapshotBody(Objects.requireNonNull(entity, "entity"), snapshotSerializable);
+        this.bodyAvailable = bodyAvailable;
         this.snapshotSerializableOnAccess = snapshotSerializable;
         this.properties = snapshotProperties(properties);
         this.headers = portableHeaders(this.properties);
@@ -89,6 +95,7 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
                                     OptionalLong.empty(),
                                     OptionalInt.empty(),
                                     Optional.empty(),
+                                    true,
                                     false);
     }
 
@@ -106,7 +113,39 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
                                     OptionalLong.of(message.getJMSDeliveryTime()),
                                     OptionalInt.of(message.getJMSPriority()),
                                     Optional.of(message.getJMSRedelivered()),
+                                    true,
                                     snapshotSerializable);
+    }
+
+    static JmsMessage<Object> metadataOnly(Map<String, Object> properties,
+                                           jakarta.jms.Message message) throws JMSException {
+        return new JmsMessageImpl<>(UnavailableBody.INSTANCE,
+                                    properties,
+                                    Optional.ofNullable(message.getJMSMessageID()),
+                                    Optional.ofNullable(message.getJMSCorrelationID()),
+                                    Optional.ofNullable(message.getJMSType()),
+                                    OptionalLong.of(message.getJMSTimestamp()),
+                                    OptionalLong.of(message.getJMSExpiration()),
+                                    OptionalLong.of(message.getJMSDeliveryTime()),
+                                    OptionalInt.of(message.getJMSPriority()),
+                                    Optional.of(message.getJMSRedelivered()),
+                                    false,
+                                    false);
+    }
+
+    static JmsMessage<Object> rejected() {
+        return new JmsMessageImpl<>(UnavailableBody.INSTANCE,
+                                    Map.of(),
+                                    Optional.empty(),
+                                    Optional.empty(),
+                                    Optional.empty(),
+                                    OptionalLong.empty(),
+                                    OptionalLong.empty(),
+                                    OptionalLong.empty(),
+                                    OptionalInt.empty(),
+                                    Optional.empty(),
+                                    false,
+                                    false);
     }
 
     static String requirePropertyName(String name) {
@@ -199,9 +238,6 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
         if (entity instanceof Serializable) {
             return entity;
         }
-        if (entity == null) {
-            return null;
-        }
         throw new IllegalArgumentException("Unsupported JMS message body type: " + entity.getClass().getName());
     }
 
@@ -240,10 +276,29 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
         return Collections.unmodifiableMap(result);
     }
 
-    private static Map<String, String> portableHeaders(Map<String, Object> properties) {
-        Map<String, String> result = new LinkedHashMap<>();
-        properties.forEach((name, value) -> result.put(name, String.valueOf(value)));
-        return Collections.unmodifiableMap(result);
+    private static MessageHeaders portableHeaders(Map<String, Object> properties) {
+        MessageHeaders.Builder result = MessageHeaders.builder();
+        properties.forEach((name, value) -> result.add(name, portableHeaderValue(value)));
+        return result.build();
+    }
+
+    private static HeaderValue portableHeaderValue(Object value) {
+        if (value instanceof Boolean booleanValue) {
+            return HeaderValue.booleanValue(booleanValue);
+        }
+        if (value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long) {
+            return HeaderValue.integer(((Number) value).longValue());
+        }
+        if (value instanceof Float floatValue) {
+            return HeaderValue.floatingPoint(floatValue);
+        }
+        if (value instanceof Double doubleValue) {
+            return HeaderValue.floatingPoint(doubleValue);
+        }
+        if (value instanceof String stringValue) {
+            return HeaderValue.text(stringValue);
+        }
+        throw new IllegalArgumentException("Unsupported JMS property type: " + value.getClass().getName());
     }
 
     @Override
@@ -255,8 +310,12 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
         return snapshotBody(entity, allowObjectMessages);
     }
 
+    boolean bodyAvailable() {
+        return bodyAvailable;
+    }
+
     @Override
-    public Map<String, String> headers() {
+    public MessageHeaders headers() {
         return headers;
     }
 
@@ -303,5 +362,9 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
     @Override
     public Map<String, Object> jmsProperties() {
         return properties;
+    }
+
+    private enum UnavailableBody {
+        INSTANCE
     }
 }

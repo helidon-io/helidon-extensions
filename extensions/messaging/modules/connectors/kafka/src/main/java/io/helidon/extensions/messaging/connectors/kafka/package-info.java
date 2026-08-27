@@ -16,8 +16,11 @@
 
 /**
  * Kafka connector for declarative messaging.
- * The portable messaging header map decodes non-null Kafka header values as UTF-8 text and exposes the last non-null
- * value for each name. {@link io.helidon.extensions.messaging.connectors.kafka.KafkaMessage#kafkaHeaders()} preserves
- * the lossless ordered native view, including duplicate names and binary or null values.
+ * Portable messaging headers retain Kafka's global order and duplicate names, exposing non-null native values as
+ * {@link io.helidon.messaging.HeaderValue.BinaryValue} and null native values as
+ * {@link io.helidon.messaging.HeaderValue.NullValue}.
+ * {@link io.helidon.extensions.messaging.connectors.kafka.KafkaMessage#kafkaHeaders()} provides the corresponding
+ * Kafka-native view. A Kafka tombstone has no Helidon payload and therefore enters the configured pre-dispatch failure
+ * policy with its key, headers, topic, partition, and offset retained for settlement or dead-letter handling.
  */
 package io.helidon.extensions.messaging.connectors.kafka;

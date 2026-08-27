@@ -27,8 +27,8 @@ import java.util.function.BooleanSupplier;
 import io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfig;
 import io.helidon.extensions.messaging.connectors.jms.JmsConnectorProvider;
 import io.helidon.extensions.messaging.connectors.jms.JmsMessage;
-import io.helidon.messaging.ConnectorConfig;
 import io.helidon.messaging.ConnectorDeliveryReservation;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnector;
 import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessagingRuntime;
@@ -110,7 +110,7 @@ class JmsBackPressureIT {
                 JmsTestClient.sendText(broker.connectionFactory(), queue, false, "waiting", ignored -> { });
                 IncomingConnector connector = new JmsConnectorProvider(connectorFactory)
                         .createIncomingConnector(JmsConnectorConfig.builder()
-                                                         .direction(ConnectorConfig.Direction.INCOMING)
+                                                         .direction(ConnectorDirection.INCOMING)
                                                          .channel("activation-gate")
                                                          .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                                                          .destination(queue)

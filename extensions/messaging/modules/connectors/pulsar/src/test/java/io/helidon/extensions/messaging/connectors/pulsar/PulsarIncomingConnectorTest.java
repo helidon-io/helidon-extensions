@@ -27,7 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
 import io.helidon.messaging.IncomingConnector;
@@ -177,7 +177,7 @@ class PulsarIncomingConnectorTest {
         PulsarMessage<?> message = deliveredMessage(context);
         assertThat(source.schema.get(), sameInstance(Schema.INT32));
         assertThat(message.entity(), is(42));
-        assertThat(message.headers(), is(java.util.Map.of("trace-id", "pulsar-trace")));
+        assertThat(message.header("trace-id").orElseThrow(), is("pulsar-trace"));
         assertThat(runFailure.get(), nullValue());
     }
 
@@ -207,7 +207,7 @@ class PulsarIncomingConnectorTest {
         assertThat(message.entity(), sameInstance(payload));
         assertThat(((GenericObject) message.entity()).getNativeObject(), is(42));
         assertThat(message.schemaVersion().isPresent(), is(true));
-        assertThat(message.headers(), is(java.util.Map.of("trace-id", "pulsar-trace")));
+        assertThat(message.header("trace-id").orElseThrow(), is("pulsar-trace"));
         assertThat(runFailure.get(), nullValue());
     }
 
@@ -219,7 +219,7 @@ class PulsarIncomingConnectorTest {
                 .build();
         PulsarSchemaResolver.ResolvedSchema resolved = PulsarSchemaResolver.resolve(
                 config,
-                ConnectorConfig.Direction.INCOMING,
+                ConnectorDirection.INCOMING,
                 () -> List.of(schemaProvider("custom-key-value", customSchema)));
         KeyValue<String, Integer> payload = new KeyValue<>("order", 7);
         TestContext context = new TestContext(false);
@@ -237,7 +237,7 @@ class PulsarIncomingConnectorTest {
         PulsarMessage<?> message = deliveredMessage(context);
         assertThat(source.schema.get(), sameInstance(customSchema));
         assertThat(message.entity(), sameInstance(payload));
-        assertThat(message.headers(), is(java.util.Map.of("trace-id", "pulsar-trace")));
+        assertThat(message.header("trace-id").orElseThrow(), is("pulsar-trace"));
         assertThat(runFailure.get(), nullValue());
     }
 
@@ -297,7 +297,7 @@ class PulsarIncomingConnectorTest {
 
     private static PulsarConnectorConfig.Builder configBuilder(PulsarSchemaType schema, int maxMessageBytes) {
         return PulsarConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.INCOMING)
+                .direction(ConnectorDirection.INCOMING)
                 .channel("in")
                 .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
                 .serviceUrl("pulsar://localhost:6650")

@@ -62,6 +62,7 @@ import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.RestartRe
 import io.helidon.extensions.messaging.tests.kafka.KafkaTestSerializers.BlockingStringSerializer;
 import io.helidon.extensions.messaging.tests.kafka.KafkaTestSerializers.FailingStringSerializer;
 import io.helidon.messaging.DeadLetterMessage;
+import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingChannel;
@@ -569,19 +570,21 @@ class KafkaConnectorIT {
 
             assertThat(List.of(firstPayload, secondPayload), is(List.of("incoming first", "incoming second")));
             assertMessages(List.of(firstMessage, secondMessage), List.of("incoming first", "incoming second"));
-            assertThat(firstMessage.header("trace-id").orElseThrow(), is("Příliš žluťoučký"));
-            assertThat(secondMessage.header("trace-id").orElseThrow(), is("incoming-2"));
+            assertThat(firstMessage.headerValue("trace-id").orElseThrow(),
+                       is(binaryHeaderValue("Příliš žluťoučký")));
+            assertThat(secondMessage.headerValue("trace-id").orElseThrow(), is(binaryHeaderValue("incoming-2")));
             List<ReceivedMessage> annotated = List.of(firstAnnotated, secondAnnotated);
             assertThat(annotated.stream().map(ReceivedMessage::entity).toList(),
                        is(List.of("incoming first", "incoming second")));
             assertThat(annotated.stream().map(ReceivedMessage::traceId).toList(),
-                       is(List.of("Příliš žluťoučký", "incoming-2")));
+                       is(List.of(binaryHeaderValue("Příliš žluťoučký"), binaryHeaderValue("incoming-2"))));
             assertMessages(annotated.stream().map(ReceivedMessage::message).toList(),
                            List.of("incoming first", "incoming second"));
             assertThat("batch id", batch.id().isBlank(), is(false));
             assertMessages(batch.messages(), List.of("incoming first", "incoming second"));
-            assertThat(batch.get(0).header("trace-id").orElseThrow(), is("Příliš žluťoučký"));
-            assertThat(batch.get(1).header("trace-id").orElseThrow(), is("incoming-2"));
+            assertThat(batch.get(0).headerValue("trace-id").orElseThrow(),
+                       is(binaryHeaderValue("Příliš žluťoučký")));
+            assertThat(batch.get(1).headerValue("trace-id").orElseThrow(), is(binaryHeaderValue("incoming-2")));
             awaitCommittedOffset(group, topic, 2L);
         } finally {
             manager.shutdown();
@@ -641,8 +644,8 @@ class KafkaConnectorIT {
             assertThat(first.timestamp().orElseThrow(), is(firstTimestamp));
             assertThat(second.timestamp().orElseThrow(), is(secondTimestamp));
             assertThat(first.timestampType().isPresent(), is(true));
-            assertThat(first.header("duplicate").orElseThrow(), is("second"));
-            assertThat(first.header("null-value").isEmpty(), is(true));
+            assertThat(first.headerValue("duplicate").orElseThrow(), is(binaryHeaderValue("second")));
+            assertThat(first.headerValue("null-value").orElseThrow(), is(HeaderValue.nullValue()));
 
             List<KafkaMessage.Header> headers = first.kafkaHeaders();
             assertThat(headers.stream().map(KafkaMessage.Header::name).toList(),
@@ -686,8 +689,10 @@ class KafkaConnectorIT {
 
             assertMessages(List.of(firstDelivery, secondDelivery),
                            List.of("redelivered message", "redelivered message"));
-            assertThat(firstDelivery.header("trace-id").orElseThrow(), is("redelivery-trace"));
-            assertThat(secondDelivery.header("trace-id").orElseThrow(), is("redelivery-trace"));
+            assertThat(firstDelivery.headerValue("trace-id").orElseThrow(),
+                       is(binaryHeaderValue("redelivery-trace")));
+            assertThat(secondDelivery.headerValue("trace-id").orElseThrow(),
+                       is(binaryHeaderValue("redelivery-trace")));
             assertThat("attempt count while second attempt is blocked", receiver.attemptCount(), is(2));
             assertNoCommittedOffset(group, topic);
 
@@ -1211,14 +1216,32 @@ class KafkaConnectorIT {
             List<Future<RecordMetadata>> results = new ArrayList<>(messages.size());
             for (Message<String> message : messages) {
                 ProducerRecord<String, String> record = new ProducerRecord<>(topic, message.entity());
-                message.headers().forEach((name, value) -> record.headers()
-                        .add(new RecordHeader(name, value.getBytes(StandardCharsets.UTF_8))));
+                message.headers().forEach(header -> record.headers()
+                        .add(new RecordHeader(header.name(), kafkaHeaderValue(header.value()))));
                 results.add(producer.send(record));
             }
             for (Future<RecordMetadata> result : results) {
                 result.get(WAIT_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
             }
         }
+    }
+
+    private static byte[] kafkaHeaderValue(HeaderValue value) {
+        if (value instanceof HeaderValue.NullValue) {
+            return null;
+        }
+        if (value instanceof HeaderValue.TextValue textValue) {
+            return textValue.value().getBytes(StandardCharsets.UTF_8);
+        }
+        if (value instanceof HeaderValue.BinaryValue binaryValue) {
+            return binaryValue.value();
+        }
+        throw new IllegalArgumentException("Unsupported Kafka test header value type "
+                                                   + value.getClass().getSimpleName());
+    }
+
+    private static HeaderValue binaryHeaderValue(String value) {
+        return HeaderValue.binary(value.getBytes(StandardCharsets.UTF_8));
     }
 
     private static void sendRecords(List<ProducerRecord<String, String>> records) throws Exception {

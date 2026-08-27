@@ -36,6 +36,7 @@ import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.SelectorRecei
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.TextReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.TextSender;
 import io.helidon.messaging.DeadLetterMessage;
+import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRuntime;
 import io.helidon.service.registry.ServiceRegistry;
@@ -130,10 +131,10 @@ class JmsConnectorIT {
                                                        "attempt", 7,
                                                        "JMSXGroupID", "order-group",
                                                        "JMSXGroupSeq", 3)));
-        assertThat(received.headers(), is(Map.of("region", "EU",
-                                                "attempt", "7",
-                                                "JMSXGroupID", "order-group",
-                                                "JMSXGroupSeq", "3")));
+        assertThat(received.headerValue("region"), is(Optional.of(HeaderValue.text("EU"))));
+        assertThat(received.headerValue("attempt"), is(Optional.of(HeaderValue.integer(7))));
+        assertThat(received.headerValue("JMSXGroupID"), is(Optional.of(HeaderValue.text("order-group"))));
+        assertThat(received.headerValue("JMSXGroupSeq"), is(Optional.of(HeaderValue.integer(3))));
     }
 
     @Test
@@ -171,6 +172,14 @@ class JmsConnectorIT {
                 "float_value", 5.5F,
                 "double_value", 6.5D,
                 "string_value", "seven")));
+        assertThat(received.headerValue("boolean_value"), is(Optional.of(HeaderValue.booleanValue(true))));
+        assertThat(received.headerValue("byte_value"), is(Optional.of(HeaderValue.integer(1))));
+        assertThat(received.headerValue("short_value"), is(Optional.of(HeaderValue.integer(2))));
+        assertThat(received.headerValue("integer_value"), is(Optional.of(HeaderValue.integer(3))));
+        assertThat(received.headerValue("long_value"), is(Optional.of(HeaderValue.integer(4))));
+        assertThat(received.headerValue("float_value"), is(Optional.of(HeaderValue.floatingPoint(5.5F))));
+        assertThat(received.headerValue("double_value"), is(Optional.of(HeaderValue.floatingPoint(6.5D))));
+        assertThat(received.headerValue("string_value"), is(Optional.of(HeaderValue.text("seven"))));
     }
 
     @Test

@@ -139,10 +139,12 @@ An incoming `PulsarMessage` is an immutable snapshot of its metadata: key, prope
 publish and event times, producer name, sequence identifier, ordering key, and redelivery count exposed by the Pulsar
 client. Built-in mutable payloads are also defensively copied. Values decoded by `AUTO` or a custom schema are retained
 as supplied by that schema and can remain mutable. Pulsar string properties are also exposed as portable Helidon message
-headers.
+text headers in the order supplied by the Pulsar client.
 
 Use the Pulsar message builder when an outgoing message needs a key, ordering key, event time, or native properties.
-Ordinary Helidon message headers are written as Pulsar string properties.
+Ordinary Helidon text headers are written as Pulsar string properties without reordering. Pulsar properties cannot
+represent typed values or duplicate names, so the connector rejects those outbound header shapes rather than silently
+stringifying, replacing, or dropping them.
 
 ## Subscription and settlement semantics
 

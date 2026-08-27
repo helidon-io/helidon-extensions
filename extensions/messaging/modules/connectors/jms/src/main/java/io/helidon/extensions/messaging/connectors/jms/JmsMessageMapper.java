@@ -23,8 +23,13 @@ import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
+import io.helidon.messaging.DeadLetterMessage;
+import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
+import io.helidon.messaging.MessageHeader;
 import io.helidon.messaging.MessagingException;
 
 import jakarta.jms.BytesMessage;
@@ -37,6 +42,11 @@ import jakarta.jms.StreamMessage;
 import jakarta.jms.TextMessage;
 
 final class JmsMessageMapper {
+    private static final Set<String> DEAD_LETTER_HEADERS = Set.of(DeadLetterMessage.SOURCE_CHANNEL_HEADER,
+                                                                  DeadLetterMessage.ATTEMPTS_HEADER,
+                                                                  DeadLetterMessage.FAILURE_TYPE_HEADER,
+                                                                  DeadLetterMessage.FAILURE_MESSAGE_HEADER);
+
     private JmsMessageMapper() {
     }
 
@@ -55,7 +65,7 @@ final class JmsMessageMapper {
     static JmsMessage<?> metadataOnly(jakarta.jms.Message message) {
         try {
             Map<String, Object> properties = readProperties(message);
-            return JmsMessageImpl.incoming(null, properties, message, false);
+            return JmsMessageImpl.metadataOnly(properties, message);
         } catch (JMSException e) {
             throw new MessagingException("Cannot snapshot rejected incoming JMS message metadata", e);
         }
@@ -64,6 +74,10 @@ final class JmsMessageMapper {
     static jakarta.jms.Message toJmsMessage(Session session,
                                             Message<?> message,
                                             boolean allowObjectMessages) throws JMSException {
+        if (message instanceof DeadLetterMessage<?> deadLetterMessage
+                && deadLetterMessage.originalMessage() instanceof JmsMessage<?> originalMessage) {
+            return toJmsDeadLetterMessage(session, deadLetterMessage, originalMessage, allowObjectMessages);
+        }
         Object entity = message instanceof JmsMessageImpl<?> jmsMessage
                 ? jmsMessage.entityForMapping(allowObjectMessages)
                 : message.entity();
@@ -84,8 +98,75 @@ final class JmsMessageMapper {
         return result;
     }
 
+    private static jakarta.jms.Message toJmsDeadLetterMessage(Session session,
+                                                              DeadLetterMessage<?> deadLetterMessage,
+                                                              JmsMessage<?> originalMessage,
+                                                              boolean allowObjectMessages) throws JMSException {
+        Map<String, HeaderValue> wrapperHeaders = portableHeaders(deadLetterMessage);
+        Map<String, HeaderValue> originalHeaders = portableHeaders(originalMessage);
+        Map<String, Object> nativeProperties = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : originalMessage.jmsProperties().entrySet()) {
+            String name = entry.getKey();
+            if (DEAD_LETTER_HEADERS.contains(name)) {
+                continue;
+            }
+            if (Objects.equals(originalHeaders.get(name), wrapperHeaders.get(name))) {
+                nativeProperties.put(name, entry.getValue());
+                wrapperHeaders.remove(name);
+            }
+        }
+        Map<String, Object> portableProperties = new LinkedHashMap<>();
+        wrapperHeaders.forEach((name, value) -> portableProperties.put(name, portableProperty(name, value)));
+
+        Object entity;
+        if (originalMessage instanceof JmsMessageImpl<?> originalImpl) {
+            entity = originalImpl.bodyAvailable() ? originalImpl.entityForMapping(allowObjectMessages) : null;
+        } else {
+            entity = originalMessage.entity();
+        }
+        jakarta.jms.Message result = createBodyMessage(session, entity, allowObjectMessages);
+        for (Map.Entry<String, Object> entry : nativeProperties.entrySet()) {
+            setTypedProperty(result, entry.getKey(), entry.getValue());
+        }
+        portableProperties.forEach((name, value) -> setPortableProperty(result, name, value));
+        if (originalMessage.correlationId().isPresent()) {
+            result.setJMSCorrelationID(originalMessage.correlationId().orElseThrow());
+        }
+        if (originalMessage.type().isPresent()) {
+            result.setJMSType(originalMessage.type().orElseThrow());
+        }
+        setPortableProperty(result, DeadLetterMessage.SOURCE_CHANNEL_HEADER, deadLetterMessage.sourceChannel());
+        setPortableProperty(result, DeadLetterMessage.ATTEMPTS_HEADER,
+                            Integer.toString(deadLetterMessage.attempts()));
+        setPortableProperty(result, DeadLetterMessage.FAILURE_TYPE_HEADER, deadLetterMessage.failureType());
+        setPortableProperty(result, DeadLetterMessage.FAILURE_MESSAGE_HEADER, deadLetterMessage.failureMessage());
+        return result;
+    }
+
+    private static Map<String, HeaderValue> portableHeaders(Message<?> message) {
+        Map<String, HeaderValue> result = new LinkedHashMap<>();
+        for (MessageHeader header : message.headers()) {
+            if (DEAD_LETTER_HEADERS.contains(header.name())) {
+                continue;
+            }
+            if (result.putIfAbsent(header.name(), header.value()) != null) {
+                throw new MessagingException("JMS application properties do not support duplicate header: "
+                                                     + header.name());
+            }
+        }
+        return result;
+    }
+
     static void copyPortableHeaders(jakarta.jms.Message target, Message<?> source) {
-        source.headers().forEach((name, value) -> setStringProperty(target, name, value));
+        Map<String, Object> properties = new LinkedHashMap<>();
+        for (MessageHeader header : source.headers()) {
+            String name = JmsMessageImpl.requirePropertyName(header.name());
+            if (properties.containsKey(name)) {
+                throw new MessagingException("JMS application properties do not support duplicate header: " + name);
+            }
+            properties.put(name, portableProperty(name, header.value()));
+        }
+        properties.forEach((name, value) -> setPortableProperty(target, name, value));
     }
 
     private static Object readBody(jakarta.jms.Message message,
@@ -217,7 +298,7 @@ final class JmsMessageMapper {
                 result.put(name, JmsMessageImpl.snapshotProperty(name, value));
             }
         }
-        return Map.copyOf(result);
+        return Collections.unmodifiableMap(result);
     }
 
     private static Object snapshotBodyValue(Object value) {
@@ -259,16 +340,68 @@ final class JmsMessageMapper {
         }
     }
 
-    private static void setStringProperty(jakarta.jms.Message message, String name, String value) {
-        String actualName = JmsMessageImpl.requirePropertyName(name);
-        try {
-            if (JmsMessageImpl.JMSX_GROUP_SEQ.equals(actualName)) {
-                message.setIntProperty(actualName, Integer.parseInt(value));
+    private static Object portableProperty(String name, HeaderValue value) {
+        Object result;
+        if (value instanceof HeaderValue.TextValue textValue) {
+            if (JmsMessageImpl.JMSX_GROUP_SEQ.equals(name)) {
+                try {
+                    result = Integer.parseInt(textValue.value());
+                } catch (NumberFormatException e) {
+                    throw new MessagingException("Cannot map messaging header " + name + " to a JMS property", e);
+                }
             } else {
-                message.setStringProperty(actualName, value);
+                result = textValue.value();
+            }
+        } else if (value instanceof HeaderValue.BooleanValue booleanValue) {
+            result = booleanValue.value();
+        } else if (value instanceof HeaderValue.IntegerValue integerValue) {
+            try {
+                if (JmsMessageImpl.JMSX_GROUP_SEQ.equals(name)) {
+                    result = integerValue.value().intValueExact();
+                } else {
+                    result = integerValue.value().longValueExact();
+                }
+            } catch (ArithmeticException e) {
+                throw new MessagingException("Cannot map messaging header " + name + " to a JMS property", e);
+            }
+        } else if (value instanceof HeaderValue.Float32Value floatValue) {
+            result = floatValue.value();
+        } else if (value instanceof HeaderValue.Float64Value doubleValue) {
+            result = doubleValue.value();
+        } else {
+            throw new MessagingException("Unsupported JMS header value for " + name + ": "
+                                                 + value.getClass().getSimpleName());
+        }
+        try {
+            return JmsMessageImpl.snapshotProperty(name, result);
+        } catch (IllegalArgumentException e) {
+            throw new MessagingException("Cannot map messaging header " + name + " to a JMS property", e);
+        }
+    }
+
+    private static void setPortableProperty(jakarta.jms.Message message, String name, Object value) {
+        try {
+            if (value instanceof String stringValue) {
+                message.setStringProperty(name, stringValue);
+            } else if (value instanceof Boolean booleanValue) {
+                message.setBooleanProperty(name, booleanValue);
+            } else if (value instanceof Integer integerValue) {
+                message.setIntProperty(name, integerValue);
+            } else if (value instanceof Long longValue) {
+                message.setLongProperty(name, longValue);
+            } else if (value instanceof Float floatValue) {
+                message.setFloatProperty(name, floatValue);
+            } else if (value instanceof Double doubleValue) {
+                message.setDoubleProperty(name, doubleValue);
+            } else {
+                throw new MessagingException("Unsupported JMS property value for " + name + ": "
+                                                     + value.getClass().getName());
             }
         } catch (JMSException | RuntimeException e) {
-            throw new MessagingException("Cannot set JMS property " + actualName, e);
+            if (e instanceof MessagingException messagingException) {
+                throw messagingException;
+            }
+            throw new MessagingException("Cannot set JMS property " + name, e);
         }
     }
 }

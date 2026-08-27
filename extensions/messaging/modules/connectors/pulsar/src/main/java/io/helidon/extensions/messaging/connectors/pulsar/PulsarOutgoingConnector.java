@@ -31,7 +31,7 @@ import java.util.function.BooleanSupplier;
 import io.helidon.messaging.BatchAtomicity;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.OutgoingConnector;
@@ -56,7 +56,7 @@ final class PulsarOutgoingConnector {
         validateDirection(config);
         return createOutgoingConnector(config,
                                        PulsarSchemaResolver.resolve(config,
-                                                                    ConnectorConfig.Direction.OUTGOING,
+                                                                    ConnectorDirection.OUTGOING,
                                                                     List::of));
     }
 
@@ -68,10 +68,10 @@ final class PulsarOutgoingConnector {
 
     private static void validateDirection(PulsarConnectorConfig config) {
         Objects.requireNonNull(config);
-        if (config.direction() != ConnectorConfig.Direction.OUTGOING) {
+        if (config.direction() != ConnectorDirection.OUTGOING) {
             throw new IllegalArgumentException("Pulsar connector configuration for channel " + config.channel()
                                                        + " has direction " + config.direction()
-                                                       + ", expected " + ConnectorConfig.Direction.OUTGOING);
+                                                       + ", expected " + ConnectorDirection.OUTGOING);
         }
     }
 

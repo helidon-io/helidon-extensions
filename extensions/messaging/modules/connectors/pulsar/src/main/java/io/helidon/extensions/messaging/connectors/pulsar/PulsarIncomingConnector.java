@@ -32,9 +32,9 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
-import io.helidon.messaging.ConnectorConfig;
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnector;
 import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessageBatch;
@@ -62,7 +62,7 @@ final class PulsarIncomingConnector {
         validateDirection(config);
         return createIncomingConnector(config,
                                        PulsarSchemaResolver.resolve(config,
-                                                                    ConnectorConfig.Direction.INCOMING,
+                                                                    ConnectorDirection.INCOMING,
                                                                     List::of));
     }
 
@@ -74,10 +74,10 @@ final class PulsarIncomingConnector {
 
     private static void validateDirection(PulsarConnectorConfig config) {
         Objects.requireNonNull(config);
-        if (config.direction() != ConnectorConfig.Direction.INCOMING) {
+        if (config.direction() != ConnectorDirection.INCOMING) {
             throw new IllegalArgumentException("Pulsar connector configuration for channel " + config.channel()
                                                        + " has direction " + config.direction()
-                                                       + ", expected " + ConnectorConfig.Direction.INCOMING);
+                                                       + ", expected " + ConnectorDirection.INCOMING);
         }
     }
 

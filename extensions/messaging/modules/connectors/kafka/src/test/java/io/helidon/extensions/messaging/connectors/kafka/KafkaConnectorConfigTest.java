@@ -22,6 +22,7 @@ import java.util.Map;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnector;
 import io.helidon.messaging.OutgoingConnector;
 
@@ -123,7 +124,7 @@ class KafkaConnectorConfigTest {
                 .topic(TOPIC)
                 .build();
         KafkaConnectorConfig incoming = builder()
-                .direction(ConnectorConfig.Direction.INCOMING)
+                .direction(ConnectorDirection.INCOMING)
                 .bootstrapServers("broker:9092")
                 .topic(TOPIC)
                 .build();
@@ -135,8 +136,8 @@ class KafkaConnectorConfigTest {
     @Test
     void testProviderFactoriesParseRawConfiguration() {
         KafkaConnectorProvider provider = new KafkaConnectorProvider();
-        IncomingConnector incoming = provider.createIncomingConnector(rawConfig(ConnectorConfig.Direction.INCOMING));
-        OutgoingConnector outgoing = provider.createOutgoingConnector(rawConfig(ConnectorConfig.Direction.OUTGOING));
+        IncomingConnector incoming = provider.createIncomingConnector(rawConfig(ConnectorDirection.INCOMING));
+        OutgoingConnector outgoing = provider.createOutgoingConnector(rawConfig(ConnectorDirection.OUTGOING));
 
         incoming.close();
         outgoing.close();
@@ -166,7 +167,7 @@ class KafkaConnectorConfigTest {
     @Test
     void testConsumerUsesChannelAsGroupAndDisablesAutoCommit() {
         KafkaConnectorConfig config = builder()
-                .direction(ConnectorConfig.Direction.INCOMING)
+                .direction(ConnectorDirection.INCOMING)
                 .bootstrapServers("broker:9092")
                 .topic(TOPIC)
                 .autoOffsetReset("earliest")
@@ -187,7 +188,7 @@ class KafkaConnectorConfigTest {
     @Test
     void testConsumerRecordAcquisitionIsCappedByRuntimeMessageLimit() {
         KafkaConnectorConfig config = builder()
-                .direction(ConnectorConfig.Direction.INCOMING)
+                .direction(ConnectorDirection.INCOMING)
                 .bootstrapServers("broker:9092")
                 .topic(TOPIC)
                 .properties(Map.of(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "500",
@@ -204,12 +205,12 @@ class KafkaConnectorConfigTest {
 
     private static KafkaConnectorConfig.Builder builder() {
         return KafkaConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.OUTGOING)
+                .direction(ConnectorDirection.OUTGOING)
                 .channel(CHANNEL)
                 .connector(KafkaConnectorProvider.CONNECTOR_TYPE);
     }
 
-    private static Config rawConfig(ConnectorConfig.Direction direction) {
+    private static Config rawConfig(ConnectorDirection direction) {
         return Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("direction", direction.name()),
                 Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, CHANNEL),

@@ -18,6 +18,7 @@ package io.helidon.extensions.messaging.connectors.jms;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
@@ -38,8 +39,9 @@ import io.helidon.messaging.Message;
  * snapshots an enabled object body before giving it to the JMS provider; the application must not mutate that body
  * between building and sending the message.
  * <p>
- * Portable {@link #headers()} are string views of the single-valued native JMS application properties; use
- * {@link #jmsProperties()} to retain their supported native value types.
+ * Portable {@link #headers()} retain the JMS Boolean, integer, floating-point, and String value kinds. JMS integer
+ * width is available through {@link #jmsProperties()}, because the portable integer representation intentionally does
+ * not retain transport-specific width.
  *
  * @param <T> payload type
  */
@@ -47,9 +49,10 @@ public interface JmsMessage<T> extends Message<T> {
     /**
      * Create an outgoing JMS message builder.
      *
-     * @param entity payload
+     * @param entity non-null payload
      * @param <T> payload type
      * @return builder
+     * @throws NullPointerException if {@code entity} is {@code null}
      */
     static <T> Builder<T> builder(T entity) {
         return new Builder<>(entity);
@@ -58,9 +61,10 @@ public interface JmsMessage<T> extends Message<T> {
     /**
      * Create an outgoing JMS message with no native metadata or properties.
      *
-     * @param entity payload
+     * @param entity non-null payload
      * @param <T> payload type
      * @return JMS message
+     * @throws NullPointerException if {@code entity} is {@code null}
      */
     static <T> JmsMessage<T> create(T entity) {
         return builder(entity).build();
@@ -143,7 +147,7 @@ public interface JmsMessage<T> extends Message<T> {
         private String type;
 
         private Builder(T entity) {
-            this.entity = entity;
+            this.entity = Objects.requireNonNull(entity, "entity");
         }
 
         /**

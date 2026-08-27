@@ -56,14 +56,7 @@ class PulsarScenarioRegistryTest {
 
     @Test
     void activatesOnlySelectedIncomingFixtureWithoutBroker() {
-        String yaml = """
-                helidon:
-                  messaging:
-                    incoming:
-                      pulsar-in:
-                        topology-only: true
-                """;
-        ServiceRegistryManager manager = PulsarScenarioRegistry.create(yaml, IncomingReceiver.class);
+        ServiceRegistryManager manager = PulsarScenarioRegistry.create("{}", IncomingReceiver.class);
         try {
             ServiceRegistry registry = manager.registry();
 

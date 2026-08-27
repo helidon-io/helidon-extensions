@@ -47,14 +47,7 @@ class JmsScenarioRegistryTest {
 
     @Test
     void activatesOnlySelectedFixtureTopologyWithoutJmsBroker() {
-        String yaml = """
-                helidon:
-                  messaging:
-                    incoming:
-                      jms-text-in:
-                        topology-only: true
-                """;
-        ServiceRegistryManager manager = JmsScenarioRegistry.create(yaml,
+        ServiceRegistryManager manager = JmsScenarioRegistry.create("{}",
                                                                      UNUSED_CONNECTION_FACTORY,
                                                                      TextReceiver.class);
         try {

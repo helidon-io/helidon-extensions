@@ -19,7 +19,7 @@ package io.helidon.extensions.messaging.connectors.jms;
 import java.util.Objects;
 
 import io.helidon.config.Config;
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnector;
 import io.helidon.messaging.IncomingConnectorProvider;
 import io.helidon.messaging.OutgoingConnector;
@@ -77,7 +77,7 @@ public final class JmsConnectorProvider
      * @return incoming connector
      */
     public IncomingConnector createIncomingConnector(JmsConnectorConfig config) {
-        requireDirection(config, ConnectorConfig.Direction.INCOMING);
+        requireDirection(config, ConnectorDirection.INCOMING);
         return JmsIncomingConnector.create(config, connectionFactoryResolver);
     }
 
@@ -93,11 +93,11 @@ public final class JmsConnectorProvider
      * @return outgoing connector
      */
     public OutgoingConnector createOutgoingConnector(JmsConnectorConfig config) {
-        requireDirection(config, ConnectorConfig.Direction.OUTGOING);
+        requireDirection(config, ConnectorDirection.OUTGOING);
         return JmsOutgoingConnector.create(config, connectionFactoryResolver);
     }
 
-    private static void requireDirection(JmsConnectorConfig config, ConnectorConfig.Direction expected) {
+    private static void requireDirection(JmsConnectorConfig config, ConnectorDirection expected) {
         Objects.requireNonNull(config);
         if (config.direction() != expected) {
             throw new IllegalArgumentException("JMS connector configuration for channel " + config.channel()

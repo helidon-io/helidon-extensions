@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import io.helidon.messaging.BatchAtomicity;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
@@ -1061,7 +1061,7 @@ class JmsOutgoingConnectorTest {
 
     private static JmsConnectorConfig config(boolean transacted, Duration closeTimeout) {
         return JmsConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.OUTGOING)
+                .direction(ConnectorDirection.OUTGOING)
                 .channel(CHANNEL)
                 .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("events")
