@@ -34,4 +34,14 @@ interface LifecycleTestLc4jProvider extends AiProvider.ModelLifecycle {
      */
     @Option.Configured
     Optional<String> plan();
+
+    @Override
+    default boolean closeModelOnInitializationFailure() {
+        return true;
+    }
+
+    @Override
+    default boolean closeModelOnShutdown() {
+        return plan().map(it -> !it.startsWith("rollback-only-")).orElse(true);
+    }
 }

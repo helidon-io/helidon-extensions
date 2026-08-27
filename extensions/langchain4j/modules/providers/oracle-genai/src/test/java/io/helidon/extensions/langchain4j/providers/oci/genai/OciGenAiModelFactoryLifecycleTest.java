@@ -39,7 +39,6 @@ import com.oracle.bmc.Region;
 import com.oracle.bmc.auth.BasicAuthenticationDetailsProvider;
 import com.oracle.bmc.generativeaiinference.GenerativeAiInferenceAsyncClient;
 import com.oracle.bmc.generativeaiinference.GenerativeAiInferenceClient;
-import dev.langchain4j.community.model.oracle.oci.genai.OciGenAiChatModel;
 import dev.langchain4j.community.model.oracle.oci.genai.OciGenAiStreamingChatModel;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -92,20 +91,7 @@ class OciGenAiModelFactoryLifecycleTest {
     }
 
     @Test
-    void closesInternallyOwnedModelOnShutdown() {
-        var factory = chatFactory(ownedModelConfig());
-        var model = factory.services().getFirst().get();
-
-        factory.preDestroy();
-
-        assertThat(factory.services(), is(empty()));
-        assertClosed(model);
-        factory.preDestroy();
-        assertClosed(model);
-    }
-
-    @Test
-    void preservesOwnershipForMixedAuthenticationAndClientConfigurations() {
+    void ociConfigLifecyclePoliciesMatchClientOwnership() {
         var authProvider = Mockito.mock(BasicAuthenticationDetailsProvider.class);
         var syncClient = Mockito.mock(GenerativeAiInferenceClient.class);
         var asyncClient = Mockito.mock(GenerativeAiInferenceAsyncClient.class);
@@ -117,6 +103,16 @@ class OciGenAiModelFactoryLifecycleTest {
                 .genAiClientDiscoverServices(false)
                 .build();
         var borrowedSyncConfig = OciGenAiChatModelConfig.builder(ownedSyncConfig)
+                .genAiClient(syncClient)
+                .build();
+        var ownedCohereSyncConfig = OciGenAiCohereChatModelConfig.builder()
+                .modelName("model-name")
+                .compartmentId("compartment-id")
+                .region(Region.US_ASHBURN_1)
+                .authProvider(authProvider)
+                .genAiClientDiscoverServices(false)
+                .build();
+        var borrowedCohereSyncConfig = OciGenAiCohereChatModelConfig.builder(ownedCohereSyncConfig)
                 .genAiClient(syncClient)
                 .build();
         var ownedStreamingConfig = OciGenAiStreamingChatModelConfig.builder()
@@ -141,17 +137,36 @@ class OciGenAiModelFactoryLifecycleTest {
                 .genAiClientDiscoverServices(false)
                 .genAiAsyncClientDiscoverServices(false)
                 .build();
-        var borrowedCohereStreamingConfig = OciGenAiCohereStreamingChatModelConfig.builder(ownedCohereStreamingConfig)
+        var borrowedCohereStreamingSyncConfig = OciGenAiCohereStreamingChatModelConfig
+                .builder(ownedCohereStreamingConfig)
+                .genAiClient(syncClient)
+                .build();
+        var borrowedCohereStreamingAsyncConfig = OciGenAiCohereStreamingChatModelConfig
+                .builder(ownedCohereStreamingConfig)
                 .genAiAsyncClient(asyncClient)
                 .build();
 
-        assertThat(ownedSyncConfig.closeModelOnShutdown(), is(true));
+        assertThat(ownedSyncConfig.closeModelOnInitializationFailure(), is(true));
+        assertThat(borrowedSyncConfig.closeModelOnInitializationFailure(), is(false));
+        assertThat(ownedCohereSyncConfig.closeModelOnInitializationFailure(), is(true));
+        assertThat(borrowedCohereSyncConfig.closeModelOnInitializationFailure(), is(false));
+        assertThat(ownedStreamingConfig.closeModelOnInitializationFailure(), is(true));
+        assertThat(borrowedStreamingSyncConfig.closeModelOnInitializationFailure(), is(false));
+        assertThat(borrowedStreamingAsyncConfig.closeModelOnInitializationFailure(), is(false));
+        assertThat(ownedCohereStreamingConfig.closeModelOnInitializationFailure(), is(true));
+        assertThat(borrowedCohereStreamingSyncConfig.closeModelOnInitializationFailure(), is(false));
+        assertThat(borrowedCohereStreamingAsyncConfig.closeModelOnInitializationFailure(), is(false));
+
+        assertThat(ownedSyncConfig.closeModelOnShutdown(), is(false));
         assertThat(borrowedSyncConfig.closeModelOnShutdown(), is(false));
-        assertThat(ownedStreamingConfig.closeModelOnShutdown(), is(true));
+        assertThat(ownedCohereSyncConfig.closeModelOnShutdown(), is(false));
+        assertThat(borrowedCohereSyncConfig.closeModelOnShutdown(), is(false));
+        assertThat(ownedStreamingConfig.closeModelOnShutdown(), is(false));
         assertThat(borrowedStreamingSyncConfig.closeModelOnShutdown(), is(false));
         assertThat(borrowedStreamingAsyncConfig.closeModelOnShutdown(), is(false));
-        assertThat(ownedCohereStreamingConfig.closeModelOnShutdown(), is(true));
-        assertThat(borrowedCohereStreamingConfig.closeModelOnShutdown(), is(false));
+        assertThat(ownedCohereStreamingConfig.closeModelOnShutdown(), is(false));
+        assertThat(borrowedCohereStreamingSyncConfig.closeModelOnShutdown(), is(false));
+        assertThat(borrowedCohereStreamingAsyncConfig.closeModelOnShutdown(), is(false));
     }
 
     @Test
@@ -163,7 +178,7 @@ class OciGenAiModelFactoryLifecycleTest {
     }
 
     @Test
-    void closesSyncModelButKeepsRegistryAsyncClientOpenForMixedProviderConfig(ServiceRegistry registry) {
+    void leavesRegistryAsyncClientOpenForMixedProviderConfig(ServiceRegistry registry) {
         var asyncClient = registry.get(GenerativeAiInferenceAsyncClient.class);
         var config = mixedAuthAndAsyncClientConfig();
         var streamingConfig = OciGenAiStreamingChatModelConfig.builder()
@@ -172,19 +187,77 @@ class OciGenAiModelFactoryLifecycleTest {
                 .build();
         var syncFactory = chatFactory(config);
         var streamingFactory = streamingFactory(config);
-        var syncModel = syncFactory.services().getFirst().get();
         long closesBeforeShutdown = closeInvocationCount(asyncClient);
 
         assertThat(streamingConfig.genAiAsyncClient().orElseThrow(), sameInstance(asyncClient));
         assertThat(streamingConfig.closeModelOnShutdown(), is(false));
-        streamingFactory.services().getFirst().get();
+        var syncModel = syncFactory.services().getFirst().get();
+        try {
+            streamingFactory.services().getFirst().get();
 
-        syncFactory.preDestroy();
-        assertClosed(syncModel);
-        assertThat(closeInvocationCount(asyncClient), is(closesBeforeShutdown));
+            syncFactory.preDestroy();
+            assertThat(syncFactory.services(), is(empty()));
+            assertThat(closeInvocationCount(asyncClient), is(closesBeforeShutdown));
 
-        streamingFactory.preDestroy();
-        assertThat(closeInvocationCount(asyncClient), is(closesBeforeShutdown));
+            streamingFactory.preDestroy();
+            assertThat(closeInvocationCount(asyncClient), is(closesBeforeShutdown));
+        } finally {
+            syncModel.close();
+        }
+    }
+
+    @Test
+    void closesRollbackOnlyModelsBeforePublicationButLeavesPublishedModelsOpen() throws Exception {
+        var rolledBackModel = LifecycleTestModel.create();
+        var publishedFirstModel = LifecycleTestModel.create();
+        var publishedSecondModel = LifecycleTestModel.create();
+        var constructionFailure = new IllegalArgumentException("first construction failed");
+        var firstModelAttempt = new AtomicInteger();
+        var secondModelAttempt = new AtomicInteger();
+        LifecycleTestModel.plan("rollback-only-first-plan", () -> firstModelAttempt.getAndIncrement() == 0
+                ? rolledBackModel
+                : publishedFirstModel);
+        LifecycleTestModel.plan("rollback-only-second-plan", () -> {
+            if (secondModelAttempt.getAndIncrement() == 0) {
+                throw constructionFailure;
+            }
+            return publishedSecondModel;
+        });
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(rollbackOnlyLifecycleModelConfig(), lifecycle);
+
+        try {
+            var actual = assertThrows(IllegalArgumentException.class, () -> factory.services().getFirst().get());
+
+            assertThat(actual, sameInstance(constructionFailure));
+            assertThat(rolledBackModel.closeCount(), is(1));
+            assertThat(rolledBackModel.closed(), is(true));
+            assertThat(LifecycleTestModel.buildCount(), is(2));
+
+            var references = factory.services();
+            assertThat(references.getFirst().get(), sameInstance(publishedFirstModel));
+            assertThat(references.get(1).get(), sameInstance(publishedSecondModel));
+            assertThat(LifecycleTestModel.buildCount(), is(4));
+
+            lifecycle.preDestroy();
+
+            assertThat(factory.services(), is(empty()));
+            assertThat(publishedFirstModel.closeCount(), is(0));
+            assertThat(publishedFirstModel.closed(), is(false));
+            assertThat(publishedSecondModel.closeCount(), is(0));
+            assertThat(publishedSecondModel.closed(), is(false));
+        } finally {
+            lifecycle.preDestroy();
+            if (!rolledBackModel.closed()) {
+                rolledBackModel.close();
+            }
+            if (!publishedFirstModel.closed()) {
+                publishedFirstModel.close();
+            }
+            if (!publishedSecondModel.closed()) {
+                publishedSecondModel.close();
+            }
+        }
     }
 
     @Test
@@ -589,17 +662,17 @@ class OciGenAiModelFactoryLifecycleTest {
     }
 
     @Test
-    void shutdownWakesServicesWaiterAndClosesLateModel() throws Exception {
+    void shutdownWakesServicesWaiterAndClosesRollbackOnlyLateModel() throws Exception {
         var model = LifecycleTestModel.create();
         var constructionStarted = new CountDownLatch(1);
         var continueConstruction = new CountDownLatch(1);
-        LifecycleTestModel.plan("shutdown-race-plan", () -> {
+        LifecycleTestModel.plan("rollback-only-shutdown-race-plan", () -> {
             constructionStarted.countDown();
             await(continueConstruction);
             return model;
         });
         var lifecycle = new LifecycleTestModelFactoryLifecycle();
-        var factory = new LifecycleTestModelFactory(oneLifecycleModelConfig("shutdown-race-plan"), lifecycle);
+        var factory = new LifecycleTestModelFactory(oneLifecycleModelConfig("rollback-only-shutdown-race-plan"), lifecycle);
         var servicesWaiterThread = new AtomicReference<Thread>();
         var servicesWaiterStarted = new CountDownLatch(1);
 
@@ -718,28 +791,6 @@ class OciGenAiModelFactoryLifecycleTest {
         return false;
     }
 
-    private static void assertClosed(OciGenAiChatModel model) {
-        var failure = assertThrows(IllegalStateException.class, () -> model.chat("ignored"));
-        assertThat(failure.getMessage(), is("OCI GenAI model is closed."));
-    }
-
-    private static Config ownedModelConfig() {
-        // language=YAML
-        var yaml = """
-                langchain4j:
-                  models:
-                    owned:
-                      provider: oci-gen-ai
-                  providers:
-                    oci-gen-ai:
-                      model-name: model-name
-                      compartment-id: compartment-id
-                      region: us-ashburn-1
-                      gen-ai-client-discover-services: false
-                """;
-        return Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
-    }
-
     private static Config twoModelConfig() {
         // language=YAML
         var yaml = """
@@ -769,6 +820,21 @@ class OciGenAiModelFactoryLifecycleTest {
                     second:
                       provider: lifecycle-test
                       plan: second-plan
+                """;
+        return Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
+    }
+
+    private static Config rollbackOnlyLifecycleModelConfig() {
+        // language=YAML
+        var yaml = """
+                langchain4j:
+                  models:
+                    first:
+                      provider: lifecycle-test
+                      plan: rollback-only-first-plan
+                    second:
+                      provider: lifecycle-test
+                      plan: rollback-only-second-plan
                 """;
         return Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
     }

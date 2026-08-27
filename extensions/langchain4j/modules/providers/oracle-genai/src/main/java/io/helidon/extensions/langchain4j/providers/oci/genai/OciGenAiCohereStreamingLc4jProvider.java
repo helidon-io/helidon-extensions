@@ -33,7 +33,8 @@ interface OciGenAiCohereStreamingLc4jProvider extends OciGenAiCohereLc4jProvider
 
     /**
      * Custom executor for asynchronous request startup and stream processing.
-     * The executor is not shut down when the model is closed.
+     * A directly supplied or registry-provided executor is borrowed and remains the responsibility of its owner; the
+     * model does not shut it down.
      *
      * @return the executor service
      */
@@ -43,6 +44,7 @@ interface OciGenAiCohereStreamingLc4jProvider extends OciGenAiCohereLc4jProvider
 
     /**
      * Custom asynchronous OCI GenAI client.
+     * A directly supplied or registry-provided client is borrowed and is not closed by the generated factory.
      *
      * @return the asynchronous OCI GenAI client
      */
@@ -50,8 +52,27 @@ interface OciGenAiCohereStreamingLc4jProvider extends OciGenAiCohereLc4jProvider
     @Option.RegistryService
     Optional<GenerativeAiInferenceAsyncClient> genAiAsyncClient();
 
+    /**
+     * Closes an internally owned model if initialization fails or is aborted, while preserving ownership of supplied
+     * synchronous and asynchronous clients.
+     *
+     * @return {@code true} when no OCI GenAI client is supplied
+     */
+    @Override
+    default boolean closeModelOnInitializationFailure() {
+        return genAiClient().isEmpty() && genAiAsyncClient().isEmpty();
+    }
+
+    /**
+     * Disables automatic model close because close may wait for streaming callbacks that can still use the registry.
+     * This also leaves internally created clients open; callers using one must close the model explicitly after all
+     * operations complete and before registry shutdown starts.
+     *
+     * @return always {@code false}
+     */
     @Override
     default boolean closeModelOnShutdown() {
-        return genAiClient().isEmpty() && genAiAsyncClient().isEmpty();
+        // A streaming callback may use the registry, so registry shutdown cannot safely wait for model close.
+        return false;
     }
 }

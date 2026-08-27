@@ -76,8 +76,27 @@ interface OciGenAiCohereLc4jProvider extends AiProvider.ModelLifecycle {
     @Option.RegistryService
     Optional<GenerativeAiInferenceClient> genAiClient();
 
+    /**
+     * Closes an internally owned model if initialization fails or is aborted, while preserving ownership of a supplied
+     * client.
+     *
+     * @return {@code true} when no OCI GenAI client is supplied
+     */
+    @Override
+    default boolean closeModelOnInitializationFailure() {
+        return genAiClient().isEmpty();
+    }
+
+    /**
+     * Disables automatic model close because LangChain4j does not track active synchronous calls, so close can race
+     * an operation. This also leaves internally created clients open; callers using one must close the model
+     * explicitly after all operations complete and before registry shutdown starts.
+     *
+     * @return always {@code false}
+     */
     @Override
     default boolean closeModelOnShutdown() {
-        return genAiClient().isEmpty();
+        // LangChain4j does not account for synchronous calls in its model lifecycle yet.
+        return false;
     }
 }

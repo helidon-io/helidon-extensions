@@ -121,6 +121,32 @@ is not created.
 | `logit-bias`        | json                    | Modifies the likelihood of specified tokens that appear in the completion. Example: `{"6395": 2, "8134": 1, "21943": 0.5, "5923": -100}`                                                                                                                                                                                                                                                                                                                                                                        |
 <!--@mdc :: -->
 
+## Streaming Client Selection and OCI Model Lifecycle
+
+Both streaming models prefer `gen-ai-async-client` when one is configured or
+discovered. Otherwise, a configured or discovered `gen-ai-client` is used for
+synchronous SDK calls on the streaming executor. If neither client is supplied,
+`auth-provider` is used to create an asynchronous client. A configured
+`executor-service` runs asynchronous request startup and stream processing; when
+it is absent, LangChain4j's shared default executor is used.
+
+Clients and executors supplied directly or obtained from the service registry
+are borrowed. The owner of an injected client or executor remains responsible
+for closing it. A custom executor and LangChain4j's shared default executor are
+never shut down by the model.
+
+This integration does not automatically close OCI models during service registry
+shutdown. Closing an OCI model can race an active synchronous request or wait
+for a streaming callback that may still need the registry.
+
+Initialization rollback uses a narrower policy. If initialization fails or is
+aborted before models are published, the factory closes an already-created OCI
+model only when its client was created internally. Models backed by injected
+clients remain unclosed, preserving ownership of those borrowed resources. Once
+a model is published successfully, an internally created client is not closed
+automatically during registry shutdown. Retain that model and close it explicitly
+after all operations complete and before service registry shutdown begins.
+
 ## OciGenAiStreamingChatModel
 
 To automatically create and add `OciGenAiStreamingChatModel` to the service

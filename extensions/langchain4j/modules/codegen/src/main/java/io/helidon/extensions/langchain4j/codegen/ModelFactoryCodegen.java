@@ -134,7 +134,8 @@ class ModelFactoryCodegen implements CodegenExtension {
         classModel.addMethod(closeModelsMethod());
         classModel.addMethod(combineFailuresMethod());
         classModel.addMethod(throwCloseFailureMethod());
-        classModel.addMethod(shouldCloseModelMethod());
+        classModel.addMethod(shouldCloseModelOnInitializationFailureMethod());
+        classModel.addMethod(shouldCloseModelOnShutdownMethod());
         classModel.addMethod(addOwnedModelMethod());
         classModel.addMethod(modelEnabledMethod(modelType, constantClassTypeName));
         classModel.addMethod(resolveModelMethod(modelType));
@@ -492,7 +493,12 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent(", ")
                 .addContent(modelType)
                 .addContentLine(">();")
-                .addContent("var ownedModels = new ")
+                .addContent("var rollbackModels = new ")
+                .addContent(ArrayList.class)
+                .addContent("<")
+                .addContent(AutoCloseable.class)
+                .addContentLine(">();")
+                .addContent("var shutdownModels = new ")
                 .addContent(ArrayList.class)
                 .addContent("<")
                 .addContent(AutoCloseable.class)
@@ -503,7 +509,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .increaseContentPadding()
                 .addContentLine("for (var name : modelNames) {")
                 .increaseContentPadding()
-                .addContentLine("buildModel(name, config, ownedModels)")
+                .addContentLine("buildModel(name, config, rollbackModels, shutdownModels)")
                 .increaseContentPadding()
                 .addContentLine(".ifPresent(model -> createdModels.put(name, model));")
                 .decreaseContentPadding()
@@ -518,7 +524,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent(HashMap.class)
                 .addContent("<>(createdModels)), ")
                 .addContent(LIST)
-                .addContentLine(".copyOf(ownedModels), null, null);")
+                .addContentLine(".copyOf(shutdownModels), null, null);")
                 .decreaseContentPadding()
                 .addContent("} catch (")
                 .addContent(RuntimeException.class)
@@ -526,7 +532,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent(Error.class)
                 .addContentLine(" e) {")
                 .increaseContentPadding()
-                .addContentLine("var cleanupFailure = closeModels(ownedModels);")
+                .addContentLine("var cleanupFailure = closeModels(rollbackModels);")
                 .addContentLine("if (cleanupFailure != null && cleanupFailure != e) {")
                 .increaseContentPadding()
                 .addContentLine("e.addSuppressed(cleanupFailure);")
@@ -601,7 +607,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                                                          TypeName lifecycleStateType,
                                                          TypeName lifecyclePhaseType) {
         builder
-                .addContentLine("var cleanupFailure = closeModels(completedState.ownedModels());")
+                .addContentLine("var cleanupFailure = closeModels(rollbackModels);")
                 .addContentLine("lifecycleLock.lock();")
                 .addContentLine("try {")
                 .increaseContentPadding()
@@ -691,7 +697,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent(lifecyclePhaseType)
                 .addContentLine(".READY) {")
                 .increaseContentPadding()
-                .addContentLine("modelsToClose = state.ownedModels();")
+                .addContentLine("modelsToClose = state.shutdownModels();")
                 .addContent("lifecycleState = new ")
                 .addContent(lifecycleStateType)
                 .addContent("(")
@@ -935,11 +941,27 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .build();
     }
 
-    private static Method shouldCloseModelMethod() {
+    private static Method shouldCloseModelOnInitializationFailureMethod() {
         return Method.builder()
                 .accessModifier(AccessModifier.PRIVATE)
                 .isStatic(true)
-                .name("shouldCloseModel")
+                .name("shouldCloseModelOnInitializationFailure")
+                .returnType(TypeNames.PRIMITIVE_BOOLEAN)
+                .addParameter(Parameter.builder()
+                                      .type(TypeNames.OBJECT)
+                                      .name("modelConfig")
+                                      .build())
+                .addContent("return !(modelConfig instanceof ")
+                .addContent(MODEL_LIFECYCLE)
+                .addContentLine(" lifecycle) || lifecycle.closeModelOnInitializationFailure();")
+                .build();
+    }
+
+    private static Method shouldCloseModelOnShutdownMethod() {
+        return Method.builder()
+                .accessModifier(AccessModifier.PRIVATE)
+                .isStatic(true)
+                .name("shouldCloseModelOnShutdown")
                 .returnType(TypeNames.PRIMITIVE_BOOLEAN)
                 .addParameter(Parameter.builder()
                                       .type(TypeNames.OBJECT)
@@ -1072,8 +1094,13 @@ class ModelFactoryCodegen implements CodegenExtension {
                                       .build())
                 .addParameter(Parameter.builder()
                                       .type(closeablesType())
-                                      .description("Models owned by this factory.")
-                                      .name("ownedModels")
+                                      .description("Models to close if initialization fails or is aborted.")
+                                      .name("rollbackModels")
+                                      .build())
+                .addParameter(Parameter.builder()
+                                      .type(closeablesType())
+                                      .description("Models to close during service registry shutdown.")
+                                      .name("shutdownModels")
                                       .build())
                 .returnType(Returns.builder()
                                     .description("New model configured with the given configuration builder.")
@@ -1094,11 +1121,18 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .decreaseContentPadding()
                 .addContentLine("}")
                 .addContentLine("var modelConfig = configBuilder.build();")
-                .addContentLine("boolean closeModel = shouldCloseModel(modelConfig);")
+                .addContentLine("boolean closeOnInitializationFailure ="
+                                        + " shouldCloseModelOnInitializationFailure(modelConfig);")
+                .addContentLine("boolean closeOnShutdown = shouldCloseModelOnShutdown(modelConfig);")
                 .addContentLine("var model = create(modelConfig);")
-                .addContentLine("if (closeModel) {")
+                .addContentLine("if (closeOnInitializationFailure) {")
                 .increaseContentPadding()
-                .addContentLine("addOwnedModel(model, ownedModels);")
+                .addContentLine("addOwnedModel(model, rollbackModels);")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .addContentLine("if (closeOnShutdown) {")
+                .increaseContentPadding()
+                .addContentLine("addOwnedModel(model, shutdownModels);")
                 .decreaseContentPadding()
                 .addContentLine("}")
                 .addContent("return ").addContent(OPTIONAL)
@@ -1210,7 +1244,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                         .type(lifecyclePhaseType))
                 .addField(it -> it.name("models")
                         .type(modelsType(modelType)))
-                .addField(it -> it.name("ownedModels")
+                .addField(it -> it.name("shutdownModels")
                         .type(closeablesType()))
                 .addField(it -> it.name("owner")
                         .type(Thread.class))
