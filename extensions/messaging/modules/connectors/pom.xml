@@ -32,7 +32,6 @@
     <name>Helidon Extensions Messaging Connectors Project</name>
 
     <modules>
-        <module>file</module>
         <module>kafka</module>
         <module>jms</module>
         <module>pulsar</module>
