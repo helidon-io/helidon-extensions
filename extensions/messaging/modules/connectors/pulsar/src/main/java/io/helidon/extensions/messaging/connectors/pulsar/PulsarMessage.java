@@ -21,9 +21,14 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 
 import io.helidon.messaging.Message;
+import io.helidon.messaging.MessageHeaders;
 
 /**
  * Pulsar-specific immutable message envelope without exposing Pulsar client types.
+ * <p>
+ * Pulsar string properties are exposed as ordered portable text headers. Pulsar properties cannot represent typed
+ * values or duplicate names, so the outgoing connector rejects those header shapes instead of stringifying or
+ * dropping them.
  *
  * @param <T> payload type
  */
@@ -31,9 +36,10 @@ public interface PulsarMessage<T> extends Message<T> {
     /**
      * Create a payload-only outgoing Pulsar message.
      *
-     * @param entity payload
+     * @param entity non-null payload
      * @param <T> payload type
      * @return immutable message
+     * @throws NullPointerException if {@code entity} is {@code null}
      */
     static <T> PulsarMessage<T> create(T entity) {
         return builder(entity).build();
@@ -42,9 +48,10 @@ public interface PulsarMessage<T> extends Message<T> {
     /**
      * Create an outgoing Pulsar message builder.
      *
-     * @param entity payload
+     * @param entity non-null payload
      * @param <T> payload type
      * @return builder
+     * @throws NullPointerException if {@code entity} is {@code null}
      */
     static <T> Builder<T> builder(T entity) {
         return new Builder<>(entity);
@@ -155,14 +162,14 @@ public interface PulsarMessage<T> extends Message<T> {
      */
     final class Builder<T> {
         private final T entity;
-        private final java.util.Map<String, String> headers = new java.util.LinkedHashMap<>();
+        private final MessageHeaders.Builder headers = MessageHeaders.builder();
         private String key;
         private byte[] keyBytes;
         private byte[] orderingKey;
         private Long eventTime;
 
         private Builder(T entity) {
-            this.entity = entity;
+            this.entity = java.util.Objects.requireNonNull(entity, "entity");
         }
 
         /**
@@ -201,14 +208,14 @@ public interface PulsarMessage<T> extends Message<T> {
         }
 
         /**
-         * Add or replace an application property.
+         * Add or replace a portable text header. The header is written as a Pulsar string property.
          *
          * @param name property name
          * @param value property value
          * @return updated builder
          */
         public Builder<T> header(String name, String value) {
-            headers.put(java.util.Objects.requireNonNull(name), java.util.Objects.requireNonNull(value));
+            headers.set(name, value);
             return this;
         }
 
@@ -232,7 +239,7 @@ public interface PulsarMessage<T> extends Message<T> {
          * @return immutable Pulsar message
          */
         public PulsarMessage<T> build() {
-            return PulsarMessageImpl.outgoing(entity, headers, key, keyBytes, orderingKey, eventTime);
+            return PulsarMessageImpl.outgoing(entity, headers.build(), key, keyBytes, orderingKey, eventTime);
         }
     }
 }

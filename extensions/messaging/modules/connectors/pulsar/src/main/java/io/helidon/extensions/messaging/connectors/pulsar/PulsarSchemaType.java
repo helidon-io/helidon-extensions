@@ -26,7 +26,7 @@ import java.time.LocalTime;
 import java.util.Date;
 import java.util.Objects;
 
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.MessagingException;
 
 import org.apache.pulsar.client.api.Schema;
@@ -77,10 +77,10 @@ public enum PulsarSchemaType {
     LOCAL_DATE_TIME;
 
     @SuppressWarnings("unchecked")
-    Schema<Object> schema(ConnectorConfig.Direction direction) {
+    Schema<Object> schema(ConnectorDirection direction) {
         Objects.requireNonNull(direction);
         Schema<?> schema = switch (this) {
-        case AUTO -> direction == ConnectorConfig.Direction.INCOMING
+        case AUTO -> direction == ConnectorDirection.INCOMING
                 ? Schema.AUTO_CONSUME()
                 : Schema.AUTO_PRODUCE_BYTES();
         case STRING -> Schema.STRING;
@@ -104,7 +104,7 @@ public enum PulsarSchemaType {
         return (Schema<Object>) schema;
     }
 
-    Object snapshot(Object value, ConnectorConfig.Direction direction) {
+    Object snapshot(Object value, ConnectorDirection direction) {
         Objects.requireNonNull(direction);
         if (value == null) {
             return null;
@@ -119,9 +119,9 @@ public enum PulsarSchemaType {
         return PulsarMessageImpl.snapshotEntity(value);
     }
 
-    private Class<?> payloadType(ConnectorConfig.Direction direction) {
+    private Class<?> payloadType(ConnectorDirection direction) {
         return switch (this) {
-        case AUTO -> direction == ConnectorConfig.Direction.INCOMING ? GenericRecord.class : byte[].class;
+        case AUTO -> direction == ConnectorDirection.INCOMING ? GenericRecord.class : byte[].class;
         case STRING -> String.class;
         case BYTES -> byte[].class;
         case BYTEBUFFER -> ByteBuffer.class;

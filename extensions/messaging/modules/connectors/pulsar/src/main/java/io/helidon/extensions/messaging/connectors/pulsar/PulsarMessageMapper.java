@@ -17,6 +17,7 @@
 package io.helidon.extensions.messaging.connectors.pulsar;
 
 import java.util.Base64;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -24,7 +25,10 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import io.helidon.messaging.DeadLetterMessage;
+import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
+import io.helidon.messaging.MessageHeader;
+import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
 
 import org.apache.pulsar.client.api.MessageId;
@@ -70,7 +74,8 @@ final class PulsarMessageMapper {
     }
 
     static PulsarMessage<Object> metadataOnly(org.apache.pulsar.client.api.Message<?> message) {
-        return PulsarMessageImpl.incoming(null, message);
+        Objects.requireNonNull(message);
+        return PulsarMessageImpl.incoming(Objects.requireNonNull(message.getData(), "Pulsar message data"), message);
     }
 
     static CompletableFuture<MessageId> send(Producer<Object> producer,
@@ -96,22 +101,13 @@ final class PulsarMessageMapper {
 
     private static OutgoingMapping outgoingMapping(Message<?> message) {
         if (!(message instanceof DeadLetterMessage<?> deadLetterMessage)) {
-            return new OutgoingMapping(copyHeaders(message.headers()),
+            return new OutgoingMapping(copyHeaders(message.headers(), Set.of()),
                                        message instanceof PulsarMessage<?> pulsarMessage ? pulsarMessage : null);
         }
         Message<?> original = deadLetterMessage.originalMessage();
         PulsarMessage<?> pulsarMessage = original instanceof PulsarMessage<?> actual ? actual : null;
-        Map<String, String> properties = new LinkedHashMap<>();
-        copyHeaders(original.headers()).forEach((name, value) -> {
-            if (!RESERVED_HEADERS.contains(name)) {
-                properties.put(name, value);
-            }
-        });
-        copyHeaders(deadLetterMessage.headers()).forEach((name, value) -> {
-            if (!RESERVED_HEADERS.contains(name)) {
-                properties.put(name, value);
-            }
-        });
+        Map<String, String> properties = new LinkedHashMap<>(
+                copyHeaders(deadLetterMessage.headers(), RESERVED_HEADERS));
         properties.put(DeadLetterMessage.SOURCE_CHANNEL_HEADER, deadLetterMessage.sourceChannel());
         properties.put(DeadLetterMessage.ATTEMPTS_HEADER, String.valueOf(deadLetterMessage.attempts()));
         properties.put(DeadLetterMessage.FAILURE_TYPE_HEADER, deadLetterMessage.failureType());
@@ -128,14 +124,31 @@ final class PulsarMessageMapper {
             pulsarMessage.redeliveryCount().ifPresent(value -> properties.put(DLQ_ORIGINAL_REDELIVERY_COUNT_HEADER,
                                                                                String.valueOf(value)));
         }
-        return new OutgoingMapping(Map.copyOf(properties), pulsarMessage);
+        return new OutgoingMapping(immutableProperties(properties), pulsarMessage);
     }
 
-    private static Map<String, String> copyHeaders(Map<String, String> headers) {
+    private static Map<String, String> copyHeaders(MessageHeaders headers, Set<String> excludedNames) {
         Map<String, String> result = new LinkedHashMap<>();
-        Objects.requireNonNull(headers).forEach((name, value) -> result.put(Objects.requireNonNull(name),
-                                                                           Objects.requireNonNull(value)));
-        return Map.copyOf(result);
+        for (MessageHeader header : Objects.requireNonNull(headers)) {
+            if (excludedNames.contains(header.name())) {
+                continue;
+            }
+            HeaderValue value = header.value();
+            if (!(value instanceof HeaderValue.TextValue textValue)) {
+                throw new MessagingException("Pulsar properties support only text message headers; header '"
+                                                     + header.name() + "' has value type "
+                                                     + value.getClass().getSimpleName());
+            }
+            if (result.putIfAbsent(header.name(), textValue.value()) != null) {
+                throw new MessagingException("Pulsar properties do not support duplicate message header '"
+                                                     + header.name() + "'");
+            }
+        }
+        return immutableProperties(result);
+    }
+
+    private static Map<String, String> immutableProperties(Map<String, String> properties) {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(properties));
     }
 
     private record OutgoingMapping(Map<String, String> properties, PulsarMessage<?> pulsarMessage) {

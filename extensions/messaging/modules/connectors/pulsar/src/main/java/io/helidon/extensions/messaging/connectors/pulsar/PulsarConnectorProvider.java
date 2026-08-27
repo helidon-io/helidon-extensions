@@ -22,7 +22,7 @@ import java.util.Objects;
 import java.util.function.Supplier;
 
 import io.helidon.config.Config;
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnector;
 import io.helidon.messaging.IncomingConnectorProvider;
 import io.helidon.messaging.OutgoingConnector;
@@ -107,9 +107,9 @@ public final class PulsarConnectorProvider
      * @return incoming connector
      */
     public IncomingConnector createIncomingConnector(PulsarConnectorConfig config) {
-        requireDirection(config, ConnectorConfig.Direction.INCOMING);
+        requireDirection(config, ConnectorDirection.INCOMING);
         PulsarSchemaResolver.ResolvedSchema schema = PulsarSchemaResolver.resolve(config,
-                                                                                  ConnectorConfig.Direction.INCOMING,
+                                                                                  ConnectorDirection.INCOMING,
                                                                                   schemaProviders);
         return incomingFactory.createIncomingConnector(config, schema);
     }
@@ -126,14 +126,14 @@ public final class PulsarConnectorProvider
      * @return outgoing connector
      */
     public OutgoingConnector createOutgoingConnector(PulsarConnectorConfig config) {
-        requireDirection(config, ConnectorConfig.Direction.OUTGOING);
+        requireDirection(config, ConnectorDirection.OUTGOING);
         PulsarSchemaResolver.ResolvedSchema schema = PulsarSchemaResolver.resolve(config,
-                                                                                  ConnectorConfig.Direction.OUTGOING,
+                                                                                  ConnectorDirection.OUTGOING,
                                                                                   schemaProviders);
         return outgoingFactory.createOutgoingConnector(config, schema);
     }
 
-    private static void requireDirection(PulsarConnectorConfig config, ConnectorConfig.Direction expected) {
+    private static void requireDirection(PulsarConnectorConfig config, ConnectorDirection expected) {
         Objects.requireNonNull(config);
         if (config.direction() != expected) {
             throw new IllegalArgumentException("Pulsar connector configuration for channel " + config.channel()

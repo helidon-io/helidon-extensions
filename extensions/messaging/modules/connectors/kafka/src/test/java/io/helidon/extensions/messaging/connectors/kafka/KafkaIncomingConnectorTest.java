@@ -40,6 +40,8 @@ import io.helidon.messaging.BatchItemStatus;
 import io.helidon.messaging.ConnectorConfig;
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
+import io.helidon.messaging.ConnectorDirection;
+import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.IncomingConnector;
 import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.Message;
@@ -448,9 +450,12 @@ class KafkaIncomingConnectorTest {
 
         assertThat(events, is(List.of("dispatch", "commit")));
         assertThat(context.messages().stream().map(Message::entity).toList(), is(List.of("first", "second")));
-        assertThat(context.messages().get(0).header("null-header").isEmpty(), is(true));
-        assertThat(context.messages().get(0).header("trace-id").orElseThrow(), is("Příliš žluťoučký"));
-        assertThat(context.messages().get(1).header("source").orElseThrow(), is("kafka"));
+        assertThat(context.messages().get(0).headerValue("null-header").orElseThrow(),
+                   is(HeaderValue.nullValue()));
+        assertThat(context.messages().get(0).headerValue("trace-id").orElseThrow(),
+                   is(HeaderValue.binary("Příliš žluťoučký".getBytes(StandardCharsets.UTF_8))));
+        assertThat(context.messages().get(1).headerValue("source").orElseThrow(),
+                   is(HeaderValue.binary("kafka".getBytes(StandardCharsets.UTF_8))));
         assertThat(context.messages().get(0), instanceOf(KafkaMessage.class));
         KafkaMessage<?, ?> kafkaMessage = (KafkaMessage<?, ?>) context.messages().get(0);
         assertThat(kafkaMessage.key().orElseThrow(), is("audit-key"));
@@ -781,6 +786,71 @@ class KafkaIncomingConnectorTest {
         assertThat(runtimeAttempts.get(1), sameInstance(runtimeAttempts.getFirst()));
         assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(6L));
         assertThat(consumer.committedOffsets().get(SECOND_TOPIC_PARTITION).offset(), is(11L));
+        assertThat(consumer.commitCount(), is(1));
+    }
+
+    @Test
+    void testTombstoneEntersPreDispatchFailurePolicyWithMetadataAndMappedSibling() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer,
+                        new ConsumerRecord<>(TOPIC,
+                                             TOPIC_PARTITION.partition(),
+                                             0,
+                                             123L,
+                                             TimestampType.CREATE_TIME,
+                                             ConsumerRecord.NULL_SIZE,
+                                             ConsumerRecord.NULL_SIZE,
+                                             "tombstone-key",
+                                             null,
+                                             new RecordHeaders().add("trace", new byte[] {1, 2}),
+                                             Optional.of(7)),
+                        record(1, "second", new RecordHeaders()));
+        AtomicReference<MessageBatch<?>> failedBatch = new AtomicReference<>();
+        AtomicReference<BatchDeliveryException> mappingFailure = new AtomicReference<>();
+        RecordingContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public ConnectorDeliveryReservation reserveDelivery() {
+                return new ConnectorDeliveryReservation() {
+                    @Override
+                    public ConnectorDelivery start(MessageBatch<?> batch) {
+                        throw new AssertionError("A mapped tombstone poll must start as failed");
+                    }
+
+                    @Override
+                    public ConnectorDelivery startFailed(MessageBatch<?> batch, RuntimeException failure) {
+                        failedBatch.set(batch);
+                        mappingFailure.set((BatchDeliveryException) failure);
+                        return new RuntimeDelivery(batch, () -> { });
+                    }
+
+                    @Override
+                    public Optional<ConnectorDelivery> tryStart(MessageBatch<?> batch) {
+                        throw new AssertionError("A mapped tombstone poll must start as failed");
+                    }
+
+                    @Override
+                    public void close() {
+                    }
+                };
+            }
+        };
+        AtomicReference<IncomingConnectorHarness> connectorRef = new AtomicReference<>();
+        consumer.afterCommit(() -> connectorRef.get().close());
+        IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
+        connectorRef.set(connector);
+
+        connector.createIncomingConnector(config()).run(context);
+
+        MessageBatch<?> batch = failedBatch.get();
+        assertThat(batch.size(), is(2));
+        KafkaMessageImpl<?, ?> tombstone = (KafkaMessageImpl<?, ?>) batch.get(0);
+        assertThat(tombstone.entityAvailable(), is(false));
+        assertThat(tombstone.key().orElseThrow(), is("tombstone-key"));
+        assertArrayEquals(new byte[] {1, 2},
+                          ((HeaderValue.BinaryValue) tombstone.headerValue("trace").orElseThrow()).value());
+        assertThat(batch.get(1).entity(), is("second"));
+        assertThat(mappingFailure.get().outcome(0).status(), is(BatchItemStatus.FAILED));
+        assertThat(mappingFailure.get().outcome(1).status(), is(BatchItemStatus.NOT_ATTEMPTED));
         assertThat(consumer.commitCount(), is(1));
     }
 
@@ -1796,7 +1866,7 @@ class KafkaIncomingConnectorTest {
 
     private static KafkaConnectorConfig config(Duration closeTimeout, Map<String, String> properties) {
         return KafkaConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.INCOMING)
+                .direction(ConnectorDirection.INCOMING)
                 .channel("audit")
                 .connector(KafkaConnectorProvider.CONNECTOR_TYPE)
                 .bootstrapServers("localhost:9092")

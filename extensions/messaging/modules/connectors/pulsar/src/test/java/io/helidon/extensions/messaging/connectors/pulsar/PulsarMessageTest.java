@@ -16,8 +16,12 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.List;
+
+import io.helidon.messaging.MessageHeader;
 
 import org.junit.jupiter.api.Test;
 
@@ -26,6 +30,23 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PulsarMessageTest {
+    @Test
+    void rejectsNullPayloads() {
+        assertThrows(NullPointerException.class, () -> PulsarMessage.builder(null));
+    }
+
+    @Test
+    void failedMappingEnvelopeUsesDefensiveRawWirePayload() {
+        PulsarMessage<Object> message = PulsarMessageMapper.metadataOnly(
+                PulsarTestSupport.nativeMessage("undecodable", 11));
+
+        byte[] first = (byte[]) message.entity();
+        assertThat(new String(first, StandardCharsets.UTF_8), is("undecodable"));
+        first[0] = 0;
+        assertThat(new String((byte[]) message.entity(), StandardCharsets.UTF_8), is("undecodable"));
+        assertThat(message.header("trace-id").orElseThrow(), is("pulsar-trace"));
+    }
+
     @Test
     void outgoingMessageDefensivelyCopiesBinaryState() {
         byte[] entity = {1, 2};
@@ -45,7 +66,7 @@ class PulsarMessageTest {
         assertThat(Arrays.equals(message.keyBytes().orElseThrow(), new byte[] {3, 4}), is(true));
         assertThat(Arrays.equals(message.orderingKey().orElseThrow(), new byte[] {5, 6}), is(true));
         assertThat(message.base64EncodedKey(), is(true));
-        assertThat(message.headers(), is(Map.of("trace-id", "abc")));
+        assertThat(message.header("trace-id").orElseThrow(), is("abc"));
         assertThat(message.eventTime().orElseThrow(), is(7L));
         assertThat(message.topic().isEmpty(), is(true));
 
@@ -53,17 +74,23 @@ class PulsarMessageTest {
         message.keyBytes().orElseThrow()[0] = 8;
         assertThat(Arrays.equals(message.entity(), new byte[] {1, 2}), is(true));
         assertThat(Arrays.equals(message.keyBytes().orElseThrow(), new byte[] {3, 4}), is(true));
-        assertThrows(UnsupportedOperationException.class, () -> message.headers().put("x", "y"));
+        assertThrows(UnsupportedOperationException.class, () -> message.headers().entries().clear());
     }
 
     @Test
     void incomingMessageSnapshotsTransportMetadataWithoutPublicPulsarTypes() {
+        LinkedHashMap<String, String> properties = new LinkedHashMap<>();
+        properties.put("first", "one");
+        properties.put("second", "two");
         PulsarMessage<Object> message = PulsarMessageImpl.incoming(
                 "payload",
-                PulsarTestSupport.nativeMessage("payload", 7));
+                PulsarTestSupport.nativeMessage("payload", 7, properties));
 
         assertThat(message.entity(), is("payload"));
-        assertThat(message.headers(), is(Map.of("trace-id", "pulsar-trace")));
+        assertThat(message.headers().entries().stream().map(MessageHeader::name).toList(),
+                   is(List.of("first", "second")));
+        assertThat(message.header("first").orElseThrow(), is("one"));
+        assertThat(message.header("second").orElseThrow(), is("two"));
         assertThat(message.topic().orElseThrow(), is("persistent://public/default/input"));
         assertThat(Arrays.equals(message.messageId().orElseThrow(), new byte[] {1, 2, 3}), is(true));
         assertThat(message.publishTime().orElseThrow(), is(1234L));

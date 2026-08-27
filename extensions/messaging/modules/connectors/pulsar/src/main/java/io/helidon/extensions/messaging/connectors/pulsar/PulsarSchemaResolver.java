@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
 
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 
 import org.apache.pulsar.client.api.Schema;
 
@@ -31,7 +31,7 @@ final class PulsarSchemaResolver {
     }
 
     static ResolvedSchema resolve(PulsarConnectorConfig config,
-                                  ConnectorConfig.Direction direction,
+                                  ConnectorDirection direction,
                                   Supplier<List<PulsarSchemaProvider>> providers) {
         Objects.requireNonNull(config);
         Objects.requireNonNull(direction);
@@ -119,7 +119,7 @@ final class PulsarSchemaResolver {
     record ResolvedSchema(Schema<Object> schema,
                           PulsarSchemaType builtIn,
                           String name,
-                          ConnectorConfig.Direction direction) {
+                          ConnectorDirection direction) {
         ResolvedSchema {
             Objects.requireNonNull(schema);
             Objects.requireNonNull(name);

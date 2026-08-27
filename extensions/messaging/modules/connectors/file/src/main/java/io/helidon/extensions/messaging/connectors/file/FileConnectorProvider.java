@@ -19,7 +19,7 @@ package io.helidon.extensions.messaging.connectors.file;
 import java.util.Objects;
 
 import io.helidon.config.Config;
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnector;
 import io.helidon.messaging.IncomingConnectorProvider;
 import io.helidon.messaging.OutgoingConnector;
@@ -57,7 +57,7 @@ public final class FileConnectorProvider
      * @return incoming connector
      */
     public IncomingConnector createIncomingConnector(FileConnectorConfig config) {
-        requireDirection(config, ConnectorConfig.Direction.INCOMING);
+        requireDirection(config, ConnectorDirection.INCOMING);
         return FileIncomingConnector.createConnector(config);
     }
 
@@ -73,11 +73,11 @@ public final class FileConnectorProvider
      * @return outgoing connector
      */
     public OutgoingConnector createOutgoingConnector(FileConnectorConfig config) {
-        requireDirection(config, ConnectorConfig.Direction.OUTGOING);
+        requireDirection(config, ConnectorDirection.OUTGOING);
         return FileOutgoingConnector.createConnector(config);
     }
 
-    private static void requireDirection(FileConnectorConfig config, ConnectorConfig.Direction expected) {
+    private static void requireDirection(FileConnectorConfig config, ConnectorDirection expected) {
         Objects.requireNonNull(config);
         if (config.direction() != expected) {
             throw new IllegalArgumentException("File connector configuration for channel " + config.channel()

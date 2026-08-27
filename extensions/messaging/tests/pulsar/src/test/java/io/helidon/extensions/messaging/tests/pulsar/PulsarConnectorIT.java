@@ -49,6 +49,7 @@ import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonOut
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonSchemaProvider;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.OutgoingSender;
 import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingRuntime;
@@ -241,7 +242,7 @@ class PulsarConnectorIT {
     private static <T> void roundTrip(PulsarClient client, SchemaRoundTrip<T> schemaCase) throws Exception {
         String topic = uniqueName("schema-" + schemaCase.type());
         Config config = Config.just(ConfigSources.create(Map.ofEntries(
-                Map.entry("direction", ConnectorConfig.Direction.OUTGOING.name()),
+                Map.entry("direction", ConnectorDirection.OUTGOING.name()),
                 Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, uniqueName("schema-out")),
                 Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, PulsarConnectorProvider.CONNECTOR_TYPE),
                 Map.entry(PulsarConnectorConfig.SERVICE_URL_PROPERTY, PULSAR.getPulsarBrokerUrl()),
@@ -363,7 +364,7 @@ class PulsarConnectorIT {
                 assertThat(message, notNullValue());
                 assertThat(message.entity(), is("incoming message"));
                 assertThat(message.key(), is(Optional.of("incoming-key")));
-                assertThat(message.headers().get("trace-id"), is("incoming-trace"));
+                assertThat(message.header("trace-id").orElseThrow(), is("incoming-trace"));
                 assertThat(message.topic(), is(Optional.of(canonicalTopic(topic))));
                 assertThat(message.messageId().isPresent(), is(true));
                 assertThat(message.messageId().orElseThrow().length > 0, is(true));

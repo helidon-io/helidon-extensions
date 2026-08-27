@@ -56,6 +56,7 @@ import io.helidon.messaging.BatchItemStatus;
 import io.helidon.messaging.ConnectorConfig;
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.ConnectorProvider;
 import io.helidon.messaging.IncomingConnector;
 import io.helidon.messaging.IncomingConnectorContext;
@@ -98,7 +99,7 @@ class FileConnectorTest {
     void testMissingPathFails() {
         assertThrows(RuntimeException.class,
                      () -> FileConnectorConfig.builder()
-                             .direction(ConnectorConfig.Direction.OUTGOING)
+                             .direction(ConnectorDirection.OUTGOING)
                              .channel("audit")
                              .connector(FileConnectorProvider.CONNECTOR_TYPE)
                              .build());
@@ -136,7 +137,7 @@ class FileConnectorTest {
                 FileConnectorConfig.MAX_LINE_BYTES_PROPERTY, "2048",
                 FileConnectorConfig.MAX_BATCH_BYTES_PROPERTY, "4096"))));
 
-        assertThat(config.direction(), is(ConnectorConfig.Direction.OUTGOING));
+        assertThat(config.direction(), is(ConnectorDirection.OUTGOING));
         assertThat(config.channel(), is("audit"));
         assertThat(config.connector(), is(FileConnectorProvider.CONNECTOR_TYPE));
         assertThat(config.path(), is(auditLog));
@@ -2324,7 +2325,7 @@ class FileConnectorTest {
 
     private static FileConnectorConfig config(Path path, String lineSeparator) {
         return FileConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.OUTGOING)
+                .direction(ConnectorDirection.OUTGOING)
                 .channel("audit")
                 .connector(FileConnectorProvider.CONNECTOR_TYPE)
                 .path(path)
@@ -2364,7 +2365,7 @@ class FileConnectorTest {
                                                       int maxLineBytes,
                                                       long maxBatchBytes) {
         return FileConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.INCOMING)
+                .direction(ConnectorDirection.INCOMING)
                 .channel("events")
                 .connector(FileConnectorProvider.CONNECTOR_TYPE)
                 .path(path)

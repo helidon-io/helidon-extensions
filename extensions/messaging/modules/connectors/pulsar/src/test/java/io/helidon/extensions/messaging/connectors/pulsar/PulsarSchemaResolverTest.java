@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 
 import org.apache.pulsar.client.api.Schema;
 import org.junit.jupiter.api.Test;
@@ -39,8 +39,8 @@ class PulsarSchemaResolverTest {
     void builtInSchemaDoesNotLoadCustomProviders() {
         AtomicBoolean loaded = new AtomicBoolean();
         PulsarSchemaResolver.ResolvedSchema resolved = PulsarSchemaResolver.resolve(
-                config(ConnectorConfig.Direction.OUTGOING, null),
-                ConnectorConfig.Direction.OUTGOING,
+                config(ConnectorDirection.OUTGOING, null),
+                ConnectorDirection.OUTGOING,
                 () -> {
                     loaded.set(true);
                     throw new AssertionError("schema providers must stay lazy for built-ins");
@@ -50,20 +50,20 @@ class PulsarSchemaResolverTest {
         assertThat(resolved.schema(), sameInstance(Schema.STRING));
         assertThat(resolved.builtIn(), is(PulsarSchemaType.STRING));
         assertThat(resolved.name(), is("STRING"));
-        assertThat(resolved.direction(), is(ConnectorConfig.Direction.OUTGOING));
+        assertThat(resolved.direction(), is(ConnectorDirection.OUTGOING));
     }
 
     @Test
     void selectedProviderOverridesBuiltInAndIsExactAndCaseSensitive() {
         TestProvider provider = new TestProvider("order-json", Schema.INT32);
         PulsarConnectorConfig config = PulsarConnectorConfig.builder(
-                        config(ConnectorConfig.Direction.OUTGOING, "order-json"))
+                        config(ConnectorDirection.OUTGOING, "order-json"))
                 .schema(PulsarSchemaType.BYTES)
                 .build();
 
         PulsarSchemaResolver.ResolvedSchema resolved = PulsarSchemaResolver.resolve(
                 config,
-                ConnectorConfig.Direction.OUTGOING,
+                ConnectorDirection.OUTGOING,
                 () -> List.of(provider));
 
         assertThat(resolved.schema(), sameInstance(Schema.INT32));
@@ -73,8 +73,8 @@ class PulsarSchemaResolverTest {
 
         IllegalArgumentException failure = assertThrows(
                 IllegalArgumentException.class,
-                () -> PulsarSchemaResolver.resolve(config(ConnectorConfig.Direction.OUTGOING, "ORDER-JSON"),
-                                                   ConnectorConfig.Direction.OUTGOING,
+                () -> PulsarSchemaResolver.resolve(config(ConnectorDirection.OUTGOING, "ORDER-JSON"),
+                                                   ConnectorDirection.OUTGOING,
                                                    () -> List.of(provider)));
         assertThat(failure.getMessage(), containsString("No Pulsar schema provider named 'ORDER-JSON'"));
         assertThat(failure.getMessage(), containsString(CHANNEL));
@@ -89,12 +89,12 @@ class PulsarSchemaResolverTest {
         });
 
         PulsarSchemaResolver.ResolvedSchema incoming = PulsarSchemaResolver.resolve(
-                config(ConnectorConfig.Direction.INCOMING, "shared"),
-                ConnectorConfig.Direction.INCOMING,
+                config(ConnectorDirection.INCOMING, "shared"),
+                ConnectorDirection.INCOMING,
                 () -> List.of(provider));
         PulsarSchemaResolver.ResolvedSchema outgoing = PulsarSchemaResolver.resolve(
-                config(ConnectorConfig.Direction.OUTGOING, "shared"),
-                ConnectorConfig.Direction.OUTGOING,
+                config(ConnectorDirection.OUTGOING, "shared"),
+                ConnectorDirection.OUTGOING,
                 () -> List.of(provider));
 
         assertThat(incoming.schema(), sameInstance(Schema.INT64));
@@ -128,8 +128,8 @@ class PulsarSchemaResolverTest {
     void explicitProviderRejectsInvalidRegistryResults() {
         IllegalArgumentException nullList = assertThrows(
                 IllegalArgumentException.class,
-                () -> PulsarSchemaResolver.resolve(config(ConnectorConfig.Direction.OUTGOING, "custom"),
-                                                   ConnectorConfig.Direction.OUTGOING,
+                () -> PulsarSchemaResolver.resolve(config(ConnectorDirection.OUTGOING, "custom"),
+                                                   ConnectorDirection.OUTGOING,
                                                    () -> null));
         assertThat(nullList.getMessage(), containsString("lookup returned null"));
         assertThat(nullList.getMessage(), containsString(CHANNEL));
@@ -178,7 +178,7 @@ class PulsarSchemaResolverTest {
                 return Schema.STRING;
             }));
         });
-        PulsarConnectorConfig outgoing = config(ConnectorConfig.Direction.OUTGOING, "custom");
+        PulsarConnectorConfig outgoing = config(ConnectorDirection.OUTGOING, "custom");
 
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
                                                          () -> provider.createIncomingConnector(outgoing));
@@ -199,7 +199,7 @@ class PulsarSchemaResolverTest {
         PulsarConnectorProvider connectorProvider = new PulsarConnectorProvider(providers);
         providers[0] = new TestProvider("replacement", Schema.BYTES);
 
-        connectorProvider.createOutgoingConnector(config(ConnectorConfig.Direction.OUTGOING, "custom"));
+        connectorProvider.createOutgoingConnector(config(ConnectorDirection.OUTGOING, "custom"));
 
         assertThat(invocations.get(), is(1));
         assertThrows(NullPointerException.class,
@@ -209,12 +209,12 @@ class PulsarSchemaResolverTest {
     }
 
     private static PulsarSchemaResolver.ResolvedSchema resolve(String name, List<PulsarSchemaProvider> providers) {
-        return PulsarSchemaResolver.resolve(config(ConnectorConfig.Direction.OUTGOING, name),
-                                            ConnectorConfig.Direction.OUTGOING,
+        return PulsarSchemaResolver.resolve(config(ConnectorDirection.OUTGOING, name),
+                                            ConnectorDirection.OUTGOING,
                                             () -> providers);
     }
 
-    private static PulsarConnectorConfig config(ConnectorConfig.Direction direction, String schemaProvider) {
+    private static PulsarConnectorConfig config(ConnectorDirection direction, String schemaProvider) {
         PulsarConnectorConfig.Builder builder = PulsarConnectorConfig.builder()
                 .direction(direction)
                 .channel(CHANNEL)

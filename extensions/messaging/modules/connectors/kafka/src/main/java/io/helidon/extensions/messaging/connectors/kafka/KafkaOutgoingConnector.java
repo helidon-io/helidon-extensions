@@ -34,10 +34,13 @@ import java.util.concurrent.locks.ReentrantLock;
 import io.helidon.messaging.BatchAtomicity;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
+import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessageHeader;
+import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.OutgoingConnector;
 
@@ -90,10 +93,10 @@ final class KafkaOutgoingConnector {
 
     OutgoingConnector createOutgoingConnector(KafkaConnectorConfig config) {
         Objects.requireNonNull(config);
-        if (config.direction() != ConnectorConfig.Direction.OUTGOING) {
+        if (config.direction() != ConnectorDirection.OUTGOING) {
             throw new IllegalArgumentException("Kafka connector configuration for channel " + config.channel()
                                                        + " has direction " + config.direction()
-                                                       + ", expected " + ConnectorConfig.Direction.OUTGOING);
+                                                       + ", expected " + ConnectorDirection.OUTGOING);
         }
         return new KafkaConnector(config.topic(),
                                   config.sendTimeout(),
@@ -400,7 +403,7 @@ final class KafkaOutgoingConnector {
                 return enqueue(current, kafkaMessage);
             }
             RecordHeaders headers = new RecordHeaders();
-            message.headers().forEach((name, value) -> headers.add(name, value.getBytes(StandardCharsets.UTF_8)));
+            addPortableHeaders(headers, message.headers());
             ProducerRecord<Object, Object> record = new ProducerRecord<>(topic,
                                                                          null,
                                                                          null,
@@ -421,7 +424,7 @@ final class KafkaOutgoingConnector {
             Message<?> originalMessage = message.originalMessage();
             if (!(originalMessage instanceof KafkaMessage<?, ?> kafkaMessage)) {
                 RecordHeaders headers = new RecordHeaders();
-                message.headers().forEach((name, value) -> addUtf8Header(headers, name, value));
+                addPortableHeaders(headers, message.headers());
                 return enqueue(current, null, message.entity(), headers);
             }
 
@@ -465,7 +468,11 @@ final class KafkaOutgoingConnector {
                              kafkaMessage.leaderEpoch().isPresent()
                                      ? kafkaMessage.leaderEpoch().getAsInt()
                                      : null);
-            return enqueue(current, kafkaMessage.key().orElse(null), message.entity(), headers);
+            Object entity = originalMessage instanceof KafkaMessageImpl<?, ?> originalImpl
+                    && !originalImpl.entityAvailable()
+                    ? null
+                    : message.entity();
+            return enqueue(current, kafkaMessage.key().orElse(null), entity, headers);
         }
 
         private Future<RecordMetadata> enqueue(Producer<Object, Object> current, KafkaMessage<?, ?> message) {
@@ -609,14 +616,41 @@ final class KafkaOutgoingConnector {
         private void mergePortableWrapperHeaders(RecordHeaders headers,
                                                  DeadLetterMessage<?> message,
                                                  Message<?> originalMessage) {
-            Map<String, String> originalHeaders = originalMessage.headers();
-            message.headers().forEach((name, value) -> {
-                if (!DLQ_RESERVED_HEADERS.contains(name)
-                        && (!originalHeaders.containsKey(name)
-                        || !Objects.equals(originalHeaders.get(name), value))) {
-                    addUtf8Header(headers, name, value);
+            List<MessageHeader> unmatchedOriginalHeaders = new ArrayList<>(originalMessage.headers().entries());
+            for (MessageHeader header : message.headers()) {
+                if (DLQ_RESERVED_HEADERS.contains(header.name())) {
+                    continue;
                 }
-            });
+                int originalIndex = unmatchedOriginalHeaders.indexOf(header);
+                if (originalIndex >= 0) {
+                    unmatchedOriginalHeaders.remove(originalIndex);
+                    continue;
+                }
+                addPortableHeader(headers, header);
+            }
+        }
+
+        private void addPortableHeaders(RecordHeaders headers, MessageHeaders portableHeaders) {
+            portableHeaders.forEach(header -> addPortableHeader(headers, header));
+        }
+
+        private void addPortableHeader(RecordHeaders headers, MessageHeader header) {
+            headers.add(header.name(), kafkaHeaderValue(header));
+        }
+
+        private byte[] kafkaHeaderValue(MessageHeader header) {
+            HeaderValue value = header.value();
+            if (value instanceof HeaderValue.NullValue) {
+                return null;
+            }
+            if (value instanceof HeaderValue.TextValue textValue) {
+                return textValue.value().getBytes(StandardCharsets.UTF_8);
+            }
+            if (value instanceof HeaderValue.BinaryValue binaryValue) {
+                return binaryValue.value();
+            }
+            throw new MessagingException("Kafka header '" + header.name() + "' has unsupported portable value type "
+                                                 + value.getClass().getSimpleName());
         }
 
         private void addReservedHeader(RecordHeaders headers, String name, Object value) {

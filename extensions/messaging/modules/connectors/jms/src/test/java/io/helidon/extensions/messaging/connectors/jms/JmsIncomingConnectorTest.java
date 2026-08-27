@@ -28,9 +28,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import io.helidon.messaging.ConnectorConfig;
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnector;
 import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessageBatch;
@@ -52,6 +52,7 @@ import org.junit.jupiter.api.Timeout;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -356,7 +357,7 @@ class JmsIncomingConnectorTest {
     void hugeReconnectDelayWithDefaultAndZeroJitterRemainsCloseable() throws Exception {
         Duration hugeDelay = Duration.ofSeconds(Long.MAX_VALUE);
         JmsConnectorConfig defaultJitter = JmsConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.INCOMING)
+                .direction(ConnectorDirection.INCOMING)
                 .channel(CHANNEL)
                 .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("events")
@@ -445,7 +446,8 @@ class JmsIncomingConnectorTest {
         assertThat(reservation.failedStarts(), is(1));
         assertThat(reservation.failure().getMessage(), containsString("ObjectMessage is disabled"));
         JmsMessage<?> rejectedMessage = (JmsMessage<?>) reservation.failedBatch().get(0);
-        assertThat(rejectedMessage.entity(), nullValue());
+        assertThat(rejectedMessage.entity(), notNullValue());
+        assertThat(((JmsMessageImpl<?>) rejectedMessage).bodyAvailable(), is(false));
         assertThat(rejectedMessage.messageId().orElseThrow(), is("ID:poison"));
         verify(nativeMessage, never()).getObject();
         verify(nativeMessage, never()).acknowledge();
@@ -1213,7 +1215,7 @@ class JmsIncomingConnectorTest {
 
     private static JmsConnectorConfig config(boolean transacted) {
         return JmsConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.INCOMING)
+                .direction(ConnectorDirection.INCOMING)
                 .channel(CHANNEL)
                 .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("events")

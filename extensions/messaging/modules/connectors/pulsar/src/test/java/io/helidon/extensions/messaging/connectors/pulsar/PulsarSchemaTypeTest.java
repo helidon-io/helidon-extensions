@@ -28,7 +28,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.MessagingException;
 
 import org.apache.pulsar.client.api.Schema;
@@ -67,12 +67,12 @@ class PulsarSchemaTypeTest {
                 Map.entry(PulsarSchemaType.LOCAL_DATE_TIME, LocalDateTime.of(LocalDate.EPOCH, LocalTime.NOON)));
 
         payloads.forEach((schema, payload) -> {
-            assertDoesNotThrow(() -> schema.snapshot(payload, ConnectorConfig.Direction.INCOMING));
-            assertDoesNotThrow(() -> schema.snapshot(payload, ConnectorConfig.Direction.OUTGOING));
+            assertDoesNotThrow(() -> schema.snapshot(payload, ConnectorDirection.INCOMING));
+            assertDoesNotThrow(() -> schema.snapshot(payload, ConnectorDirection.OUTGOING));
         });
         for (PulsarSchemaType schema : PulsarSchemaType.values()) {
-            assertThat(schema.snapshot(null, ConnectorConfig.Direction.INCOMING), is((Object) null));
-            assertThat(schema.snapshot(null, ConnectorConfig.Direction.OUTGOING), is((Object) null));
+            assertThat(schema.snapshot(null, ConnectorDirection.INCOMING), is((Object) null));
+            assertThat(schema.snapshot(null, ConnectorDirection.OUTGOING), is((Object) null));
         }
 
         Map<PulsarSchemaType, Schema<?>> schemas = Map.ofEntries(
@@ -93,14 +93,14 @@ class PulsarSchemaTypeTest {
                 Map.entry(PulsarSchemaType.LOCAL_DATE, Schema.LOCAL_DATE),
                 Map.entry(PulsarSchemaType.LOCAL_TIME, Schema.LOCAL_TIME),
                 Map.entry(PulsarSchemaType.LOCAL_DATE_TIME, Schema.LOCAL_DATE_TIME));
-        schemas.forEach((type, schema) -> assertThat(type.schema(ConnectorConfig.Direction.INCOMING),
+        schemas.forEach((type, schema) -> assertThat(type.schema(ConnectorDirection.INCOMING),
                                                      sameInstance((Object) schema)));
     }
 
     @Test
     void autoSchemaIsDirectionAware() {
-        Schema<Object> incoming = PulsarSchemaType.AUTO.schema(ConnectorConfig.Direction.INCOMING);
-        Schema<Object> outgoing = PulsarSchemaType.AUTO.schema(ConnectorConfig.Direction.OUTGOING);
+        Schema<Object> incoming = PulsarSchemaType.AUTO.schema(ConnectorDirection.INCOMING);
+        Schema<Object> outgoing = PulsarSchemaType.AUTO.schema(ConnectorDirection.OUTGOING);
         assertThat(incoming.getClass(), sameInstance((Object) Schema.AUTO_CONSUME().getClass()));
         assertThat(outgoing.getClass(), sameInstance((Object) Schema.AUTO_PRODUCE_BYTES().getClass()));
 
@@ -130,20 +130,20 @@ class PulsarSchemaTypeTest {
                 return "value";
             }
         };
-        assertThat(PulsarSchemaType.AUTO.snapshot(record, ConnectorConfig.Direction.INCOMING), sameInstance(record));
+        assertThat(PulsarSchemaType.AUTO.snapshot(record, ConnectorDirection.INCOMING), sameInstance(record));
 
         byte[] bytes = {1, 2};
-        byte[] snapshot = (byte[]) PulsarSchemaType.AUTO.snapshot(bytes, ConnectorConfig.Direction.OUTGOING);
+        byte[] snapshot = (byte[]) PulsarSchemaType.AUTO.snapshot(bytes, ConnectorDirection.OUTGOING);
         assertThat(snapshot, not(sameInstance(bytes)));
         assertThat(snapshot, is(bytes));
 
         MessagingException incomingFailure = assertThrows(
                 MessagingException.class,
-                () -> PulsarSchemaType.AUTO.snapshot(bytes, ConnectorConfig.Direction.INCOMING));
+                () -> PulsarSchemaType.AUTO.snapshot(bytes, ConnectorDirection.INCOMING));
         assertThat(incomingFailure.getMessage(), containsString(GenericRecord.class.getName()));
         MessagingException outgoingFailure = assertThrows(
                 MessagingException.class,
-                () -> PulsarSchemaType.AUTO.snapshot(record, ConnectorConfig.Direction.OUTGOING));
+                () -> PulsarSchemaType.AUTO.snapshot(record, ConnectorDirection.OUTGOING));
         assertThat(outgoingFailure.getMessage(), containsString("byte[]"));
     }
 
@@ -151,7 +151,7 @@ class PulsarSchemaTypeTest {
     void rejectsWrongPayloadTypesWithoutCoercion() {
         MessagingException failure = assertThrows(
                 MessagingException.class,
-                () -> PulsarSchemaType.INT32.snapshot(1L, ConnectorConfig.Direction.OUTGOING));
+                () -> PulsarSchemaType.INT32.snapshot(1L, ConnectorDirection.OUTGOING));
         assertThat(failure.getMessage(), containsString(Integer.class.getName()));
         assertThat(failure.getMessage(), containsString(Long.class.getName()));
     }
@@ -165,7 +165,7 @@ class PulsarSchemaTypeTest {
 
         ByteBuffer snapshot = (ByteBuffer) PulsarSchemaType.BYTEBUFFER.snapshot(
                 source,
-                ConnectorConfig.Direction.OUTGOING);
+                ConnectorDirection.OUTGOING);
         assertThat(source.position(), is(2));
         assertThat(source.limit(), is(4));
         assertThat(snapshot.position(), is(0));
@@ -196,13 +196,13 @@ class PulsarSchemaTypeTest {
         assertThat(timestampMessage.entity().getNanos(), is(123456789));
 
         Date date = new Date(1234);
-        Date dateSnapshot = (Date) PulsarSchemaType.DATE.snapshot(date, ConnectorConfig.Direction.OUTGOING);
+        Date dateSnapshot = (Date) PulsarSchemaType.DATE.snapshot(date, ConnectorDirection.OUTGOING);
         assertThat(dateSnapshot, not(sameInstance(date)));
         date.setTime(5678);
         assertThat(dateSnapshot.getTime(), is(1234L));
 
         Time time = new Time(1234);
-        Time timeSnapshot = (Time) PulsarSchemaType.TIME.snapshot(time, ConnectorConfig.Direction.OUTGOING);
+        Time timeSnapshot = (Time) PulsarSchemaType.TIME.snapshot(time, ConnectorDirection.OUTGOING);
         assertThat(timeSnapshot, not(sameInstance(time)));
         time.setTime(5678);
         assertThat(timeSnapshot.getTime(), is(1234L));

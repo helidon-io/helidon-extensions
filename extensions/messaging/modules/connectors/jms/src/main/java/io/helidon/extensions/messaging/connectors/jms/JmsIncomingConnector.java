@@ -431,7 +431,7 @@ final class JmsIncomingConnector {
                 rejectedMessage = JmsMessageMapper.metadataOnly(nativeMessage);
             } catch (RuntimeException metadataFailure) {
                 mappingFailure.addSuppressed(metadataFailure);
-                rejectedMessage = io.helidon.messaging.Message.create(null);
+                rejectedMessage = JmsMessageImpl.rejected();
             }
             return MessageBatch.create(rejectedMessage);
         }

@@ -24,6 +24,7 @@ import java.util.Optional;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.MessagingException;
 import io.helidon.service.registry.ServiceRegistry;
 
@@ -256,7 +257,7 @@ class JmsConnectorConfigTest {
         assertThat(provider.connectorType(), is("helidon-jms"));
         assertThat(provider.createIncomingConnector(incomingBuilder().build()) != null, is(true));
         assertThat(provider.createOutgoingConnector(incomingBuilder()
-                                                            .direction(ConnectorConfig.Direction.OUTGOING)
+                                                            .direction(ConnectorDirection.OUTGOING)
                                                             .build()) != null,
                    is(true));
     }
@@ -317,7 +318,7 @@ class JmsConnectorConfigTest {
 
     private static JmsConnectorConfig.Builder incomingBuilder() {
         return JmsConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.INCOMING)
+                .direction(ConnectorDirection.INCOMING)
                 .channel("orders")
                 .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("orders");

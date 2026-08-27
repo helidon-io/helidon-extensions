@@ -16,14 +16,27 @@
 
 package io.helidon.extensions.messaging.connectors.kafka;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import io.helidon.messaging.HeaderValue;
+import io.helidon.messaging.MessageHeader;
+
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class KafkaMessageTest {
+    @Test
+    void rejectsNullPayloads() {
+        assertThrows(NullPointerException.class, () -> KafkaMessage.builder("key", null));
+        ConsumerRecord<String, String> tombstone = new ConsumerRecord<>("topic", 0, 1L, "key", null);
+        assertThrows(NullPointerException.class, () -> KafkaMessageImpl.create(tombstone));
+    }
+
     @Test
     void testProgrammaticMessageContainsOnlyOutgoingMetadata() {
         byte[] binary = {1, 2};
@@ -35,7 +48,8 @@ class KafkaMessageTest {
 
         assertThat(message.key().orElseThrow(), is("key"));
         assertThat(message.entity(), is("payload"));
-        assertThat(message.headers().get("trace"), is("abc"));
+        assertThat(message.headerValue("trace").orElseThrow(),
+                   is(HeaderValue.binary("abc".getBytes(StandardCharsets.UTF_8))));
         assertThat(message.kafkaHeaders().get(1).value().orElseThrow()[0], is((byte) 1));
         assertThat(message.topic().isEmpty(), is(true));
         assertThat(message.partition().isEmpty(), is(true));
@@ -46,7 +60,7 @@ class KafkaMessageTest {
     }
 
     @Test
-    void testPortableHeadersExposeLastNonNullNativeValue() {
+    void testPortableHeadersPreserveNativeOrderDuplicatesBinaryAndNullValues() {
         KafkaMessage<String, String> message = KafkaMessage.<String, String>builder("key", "payload")
                 .header("trace", "first")
                 .rawHeader("trace", null)
@@ -55,8 +69,14 @@ class KafkaMessageTest {
                 .rawHeader("only-null", null)
                 .build();
 
-        assertThat(message.header("trace").orElseThrow(), is("last"));
-        assertThat(message.header("only-null").isEmpty(), is(true));
+        assertThat(message.headers().entries(), is(List.of(
+                MessageHeader.create("trace", HeaderValue.binary("first".getBytes(StandardCharsets.UTF_8))),
+                MessageHeader.create("trace", HeaderValue.nullValue()),
+                MessageHeader.create("trace", HeaderValue.binary("last".getBytes(StandardCharsets.UTF_8))),
+                MessageHeader.create("trace", HeaderValue.nullValue()),
+                MessageHeader.create("only-null", HeaderValue.nullValue()))));
+        assertThat(message.headerValue("trace").orElseThrow(), is(HeaderValue.nullValue()));
+        assertThat(message.headerValue("only-null").orElseThrow(), is(HeaderValue.nullValue()));
         assertThat(message.kafkaHeaders().stream().map(KafkaMessage.Header::name).toList(),
                    is(List.of("trace", "trace", "trace", "trace", "only-null")));
         assertThat(message.kafkaHeaders().get(1).value().isEmpty(), is(true));

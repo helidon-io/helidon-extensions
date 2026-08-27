@@ -22,6 +22,7 @@ import java.util.Map;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 
 import org.junit.jupiter.api.Test;
 
@@ -115,7 +116,7 @@ class PulsarConnectorConfigTest {
         PulsarConnectorProvider provider = new PulsarConnectorProvider();
         PulsarConnectorConfig outgoing = completeBuilder().build();
         PulsarConnectorConfig incoming = completeBuilder()
-                .direction(ConnectorConfig.Direction.INCOMING)
+                .direction(ConnectorDirection.INCOMING)
                 .build();
         assertThrows(IllegalArgumentException.class, () -> provider.createIncomingConnector(outgoing));
         assertThrows(IllegalArgumentException.class, () -> provider.createOutgoingConnector(incoming));
@@ -131,7 +132,7 @@ class PulsarConnectorConfigTest {
 
     private static PulsarConnectorConfig.Builder builder() {
         return PulsarConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.OUTGOING)
+                .direction(ConnectorDirection.OUTGOING)
                 .channel(CHANNEL)
                 .connector(PulsarConnectorProvider.CONNECTOR_TYPE);
     }

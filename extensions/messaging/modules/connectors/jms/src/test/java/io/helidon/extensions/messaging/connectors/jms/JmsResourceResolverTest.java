@@ -26,7 +26,7 @@ import javax.naming.Context;
 import javax.naming.NamingException;
 import javax.naming.spi.InitialContextFactory;
 
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.MessagingException;
 import io.helidon.service.registry.ServiceRegistry;
 
@@ -186,7 +186,7 @@ class JmsResourceResolverTest {
 
     private static JmsConnectorConfig config() {
         return JmsConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.INCOMING)
+                .direction(ConnectorDirection.INCOMING)
                 .channel("orders")
                 .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("orders")
@@ -198,7 +198,7 @@ class JmsResourceResolverTest {
 
     private static JmsConnectorConfig configWithoutJndi() {
         return JmsConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.INCOMING)
+                .direction(ConnectorDirection.INCOMING)
                 .channel("orders")
                 .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("orders")

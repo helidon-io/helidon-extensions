@@ -35,10 +35,11 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 import io.helidon.messaging.BatchDeliveryException;
+import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.BatchItemStatus;
-import io.helidon.messaging.ConnectorConfig;
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnector;
 import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.Message;
@@ -92,10 +93,10 @@ final class KafkaIncomingConnector {
 
     IncomingConnector createIncomingConnector(KafkaConnectorConfig config) {
         Objects.requireNonNull(config);
-        if (config.direction() != ConnectorConfig.Direction.INCOMING) {
+        if (config.direction() != ConnectorDirection.INCOMING) {
             throw new IllegalArgumentException("Kafka connector configuration for channel " + config.channel()
                                                        + " has direction " + config.direction()
-                                                       + ", expected " + ConnectorConfig.Direction.INCOMING);
+                                                       + ", expected " + ConnectorDirection.INCOMING);
         }
         return new IncomingKafkaConnector(config);
     }
@@ -256,13 +257,20 @@ final class KafkaIncomingConnector {
                         return;
                     }
                     List<Message<Object>> messages = new ArrayList<>();
+                    List<RuntimeException> mappingFailures = new ArrayList<>();
                     for (ConsumerRecord<Object, Object> record : records) {
-                        messages.add(toMessage(record));
+                        try {
+                            messages.add(toMessage(record));
+                            mappingFailures.add(null);
+                        } catch (RuntimeException mappingFailure) {
+                            messages.add(KafkaMessageImpl.rejected(record));
+                            mappingFailures.add(mappingFailure);
+                        }
                     }
                     if (messages.isEmpty()) {
                         continue;
                     }
-                    PendingPoll pendingPoll = PendingPoll.create(records, messages, context);
+                    PendingPoll pendingPoll = PendingPoll.create(records, messages, mappingFailures, context);
                     if (!processPoll(consumer,
                                      rebalanceListener,
                                      pendingPoll,
@@ -403,7 +411,10 @@ final class KafkaIncomingConnector {
 
             Optional<ConnectorDelivery> admitted;
             try {
-                admitted = reservation.tryStart(pendingPoll.batch());
+                RuntimeException mappingFailure = pendingPoll.mappingFailure();
+                admitted = mappingFailure == null
+                        ? reservation.tryStart(pendingPoll.batch())
+                        : Optional.of(reservation.startFailed(pendingPoll.batch(), mappingFailure));
                 admitted.ifPresent(active::attach);
             } catch (RuntimeException | Error e) {
                 finishDeliveryStart();
@@ -704,6 +715,10 @@ final class KafkaIncomingConnector {
         }
 
         private KafkaMessage<Object, Object> toMessage(ConsumerRecord<Object, Object> record) {
+            if (record.value() == null) {
+                throw new MessagingException("Kafka record " + record.topic() + "-" + record.partition() + "@"
+                                                     + record.offset() + " has a null payload");
+            }
             return KafkaMessageImpl.create(record);
         }
 
@@ -1111,22 +1126,26 @@ final class KafkaIncomingConnector {
         private final Map<TopicPartition, Long> firstOffsets;
         private final Map<TopicPartition, List<IndexedOffset>> indexedOffsets;
         private final AtomicIntegerArray settled;
+        private final RuntimeException mappingFailure;
         private final Set<TopicPartition> invalidatedPartitions = new HashSet<>();
         private final AtomicBoolean stale = new AtomicBoolean();
 
         private PendingPoll(MessageBatch<Object> batch,
                             Map<TopicPartition, OffsetAndMetadata> nextOffsets,
                             Map<TopicPartition, Long> firstOffsets,
-                            Map<TopicPartition, List<IndexedOffset>> indexedOffsets) {
+                            Map<TopicPartition, List<IndexedOffset>> indexedOffsets,
+                            RuntimeException mappingFailure) {
             this.batch = batch;
             this.nextOffsets = nextOffsets;
             this.firstOffsets = firstOffsets;
             this.indexedOffsets = indexedOffsets;
             this.settled = new AtomicIntegerArray(batch.size());
+            this.mappingFailure = mappingFailure;
         }
 
         private static PendingPoll create(ConsumerRecords<Object, Object> records,
                                           List<Message<Object>> messages,
+                                          List<RuntimeException> mappingFailures,
                                           IncomingConnectorContext context) {
             String channel = context.channel();
             int maxDeliveryMessages = context.maxDeliveryMessages();
@@ -1151,22 +1170,55 @@ final class KafkaIncomingConnector {
             if (batchIndex != messages.size()) {
                 throw new IllegalStateException("Kafka poll record count does not match its message count");
             }
+            if (mappingFailures.size() != messages.size()) {
+                throw new IllegalStateException("Kafka poll mapping outcome count does not match its message count");
+            }
             Map<TopicPartition, OffsetAndMetadata> nextOffsets = Map.copyOf(records.nextOffsets());
             Map<TopicPartition, Long> immutableFirstOffsets = Map.copyOf(firstOffsets);
             MessageBatch<Object> batch = MessageBatch.<Object>builder()
                     .messages(messages)
                     .build();
+            RuntimeException mappingFailure = mappingFailure(batch, mappingFailures, channel);
             Map<TopicPartition, List<IndexedOffset>> immutableIndexedOffsets = new LinkedHashMap<>();
             indexedOffsets.forEach((partition, offsets) -> immutableIndexedOffsets.put(partition,
                                                                                        List.copyOf(offsets)));
             return new PendingPoll(batch,
                                    nextOffsets,
                                    immutableFirstOffsets,
-                                   Map.copyOf(immutableIndexedOffsets));
+                                   Map.copyOf(immutableIndexedOffsets),
+                                   mappingFailure);
+        }
+
+        private static RuntimeException mappingFailure(MessageBatch<?> batch,
+                                                       List<RuntimeException> failures,
+                                                       String channel) {
+            RuntimeException primary = null;
+            List<BatchItemOutcome> outcomes = new ArrayList<>(failures.size());
+            for (int i = 0; i < failures.size(); i++) {
+                RuntimeException failure = failures.get(i);
+                if (failure == null) {
+                    outcomes.add(BatchItemOutcome.notAttempted(i));
+                } else {
+                    outcomes.add(BatchItemOutcome.failed(i, failure));
+                    if (primary == null) {
+                        primary = failure;
+                    } else if (failure != primary) {
+                        primary.addSuppressed(failure);
+                    }
+                }
+            }
+            return primary == null ? null : new BatchDeliveryException("Cannot map Kafka poll on channel " + channel,
+                                                                        batch,
+                                                                        outcomes,
+                                                                        primary);
         }
 
         private MessageBatch<Object> batch() {
             return batch;
+        }
+
+        private RuntimeException mappingFailure() {
+            return mappingFailure;
         }
 
         private Map<TopicPartition, OffsetAndMetadata> nextOffsets() {

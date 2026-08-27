@@ -31,7 +31,9 @@ import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.messaging.DeadLetterMessage;
+import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
 
 import jakarta.jms.BytesMessage;
@@ -45,6 +47,7 @@ import jakarta.jms.TextMessage;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -72,7 +75,10 @@ class JmsMessageTest {
         assertThat(message.correlationId().orElseThrow(), is("order-42"));
         assertThat(message.type().orElseThrow(), is("order"));
         assertThat(message.jmsProperties(), is(Map.of("attempt", 2)));
-        assertThat(message.headers(), is(Map.of("attempt", "2")));
+        assertThat(message.headers(),
+                   is(MessageHeaders.builder()
+                              .add("attempt", HeaderValue.integer(2))
+                              .build()));
     }
 
     @Test
@@ -117,8 +123,8 @@ class JmsMessageTest {
         verify(nativeMessage).setStringProperty(DeadLetterMessage.FAILURE_TYPE_HEADER,
                                                 RuntimeException.class.getName());
         verify(nativeMessage).setStringProperty(DeadLetterMessage.FAILURE_MESSAGE_HEADER, "failed");
-        deadLetter.headers().keySet().forEach(name ->
-                assertThat(JmsMessageImpl.isApplicationPropertyName(name), is(true)));
+        deadLetter.headers().forEach(header ->
+                assertThat(JmsMessageImpl.isApplicationPropertyName(header.name()), is(true)));
     }
 
     @Test
@@ -180,7 +186,7 @@ class JmsMessageTest {
         JmsMessageMapper.toJmsMessage(session,
                                       io.helidon.messaging.Message.builder("portable")
                                               .header("JMSXGroupID", "orders")
-                                              .header("JMSXGroupSeq", "8")
+                                              .header("JMSXGroupSeq", HeaderValue.integer(8))
                                               .build(),
                                       false);
 
@@ -193,6 +199,54 @@ class JmsMessageTest {
                                                                 io.helidon.messaging.Message.builder("bad")
                                                                         .header("JMSXGroupSeq", "not-an-integer")
                                                                         .build()));
+    }
+
+    @Test
+    void testPortableHeaderKindsMapToNativeJmsPropertyTypes() throws Exception {
+        Session session = mock(Session.class);
+        TextMessage nativeMessage = mock(TextMessage.class);
+        when(session.createTextMessage("portable")).thenReturn(nativeMessage);
+
+        JmsMessageMapper.toJmsMessage(session,
+                                      io.helidon.messaging.Message.builder("portable")
+                                              .header("text_value", "text")
+                                              .header("boolean_value", HeaderValue.booleanValue(true))
+                                              .header("integer_value", HeaderValue.integer(7))
+                                              .header("float_value", HeaderValue.floatingPoint(8.5F))
+                                              .header("double_value", HeaderValue.floatingPoint(9.5D))
+                                              .build(),
+                                      false);
+
+        verify(nativeMessage).setStringProperty("text_value", "text");
+        verify(nativeMessage).setBooleanProperty("boolean_value", true);
+        verify(nativeMessage).setLongProperty("integer_value", 7L);
+        verify(nativeMessage).setFloatProperty("float_value", 8.5F);
+        verify(nativeMessage).setDoubleProperty("double_value", 9.5D);
+    }
+
+    @Test
+    void testDuplicateAndUnsupportedPortableHeadersAreRejected() throws Exception {
+        Session session = mock(Session.class);
+        TextMessage duplicateMessage = mock(TextMessage.class);
+        TextMessage binaryMessage = mock(TextMessage.class);
+        when(session.createTextMessage("duplicate")).thenReturn(duplicateMessage);
+        when(session.createTextMessage("binary")).thenReturn(binaryMessage);
+
+        assertThrows(MessagingException.class,
+                     () -> JmsMessageMapper.toJmsMessage(
+                             session,
+                             io.helidon.messaging.Message.builder("duplicate")
+                                     .addHeader("region", "EU")
+                                     .addHeader("region", "US")
+                                     .build(),
+                             false));
+        assertThrows(MessagingException.class,
+                     () -> JmsMessageMapper.toJmsMessage(
+                             session,
+                             io.helidon.messaging.Message.builder("binary")
+                                     .header("binary", HeaderValue.binary(new byte[] {1}))
+                                     .build(),
+                             false));
     }
 
     @Test
@@ -259,18 +313,123 @@ class JmsMessageTest {
     }
 
     @Test
-    void testBodylessMessageRoundTrip() throws Exception {
+    @SuppressWarnings("unchecked")
+    void testBodylessIncomingMessageUsesNonNullFailureEnvelopeAndDeadLettersWithoutABody() throws Exception {
         Session session = mock(Session.class);
         Message bodyless = mock(Message.class);
         when(session.createMessage()).thenReturn(bodyless);
         when(bodyless.getBody(Object.class)).thenReturn(null);
         when(bodyless.getPropertyNames()).thenReturn(java.util.Collections.emptyEnumeration());
 
-        assertThat(JmsMessageMapper.toJmsMessage(session,
-                                                 io.helidon.messaging.Message.create(null),
-                                                 false),
-                   is(bodyless));
-        assertThat(JmsMessageMapper.fromJmsMessage(bodyless, false, 1024).entity(), is((Object) null));
+        assertThrows(NullPointerException.class, () -> JmsMessage.create(null));
+        assertThrows(NullPointerException.class, () -> JmsMessageMapper.fromJmsMessage(bodyless, false, 1024));
+
+        JmsMessage<Object> rejected = (JmsMessage<Object>) JmsMessageMapper.metadataOnly(bodyless);
+        assertThat(rejected.entity(), notNullValue());
+        assertThat(((JmsMessageImpl<?>) rejected).bodyAvailable(), is(false));
+
+        DeadLetterMessage<Object> deadLetter = DeadLetterMessage.create(
+                rejected,
+                "orders",
+                1,
+                new MessagingException("body unavailable"));
+        assertThat(JmsMessageMapper.toJmsMessage(session, deadLetter, false), is(bodyless));
+        verify(bodyless).setStringProperty(DeadLetterMessage.SOURCE_CHANNEL_HEADER, "orders");
+    }
+
+    @Test
+    void testJmsDeadLetterPreservesNativePropertyWidthsAndReservedHeaders() throws Exception {
+        Session session = mock(Session.class);
+        TextMessage nativeMessage = mock(TextMessage.class);
+        when(session.createTextMessage("body")).thenReturn(nativeMessage);
+        JmsMessage<String> original = JmsMessage.<String>builder("body")
+                .correlationId("correlation")
+                .type("kind")
+                .property("byteValue", (byte) 1)
+                .property("shortValue", (short) 2)
+                .property("intValue", 3)
+                .property("longValue", 4L)
+                .property(DeadLetterMessage.ATTEMPTS_HEADER, "caller-value")
+                .build();
+        DeadLetterMessage<String> deadLetter = DeadLetterMessage.create(
+                original,
+                "orders",
+                5,
+                new RuntimeException("failed"));
+
+        JmsMessageMapper.toJmsMessage(session, deadLetter, false);
+
+        verify(nativeMessage).setObjectProperty("byteValue", (byte) 1);
+        verify(nativeMessage).setObjectProperty("shortValue", (short) 2);
+        verify(nativeMessage).setObjectProperty("intValue", 3);
+        verify(nativeMessage).setObjectProperty("longValue", 4L);
+        verify(nativeMessage, never()).setObjectProperty(DeadLetterMessage.ATTEMPTS_HEADER, "caller-value");
+        verify(nativeMessage).setStringProperty(DeadLetterMessage.ATTEMPTS_HEADER, "5");
+        verify(nativeMessage).setJMSCorrelationID("correlation");
+        verify(nativeMessage).setJMSType("kind");
+    }
+
+    @Test
+    void testCustomJmsDeadLetterMergesWrapperHeaderChanges() throws Exception {
+        Session session = mock(Session.class);
+        TextMessage nativeMessage = mock(TextMessage.class);
+        when(session.createTextMessage("body")).thenReturn(nativeMessage);
+        JmsMessage<String> original = JmsMessage.<String>builder("body")
+                .property("byteValue", (byte) 1)
+                .property("region", "original")
+                .build();
+        MessageHeaders wrapperHeaders = MessageHeaders.builder()
+                .addAll(original.headers())
+                .set("region", "replacement")
+                .add("added", "wrapper")
+                .set(DeadLetterMessage.SOURCE_CHANNEL_HEADER, "orders")
+                .set(DeadLetterMessage.ATTEMPTS_HEADER, "2")
+                .set(DeadLetterMessage.FAILURE_TYPE_HEADER, RuntimeException.class.getName())
+                .set(DeadLetterMessage.FAILURE_MESSAGE_HEADER, "failed")
+                .build();
+        DeadLetterMessage<String> deadLetter = new DeadLetterMessage<>() {
+            @Override
+            public io.helidon.messaging.Message<String> originalMessage() {
+                return original;
+            }
+
+            @Override
+            public String sourceChannel() {
+                return "orders";
+            }
+
+            @Override
+            public int attempts() {
+                return 2;
+            }
+
+            @Override
+            public String failureType() {
+                return RuntimeException.class.getName();
+            }
+
+            @Override
+            public String failureMessage() {
+                return "failed";
+            }
+
+            @Override
+            public String entity() {
+                return original.entity();
+            }
+
+            @Override
+            public MessageHeaders headers() {
+                return wrapperHeaders;
+            }
+        };
+
+        JmsMessageMapper.toJmsMessage(session, deadLetter, false);
+
+        verify(nativeMessage).setObjectProperty("byteValue", (byte) 1);
+        verify(nativeMessage).setStringProperty("region", "replacement");
+        verify(nativeMessage).setStringProperty("added", "wrapper");
+        verify(nativeMessage, never()).setObjectProperty("region", "original");
     }
 
     @Test
@@ -306,10 +465,13 @@ class JmsMessageTest {
                                                        "region", "EU",
                                                        "JMSXGroupID", "orders",
                                                        "JMSXGroupSeq", 11)));
-        assertThat(message.headers(), is(Map.of("attempt", "2",
-                                                "region", "EU",
-                                                "JMSXGroupID", "orders",
-                                                "JMSXGroupSeq", "11")));
+        assertThat(message.headers(),
+                   is(MessageHeaders.builder()
+                              .add("attempt", HeaderValue.integer(2))
+                              .add("region", "EU")
+                              .add("JMSXGroupID", "orders")
+                              .add("JMSXGroupSeq", HeaderValue.integer(11))
+                              .build()));
         assertThat(message.messageId(), is(Optional.of("ID:42")));
         assertThat(message.correlationId(), is(Optional.of("order-42")));
         assertThat(message.type(), is(Optional.of("order")));

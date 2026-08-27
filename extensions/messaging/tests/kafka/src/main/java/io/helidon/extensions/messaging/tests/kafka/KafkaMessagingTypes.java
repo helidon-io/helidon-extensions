@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.extensions.messaging.connectors.kafka.KafkaMessage;
 import io.helidon.messaging.Emitter;
+import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.Messaging;
@@ -301,7 +302,7 @@ final class KafkaMessagingTypes {
             messages.add(message);
         }
 
-        void recordAnnotated(String traceId, Message<String> message) {
+        void recordAnnotated(HeaderValue traceId, Message<String> message) {
             annotated.add(new ReceivedMessage(traceId, message.entity(), message));
         }
 
@@ -366,7 +367,7 @@ final class KafkaMessagingTypes {
         }
 
         @Messaging.ReceiveFrom(INCOMING_CHANNEL)
-        void receiveAnnotated(@Messaging.HeaderParam("trace-id") String traceId,
+        void receiveAnnotated(@Messaging.HeaderParam("trace-id") HeaderValue traceId,
                               Message<String> message) {
             receiver.recordAnnotated(traceId, message);
         }
@@ -570,7 +571,7 @@ final class KafkaMessagingTypes {
         }
     }
 
-    record ReceivedMessage(String traceId, String entity, Message<String> message) {
+    record ReceivedMessage(HeaderValue traceId, String entity, Message<String> message) {
     }
 
     record PartitionRecord(int partition, long offset, String entity) {
