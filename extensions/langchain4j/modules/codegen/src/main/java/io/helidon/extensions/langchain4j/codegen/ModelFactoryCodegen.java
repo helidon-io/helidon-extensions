@@ -148,9 +148,9 @@ class ModelFactoryCodegen implements CodegenExtension {
 
         classModel.addMethod(buildModelMethod(modelClassNamePrefix, modelType, constantClassTypeName));
         classModel.addMethod(createMethod(modelType, modelConfigTypeName));
-        classModel.addInnerClass(modelQualifiedInstance(modelType));
         classModel.addInnerClass(lifecyclePhase());
         classModel.addInnerClass(lifecycleState(modelType, lifecyclePhaseType));
+        classModel.addInnerClass(modelQualifiedInstance(modelType));
         roundContext.addGeneratedType(factoryTypeName, classModel, configType.typeName());
         roundContext.addGeneratedType(lifecycleCoordinatorType,
                                       lifecycleCoordinator(factoryTypeName, lifecycleCoordinatorType),
