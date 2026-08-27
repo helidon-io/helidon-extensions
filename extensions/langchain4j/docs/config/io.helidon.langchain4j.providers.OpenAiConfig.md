@@ -41,6 +41,17 @@ Merged configuration for langchain4j.providers.open-ai
 </tr>
 <tr>
 <td>
+<code>background</code>
+</td>
+<td>
+<code>String</code>
+</td>
+<td>
+</td>
+<td>Generated from <code>dev.<wbr>langchain4j.<wbr>model.<wbr>openai.<wbr>Open<wbr>AiImage<wbr>Model.<wbr>Open<wbr>AiImage<wbr>Model<wbr>Builder#<wbr>background(<wbr>java.<wbr>lang.<wbr>String)</code></td>
+</tr>
+<tr>
+<td>
 <code>base-<wbr>url</code>
 </td>
 <td>
@@ -309,6 +320,17 @@ Merged configuration for langchain4j.providers.open-ai
 </tr>
 <tr>
 <td>
+<code>moderation</code>
+</td>
+<td>
+<code>String</code>
+</td>
+<td>
+</td>
+<td>Generated from <code>dev.<wbr>langchain4j.<wbr>model.<wbr>openai.<wbr>Open<wbr>AiImage<wbr>Model.<wbr>Open<wbr>AiImage<wbr>Model<wbr>Builder#<wbr>moderation(<wbr>java.<wbr>lang.<wbr>String)</code></td>
+</tr>
+<tr>
+<td>
 <code>organization-<wbr>id</code>
 </td>
 <td>
@@ -317,6 +339,28 @@ Merged configuration for langchain4j.providers.open-ai
 <td>
 </td>
 <td>Generated from <code>dev.<wbr>langchain4j.<wbr>model.<wbr>openai.<wbr>Open<wbr>AiChat<wbr>Model.<wbr>Open<wbr>AiChat<wbr>Model<wbr>Builder#<wbr>organization<wbr>Id(java.<wbr>lang.<wbr>String)</code></td>
+</tr>
+<tr>
+<td>
+<code>output-<wbr>compression</code>
+</td>
+<td>
+<code>Integer</code>
+</td>
+<td>
+</td>
+<td>Generated from <code>dev.<wbr>langchain4j.<wbr>model.<wbr>openai.<wbr>Open<wbr>AiImage<wbr>Model.<wbr>Open<wbr>AiImage<wbr>Model<wbr>Builder#<wbr>output<wbr>Compression(<wbr>java.<wbr>lang.<wbr>Integer)</code></td>
+</tr>
+<tr>
+<td>
+<code>output-<wbr>format</code>
+</td>
+<td>
+<code>String</code>
+</td>
+<td>
+</td>
+<td>Generated from <code>dev.<wbr>langchain4j.<wbr>model.<wbr>openai.<wbr>Open<wbr>AiImage<wbr>Model.<wbr>Open<wbr>AiImage<wbr>Model<wbr>Builder#<wbr>output<wbr>Format(<wbr>java.<wbr>lang.<wbr>String)</code></td>
 </tr>
 <tr>
 <td>
@@ -382,7 +426,7 @@ Merged configuration for langchain4j.providers.open-ai
 </td>
 <td>
 </td>
-<td>Enable a "JSON mode" in the model configuration</td>
+<td>Enable a "JSON mode" in the chat-model configuration</td>
 </tr>
 <tr>
 <td>
@@ -482,17 +526,6 @@ Merged configuration for langchain4j.providers.open-ai
 <td>
 </td>
 <td>Generated from <code>dev.<wbr>langchain4j.<wbr>model.<wbr>openai.<wbr>Open<wbr>AiChat<wbr>Model.<wbr>Open<wbr>AiChat<wbr>Model<wbr>Builder#<wbr>strict<wbr>Tools(<wbr>java.<wbr>lang.<wbr>Boolean)</code></td>
-</tr>
-<tr>
-<td>
-<code>style</code>
-</td>
-<td>
-<code>String</code>
-</td>
-<td>
-</td>
-<td>Generated from <code>dev.<wbr>langchain4j.<wbr>model.<wbr>openai.<wbr>Open<wbr>AiImage<wbr>Model.<wbr>Open<wbr>AiImage<wbr>Model<wbr>Builder#<wbr>style(<wbr>java.<wbr>lang.<wbr>String)</code></td>
 </tr>
 <tr>
 <td>

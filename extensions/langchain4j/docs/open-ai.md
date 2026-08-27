@@ -179,25 +179,27 @@ is not created.
 ### Configuration options
 
 <!--@mdc ::table-collapse -->
-| Key               | Type                  | Description                                                                                           |
-|-------------------|-----------------------|-------------------------------------------------------------------------------------------------------|
-| `api-key`         | string                | Required. The API key used to authenticate requests to the OpenAI API.                                |
-| `base-url`        | string                | The base URL for the OpenAI API. If not present, the default value supplied from LangChain4j is used. |
-| `custom-headers`  | Map\<string, string\> | A map containing custom headers.                                                                      |
-| `enabled`         | boolean               | If set to false, the OpenAI model will not be available even if configured.                           |
-| `log-requests`    | boolean               | Whether to log API requests.                                                                          |
-| `log-responses`   | boolean               | Whether to log API responses.                                                                         |
-| `max-retries`     | integer               | The maximum number of retries for failed API requests.                                                |
-| `model-name`      | string                | The model name to use.                                                                                |
-| `organization-id` | string                | The ID of the organization for API requests.                                                          |
-| `persist-to`      | Path                  | The path or location where the generated images should be persisted.                                  |
-| `quality`         | string                | The quality of the generated images.                                                                  |
-| `response-format` | string                | The format of the response.                                                                           |
-| `size`            | string                | The desired size of the generated images.                                                             |
-| `style`           | string                | The style of the generated images.                                                                    |
-| `timeout`         | duration              | The timeout setting for API requests. See [here][here] for the format.                                |
-| `user`            | string                | The unique identifier for the user making the request.                                                |
-| `with-persisting` | boolean               | The flag to indicate whether to persist the generated images.                                         |
+| Key                  | Type                  | Description                                                                                           |
+|----------------------|-----------------------|-------------------------------------------------------------------------------------------------------|
+| `api-key`            | string                | Required. The API key used to authenticate requests to the OpenAI API.                                |
+| `background`         | string                | The background setting for generated images.                                                          |
+| `base-url`           | string                | The base URL for the OpenAI API. If not present, the default value supplied from LangChain4j is used. |
+| `custom-headers`     | Map\<string, string\> | A map containing custom headers.                                                                      |
+| `enabled`            | boolean               | If set to false, the OpenAI model will not be available even if configured.                           |
+| `log-requests`       | boolean               | Whether to log API requests.                                                                          |
+| `log-responses`      | boolean               | Whether to log API responses.                                                                         |
+| `max-retries`        | integer               | The maximum number of retries for failed API requests.                                                |
+| `model-name`         | string                | The model name to use.                                                                                |
+| `moderation`         | string                | The content moderation setting for generated images.                                                  |
+| `organization-id`    | string                | The ID of the organization for API requests.                                                          |
+| `output-compression` | integer               | The compression level for generated images.                                                           |
+| `output-format`      | string                | The output format for generated images.                                                               |
+| `persist-to`         | Path                  | The path or location where the generated images should be persisted.                                  |
+| `quality`            | string                | The quality of the generated images.                                                                  |
+| `size`               | string                | The desired size of the generated images.                                                             |
+| `timeout`            | duration              | The timeout setting for API requests. See [here][here] for the format.                                |
+| `user`               | string                | The unique identifier for the user making the request.                                                |
+| `with-persisting`    | boolean               | The flag to indicate whether to persist the generated images.                                         |
 <!--@mdc :: -->
 
 ### Proxy

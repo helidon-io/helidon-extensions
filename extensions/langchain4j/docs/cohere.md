@@ -79,17 +79,19 @@ is not created.
 ### Configuration options
 
 <!--@mdc ::table-collapse -->
-| Key              | Type                  | Description                                                                                          |
-|------------------|-----------------------|------------------------------------------------------------------------------------------------------|
-| `api-key`        | string                | Required. The API key used to authenticate requests to the Cohere API.                               |
-| `base-url`       | string                | The base URL for the model API. If not present, the default value supplied from LangChain4j is used. |
-| `custom-headers` | Map\<string, string\> | A map containing custom headers.                                                                     |
-| `enabled`        | boolean               | If set to false, this component will not be available even if configured.                            |
-| `log-requests`   | boolean               | Whether to log API requests.                                                                         |
-| `log-responses`  | boolean               | Whether to log API responses.                                                                        |
-| `max-retries`    | int                   | The maximum number of retries for failed API requests.                                               |
-| `model-name`     | string                | The model name to use.                                                                               |
-| `timeout`        | duration              | The timeout setting for API requests. See [here][here] for the format.                               |
+| Key                                     | Type                  | Description                                                                                                                                |
+|-----------------------------------------|-----------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
+| `api-key`                               | string                | Required. The API key used to authenticate requests to the Cohere API.                                                                     |
+| `base-url`                              | string                | The base URL for the model API. If not present, the default value supplied from LangChain4j is used.                                       |
+| `custom-headers`                        | Map\<string, string\> | A map containing custom headers.                                                                                                           |
+| `enabled`                               | boolean               | If set to false, this component will not be available even if configured.                                                                  |
+| `http-client-builder`                   | injected bean         | HTTP client builder to use. The default service is injected when available; select a named service with `http-client-builder.service-registry.named`. |
+| `http-client-builder-discover-services` | boolean               | Whether to enable automatic service discovery for `http-client-builder`. Defaults to `true`.                                               |
+| `log-requests`                          | boolean               | Whether to log API requests.                                                                                                               |
+| `log-responses`                         | boolean               | Whether to log API responses.                                                                                                              |
+| `max-retries`                           | int                   | The maximum number of retries for failed API requests.                                                                                     |
+| `model-name`                            | string                | The model name to use.                                                                                                                     |
+| `timeout`                               | duration              | The timeout setting for API requests. See [here][here] for the format.                                                                     |
 <!--@mdc :: -->
 
 ## Additional Information

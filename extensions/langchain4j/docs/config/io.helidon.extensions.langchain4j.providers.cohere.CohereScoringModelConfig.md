@@ -30,14 +30,14 @@ Configuration for LangChain4j model CohereScoringModel
 </tr>
 <tr>
 <td>
-<code>proxy</code>
+<code>http-<wbr>client-<wbr>builder</code>
 </td>
 <td>
-<code>Proxy</code>
+<code>Http<wbr>Client<wbr>Builder</code>
 </td>
 <td>
 </td>
-<td>Proxy to use</td>
+<td>HTTP client builder to use</td>
 </tr>
 <tr>
 <td>
@@ -119,7 +119,7 @@ Configuration for LangChain4j model CohereScoringModel
 </tr>
 <tr>
 <td>
-<code>proxy-<wbr>discover-<wbr>services</code>
+<code>http-<wbr>client-<wbr>builder-<wbr>discover-<wbr>services</code>
 </td>
 <td>
 <code>Boolean</code>
@@ -127,7 +127,7 @@ Configuration for LangChain4j model CohereScoringModel
 <td>
 <code>true</code>
 </td>
-<td>Whether to enable automatic service discovery for <code>proxy</code></td>
+<td>Whether to enable automatic service discovery for <code>http-<wbr>client-<wbr>builder</code></td>
 </tr>
 <tr>
 <td>
