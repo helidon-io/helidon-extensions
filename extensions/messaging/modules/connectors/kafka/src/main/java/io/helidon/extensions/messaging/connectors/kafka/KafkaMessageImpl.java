@@ -16,23 +16,23 @@
 
 package io.helidon.extensions.messaging.connectors.kafka;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+
+import io.helidon.messaging.HeaderValue;
+import io.helidon.messaging.MessageHeaders;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 
 final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
     private final K key;
     private final V entity;
-    private final Map<String, String> headers;
+    private final boolean entityAvailable;
+    private final MessageHeaders headers;
     private final List<KafkaMessage.Header> kafkaHeaders;
     private final Optional<String> topic;
     private final OptionalInt partition;
@@ -49,9 +49,11 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
                              OptionalLong offset,
                              OptionalLong timestamp,
                              Optional<KafkaMessage.TimestampType> timestampType,
-                             OptionalInt leaderEpoch) {
+                             OptionalInt leaderEpoch,
+                             boolean entityAvailable) {
         this.key = key;
-        this.entity = entity;
+        this.entity = Objects.requireNonNull(entity, "entity");
+        this.entityAvailable = entityAvailable;
         this.kafkaHeaders = snapshot(headers);
         this.headers = commonHeaders(kafkaHeaders);
         this.topic = topic;
@@ -77,7 +79,8 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
                                       OptionalLong.empty(),
                                       OptionalLong.empty(),
                                       Optional.empty(),
-                                      OptionalInt.empty());
+                                      OptionalInt.empty(),
+                                      true);
     }
 
     static <K, V> KafkaMessage<K, V> create(ConsumerRecord<K, V> record) {
@@ -97,7 +100,29 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
                                       Optional.of(timestampType(record.timestampType())),
                                       leaderEpoch.isPresent()
                                               ? OptionalInt.of(leaderEpoch.get())
-                                              : OptionalInt.empty());
+                                              : OptionalInt.empty(),
+                                      true);
+    }
+
+    static KafkaMessage<Object, Object> rejected(ConsumerRecord<Object, Object> record) {
+        Objects.requireNonNull(record);
+        List<KafkaMessage.Header> headers = new ArrayList<>();
+        for (org.apache.kafka.common.header.Header header : record.headers()) {
+            headers.add(header(header.key(), header.value()));
+        }
+        Optional<Integer> leaderEpoch = record.leaderEpoch();
+        return new KafkaMessageImpl<>(record.key(),
+                                      UnavailableEntity.INSTANCE,
+                                      headers,
+                                      Optional.of(record.topic()),
+                                      OptionalInt.of(record.partition()),
+                                      OptionalLong.of(record.offset()),
+                                      OptionalLong.of(record.timestamp()),
+                                      Optional.of(timestampType(record.timestampType())),
+                                      leaderEpoch.isPresent()
+                                              ? OptionalInt.of(leaderEpoch.get())
+                                              : OptionalInt.empty(),
+                                      false);
     }
 
     @Override
@@ -105,8 +130,12 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
         return entity;
     }
 
+    boolean entityAvailable() {
+        return entityAvailable;
+    }
+
     @Override
-    public Map<String, String> headers() {
+    public MessageHeaders headers() {
         return headers;
     }
 
@@ -159,13 +188,15 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
         return List.copyOf(result);
     }
 
-    private static Map<String, String> commonHeaders(List<KafkaMessage.Header> headers) {
-        Map<String, String> result = new LinkedHashMap<>();
+    private static MessageHeaders commonHeaders(List<KafkaMessage.Header> headers) {
+        MessageHeaders.Builder result = MessageHeaders.builder();
         for (KafkaMessage.Header header : headers) {
-            header.value().ifPresent(value -> result.put(header.name(),
-                                                        new String(value, StandardCharsets.UTF_8)));
+            Optional<byte[]> value = header.value();
+            result.add(header.name(), value.isPresent()
+                    ? HeaderValue.binary(value.orElseThrow())
+                    : HeaderValue.nullValue());
         }
-        return Collections.unmodifiableMap(result);
+        return result.build();
     }
 
     private static KafkaMessage.TimestampType timestampType(
@@ -175,6 +206,10 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
         case CREATE_TIME -> KafkaMessage.TimestampType.CREATE_TIME;
         case LOG_APPEND_TIME -> KafkaMessage.TimestampType.LOG_APPEND_TIME;
         };
+    }
+
+    private enum UnavailableEntity {
+        INSTANCE
     }
 
     private static final class ImmutableHeader implements KafkaMessage.Header {

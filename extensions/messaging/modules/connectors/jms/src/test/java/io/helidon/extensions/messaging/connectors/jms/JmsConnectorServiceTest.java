@@ -16,7 +16,7 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.ConnectorProvider;
 import io.helidon.messaging.IncomingConnector;
 import io.helidon.messaging.IncomingConnectorProvider;
@@ -53,10 +53,10 @@ class JmsConnectorServiceTest {
             assertThat(provider instanceof AutoCloseable, is(false));
 
             JmsConnectorProvider jmsProvider = (JmsConnectorProvider) provider;
-            IncomingConnector firstIncoming = jmsProvider.createIncomingConnector(config(ConnectorConfig.Direction.INCOMING));
-            IncomingConnector secondIncoming = jmsProvider.createIncomingConnector(config(ConnectorConfig.Direction.INCOMING));
-            OutgoingConnector firstOutgoing = jmsProvider.createOutgoingConnector(config(ConnectorConfig.Direction.OUTGOING));
-            OutgoingConnector secondOutgoing = jmsProvider.createOutgoingConnector(config(ConnectorConfig.Direction.OUTGOING));
+            IncomingConnector firstIncoming = jmsProvider.createIncomingConnector(config(ConnectorDirection.INCOMING));
+            IncomingConnector secondIncoming = jmsProvider.createIncomingConnector(config(ConnectorDirection.INCOMING));
+            OutgoingConnector firstOutgoing = jmsProvider.createOutgoingConnector(config(ConnectorDirection.OUTGOING));
+            OutgoingConnector secondOutgoing = jmsProvider.createOutgoingConnector(config(ConnectorDirection.OUTGOING));
 
             assertThat(firstIncoming, not(sameInstance(secondIncoming)));
             assertThat(firstOutgoing, not(sameInstance(secondOutgoing)));
@@ -73,7 +73,7 @@ class JmsConnectorServiceTest {
                 .build();
         ServiceRegistryManager registryManager = ServiceRegistryManager.create(registryConfig);
         try {
-            JmsConnectorConfig config = config(ConnectorConfig.Direction.INCOMING);
+            JmsConnectorConfig config = config(ConnectorDirection.INCOMING);
 
             assertThat(new JmsResourceResolver(registryManager.registry()).resolve(config), sameInstance(factory));
         } finally {
@@ -81,7 +81,7 @@ class JmsConnectorServiceTest {
         }
     }
 
-    private static JmsConnectorConfig config(ConnectorConfig.Direction direction) {
+    private static JmsConnectorConfig config(ConnectorDirection direction) {
         return JmsConnectorConfig.builder()
                 .direction(direction)
                 .channel("orders")

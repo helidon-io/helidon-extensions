@@ -18,7 +18,7 @@ package io.helidon.extensions.messaging.connectors.pulsar;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.ConnectorProvider;
 import io.helidon.messaging.IncomingConnectorProvider;
 import io.helidon.messaging.OutgoingConnectorProvider;
@@ -75,7 +75,7 @@ class PulsarConnectorServiceTest {
         try {
             PulsarConnectorProvider provider = manager.registry().get(PulsarConnectorProvider.class);
             provider.createOutgoingConnector(PulsarConnectorConfig.builder()
-                                                       .direction(ConnectorConfig.Direction.OUTGOING)
+                                                       .direction(ConnectorDirection.OUTGOING)
                                                        .channel("registry-schema")
                                                        .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
                                                        .serviceUrl("pulsar://127.0.0.1:6650")

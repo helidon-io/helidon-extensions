@@ -189,7 +189,8 @@ results.emitMessage(message);
 Incoming `JmsMessage` instances expose immutable snapshots of the body, typed application properties, and selected
 JMS metadata: message and String correlation identifiers, type, timestamp, expiration, delivery time, priority, and
 redelivery state. They never expose the live native `Message`, `Session`, or `Connection`. Portable message headers
-are the string representation of JMS application properties.
+preserve JMS Boolean, integer, 32/64-bit floating-point, and String value kinds; `jmsProperties()` additionally retains
+the native Byte, Short, Integer, and Long widths.
 
 Incoming `BytesMessage` bodies are rejected before allocation when their declared length exceeds `max-body-bytes`,
 which defaults to one MiB. Set this limit to the largest byte-array payload the application is prepared to retain.
@@ -197,9 +198,12 @@ Other JMS body types do not expose a portable encoded byte length and are not go
 
 ## Body and property mapping
 
+Helidon message payloads are non-null. A provider bodyless JMS message enters the configured pre-dispatch failure
+policy; DROP can settle it, while DEAD_LETTER publishes a metadata-only bodyless JMS message without exposing an
+unsafe or unavailable source body.
+
 | Helidon payload | JMS message |
 | --- | --- |
-| `null` | bodyless `Message`; an incoming generic bodyless JMS `Message` maps back to a null payload |
 | `String` | `TextMessage` |
 | `byte[]` | `BytesMessage` |
 | `Map<String, Object>` | `MapMessage` |
@@ -211,8 +215,8 @@ application properties support `Boolean`, numeric primitive wrappers, and `Strin
 selector identifiers and must not use the provider-reserved `JMS` prefix, except for the standard client-settable
 `JMSXGroupID` (`String`) and `JMSXGroupSeq` (`Integer`) properties. Other provider-owned `JMSX*` and `JMS_*` properties
 are not exposed as portable application headers. Generic portable headers may also set these two grouping properties;
-the `JMSXGroupSeq` header value must be a decimal integer. Invalid application property names or values fail the send
-before the broker success point.
+`JMSXGroupSeq` accepts a portable integer or decimal text value. Unsupported typed values and duplicate property names
+are rejected without stringification before the broker success point.
 
 Java object messages are disabled by default. Enabling them permits native Java serialization and deserialization and
 must be limited to trusted producers, trusted payload classes, and a properly restricted deserialization environment.

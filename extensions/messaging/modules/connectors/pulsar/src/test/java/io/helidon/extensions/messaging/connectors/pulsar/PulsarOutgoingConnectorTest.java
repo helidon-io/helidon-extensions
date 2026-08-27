@@ -19,6 +19,7 @@ package io.helidon.extensions.messaging.connectors.pulsar;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,7 +30,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
+import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.OutgoingConnector;
@@ -42,6 +44,7 @@ import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.TypedMessageBuilder;
 import org.junit.jupiter.api.Test;
 
+import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -62,13 +65,16 @@ class PulsarOutgoingConnectorTest {
                         .key("key-1")
                         .orderingKey(new byte[] {1, 2})
                         .header("trace-id", "first-trace")
+                        .header("span-id", "first-span")
                         .eventTime(123)
                         .build(),
                 Message.builder("second").header("trace-id", "second-trace").build())));
         connector.close();
 
         assertThat(transport.values, is(List.of("first", "second")));
-        assertThat(transport.properties.get(0), is(Map.of("trace-id", "first-trace")));
+        assertThat(transport.properties.get(0),
+                   is(Map.of("trace-id", "first-trace", "span-id", "first-span")));
+        assertThat(List.copyOf(transport.properties.get(0).keySet()), is(List.of("trace-id", "span-id")));
         assertThat(transport.properties.get(1), is(Map.of("trace-id", "second-trace")));
         assertThat(transport.keys, is(List.of("key-1", "")));
         assertThat(transport.eventTimes, is(List.of(123L, -1L)));
@@ -97,6 +103,31 @@ class PulsarOutgoingConnectorTest {
     }
 
     @Test
+    void rejectsTypedAndDuplicateHeadersThatPulsarPropertiesCannotRepresent() {
+        FakeTransport transport = new FakeTransport();
+        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
+                .createOutgoingConnector(config(PulsarSchemaType.STRING));
+        connector.start();
+
+        BatchDeliveryException typedFailure = assertThrows(
+                BatchDeliveryException.class,
+                () -> connector.sendBatch(MessageBatch.create(Message.builder("typed")
+                                                                       .header("priority", HeaderValue.integer(7))
+                                                                       .build())));
+        assertThat(typedFailure.getCause().getMessage(), containsString("only text message headers"));
+
+        BatchDeliveryException duplicateFailure = assertThrows(
+                BatchDeliveryException.class,
+                () -> connector.sendBatch(MessageBatch.create(Message.builder("duplicate")
+                                                                       .addHeader("trace-id", "first")
+                                                                       .addHeader("trace-id", "second")
+                                                                       .build())));
+        assertThat(duplicateFailure.getCause().getMessage(), containsString("duplicate message header 'trace-id'"));
+        assertThat(transport.values, is(List.of()));
+        connector.close();
+    }
+
+    @Test
     void passesResolvedBuiltInSchemaAndTypedPayloadToPulsar() {
         FakeTransport transport = new FakeTransport();
         OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
@@ -119,7 +150,7 @@ class PulsarOutgoingConnectorTest {
                 .build();
         PulsarSchemaResolver.ResolvedSchema resolved = PulsarSchemaResolver.resolve(
                 config,
-                ConnectorConfig.Direction.OUTGOING,
+                ConnectorDirection.OUTGOING,
                 () -> List.of(schemaProvider("custom-json", customSchema)));
         OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
                 .createOutgoingConnector(config, resolved);
@@ -188,7 +219,7 @@ class PulsarOutgoingConnectorTest {
 
     private static PulsarConnectorConfig.Builder configBuilder(PulsarSchemaType schema) {
         return PulsarConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.OUTGOING)
+                .direction(ConnectorDirection.OUTGOING)
                 .channel("out")
                 .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
                 .serviceUrl("pulsar://localhost:6650")
@@ -301,7 +332,7 @@ class PulsarOutgoingConnectorTest {
                     }
                     case "sendAsync" -> {
                         values.add(value[0]);
-                        properties.add(Map.copyOf(messageProperties));
+                        properties.add(Collections.unmodifiableMap(new LinkedHashMap<>(messageProperties)));
                         keys.add(key[0]);
                         eventTimes.add(eventTime[0]);
                         yield CompletableFuture.completedFuture(messageId);

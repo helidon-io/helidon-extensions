@@ -40,9 +40,12 @@ import io.helidon.messaging.BatchAtomicity;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
 import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
+import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.OutgoingConnector;
 
@@ -78,13 +81,17 @@ class KafkaOutgoingConnectorTest {
     }
 
     @Test
-    void testSendsPayloadTopicAndUtf8Headers() {
+    void testSendsPayloadTopicAndPortableHeaders() {
         MockProducer<Object, Object> producer = mockProducer(true);
         KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
 
         start(connector, config())
                 .send(Message.builder("audit event")
                               .header("trace-id", "Příliš žluťoučký")
+                              .addHeader("duplicate", "first")
+                              .addHeader("duplicate", "second")
+                              .addHeader("binary", HeaderValue.binary(new byte[] {0x00, (byte) 0xFF}))
+                              .addHeader("null-header", HeaderValue.nullValue())
                               .build());
 
         assertThat(producer.history().size(), is(1));
@@ -93,6 +100,25 @@ class KafkaOutgoingConnectorTest {
         assertThat(record.value(), is("audit event"));
         Header header = record.headers().lastHeader("trace-id");
         assertThat(new String(header.value(), StandardCharsets.UTF_8), is("Příliš žluťoučký"));
+        assertThat(headerValues(record, "duplicate"), is(List.of("first", "second")));
+        assertArrayEquals(new byte[] {0x00, (byte) 0xFF}, record.headers().lastHeader("binary").value());
+        assertThat(record.headers().lastHeader("null-header").value(), nullValue());
+    }
+
+    @Test
+    void testRejectsUnsupportedPortableHeaderValue() {
+        MockProducer<Object, Object> producer = mockProducer(true);
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        OutgoingConnector outgoing = start(connector, config());
+        Message<String> message = Message.builder("audit event")
+                .header("attempt", HeaderValue.integer(1))
+                .build();
+
+        MessagingException failure = assertThrows(MessagingException.class, () -> outgoing.send(message));
+
+        assertThat(failure.getCause().getMessage(),
+                   is("Kafka header 'attempt' has unsupported portable value type IntegerValue"));
+        assertThat(producer.history().isEmpty(), is(true));
     }
 
     @Test
@@ -122,8 +148,9 @@ class KafkaOutgoingConnectorTest {
         assertArrayEquals("second".getBytes(StandardCharsets.UTF_8), headers[1].value());
         assertArrayEquals(new byte[] {0x00, (byte) 0xFF}, headers[2].value());
         assertThat(headers[3].value(), nullValue());
-        assertThat(message.header("trace-id").orElseThrow(), is("second"));
-        assertThat(message.header("null-header"), is(Optional.empty()));
+        assertThat(message.headerValue("trace-id").orElseThrow(),
+                   is(HeaderValue.binary("second".getBytes(StandardCharsets.UTF_8))));
+        assertThat(message.headerValue("null-header").orElseThrow(), is(HeaderValue.nullValue()));
     }
 
     @Test
@@ -152,6 +179,33 @@ class KafkaOutgoingConnectorTest {
         assertThat(record.key(), is("source-key"));
         assertThat(record.value(), is("audit event"));
         assertArrayEquals(new byte[] {0x01}, record.headers().lastHeader("source").value());
+    }
+
+    @Test
+    void testDeadLettersKafkaTombstoneAsNullValueWithNativeMetadata() {
+        MockProducer<Object, Object> producer = mockProducer(true);
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        ConsumerRecord<Object, Object> tombstone = new ConsumerRecord<>("source-topic",
+                                                                         2,
+                                                                         7L,
+                                                                         "source-key",
+                                                                         null);
+        DeadLetterMessage<Object> deadLetter = DeadLetterMessage.create(
+                KafkaMessageImpl.rejected(tombstone),
+                "orders-in",
+                1,
+                new MessagingException("Kafka tombstone has no payload"));
+
+        start(connector, config()).send(deadLetter);
+
+        ProducerRecord<Object, Object> record = producer.history().getFirst();
+        assertThat(record.key(), is("source-key"));
+        assertThat(record.value(), nullValue());
+        assertThat(new String(record.headers()
+                                      .lastHeader(KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER)
+                                      .value(),
+                              StandardCharsets.UTF_8),
+                   is("source-topic"));
     }
 
     @Test
@@ -774,7 +828,7 @@ class KafkaOutgoingConnectorTest {
 
     private static KafkaConnectorConfig config(Duration sendTimeout) {
         return KafkaConnectorConfig.builder()
-                .direction(ConnectorConfig.Direction.OUTGOING)
+                .direction(ConnectorDirection.OUTGOING)
                 .channel("audit")
                 .connector(KafkaConnectorProvider.CONNECTOR_TYPE)
                 .bootstrapServers("localhost:9092")
@@ -811,9 +865,9 @@ class KafkaOutgoingConnectorTest {
 
     private static <T> DeadLetterMessage<T> customDeadLetter(Message<T> originalMessage,
                                                              Map<String, String> additionalHeaders) {
-        Map<String, String> headers = new LinkedHashMap<>(originalMessage.headers());
-        headers.putAll(additionalHeaders);
-        Map<String, String> immutableHeaders = Map.copyOf(headers);
+        MessageHeaders.Builder headers = MessageHeaders.builder().addAll(originalMessage.headers());
+        additionalHeaders.forEach(headers::set);
+        MessageHeaders immutableHeaders = headers.build();
         return new DeadLetterMessage<>() {
             @Override
             public Message<T> originalMessage() {
@@ -846,7 +900,7 @@ class KafkaOutgoingConnectorTest {
             }
 
             @Override
-            public Map<String, String> headers() {
+            public MessageHeaders headers() {
                 return immutableHeaders;
             }
         };

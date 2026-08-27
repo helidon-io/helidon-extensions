@@ -22,7 +22,7 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 import io.helidon.builder.api.Prototype;
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.ConnectorDirection;
 
 /**
  * Support methods and constants for {@link JmsConnectorConfig}.
@@ -177,7 +177,7 @@ final class JmsConnectorConfigSupport {
                 throw new IllegalArgumentException(USERNAME_PROPERTY + " and " + PASSWORD_PROPERTY
                                                            + " must be configured together");
             }
-            if (target.direction().orElse(null) == ConnectorConfig.Direction.OUTGOING
+            if (target.direction().orElse(null) == ConnectorDirection.OUTGOING
                     && (target.messageSelector().isPresent()
                     || target.durable()
                     || target.subscriptionName().isPresent()

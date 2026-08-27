@@ -41,14 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 class KafkaScenarioRegistryTest {
     @Test
     void activatesOnlySelectedFixtureTopologyWithoutKafkaBroker() {
-        String yaml = """
-                helidon:
-                  messaging:
-                    incoming:
-                      kafka-in:
-                        topology-only: true
-                """;
-        ServiceRegistryManager manager = KafkaScenarioRegistry.create(yaml,
+        ServiceRegistryManager manager = KafkaScenarioRegistry.create("{}",
                                                                        IncomingReceiver.class,
                                                                        IncomingPayloadReceiver.class,
                                                                        IncomingMessageReceiver.class,
