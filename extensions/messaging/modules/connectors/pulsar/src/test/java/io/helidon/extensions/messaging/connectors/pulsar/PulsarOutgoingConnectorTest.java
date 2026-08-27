@@ -18,6 +18,7 @@ package io.helidon.extensions.messaging.connectors.pulsar;
 
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -31,9 +32,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
 import io.helidon.messaging.ConnectorDirection;
+import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.OutgoingConnector;
 
 import org.apache.pulsar.client.api.MessageId;
@@ -46,6 +49,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -213,6 +217,64 @@ class PulsarOutgoingConnectorTest {
         assertThat(payload.limit(), is(5));
     }
 
+    @Test
+    void sendsUnavailablePulsarDeadLetterAsNativeNullWithOriginalMetadata() {
+        FakeTransport transport = new FakeTransport();
+        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
+                .createOutgoingConnector(config(PulsarSchemaType.STRING));
+        PulsarMessage<Object> original = PulsarMessageMapper.metadataOnly(
+                PulsarTestSupport.nativeMessage("oversized", 9));
+        DeadLetterMessage<Object> deadLetter = DeadLetterMessage.create(
+                original,
+                "orders-in",
+                2,
+                new MessagingException("Pulsar message payload is unavailable"));
+
+        connector.start();
+        connector.sendBatch(MessageBatch.create(deadLetter));
+        connector.close();
+
+        assertThat(transport.values.size(), is(1));
+        assertThat(transport.values.getFirst(), nullValue());
+        assertThat(transport.properties.getFirst().get("trace-id"), is("pulsar-trace"));
+        assertThat(transport.properties.getFirst().get(DeadLetterMessage.SOURCE_CHANNEL_HEADER), is("orders-in"));
+        assertThat(transport.properties.getFirst().get(DeadLetterMessage.ATTEMPTS_HEADER), is("2"));
+        assertThat(transport.properties.getFirst().get(PulsarConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER),
+                   is("persistent://public/default/input"));
+    }
+
+    @Test
+    void zeroCloseTimeoutAcceptsCompletedProducerAndClientCloses() {
+        FakeTransport transport = new FakeTransport();
+        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
+                .createOutgoingConnector(configBuilder(PulsarSchemaType.STRING)
+                                                 .closeTimeout(Duration.ZERO)
+                                                 .build());
+
+        connector.start();
+        connector.close();
+
+        assertThat(transport.closed.get(), is(true));
+        assertThat(transport.shutdowns.get(), is(0));
+    }
+
+    @Test
+    void zeroCloseTimeoutRejectsIncompleteClientCloseAndForcesShutdown() {
+        FakeTransport transport = new FakeTransport();
+        transport.clientCloseFuture = new CompletableFuture<>();
+        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
+                .createOutgoingConnector(configBuilder(PulsarSchemaType.STRING)
+                                                 .closeTimeout(Duration.ZERO)
+                                                 .build());
+
+        connector.start();
+        MessagingException failure = assertThrows(MessagingException.class, connector::close);
+
+        assertThat(failure.getMessage(), containsString("Timed out closing Pulsar client"));
+        assertThat(transport.shutdowns.get(), is(1));
+        assertThat(transport.closed.get(), is(true));
+    }
+
     private static PulsarConnectorConfig config(PulsarSchemaType schema) {
         return configBuilder(schema).build();
     }
@@ -249,6 +311,8 @@ class PulsarOutgoingConnectorTest {
         private final AtomicBoolean closed = new AtomicBoolean();
         private final AtomicInteger shutdowns = new AtomicInteger();
         private final AtomicReference<Schema<?>> schema = new AtomicReference<>();
+        private CompletableFuture<Void> producerCloseFuture = CompletableFuture.completedFuture(null);
+        private CompletableFuture<Void> clientCloseFuture = CompletableFuture.completedFuture(null);
         private final MessageId messageId = PulsarTestSupport.proxy(MessageId.class,
                                                                     (ignored, method, args) -> method.getName()
                                                                             .equals("compareTo")
@@ -269,8 +333,8 @@ class PulsarOutgoingConnectorTest {
                 yield producerBuilder;
             }
             case "closeAsync" -> {
-                closed.set(true);
-                yield CompletableFuture.completedFuture(null);
+                clientCloseFuture.thenRun(() -> closed.set(true));
+                yield clientCloseFuture;
             }
             case "shutdown" -> {
                 shutdowns.incrementAndGet();
@@ -297,7 +361,7 @@ class PulsarOutgoingConnectorTest {
             return PulsarTestSupport.proxy(Producer.class, (ignored, method, args) -> switch (method.getName()) {
             case "isConnected" -> true;
             case "newMessage" -> messageBuilder();
-            case "closeAsync" -> CompletableFuture.completedFuture(null);
+            case "closeAsync" -> producerCloseFuture;
             default -> PulsarTestSupport.defaultValue(method);
             });
         }

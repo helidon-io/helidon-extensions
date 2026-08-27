@@ -160,6 +160,12 @@ subscriptions. A terminal processing failure is negatively acknowledged and beco
 after `negative-ack-redelivery-delay` while the consumer remains connected. That delay is best-effort on a terminal
 graph failure: closing or losing the consumer can make its unacknowledged message eligible for redelivery sooner.
 
+If decoding fails, the decoded value is null, or the encoded size exceeds `max-message-bytes`, the connector retains an
+immutable metadata-only envelope without reading or copying the raw payload and submits it through the configured failure
+policy. Its `entity()` method throws `MessagingException`. A same-Pulsar dead-letter route publishes that unavailable
+entity as a native null value while retaining available keys, properties, and source metadata. Other outgoing connector
+types must reject the unavailable entity before reporting transport success.
+
 The connector enables broker acknowledgment receipts, disables acknowledgment timeouts, client-side retry/dead-letter
 handling, and pooled messages, and starts the consumer paused until the messaging graph is running. These settlement
 controls remain connector-owned and cannot be overridden through `consumer-properties`.
@@ -196,7 +202,9 @@ Pass-through property maps are treated as confidential configuration and are not
 Graceful shutdown stops new receives and lets the active retained delivery settle before closing the Pulsar consumer,
 producer, and client. `close-timeout` bounds connector-owned cleanup waits. Forced shutdown interrupts receive and
 delivery waits and closes the active client resources; any source message that was not successfully acknowledged remains
-eligible for redelivery. Close operations are idempotent, and shutdown never deletes the durable subscription.
+eligible for redelivery. `PT0S` performs a non-blocking completion check: already-completed closes succeed, while an
+unfinished close times out and uses the existing forced client-shutdown fallback. Close operations are idempotent, and
+shutdown never deletes the durable subscription.
 
 ## JPMS limitation in the upstream client
 
