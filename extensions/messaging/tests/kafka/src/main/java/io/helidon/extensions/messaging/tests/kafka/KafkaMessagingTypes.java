@@ -70,11 +70,11 @@ final class KafkaMessagingTypes {
         }
 
         void send(Message<String> message) {
-            emitter.emitMessage(message);
+            emitter.emit(message);
         }
 
         void sendBatch(MessageBatch<String> batch) {
-            emitter.emitBatch(batch);
+            emitter.emit(batch);
         }
     }
 
@@ -269,7 +269,7 @@ final class KafkaMessagingTypes {
         Emitter<Integer> emitter;
 
         void send(KafkaMessage<Long, Integer> message) {
-            emitter.emitMessage(message);
+            emitter.emit(message);
         }
     }
 

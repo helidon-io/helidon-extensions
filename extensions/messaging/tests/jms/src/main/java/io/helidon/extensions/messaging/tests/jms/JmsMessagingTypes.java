@@ -64,7 +64,7 @@ final class JmsMessagingTypes {
         }
 
         void send(Message<String> message) {
-            emitter.emitMessage(message);
+            emitter.emit(message);
         }
     }
 
@@ -211,7 +211,7 @@ final class JmsMessagingTypes {
         }
 
         void send(Message<String> message) {
-            emitter.emitMessage(message);
+            emitter.emit(message);
         }
     }
 

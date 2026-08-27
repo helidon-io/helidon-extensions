@@ -214,15 +214,15 @@ class KafkaConnectorIT {
         try (MessagingGraph graph = builder.build()) {
             graph.start();
             graph.emitter(channel).emit("channel payload");
-            graph.emitter(channel).emitMessage(Message.builder("channel message")
-                                                       .header("trace-id", "channel-single")
-                                                       .build());
-            graph.emitter(channel).emitBatch(MessageBatch.create(List.of(Message.builder("channel batch first")
-                                                                                 .header("trace-id", "channel-batch-1")
-                                                                                 .build(),
-                                                                         Message.builder("channel batch second")
-                                                                                 .header("trace-id", "channel-batch-2")
-                                                                                 .build())));
+            graph.emitter(channel).emit(Message.builder("channel message")
+                                               .header("trace-id", "channel-single")
+                                               .build());
+            graph.emitter(channel).emit(MessageBatch.create(List.of(Message.builder("channel batch first")
+                                                                          .header("trace-id", "channel-batch-1")
+                                                                          .build(),
+                                                                  Message.builder("channel batch second")
+                                                                          .header("trace-id", "channel-batch-2")
+                                                                          .build())));
 
             assertRecords(awaitRecords(topic, 4),
                           List.of(ExpectedRecord.create("channel payload"),

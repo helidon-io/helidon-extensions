@@ -698,9 +698,9 @@ class FileConnectorTest {
         try (MessagingGraph graph = builder.build()) {
             graph.start();
             graph.emitter(channel).emit("first audit event");
-            graph.emitter(channel).emitMessage(Message.builder("second audit event")
-                                                       .header("key", "value")
-                                                       .build());
+            graph.emitter(channel).emit(Message.builder("second audit event")
+                                               .header("key", "value")
+                                               .build());
 
             assertThat(Files.readString(auditLog), is("first audit event|second audit event|"));
         }
@@ -716,10 +716,10 @@ class FileConnectorTest {
 
         try (MessagingGraph graph = builder.build()) {
             graph.start();
-            graph.emitter(channel).emitBatch(MessageBatch.create(List.of(Message.create("first audit event"),
-                                                                         Message.builder("second audit event")
-                                                                                 .header("key", "value")
-                                                                                 .build())));
+            graph.emitter(channel).emit(MessageBatch.create(List.of(Message.create("first audit event"),
+                                                                    Message.builder("second audit event")
+                                                                            .header("key", "value")
+                                                                            .build())));
 
             assertThat(Files.readString(auditLog), is("first audit event|second audit event|"));
         }

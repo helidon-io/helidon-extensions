@@ -183,7 +183,7 @@ JmsMessage<String> message = JmsMessage.<String>builder("accepted")
         .property("JMSXGroupID", "order-42")
         .property("JMSXGroupSeq", 1)
         .build();
-results.emitMessage(message);
+results.emit(message);
 ```
 
 Incoming `JmsMessage` instances expose immutable snapshots of the body, typed application properties, and selected
