@@ -19,6 +19,7 @@ package io.helidon.extensions.langchain4j.codegen;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -127,8 +128,8 @@ class ModelFactoryCodegen implements CodegenExtension {
                         lifecycleCoordinatorType);
 
         classModel.addMethod(servicesMethod(modelType, lifecycleStateType, lifecyclePhaseType));
-        classModel.addMethod(resolvedServicesMethod(modelType, lifecycleStateType, lifecyclePhaseType));
-        classModel.addMethod(initializeServicesMethod(modelType, lifecycleStateType, lifecyclePhaseType));
+        classModel.addMethod(resolvedModelsMethod(modelType, lifecycleStateType, lifecyclePhaseType));
+        classModel.addMethod(initializeModelsMethod(modelType, lifecycleStateType, lifecyclePhaseType));
         classModel.addMethod(preDestroyMethod(lifecycleStateType, lifecyclePhaseType));
         classModel.addMethod(closeModelsMethod());
         classModel.addMethod(combineFailuresMethod());
@@ -208,6 +209,7 @@ class ModelFactoryCodegen implements CodegenExtension {
         classModel.addField(Field.builder()
                                     .name("lifecycleState")
                                     .accessModifier(AccessModifier.PRIVATE)
+                                    .isVolatile(true)
                                     .type(lifecycleStateType)
                                     .build());
         classModel.addConstructor(Constructor.builder()
@@ -242,7 +244,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                                           .addContent("(")
                                           .addContent(lifecyclePhaseType)
                                           .addContent(".NEW, ")
-                                          .addContent(LIST)
+                                          .addContent(Map.class)
                                           .addContent(".of(), ")
                                           .addContent(LIST)
                                           .addContentLine(".of(), null, null);")
@@ -368,24 +370,32 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .build();
     }
 
-    private static Method resolvedServicesMethod(TypeName modelType,
-                                                 TypeName lifecycleStateType,
-                                                 TypeName lifecyclePhaseType) {
+    private static Method resolvedModelsMethod(TypeName modelType,
+                                               TypeName lifecycleStateType,
+                                               TypeName lifecyclePhaseType) {
         return Method.builder()
                 .accessModifier(AccessModifier.PRIVATE)
-                .name("resolvedServices")
-                .returnType(servicesType(modelType))
-                .addContentLine("while (true) {")
-                .increaseContentPadding()
-                .addContentLine("lifecycleLock.lock();")
-                .addContentLine("try {")
-                .increaseContentPadding()
+                .name("resolvedModels")
+                .returnType(modelsType(modelType))
                 .addContentLine("var state = lifecycleState;")
                 .addContent("if (state.phase() == ")
                 .addContent(lifecyclePhaseType)
                 .addContentLine(".READY) {")
                 .increaseContentPadding()
-                .addContentLine("return state.services();")
+                .addContentLine("return state.models();")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .addContentLine("while (true) {")
+                .increaseContentPadding()
+                .addContentLine("lifecycleLock.lock();")
+                .addContentLine("try {")
+                .increaseContentPadding()
+                .addContentLine("state = lifecycleState;")
+                .addContent("if (state.phase() == ")
+                .addContent(lifecyclePhaseType)
+                .addContentLine(".READY) {")
+                .increaseContentPadding()
+                .addContentLine("return state.models();")
                 .decreaseContentPadding()
                 .addContentLine("}")
                 .addContent("if (state.phase() == ")
@@ -395,7 +405,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContentLine(".DESTROYED) {")
                 .increaseContentPadding()
                 .addContent("return ")
-                .addContent(LIST)
+                .addContent(Map.class)
                 .addContentLine(".of();")
                 .decreaseContentPadding()
                 .addContentLine("}")
@@ -450,7 +460,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent("(")
                 .addContent(lifecyclePhaseType)
                 .addContent(".INITIALIZING, ")
-                .addContent(LIST)
+                .addContent(Map.class)
                 .addContent(".of(), ")
                 .addContent(LIST)
                 .addContent(".of(), ")
@@ -462,27 +472,27 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContentLine("lifecycleLock.unlock();")
                 .decreaseContentPadding()
                 .addContentLine("}")
-                .addContentLine("return initializeServices();")
+                .addContentLine("return initializeModels();")
                 .decreaseContentPadding()
                 .addContentLine("}")
                 .build();
     }
 
-    private static Method initializeServicesMethod(TypeName modelType,
-                                                   TypeName lifecycleStateType,
-                                                   TypeName lifecyclePhaseType) {
+    private static Method initializeModelsMethod(TypeName modelType,
+                                                 TypeName lifecycleStateType,
+                                                 TypeName lifecyclePhaseType) {
         var builder = Method.builder()
                 .accessModifier(AccessModifier.PRIVATE)
-                .name("initializeServices")
-                .returnType(servicesType(modelType))
-                .addContent("var createdServices = new ")
-                .addContent(ArrayList.class)
-                .addContent("<")
-                .addContent(SERVICE_QUALIFIED_INSTANCE)
-                .addContent("<")
-                .addContent(modelType)
-                .addContentLine(">>();")
+                .name("initializeModels")
+                .returnType(modelsType(modelType))
                 .addContent("var createdModels = new ")
+                .addContent(HashMap.class)
+                .addContent("<")
+                .addContent(STRING)
+                .addContent(", ")
+                .addContent(modelType)
+                .addContentLine(">();")
+                .addContent("var ownedModels = new ")
                 .addContent(ArrayList.class)
                 .addContent("<")
                 .addContent(AutoCloseable.class)
@@ -493,17 +503,9 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .increaseContentPadding()
                 .addContentLine("for (var name : modelNames) {")
                 .increaseContentPadding()
-                .addContentLine("buildModel(name, config, createdModels)")
+                .addContentLine("buildModel(name, config, ownedModels)")
                 .increaseContentPadding()
-                .addContent(".map(model -> ")
-                .addContent(SERVICE_QUALIFIED_INSTANCE)
-                .addContentLine()
-                .increaseContentPadding()
-                .addContent(".create(model, ")
-                .addContent(SERVICE_QUALIFIER)
-                .addContentLine(".createNamed(name)))")
-                .decreaseContentPadding()
-                .addContentLine(".ifPresent(createdServices::add);")
+                .addContentLine(".ifPresent(model -> createdModels.put(name, model));")
                 .decreaseContentPadding()
                 .addContentLine("}")
                 .addContent("completedState = new ")
@@ -511,10 +513,12 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent("(")
                 .addContent(lifecyclePhaseType)
                 .addContent(".READY, ")
+                .addContent(Collections.class)
+                .addContent(".unmodifiableMap(new ")
+                .addContent(HashMap.class)
+                .addContent("<>(createdModels)), ")
                 .addContent(LIST)
-                .addContent(".copyOf(createdServices), ")
-                .addContent(LIST)
-                .addContentLine(".copyOf(createdModels), null, null);")
+                .addContentLine(".copyOf(ownedModels), null, null);")
                 .decreaseContentPadding()
                 .addContent("} catch (")
                 .addContent(RuntimeException.class)
@@ -522,7 +526,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent(Error.class)
                 .addContentLine(" e) {")
                 .increaseContentPadding()
-                .addContentLine("var cleanupFailure = closeModels(createdModels);")
+                .addContentLine("var cleanupFailure = closeModels(ownedModels);")
                 .addContentLine("if (cleanupFailure != null && cleanupFailure != e) {")
                 .increaseContentPadding()
                 .addContentLine("e.addSuppressed(cleanupFailure);")
@@ -543,7 +547,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent("lifecycleState = new ")
                 .addContent(lifecycleStateType)
                 .addContent("(phase, ")
-                .addContent(LIST)
+                .addContent(Map.class)
                 .addContent(".of(), ")
                 .addContent(LIST)
                 .addContentLine(".of(), null, null);")
@@ -555,7 +559,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent("(")
                 .addContent(lifecyclePhaseType)
                 .addContent(".CLEANUP_FAILED, ")
-                .addContent(LIST)
+                .addContent(Map.class)
                 .addContent(".of(), ")
                 .addContent(LIST)
                 .addContentLine(".of(), null, cleanupFailure);")
@@ -580,7 +584,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .increaseContentPadding()
                 .addContentLine("lifecycleState = completedState;")
                 .addContentLine("lifecycleChanged.signalAll();")
-                .addContentLine("return completedState.services();")
+                .addContentLine("return completedState.models();")
                 .decreaseContentPadding()
                 .addContentLine("}")
                 .decreaseContentPadding()
@@ -608,7 +612,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent("(")
                 .addContent(lifecyclePhaseType)
                 .addContent(".DESTROYED, ")
-                .addContent(LIST)
+                .addContent(Map.class)
                 .addContent(".of(), ")
                 .addContent(LIST)
                 .addContentLine(".of(), null, null);")
@@ -620,7 +624,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent("(")
                 .addContent(lifecyclePhaseType)
                 .addContent(".CLEANUP_FAILED, ")
-                .addContent(LIST)
+                .addContent(Map.class)
                 .addContent(".of(), ")
                 .addContent(LIST)
                 .addContentLine(".of(), null, cleanupFailure);")
@@ -635,7 +639,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContentLine("}")
                 .addContentLine("throwCloseFailure(cleanupFailure);")
                 .addContent("return ")
-                .addContent(LIST)
+                .addContent(Map.class)
                 .addContentLine(".of();");
     }
 
@@ -667,7 +671,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent("(")
                 .addContent(lifecyclePhaseType)
                 .addContent(".DESTROYED, ")
-                .addContent(LIST)
+                .addContent(Map.class)
                 .addContent(".of(), ")
                 .addContent(LIST)
                 .addContentLine(".of(), null, null);")
@@ -693,7 +697,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent("(")
                 .addContent(lifecyclePhaseType)
                 .addContent(".DESTROYING, ")
-                .addContent(LIST)
+                .addContent(Map.class)
                 .addContent(".of(), ")
                 .addContent("modelsToClose, ")
                 .addContent(Thread.class)
@@ -710,7 +714,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent("(")
                 .addContent(lifecyclePhaseType)
                 .addContent(".DESTROYING, ")
-                .addContent(LIST)
+                .addContent(Map.class)
                 .addContent(".of(), ")
                 .addContent(LIST)
                 .addContentLine(".of(), state.owner(), null);")
@@ -774,7 +778,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent("(")
                 .addContent(lifecyclePhaseType)
                 .addContent(".DESTROYED, ")
-                .addContent(LIST)
+                .addContent(Map.class)
                 .addContent(".of(), ")
                 .addContent(LIST)
                 .addContentLine(".of(), null, null);")
@@ -786,7 +790,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addContent("(")
                 .addContent(lifecyclePhaseType)
                 .addContent(".CLEANUP_FAILED, ")
-                .addContent(LIST)
+                .addContent(Map.class)
                 .addContent(".of(), ")
                 .addContent(LIST)
                 .addContentLine(".of(), null, cleanupFailure);")
@@ -1000,21 +1004,26 @@ class ModelFactoryCodegen implements CodegenExtension {
                                       .type(STRING)
                                       .name("modelName")
                                       .build())
-                .addContent("var qualifier = ")
-                .addContent(SERVICE_QUALIFIER)
-                .addContentLine(".createNamed(modelName);")
-                .addContentLine("return resolvedServices().stream()")
+                .addContentLine("var model = resolvedModels().get(modelName);")
+                .addContentLine("if (model == null) {")
                 .increaseContentPadding()
-                .addContentLine(".filter(service -> service.qualifiers().contains(qualifier))")
-                .addContentLine(".findFirst()")
-                .addContent(".orElseThrow(() -> new ")
+                .addContent("throw new ")
                 .addContent(IllegalStateException.class)
                 .addContent("(")
                 .addContentLiteral("No initialized LangChain4j model named '")
                 .addContent(" + modelName + ")
                 .addContentLiteral("'.")
-                .addContentLine("))")
-                .addContentLine(".get();")
+                .addContentLine(");")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .addContentLine("return model;")
+                .build();
+    }
+
+    private static TypeName modelsType(TypeName modelType) {
+        return TypeName.builder(TypeName.create(Map.class))
+                .addTypeArgument(STRING)
+                .addTypeArgument(modelType)
                 .build();
     }
 
@@ -1199,8 +1208,8 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .sortFields(false)
                 .addField(it -> it.name("phase")
                         .type(lifecyclePhaseType))
-                .addField(it -> it.name("services")
-                        .type(servicesType(modelType)))
+                .addField(it -> it.name("models")
+                        .type(modelsType(modelType)))
                 .addField(it -> it.name("ownedModels")
                         .type(closeablesType()))
                 .addField(it -> it.name("owner")

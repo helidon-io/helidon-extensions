@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.langchain4j.providers.oci.genai;
 
+import java.util.HashMap;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -27,6 +28,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
+import io.helidon.service.registry.Service;
 import io.helidon.service.registry.ServiceDescriptor;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryConfig;
@@ -263,6 +265,110 @@ class OciGenAiModelFactoryLifecycleTest {
         }
 
         assertThat(rolledBackModel.closeCount(), is(1));
+        assertThat(firstModel.closeCount(), is(1));
+        assertThat(secondModel.closeCount(), is(1));
+    }
+
+    @Test
+    void resolvesManyNamedModelsByIdentityInRepeatedAndReverseOrder() {
+        int modelCount = 32;
+        var models = new HashMap<String, LifecycleTestModel>(modelCount);
+        for (int i = 0; i < modelCount; i++) {
+            var modelName = "model-" + i;
+            var model = LifecycleTestModel.create();
+            models.put(modelName, model);
+            LifecycleTestModel.plan("plan-" + i, () -> model);
+        }
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(manyLifecycleModelConfig(modelCount), lifecycle);
+        var references = factory.services();
+
+        assertThat(references, hasSize(modelCount));
+        for (int repetition = 0; repetition < 3; repetition++) {
+            for (int i = modelCount - 1; i >= 0; i--) {
+                var reference = references.get(i);
+                assertThat(reference.get(), sameInstance(models.get(modelName(reference))));
+            }
+        }
+        assertThat(LifecycleTestModel.buildCount(), is(modelCount));
+
+        lifecycle.preDestroy();
+        models.values().forEach(model -> assertThat(model.closeCount(), is(1)));
+    }
+
+    @Test
+    void publishesNamedModelsAtomicallyToConcurrentReferences() throws Exception {
+        int modelCount = 8;
+        var models = new HashMap<String, LifecycleTestModel>(modelCount);
+        var finalModelConstructionStarted = new CountDownLatch(1);
+        var continueFinalModelConstruction = new CountDownLatch(1);
+        for (int i = 0; i < modelCount; i++) {
+            var modelName = "model-" + i;
+            var model = LifecycleTestModel.create();
+            models.put(modelName, model);
+            if (i == modelCount - 1) {
+                LifecycleTestModel.plan("plan-" + i, () -> {
+                    finalModelConstructionStarted.countDown();
+                    await(continueFinalModelConstruction);
+                    return model;
+                });
+            } else {
+                LifecycleTestModel.plan("plan-" + i, () -> model);
+            }
+        }
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(manyLifecycleModelConfig(modelCount), lifecycle);
+        var references = factory.services();
+        var waitingThread = new AtomicReference<Thread>();
+        var waitingReferenceStarted = new CountDownLatch(1);
+        var initializingModelReference = references.getFirst();
+        var waitingModelReference = references.get(1);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            try {
+                var initializingReference = executor.submit(initializingModelReference::get);
+                assertThat(finalModelConstructionStarted.await(10, TimeUnit.SECONDS), is(true));
+                var waitingReference = executor.submit(() -> {
+                    waitingThread.set(Thread.currentThread());
+                    waitingReferenceStarted.countDown();
+                    return waitingModelReference.get();
+                });
+
+                assertThat(waitingReferenceStarted.await(10, TimeUnit.SECONDS), is(true));
+                assertThat(awaitWaiting(waitingThread.get()), is(true));
+                assertThat(waitingReference.isDone(), is(false));
+                continueFinalModelConstruction.countDown();
+
+                assertThat(initializingReference.get(10, TimeUnit.SECONDS),
+                           sameInstance(models.get(modelName(initializingModelReference))));
+                assertThat(waitingReference.get(10, TimeUnit.SECONDS),
+                           sameInstance(models.get(modelName(waitingModelReference))));
+                assertThat(LifecycleTestModel.buildCount(), is(modelCount));
+            } finally {
+                continueFinalModelConstruction.countDown();
+            }
+        }
+
+        lifecycle.preDestroy();
+        models.values().forEach(model -> assertThat(model.closeCount(), is(1)));
+    }
+
+    @Test
+    void retainedReferencesFailAfterShutdown() {
+        var firstModel = LifecycleTestModel.create();
+        var secondModel = LifecycleTestModel.create();
+        LifecycleTestModel.plan("first-plan", () -> firstModel);
+        LifecycleTestModel.plan("second-plan", () -> secondModel);
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(twoLifecycleModelConfig(), lifecycle);
+        var references = factory.services();
+
+        assertThat(references.getFirst().get(), sameInstance(firstModel));
+        assertThat(references.get(1).get(), sameInstance(secondModel));
+
+        lifecycle.preDestroy();
+
+        references.forEach(reference -> assertThrows(IllegalStateException.class, reference::get));
         assertThat(firstModel.closeCount(), is(1));
         assertThat(secondModel.closeCount(), is(1));
     }
@@ -586,6 +692,10 @@ class OciGenAiModelFactoryLifecycleTest {
                 .count();
     }
 
+    private static String modelName(Service.QualifiedInstance<?> reference) {
+        return reference.qualifiers().iterator().next().value().orElseThrow();
+    }
+
     private static void await(CountDownLatch latch) {
         try {
             if (!latch.await(10, TimeUnit.SECONDS)) {
@@ -661,6 +771,21 @@ class OciGenAiModelFactoryLifecycleTest {
                       plan: second-plan
                 """;
         return Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
+    }
+
+    private static Config manyLifecycleModelConfig(int modelCount) {
+        var yaml = new StringBuilder("""
+                langchain4j:
+                  models:
+                """);
+        for (int i = 0; i < modelCount; i++) {
+            yaml.append("""
+                    model-%d:
+                      provider: lifecycle-test
+                      plan: plan-%d
+                """.formatted(i, i));
+        }
+        return Config.just(ConfigSources.create(yaml.toString(), MediaTypes.APPLICATION_X_YAML));
     }
 
     private static Config oneLifecycleModelConfig(String plan) {
