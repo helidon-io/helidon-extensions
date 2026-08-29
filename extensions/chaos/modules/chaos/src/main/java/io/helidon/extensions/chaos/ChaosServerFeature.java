@@ -42,7 +42,7 @@ public final class ChaosServerFeature implements RuntimeType.Api<ChaosConfig>, S
      * @return runtime type
      */
     public static ChaosServerFeature create(ChaosConfig prototype) {
-        return new ChaosServerFeature(prototype);
+        return new ChaosServerFeature(Objects.requireNonNull(prototype));
     }
 
     /**
@@ -61,7 +61,7 @@ public final class ChaosServerFeature implements RuntimeType.Api<ChaosConfig>, S
      * @return runtime type
      */
     public static ChaosServerFeature create(Consumer<ChaosConfig.Builder> builderConsumer) {
-        return builder().update(builderConsumer).build();
+        return builder().update(Objects.requireNonNull(builderConsumer)).build();
     }
 
     @Override
@@ -76,6 +76,7 @@ public final class ChaosServerFeature implements RuntimeType.Api<ChaosConfig>, S
 
     @Override
     public void setup(ServerFeatureContext context) {
+        Objects.requireNonNull(context);
         if (!prototype.enabled()) {
             return;
         }

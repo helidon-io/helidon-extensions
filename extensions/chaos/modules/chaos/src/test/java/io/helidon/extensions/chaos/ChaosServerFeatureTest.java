@@ -52,6 +52,13 @@ class ChaosServerFeatureTest {
     }
 
     @Test
+    void rejectsNullFeatureContextWhenDisabled() {
+        ChaosServerFeature feature = ChaosServerFeature.create(ChaosConfig.builder().buildPrototype());
+
+        assertThrows(NullPointerException.class, () -> feature.setup(null));
+    }
+
+    @Test
     void rejectsUnknownControlAndApplicationSockets() {
         ChaosConfig unknownControl = enabledConfig("unknown", Set.of(WebServer.DEFAULT_SOCKET_NAME), true);
         ChaosConfig unknownApplication = enabledConfig("chaos-control", Set.of("unknown"), true);

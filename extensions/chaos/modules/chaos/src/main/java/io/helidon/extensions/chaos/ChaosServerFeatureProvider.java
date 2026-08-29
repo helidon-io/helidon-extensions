@@ -15,6 +15,8 @@
  */
 package io.helidon.extensions.chaos;
 
+import java.util.Objects;
+
 import io.helidon.common.Api;
 import io.helidon.config.Config;
 import io.helidon.webserver.spi.ServerFeatureProvider;
@@ -39,8 +41,8 @@ public final class ChaosServerFeatureProvider implements ServerFeatureProvider<C
     @Override
     public ChaosServerFeature create(Config config, String name) {
         return ChaosConfig.builder()
-                .config(config)
-                .name(name)
+                .config(Objects.requireNonNull(config))
+                .name(Objects.requireNonNull(name))
                 .build();
     }
 }
