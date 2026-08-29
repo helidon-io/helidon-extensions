@@ -100,7 +100,7 @@ class ChaosRunJsonTest {
                                                          Optional.of(CREATED.plusSeconds(4)),
                                                          Optional.of("operator-stopped"))));
         assertThat(list.size(), is(1));
-        assertThat(list.get(0).orElseThrow().asObject(), is(terminal));
+        assertThat(list.get(0).orElseThrow().asObject().toString(), is(terminal.toString()));
     }
 
     @Test
@@ -112,7 +112,7 @@ class ChaosRunJsonTest {
         ChaosProblemJson.Problem problem = ChaosProblemJson.from(error, "/chaos/v1/runs");
 
         assertThat(problem.status(), is(422));
-        assertThat(problem.body(), is(json("""
+        assertThat(problem.body().toString(), is(json("""
                 {
                   "type": "/chaos/v1/problems/invalid-plan",
                   "title": "Invalid chaos run plan",
@@ -127,7 +127,7 @@ class ChaosRunJsonTest {
                     }
                   ]
                 }
-                """)));
+                """).toString()));
     }
 
     @Test

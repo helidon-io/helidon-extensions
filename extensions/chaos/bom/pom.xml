@@ -29,13 +29,13 @@
 
     <groupId>io.helidon.extensions.chaos</groupId>
     <artifactId>helidon-extensions-chaos-bom</artifactId>
-    <version>27.0.0-SNAPSHOT</version>
+    <version>4.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>Helidon Extensions Chaos BOM</name>
 
     <properties>
-        <chaos.extension.version>27.0.0-SNAPSHOT</chaos.extension.version>
+        <chaos.extension.version>4.0.0-SNAPSHOT</chaos.extension.version>
     </properties>
 
     <dependencyManagement>
