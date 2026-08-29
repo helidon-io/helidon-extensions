@@ -73,7 +73,7 @@ class ChaosRunJsonTest {
 
     @Test
     void writesNormalizedProbabilityActivation() {
-        ChaosRunPlan probabilityPlan = plan(new ChaosActivation.Probability(0.25));
+        ChaosRunPlan probabilityPlan = plan(new ProbabilityActivation(0.25));
 
         JsonObject json = ChaosRunJson.toJson(view(RUNNING,
                                                    Optional.empty(),

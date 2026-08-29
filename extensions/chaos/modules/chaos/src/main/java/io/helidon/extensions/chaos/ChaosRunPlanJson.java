@@ -183,7 +183,7 @@ final class ChaosRunPlanJson {
                 throw invalid(path + "/probability", "probability-precision",
                               "probability is too close to one for the supported numeric precision.");
             }
-            yield new ChaosActivation.Probability(normalized);
+            yield new ProbabilityActivation(normalized);
         }
         default -> throw invalid(path + "/type", "unsupported-type",
                                  "Activation type must be always or probability.");

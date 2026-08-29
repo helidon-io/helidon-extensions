@@ -108,7 +108,7 @@ class ChaosRunEngineTest {
                                  20,
                                  2,
                                  "/orders",
-                                 new ChaosActivation.Probability(0.5),
+                                 new ProbabilityActivation(0.5),
                                  42,
                                  "synthetic");
         ChaosRunView created = engine.create(plan, "alice");
@@ -129,13 +129,13 @@ class ChaosRunEngineTest {
     void probabilityStreamIncludesSeedAndStableDisruptionIdentity() {
         ChaosRunEngine seedEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
         seedEngine.create(plan(10, 30, 20, 2, "/orders",
-                               new ChaosActivation.Probability(0.5), 44, "synthetic"), "alice");
+                               new ProbabilityActivation(0.5), 44, "synthetic"), "alice");
         assertThat(reserveSequence(seedEngine, 8),
                    is(List.of(false, true, false, true, true, false, false, false)));
 
         ChaosRunEngine identityEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
         identityEngine.create(plan(10, 30, 20, 2, "/orders",
-                                   new ChaosActivation.Probability(0.5), 42, "alternate"), "alice");
+                                   new ProbabilityActivation(0.5), 42, "alternate"), "alice");
         assertThat(reserveSequence(identityEngine, 8),
                    is(List.of(false, true, true, true, true, false, false, true)));
     }

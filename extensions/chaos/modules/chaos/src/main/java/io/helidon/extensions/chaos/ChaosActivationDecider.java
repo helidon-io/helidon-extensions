@@ -46,7 +46,7 @@ final class ChaosActivationDecider {
     }
 
     static boolean activates(ChaosActivation activation, long streamSeed, long matchedInvocation) {
-        if (activation instanceof ChaosActivation.Probability probability) {
+        if (activation instanceof ProbabilityActivation probability) {
             long sampleBits = mix64(streamSeed + (matchedInvocation - 1) * GOLDEN_GAMMA);
             double sample = (sampleBits >>> 11) * DOUBLE_UNIT;
             return sample < probability.probability();

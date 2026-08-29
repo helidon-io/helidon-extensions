@@ -27,6 +27,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 import static io.helidon.extensions.chaos.ChaosRunState.COMPLETED;
@@ -51,6 +52,7 @@ final class ChaosRunEngine implements AutoCloseable {
     private final ChaosScheduler scheduler;
     private final Supplier<UUID> idSupplier;
     private final Map<UUID, ChaosRun> runs = new LinkedHashMap<>();
+    private final ReentrantLock lock = new ReentrantLock();
 
     private long sequence;
     private boolean closed;
@@ -79,110 +81,150 @@ final class ChaosRunEngine implements AutoCloseable {
         return new ChaosRunEngine(limits, clock, scheduler, idSupplier);
     }
 
-    synchronized ChaosRunView create(ChaosRunPlan plan, String actor) {
-        Objects.requireNonNull(plan);
-        Objects.requireNonNull(actor);
-        ensureOpen();
-        evictExpiredTerminalRuns();
-
-        List<ChaosRun> activeRuns = activeRuns();
-        if (activeRuns.size() >= limits.maximumActiveRuns()) {
-            throw new ConflictException("The maximum number of active chaos runs has been reached");
-        }
-        ChaosHttpScope requestedScope = plan.stage().disruption().scope();
-        if (activeRuns.stream().anyMatch(run -> overlaps(run.scope(), requestedScope))) {
-            throw new ConflictException("The requested scope overlaps an active chaos disruption");
-        }
-        evictForCapacity();
-
-        UUID id = nextId();
-        ChaosRun run = new ChaosRun(id, ++sequence, plan, actor, clock.instant());
-        ChaosScheduler.Cancellable completionTask = scheduler.schedule(plan.stage().duration(),
-                                                                       () -> terminate(id,
-                                                                                       COMPLETED,
-                                                                                       REASON_COMPLETED));
+    ChaosRunView create(ChaosRunPlan plan, String actor) {
+        lock.lock();
         try {
-            ChaosScheduler.Cancellable expirationTask = scheduler.schedule(plan.maximumDuration(),
-                                                                            () -> terminate(id,
-                                                                                            EXPIRED,
-                                                                                            REASON_EXPIRED));
-            run.tasks(completionTask, expirationTask);
-        } catch (RuntimeException e) {
-            completionTask.cancel();
-            throw e;
-        }
-        runs.put(id, run);
-        return run.view();
-    }
+            Objects.requireNonNull(plan);
+            Objects.requireNonNull(actor);
+            ensureOpen();
+            evictExpiredTerminalRuns();
 
-    synchronized Optional<Reservation> reserve(String method, String requestPath) {
-        Objects.requireNonNull(method);
-        Objects.requireNonNull(requestPath);
-        if (closed) {
-            return Optional.empty();
-        }
-        for (ChaosRun run : runs.values()) {
-            Optional<ChaosRun.Activation> activation = run.reserve(method, requestPath);
-            if (activation.isPresent()) {
-                return Optional.of(new Reservation(this, run.id(), activation.orElseThrow()));
+            List<ChaosRun> activeRuns = activeRuns();
+            if (activeRuns.size() >= limits.maximumActiveRuns()) {
+                throw new ConflictException("The maximum number of active chaos runs has been reached");
             }
+            ChaosHttpScope requestedScope = plan.stage().disruption().scope();
+            if (activeRuns.stream().anyMatch(run -> overlaps(run.scope(), requestedScope))) {
+                throw new ConflictException("The requested scope overlaps an active chaos disruption");
+            }
+            evictForCapacity();
+
+            UUID id = nextId();
+            ChaosRun run = new ChaosRun(id, ++sequence, plan, actor, clock.instant());
+            ChaosScheduler.Cancellable completionTask = scheduler.schedule(plan.stage().duration(),
+                                                                           () -> terminate(id,
+                                                                                           COMPLETED,
+                                                                                           REASON_COMPLETED));
+            try {
+                ChaosScheduler.Cancellable expirationTask = scheduler.schedule(plan.maximumDuration(),
+                                                                                () -> terminate(id,
+                                                                                                EXPIRED,
+                                                                                                REASON_EXPIRED));
+                run.tasks(completionTask, expirationTask);
+            } catch (RuntimeException e) {
+                completionTask.cancel();
+                throw e;
+            }
+            runs.put(id, run);
+            return run.view();
+        } finally {
+            lock.unlock();
         }
-        return Optional.empty();
     }
 
-    synchronized Optional<ChaosRunView> get(UUID id) {
-        Objects.requireNonNull(id);
-        evictExpiredTerminalRuns();
-        return Optional.ofNullable(runs.get(id)).map(ChaosRun::view);
+    Optional<Reservation> reserve(String method, String requestPath) {
+        lock.lock();
+        try {
+            Objects.requireNonNull(method);
+            Objects.requireNonNull(requestPath);
+            if (closed) {
+                return Optional.empty();
+            }
+            for (ChaosRun run : runs.values()) {
+                Optional<ChaosRun.Activation> activation = run.reserve(method, requestPath);
+                if (activation.isPresent()) {
+                    return Optional.of(new Reservation(this, run.id(), activation.orElseThrow()));
+                }
+            }
+            return Optional.empty();
+        } finally {
+            lock.unlock();
+        }
     }
 
-    synchronized List<ChaosRunView> list() {
-        evictExpiredTerminalRuns();
-        return runs.values()
-                .stream()
-                .sorted(Comparator.comparingLong(ChaosRun::sequence).reversed())
-                .map(ChaosRun::view)
-                .toList();
+    Optional<ChaosRunView> get(UUID id) {
+        lock.lock();
+        try {
+            Objects.requireNonNull(id);
+            evictExpiredTerminalRuns();
+            return Optional.ofNullable(runs.get(id)).map(ChaosRun::view);
+        } finally {
+            lock.unlock();
+        }
     }
 
-    synchronized ChaosRunView stop(UUID id) {
-        Objects.requireNonNull(id);
-        evictExpiredTerminalRuns();
-        ChaosRun run = runs.get(id);
-        if (run == null) {
-            throw new NotFoundException(id);
+    List<ChaosRunView> list() {
+        lock.lock();
+        try {
+            evictExpiredTerminalRuns();
+            return runs.values()
+                    .stream()
+                    .sorted(Comparator.comparingLong(ChaosRun::sequence).reversed())
+                    .map(ChaosRun::view)
+                    .toList();
+        } finally {
+            lock.unlock();
         }
-        if (run.running()) {
-            run.terminate(STOPPED, REASON_STOPPED, clock.instant());
+    }
+
+    ChaosRunView stop(UUID id) {
+        lock.lock();
+        try {
+            Objects.requireNonNull(id);
+            evictExpiredTerminalRuns();
+            ChaosRun run = runs.get(id);
+            if (run == null) {
+                throw new NotFoundException(id);
+            }
+            if (run.running()) {
+                run.terminate(STOPPED, REASON_STOPPED, clock.instant());
+            }
+            return run.view();
+        } finally {
+            lock.unlock();
         }
-        return run.view();
     }
 
     @Override
-    public synchronized void close() {
-        if (closed) {
-            return;
-        }
-        closed = true;
-        for (ChaosRun run : runs.values()) {
-            if (run.running()) {
-                run.terminate(STOPPED, "engine-closed", clock.instant());
+    public void close() {
+        lock.lock();
+        try {
+            if (closed) {
+                return;
             }
+            closed = true;
+            for (ChaosRun run : runs.values()) {
+                if (run.running()) {
+                    run.terminate(STOPPED, "engine-closed", clock.instant());
+                }
+            }
+            scheduler.close();
+        } finally {
+            lock.unlock();
         }
-        scheduler.close();
     }
 
-    private synchronized void terminate(UUID id, ChaosRunState state, String reason) {
-        ChaosRun run = runs.get(id);
-        if (run != null && run.running()) {
-            run.terminate(state, reason, clock.instant());
+    private void terminate(UUID id, ChaosRunState state, String reason) {
+        lock.lock();
+        try {
+            ChaosRun run = runs.get(id);
+            if (run != null && run.running()) {
+                run.terminate(state, reason, clock.instant());
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
-    private synchronized void release(UUID id) {
-        ChaosRun run = runs.get(id);
-        if (run != null) {
-            run.release(clock.instant());
+    private void release(UUID id) {
+        lock.lock();
+        try {
+            ChaosRun run = runs.get(id);
+            if (run != null) {
+                run.release(clock.instant());
+            }
+        } finally {
+            lock.unlock();
         }
     }
 

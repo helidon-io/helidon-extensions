@@ -85,7 +85,7 @@ final class ChaosRunJson {
     }
 
     private static JsonObject activation(ChaosActivation activation) {
-        if (activation instanceof ChaosActivation.Probability probability) {
+        if (activation instanceof ProbabilityActivation probability) {
             return JsonObject.builder()
                     .set("type", "probability")
                     .set("probability", probability.probability())

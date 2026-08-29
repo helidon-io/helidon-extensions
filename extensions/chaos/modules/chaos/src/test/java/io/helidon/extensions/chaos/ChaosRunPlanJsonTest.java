@@ -15,6 +15,7 @@
  */
 package io.helidon.extensions.chaos;
 
+import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
@@ -56,18 +57,24 @@ class ChaosRunPlanJsonTest {
 
         ChaosRunPlan plan = ChaosRunPlanJson.parse(json(input), LIMITS);
 
-        assertThat(plan.stage().disruption().activation(), is(new ChaosActivation.Probability(0.25)));
+        assertThat(plan.stage().disruption().activation(), is(new ProbabilityActivation(0.25)));
 
         ChaosRunPlan minimum = ChaosRunPlanJson.parse(
                 json(withActivation("{\"type\": \"probability\", "
                                             + "\"probability\": 1.1102230246251565e-16}")),
                 LIMITS);
         assertThat(minimum.stage().disruption().activation(),
-                   is(new ChaosActivation.Probability(0x1.0p-53)));
+                   is(new ProbabilityActivation(0x1.0p-53)));
         ChaosRunPlan certain = ChaosRunPlanJson.parse(
                 json(withActivation("{\"type\": \"probability\", \"probability\": 1}")),
                 LIMITS);
-        assertThat(certain.stage().disruption().activation(), is(new ChaosActivation.Probability(1)));
+        assertThat(certain.stage().disruption().activation(), is(new ProbabilityActivation(1)));
+    }
+
+    @Test
+    void activationImplementationsAreNotPublicApiTypes() {
+        assertThat(Modifier.isPublic(AlwaysActivation.class.getModifiers()), is(false));
+        assertThat(Modifier.isPublic(ProbabilityActivation.class.getModifiers()), is(false));
     }
 
     @Test
