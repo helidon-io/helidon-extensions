@@ -28,38 +28,42 @@ import io.helidon.json.JsonObject;
 import io.helidon.json.JsonParser;
 import io.helidon.webclient.http1.Http1Client;
 import io.helidon.webclient.http1.Http1ClientRequest;
-import io.helidon.webserver.WebServer;
+import io.helidon.webserver.WebServerConfig;
+import io.helidon.webserver.testing.junit5.ServerTest;
+import io.helidon.webserver.testing.junit5.SetUpServer;
+import io.helidon.webserver.testing.junit5.Socket;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 
+@ServerTest
 class ChaosSecurityIT {
 
+    private static final String CONTROL_SOCKET = "chaos-control";
     private static final String RUNS = "/chaos/v1/runs";
+
+    private final Http1Client control;
+
+    ChaosSecurityIT(@Socket(CONTROL_SOCKET) Http1Client control) {
+        this.control = control;
+    }
+
+    @SetUpServer
+    static void setUpServer(WebServerConfig.Builder server) {
+        Config config = Config.just(ConfigSources.classpath("security-application.yaml"));
+        server.config(config.get("server"));
+    }
 
     @Test
     void protectsEveryControlRouteWithAuthenticationAndOperatorRole() {
-        Config config = Config.just(ConfigSources.classpath("security-application.yaml"));
-        WebServer server = WebServer.builder()
-                .config(config.get("server"))
-                .build()
-                .start();
-        Http1Client control = Http1Client.builder()
-                .baseUri("http://127.0.0.1:" + server.port("chaos-control"))
-                .build();
-        try {
-            assertAccess(() -> control.get(RUNS), Status.OK_200);
-            JsonObject created = assertCreateAccess(control);
-            assertThat(created.stringValue("actor").orElseThrow(), is("operator"));
-            String run = RUNS + "/" + created.stringValue("id").orElseThrow();
+        assertAccess(() -> control.get(RUNS), Status.OK_200);
+        JsonObject created = assertCreateAccess(control);
+        assertThat(created.stringValue("actor").orElseThrow(), is("operator"));
+        String run = RUNS + "/" + created.stringValue("id").orElseThrow();
 
-            assertAccess(() -> control.get(run), Status.OK_200);
-            assertAccess(() -> control.delete(run), Status.OK_200);
-        } finally {
-            control.closeResource();
-            server.stop();
-        }
+        assertAccess(() -> control.get(run), Status.OK_200);
+        assertAccess(() -> control.delete(run), Status.OK_200);
     }
 
     private static void assertAccess(Supplier<Http1ClientRequest> request, Status operatorStatus) {

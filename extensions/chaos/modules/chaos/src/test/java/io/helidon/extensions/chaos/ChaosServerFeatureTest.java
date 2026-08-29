@@ -119,6 +119,30 @@ class ChaosServerFeatureTest {
         assertThat(feature.prototype().enabled(), is(false));
     }
 
+    @Test
+    void unsafeSocketConfigurationsFailDuringServerConstruction() {
+        var wildcard = WebServer.builder()
+                .featuresDiscoverServices(false)
+                .host("127.0.0.1")
+                .port(0)
+                .putSocket("chaos-control", socket -> socket.host("0.0.0.0").port(0))
+                .addFeature(ChaosServerFeature.create(enabledConfig("chaos-control",
+                                                                      Set.of(WebServer.DEFAULT_SOCKET_NAME),
+                                                                      true)));
+        assertThat(wildcard.sockets().get("chaos-control").host(), is("0.0.0.0"));
+        assertThat(wildcard.sockets().get("chaos-control").address().isAnyLocalAddress(), is(true));
+        assertThrows(IllegalStateException.class, wildcard::build);
+
+        var missingControl = WebServer.builder()
+                .featuresDiscoverServices(false)
+                .host("127.0.0.1")
+                .port(0)
+                .addFeature(ChaosServerFeature.create(enabledConfig("missing-control",
+                                                                      Set.of(WebServer.DEFAULT_SOCKET_NAME),
+                                                                      true)));
+        assertThrows(IllegalStateException.class, missingControl::build);
+    }
+
     private static ChaosConfig enabledConfig(String controlSocket,
                                              Set<String> applicationSockets,
                                              boolean anonymousLoopback) {
