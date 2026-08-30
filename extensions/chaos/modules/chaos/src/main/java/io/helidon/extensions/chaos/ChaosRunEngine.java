@@ -204,6 +204,30 @@ final class ChaosRunEngine implements AutoCloseable {
         }
     }
 
+    private static boolean overlaps(ChaosHttpScope first, ChaosHttpScope second) {
+        if (!methodsOverlap(first.methods(), second.methods())) {
+            return false;
+        }
+        return switch (first.pathMatch()) {
+        case EXACT -> switch (second.pathMatch()) {
+            case EXACT -> first.path().equals(second.path());
+            case PREFIX -> prefixContains(second.path(), first.path());
+        };
+        case PREFIX -> switch (second.pathMatch()) {
+            case EXACT -> prefixContains(first.path(), second.path());
+            case PREFIX -> prefixContains(first.path(), second.path()) || prefixContains(second.path(), first.path());
+        };
+        };
+    }
+
+    private static boolean methodsOverlap(Set<String> first, Set<String> second) {
+        return first.stream().anyMatch(second::contains);
+    }
+
+    private static boolean prefixContains(String prefix, String path) {
+        return prefix.equals("/") || path.equals(prefix) || path.startsWith(prefix + "/");
+    }
+
     private void terminate(UUID id, ChaosRunState state, String reason) {
         lock.lock();
         try {
@@ -265,30 +289,6 @@ final class ChaosRunEngine implements AutoCloseable {
             }
             runs.remove(candidates.next().id());
         }
-    }
-
-    private static boolean overlaps(ChaosHttpScope first, ChaosHttpScope second) {
-        if (!methodsOverlap(first.methods(), second.methods())) {
-            return false;
-        }
-        return switch (first.pathMatch()) {
-        case EXACT -> switch (second.pathMatch()) {
-            case EXACT -> first.path().equals(second.path());
-            case PREFIX -> prefixContains(second.path(), first.path());
-        };
-        case PREFIX -> switch (second.pathMatch()) {
-            case EXACT -> prefixContains(first.path(), second.path());
-            case PREFIX -> prefixContains(first.path(), second.path()) || prefixContains(second.path(), first.path());
-        };
-        };
-    }
-
-    private static boolean methodsOverlap(Set<String> first, Set<String> second) {
-        return first.stream().anyMatch(second::contains);
-    }
-
-    private static boolean prefixContains(String prefix, String path) {
-        return prefix.equals("/") || path.equals(prefix) || path.startsWith(prefix + "/");
     }
 
     /**

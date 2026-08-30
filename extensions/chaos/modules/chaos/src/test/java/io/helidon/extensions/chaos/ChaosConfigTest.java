@@ -22,7 +22,6 @@ import org.junit.jupiter.api.Test;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.is;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ChaosConfigTest {
@@ -47,7 +46,7 @@ class ChaosConfigTest {
 
     @Test
     void disabledConfigurationDoesNotRequireSockets() {
-        assertDoesNotThrow(() -> ChaosConfig.builder().enabled(false).buildPrototype());
+        assertThat(ChaosConfig.builder().enabled(false).buildPrototype().enabled(), is(false));
     }
 
     @Test

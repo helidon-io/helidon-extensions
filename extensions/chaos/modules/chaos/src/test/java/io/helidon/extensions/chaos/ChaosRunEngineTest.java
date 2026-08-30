@@ -276,13 +276,6 @@ class ChaosRunEngineTest {
         assertThat(engine.list().getFirst().inFlight(), is(0L));
     }
 
-    private ChaosRunEngine engine(ChaosLimitsConfig limits) {
-        return ChaosRunEngine.create(limits,
-                                     scheduler.clock(),
-                                     scheduler,
-                                     () -> new UUID(0, ids.incrementAndGet()));
-    }
-
     private static ChaosLimitsConfig limits(int activeRuns, int retainedRuns, Duration retention) {
         return ChaosLimitsConfig.builder()
                 .maximumActiveRuns(activeRuns)
@@ -355,6 +348,13 @@ class ChaosRunEngineTest {
             reservation.ifPresent(ChaosRunEngine.Reservation::close);
         }
         return decisions;
+    }
+
+    private ChaosRunEngine engine(ChaosLimitsConfig limits) {
+        return ChaosRunEngine.create(limits,
+                                     scheduler.clock(),
+                                     scheduler,
+                                     () -> new UUID(0, ids.incrementAndGet()));
     }
 
 }

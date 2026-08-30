@@ -26,6 +26,15 @@ import java.util.concurrent.TimeUnit;
 interface ChaosScheduler extends AutoCloseable {
 
     /**
+     * Creates the daemon scheduler used by a running server.
+     *
+     * @return scheduler
+     */
+    static ChaosScheduler create() {
+        return new SystemChaosScheduler();
+    }
+
+    /**
      * Schedules an action after a delay.
      *
      * @param delay non-negative delay
@@ -36,15 +45,6 @@ interface ChaosScheduler extends AutoCloseable {
 
     @Override
     void close();
-
-    /**
-     * Creates the daemon scheduler used by a running server.
-     *
-     * @return scheduler
-     */
-    static ChaosScheduler create() {
-        return new SystemChaosScheduler();
-    }
 
     /**
      * Handle for a scheduled transition.

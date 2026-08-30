@@ -168,12 +168,6 @@ class ChaosControlServiceTest {
         }
     }
 
-    private ClientResponseTyped<JsonObject> post(JsonObject plan) {
-        return client.post(RUNS)
-                .contentType(MediaTypes.APPLICATION_JSON)
-                .submit(plan, JsonObject.class);
-    }
-
     private static void assertProblem(ClientResponseTyped<String> response,
                                       Status status,
                                       String type) {
@@ -217,4 +211,11 @@ class ChaosControlServiceTest {
                 """.formatted(name);
         return JsonParser.create(json).readJsonObject();
     }
+
+    private ClientResponseTyped<JsonObject> post(JsonObject plan) {
+        return client.post(RUNS)
+                .contentType(MediaTypes.APPLICATION_JSON)
+                .submit(plan, JsonObject.class);
+    }
+
 }

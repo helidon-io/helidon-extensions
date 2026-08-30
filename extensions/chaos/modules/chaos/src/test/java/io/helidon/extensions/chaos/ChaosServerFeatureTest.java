@@ -37,7 +37,6 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ChaosServerFeatureTest {
@@ -73,7 +72,7 @@ class ChaosServerFeatureTest {
     void anonymousModeRequiresActualLoopbackBinding() {
         ChaosConfig config = enabledConfig("chaos-control", Set.of(WebServer.DEFAULT_SOCKET_NAME), true);
 
-        assertDoesNotThrow(() -> ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true)));
+        assertThat(ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true)).anonymousLoopback(), is(true));
         assertThrows(IllegalStateException.class,
                      () -> ChaosSocketPolicy.validate(config, context("0.0.0.0", false, true)));
     }
@@ -86,7 +85,8 @@ class ChaosServerFeatureTest {
                      () -> ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true, -1)));
         assertThrows(IllegalStateException.class,
                      () -> ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true, 65_537)));
-        assertDoesNotThrow(() -> ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true, 65_536)));
+        assertThat(ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true, 65_536)).anonymousLoopback(),
+                   is(true));
     }
 
     @Test
@@ -97,7 +97,7 @@ class ChaosServerFeatureTest {
                      () -> ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true)));
         assertThrows(IllegalStateException.class,
                      () -> ChaosSocketPolicy.validate(config, context("127.0.0.1", true, false)));
-        assertDoesNotThrow(() -> ChaosSocketPolicy.validate(config, context("0.0.0.0", true, true)));
+        assertThat(ChaosSocketPolicy.validate(config, context("0.0.0.0", true, true)).anonymousLoopback(), is(false));
     }
 
     @Test
@@ -226,10 +226,6 @@ class ChaosServerFeatureTest {
             return builders;
         }
 
-        private List<String> requestedSockets() {
-            return List.copyOf(requestedSockets);
-        }
-
         private static ServerFeature.SocketBuilders socketBuilders(ListenerConfig listener) {
             HttpRouting.Builder routing = HttpRouting.builder();
             return new ServerFeature.SocketBuilders() {
@@ -248,6 +244,10 @@ class ChaosServerFeatureTest {
                     return null;
                 }
             };
+        }
+
+        private List<String> requestedSockets() {
+            return List.copyOf(requestedSockets);
         }
     }
 }

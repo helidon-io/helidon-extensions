@@ -4,6 +4,12 @@ The Helidon Chaos extension adds a bounded, process-local chaos run engine to He
 
 This first slice targets Helidon 4.5.3 and is disabled by default.
 
+## Versioning
+
+The Chaos extension deliberately declares its own `4.0.0-SNAPSHOT` project and BOM version so that it can track the
+Helidon 4 compatibility line independently of the parent extensions repository version. This is a documented exception
+to Helidon development guideline 4.2.2.3, which normally requires modules to inherit their version.
+
 ## Maven coordinates
 
 Import the BOM:

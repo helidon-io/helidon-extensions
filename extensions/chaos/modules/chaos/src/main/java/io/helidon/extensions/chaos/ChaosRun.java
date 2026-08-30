@@ -157,9 +157,6 @@ final class ChaosRun {
                                 completed);
     }
 
-    record Activation(ChaosEffect effect) {
-    }
-
     private void cancelTasks() {
         if (completionTask != null) {
             completionTask.cancel();
@@ -167,5 +164,8 @@ final class ChaosRun {
         if (expirationTask != null) {
             expirationTask.cancel();
         }
+    }
+
+    record Activation(ChaosEffect effect) {
     }
 }

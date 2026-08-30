@@ -31,8 +31,9 @@ final class ChaosRequestException extends RuntimeException {
                                   String problemType,
                                   String title,
                                   String detail,
-                                  List<ChaosViolation> violations) {
-        super(detail);
+                                  List<ChaosViolation> violations,
+                                  Throwable cause) {
+        super(detail, cause);
         this.status = status;
         this.problemType = problemType;
         this.title = title;
@@ -40,19 +41,29 @@ final class ChaosRequestException extends RuntimeException {
     }
 
     static ChaosRequestException badRequest(String path, String code, String message) {
+        return badRequest(path, code, message, null);
+    }
+
+    static ChaosRequestException badRequest(String path, String code, String message, Throwable cause) {
         return new ChaosRequestException(400,
                                          "invalid-request",
                                          "Invalid chaos request",
                                          "The request body is not a valid chaos run request.",
-                                         List.of(new ChaosViolation(path, code, message)));
+                                         List.of(new ChaosViolation(path, code, message)),
+                                         cause);
     }
 
     static ChaosRequestException invalidPlan(String path, String code, String message) {
+        return invalidPlan(path, code, message, null);
+    }
+
+    static ChaosRequestException invalidPlan(String path, String code, String message, Throwable cause) {
         return new ChaosRequestException(422,
                                          "invalid-plan",
                                          "Invalid chaos run plan",
                                          "The run plan violates one or more constraints.",
-                                         List.of(new ChaosViolation(path, code, message)));
+                                         List.of(new ChaosViolation(path, code, message)),
+                                         cause);
     }
 
     int status() {

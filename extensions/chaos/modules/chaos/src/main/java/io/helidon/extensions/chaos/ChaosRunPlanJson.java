@@ -225,7 +225,7 @@ final class ChaosRunPlanJson {
             try {
                 mediaType = Optional.of(MediaTypes.create(value));
             } catch (RuntimeException e) {
-                throw invalid(path + "/mediaType", "invalid-media-type", "mediaType is not valid.");
+                throw invalid(path + "/mediaType", "invalid-media-type", "mediaType is not valid.", e);
             }
         }
 
@@ -278,7 +278,7 @@ final class ChaosRunPlanJson {
                 throw invalid(path, "non-normalized-path", "Path must be normalized.");
             }
         } catch (IllegalArgumentException e) {
-            throw invalid(path, "invalid-path", "Path must be a valid absolute path.");
+            throw invalid(path, "invalid-path", "Path must be a valid absolute path.", e);
         }
         if (value.equals("/chaos") || value.startsWith("/chaos/")) {
             throw invalid(path, "control-path", "Chaos control paths cannot be disrupted.");
@@ -309,7 +309,7 @@ final class ChaosRunPlanJson {
         try {
             return Duration.parse(value);
         } catch (DateTimeParseException e) {
-            throw invalid(path, "invalid-duration", "Value must be an ISO-8601 duration.");
+            throw invalid(path, "invalid-duration", "Value must be an ISO-8601 duration.", e);
         }
     }
 
@@ -325,7 +325,7 @@ final class ChaosRunPlanJson {
             BigDecimal number = value.asNumber().bigDecimalValue();
             return number.longValueExact();
         } catch (RuntimeException e) {
-            throw bad(path, "invalid-type", "Value must be an integer.");
+            throw bad(path, "invalid-type", "Value must be an integer.", e);
         }
     }
 
@@ -334,7 +334,7 @@ final class ChaosRunPlanJson {
         try {
             return value.asNumber().bigDecimalValue();
         } catch (RuntimeException e) {
-            throw bad(path, "invalid-type", "Value must be a number.");
+            throw bad(path, "invalid-type", "Value must be a number.", e);
         }
     }
 
@@ -355,7 +355,7 @@ final class ChaosRunPlanJson {
         try {
             result = value.asString().value();
         } catch (RuntimeException e) {
-            throw bad(path, "invalid-type", "Value must be a string.");
+            throw bad(path, "invalid-type", "Value must be a string.", e);
         }
         validateUnicode(result, path);
         return result;
@@ -379,7 +379,7 @@ final class ChaosRunPlanJson {
         try {
             return value.asArray();
         } catch (RuntimeException e) {
-            throw bad(path, "invalid-type", "Value must be an array.");
+            throw bad(path, "invalid-type", "Value must be an array.", e);
         }
     }
 
@@ -391,7 +391,7 @@ final class ChaosRunPlanJson {
         try {
             return value.asObject();
         } catch (RuntimeException e) {
-            throw bad(path, "invalid-type", "Value must be an object.");
+            throw bad(path, "invalid-type", "Value must be an object.", e);
         }
     }
 
@@ -415,7 +415,15 @@ final class ChaosRunPlanJson {
         return ChaosRequestException.badRequest(path, code, message);
     }
 
+    private static ChaosRequestException bad(String path, String code, String message, Throwable cause) {
+        return ChaosRequestException.badRequest(path, code, message, cause);
+    }
+
     private static ChaosRequestException invalid(String path, String code, String message) {
         return ChaosRequestException.invalidPlan(path, code, message);
+    }
+
+    private static ChaosRequestException invalid(String path, String code, String message, Throwable cause) {
+        return ChaosRequestException.invalidPlan(path, code, message, cause);
     }
 }

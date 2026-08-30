@@ -27,11 +27,14 @@ import io.helidon.common.features.api.HelidonFlavor;
 @Features.Preview
 module io.helidon.extensions.chaos {
     requires transitive io.helidon.builder.api;
-    requires transitive io.helidon.common.media.type;
+    requires transitive io.helidon.common;
     requires transitive io.helidon.config;
-    requires transitive io.helidon.json;
     requires transitive io.helidon.webserver;
 
+    requires io.helidon.common.media.type;
+    requires io.helidon.http;
+    requires io.helidon.http.media.json;
+    requires io.helidon.json;
     requires io.helidon.security;
     requires io.helidon.service.registry;
     requires io.helidon.webserver.security;

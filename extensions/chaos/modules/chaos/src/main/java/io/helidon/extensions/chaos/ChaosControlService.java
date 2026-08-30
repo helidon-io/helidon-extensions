@@ -81,6 +81,55 @@ final class ChaosControlService implements HttpService {
         engine.close();
     }
 
+    private static JsonObject requestBody(ServerRequest request) {
+        if (!request.content().hasEntity()) {
+            throw ChaosRequestException.badRequest("", "missing-body", "A JSON request body is required.");
+        }
+        try {
+            return request.content().as(JsonObject.class);
+        } catch (RuntimeException e) {
+            throw ChaosRequestException.badRequest("",
+                                                    "malformed-json",
+                                                    "The request body must contain one JSON object.",
+                                                    e);
+        }
+    }
+
+    private static UUID runId(ServerRequest request) {
+        String value = request.path().pathParameters().get("runId");
+        try {
+            UUID id = UUID.fromString(value);
+            if (!id.toString().equalsIgnoreCase(value)) {
+                throw new IllegalArgumentException("UUID is not in canonical form");
+            }
+            return id;
+        } catch (IllegalArgumentException e) {
+            throw ChaosRequestException.badRequest("/runId", "invalid-run-id", "runId must be a UUID.", e);
+        }
+    }
+
+    private static ChaosRunEngine.NotFoundException notFound(UUID id) {
+        return new ChaosRunEngine.NotFoundException(id);
+    }
+
+    private static String instance(ServerRequest request) {
+        return request.path().absolute().path();
+    }
+
+    private static void sendJson(ServerResponse response, Status status, Object body) {
+        response.status(status)
+                .header(HeaderNames.CONTENT_TYPE, MediaTypes.APPLICATION_JSON.text())
+                .send(body);
+    }
+
+    private static void sendProblem(ServerResponse response, ChaosProblemJson.Problem problem) {
+        byte[] body = problem.body().toString().getBytes(StandardCharsets.UTF_8);
+        response.status(problem.status())
+                .header(HeaderNames.CONTENT_TYPE, PROBLEM_JSON.text());
+        response.contentLength(body.length);
+        response.send(body);
+    }
+
     private void createRun(ServerRequest request, ServerResponse response) {
         bounded(request, response, () -> {
             if (!request.headers().testContentType(MediaTypes.APPLICATION_JSON)) {
@@ -125,7 +174,7 @@ final class ChaosControlService implements HttpService {
         }
         try {
             operation.execute();
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             sendProblem(response, ChaosProblemJson.from(e, instance));
         } finally {
             capacity.release();
@@ -147,54 +196,8 @@ final class ChaosControlService implements HttpService {
         return actor;
     }
 
-    private static JsonObject requestBody(ServerRequest request) {
-        if (!request.content().hasEntity()) {
-            throw ChaosRequestException.badRequest("", "missing-body", "A JSON request body is required.");
-        }
-        try {
-            return request.content().as(JsonObject.class);
-        } catch (RuntimeException e) {
-            throw ChaosRequestException.badRequest("", "malformed-json", "The request body must contain one JSON object.");
-        }
-    }
-
-    private static UUID runId(ServerRequest request) {
-        String value = request.path().pathParameters().get("runId");
-        try {
-            UUID id = UUID.fromString(value);
-            if (!id.toString().equalsIgnoreCase(value)) {
-                throw new IllegalArgumentException("UUID is not in canonical form");
-            }
-            return id;
-        } catch (IllegalArgumentException e) {
-            throw ChaosRequestException.badRequest("/runId", "invalid-run-id", "runId must be a UUID.");
-        }
-    }
-
-    private static ChaosRunEngine.NotFoundException notFound(UUID id) {
-        return new ChaosRunEngine.NotFoundException(id);
-    }
-
-    private static String instance(ServerRequest request) {
-        return request.path().absolute().path();
-    }
-
-    private static void sendJson(ServerResponse response, Status status, Object body) {
-        response.status(status)
-                .header(HeaderNames.CONTENT_TYPE, MediaTypes.APPLICATION_JSON.text())
-                .send(body);
-    }
-
-    private static void sendProblem(ServerResponse response, ChaosProblemJson.Problem problem) {
-        byte[] body = problem.body().toString().getBytes(StandardCharsets.UTF_8);
-        response.status(problem.status())
-                .header(HeaderNames.CONTENT_TYPE, PROBLEM_JSON.text());
-        response.contentLength(body.length);
-        response.send(body);
-    }
-
     @FunctionalInterface
     private interface Operation {
-        void execute() throws Exception;
+        void execute();
     }
 }

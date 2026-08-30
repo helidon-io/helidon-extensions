@@ -18,6 +18,7 @@ package io.helidon.extensions.chaos;
 import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.format.DateTimeParseException;
 
 import io.helidon.json.JsonObject;
 import io.helidon.json.JsonParser;
@@ -25,8 +26,11 @@ import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasEntry;
+import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ChaosRunPlanJsonTest {
@@ -151,6 +155,18 @@ class ChaosRunPlanJsonTest {
                 .maximumRunDuration(Duration.ofSeconds(20))
                 .build();
         assertInvalidPlan(validJson(), limits, "/maximumDuration");
+    }
+
+    @Test
+    void retainsParsingCauseWithoutExposingItInProblemResponse() {
+        ChaosRequestException exception = assertThrows(ChaosRequestException.class,
+                                                        () -> ChaosRunPlanJson.parse(
+                                                                json(validJson().replace("PT30S", "not-a-duration")),
+                                                                LIMITS));
+
+        assertThat(exception.getCause(), instanceOf(DateTimeParseException.class));
+        assertThat(ChaosProblemJson.from(exception, "/chaos/v1/runs").body().toString(),
+                   not(containsString("not-a-duration")));
     }
 
     @Test

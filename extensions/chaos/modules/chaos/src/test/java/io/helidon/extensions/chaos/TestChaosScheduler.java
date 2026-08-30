@@ -54,17 +54,17 @@ final class TestChaosScheduler implements ChaosScheduler {
         task.run();
     }
 
+    @Override
+    public void close() {
+        tasks.forEach(Task::cancel);
+    }
+
     private void runDueTasks() {
         tasks.stream()
                 .filter(task -> !task.cancelled && !task.executed && !task.due.isAfter(clock.instant()))
                 .sorted(Comparator.comparing(task -> task.due))
                 .toList()
                 .forEach(Task::run);
-    }
-
-    @Override
-    public void close() {
-        tasks.forEach(Task::cancel);
     }
 
     private static final class Task implements Cancellable {
