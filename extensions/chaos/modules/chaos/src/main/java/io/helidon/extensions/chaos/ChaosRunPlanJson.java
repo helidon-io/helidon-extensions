@@ -208,11 +208,15 @@ final class ChaosRunPlanJson {
         }
 
         Map<String, String> headers = new LinkedHashMap<>();
+        Set<String> headerNames = new LinkedHashSet<>();
         if (json.containsKey("headers")) {
             JsonObject headerJson = requiredObject(json, "headers", path + "/headers");
             for (String name : headerJson.keysAsStrings()) {
                 String headerPath = path + "/headers/" + pointerToken(name);
                 validateHeaderName(name, headerPath);
+                if (!headerNames.add(name.toLowerCase(Locale.ROOT))) {
+                    throw invalid(headerPath, "duplicate-header", "Header name must be unique ignoring case.");
+                }
                 String value = requiredString(headerJson, name, headerPath);
                 validateHeaderValue(value, headerPath);
                 headers.put(name, value);
@@ -224,8 +228,8 @@ final class ChaosRunPlanJson {
             String value = requiredString(json, "mediaType", path + "/mediaType");
             try {
                 mediaType = Optional.of(MediaTypes.create(value));
-            } catch (RuntimeException e) {
-                throw invalid(path + "/mediaType", "invalid-media-type", "mediaType is not valid.", e);
+            } catch (RuntimeException exception) {
+                throw invalid(path + "/mediaType", "invalid-media-type", "mediaType is not valid.", exception);
             }
         }
 
@@ -277,8 +281,8 @@ final class ChaosRunPlanJson {
             if (!value.equals(uri.normalize().getPath()) || value.contains("//")) {
                 throw invalid(path, "non-normalized-path", "Path must be normalized.");
             }
-        } catch (IllegalArgumentException e) {
-            throw invalid(path, "invalid-path", "Path must be a valid absolute path.", e);
+        } catch (IllegalArgumentException exception) {
+            throw invalid(path, "invalid-path", "Path must be a valid absolute path.", exception);
         }
         if (value.equals("/chaos") || value.startsWith("/chaos/")) {
             throw invalid(path, "control-path", "Chaos control paths cannot be disrupted.");
@@ -308,8 +312,8 @@ final class ChaosRunPlanJson {
         String value = requiredString(json, name, path);
         try {
             return Duration.parse(value);
-        } catch (DateTimeParseException e) {
-            throw invalid(path, "invalid-duration", "Value must be an ISO-8601 duration.", e);
+        } catch (DateTimeParseException exception) {
+            throw invalid(path, "invalid-duration", "Value must be an ISO-8601 duration.", exception);
         }
     }
 
@@ -324,8 +328,8 @@ final class ChaosRunPlanJson {
         try {
             BigDecimal number = value.asNumber().bigDecimalValue();
             return number.longValueExact();
-        } catch (RuntimeException e) {
-            throw bad(path, "invalid-type", "Value must be an integer.", e);
+        } catch (RuntimeException exception) {
+            throw bad(path, "invalid-type", "Value must be an integer.", exception);
         }
     }
 
@@ -333,8 +337,8 @@ final class ChaosRunPlanJson {
         JsonValue value = requiredValue(json, name, path);
         try {
             return value.asNumber().bigDecimalValue();
-        } catch (RuntimeException e) {
-            throw bad(path, "invalid-type", "Value must be a number.", e);
+        } catch (RuntimeException exception) {
+            throw bad(path, "invalid-type", "Value must be a number.", exception);
         }
     }
 
@@ -354,8 +358,8 @@ final class ChaosRunPlanJson {
         String result;
         try {
             result = value.asString().value();
-        } catch (RuntimeException e) {
-            throw bad(path, "invalid-type", "Value must be a string.", e);
+        } catch (RuntimeException exception) {
+            throw bad(path, "invalid-type", "Value must be a string.", exception);
         }
         validateUnicode(result, path);
         return result;
@@ -378,8 +382,8 @@ final class ChaosRunPlanJson {
         JsonValue value = requiredValue(json, name, path);
         try {
             return value.asArray();
-        } catch (RuntimeException e) {
-            throw bad(path, "invalid-type", "Value must be an array.", e);
+        } catch (RuntimeException exception) {
+            throw bad(path, "invalid-type", "Value must be an array.", exception);
         }
     }
 
@@ -390,8 +394,8 @@ final class ChaosRunPlanJson {
     private static JsonObject requiredObject(JsonValue value, String path) {
         try {
             return value.asObject();
-        } catch (RuntimeException e) {
-            throw bad(path, "invalid-type", "Value must be an object.", e);
+        } catch (RuntimeException exception) {
+            throw bad(path, "invalid-type", "Value must be an object.", exception);
         }
     }
 

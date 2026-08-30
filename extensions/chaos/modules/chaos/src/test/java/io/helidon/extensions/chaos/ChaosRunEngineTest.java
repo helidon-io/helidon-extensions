@@ -237,11 +237,11 @@ class ChaosRunEngineTest {
                         if (candidate.isPresent()) {
                             reserved.incrementAndGet();
                         }
-                    } catch (InterruptedException e) {
+                    } catch (InterruptedException exception) {
                         Thread.currentThread().interrupt();
-                        failures.add(e);
-                    } catch (RuntimeException | AssertionError e) {
-                        failures.add(e);
+                        failures.add(exception);
+                    } catch (RuntimeException | AssertionError exception) {
+                        failures.add(exception);
                     } finally {
                         attempted.countDown();
                     }
@@ -250,11 +250,11 @@ class ChaosRunEngineTest {
                             if (!release.await(5, TimeUnit.SECONDS)) {
                                 throw new AssertionError("Timed out waiting to release reservation");
                             }
-                        } catch (InterruptedException e) {
+                        } catch (InterruptedException exception) {
                             Thread.currentThread().interrupt();
-                            failures.add(e);
-                        } catch (AssertionError e) {
-                            failures.add(e);
+                            failures.add(exception);
+                        } catch (AssertionError exception) {
+                            failures.add(exception);
                         } finally {
                             candidate.orElseThrow().close();
                         }

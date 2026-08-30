@@ -19,6 +19,8 @@ import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
+import java.util.Map;
+import java.util.Optional;
 
 import io.helidon.json.JsonObject;
 import io.helidon.json.JsonParser;
@@ -189,6 +191,9 @@ class ChaosRunPlanJsonTest {
                           "/stages/0/disruptions/0/effect/status");
         assertInvalidPlan(validJson().replace("\"Retry-After\": \"1\"", "\"Content-Length\": \"2\""),
                           "/stages/0/disruptions/0/effect/headers/Content-Length");
+        assertInvalidPlan(validJson().replace("\"Retry-After\": \"1\"",
+                                              "\"Retry-After\": \"1\", \"retry-after\": \"60\""),
+                          "/stages/0/disruptions/0/effect/headers/retry-after");
         assertInvalidPlan(validJson().replace("\"Retry-After\": \"1\"", "\"X-Test\": \"bad\\nvalue\""),
                           "/stages/0/disruptions/0/effect/headers/X-Test");
         assertInvalidPlan(validJson().replace("\"Retry-After\": \"1\"", "\"X-Test\": \"bad\\u0001value\""),
@@ -199,6 +204,19 @@ class ChaosRunPlanJsonTest {
         ChaosLimitsConfig limits = ChaosLimitsConfig.builder().maximumSyntheticBodyBytes(4).build();
         assertInvalidPlan(validJson().replace("Synthetic service failure", "ééé"), limits,
                           "/stages/0/disruptions/0/effect/body");
+    }
+
+    @Test
+    void reportsNullSyntheticResponseComponents() {
+        assertThat(assertThrows(NullPointerException.class,
+                                () -> new ChaosSyntheticResponse(503, null, Optional.empty(), new byte[0])).getMessage(),
+                   is("headers is null"));
+        assertThat(assertThrows(NullPointerException.class,
+                                () -> new ChaosSyntheticResponse(503, Map.of(), null, new byte[0])).getMessage(),
+                   is("mediaType is null"));
+        assertThat(assertThrows(NullPointerException.class,
+                                () -> new ChaosSyntheticResponse(503, Map.of(), Optional.empty(), null)).getMessage(),
+                   is("body is null"));
     }
 
     @Test

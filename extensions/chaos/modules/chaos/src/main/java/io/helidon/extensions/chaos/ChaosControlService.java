@@ -87,11 +87,11 @@ final class ChaosControlService implements HttpService {
         }
         try {
             return request.content().as(JsonObject.class);
-        } catch (RuntimeException e) {
+        } catch (RuntimeException exception) {
             throw ChaosRequestException.badRequest("",
                                                     "malformed-json",
                                                     "The request body must contain one JSON object.",
-                                                    e);
+                                                    exception);
         }
     }
 
@@ -103,8 +103,8 @@ final class ChaosControlService implements HttpService {
                 throw new IllegalArgumentException("UUID is not in canonical form");
             }
             return id;
-        } catch (IllegalArgumentException e) {
-            throw ChaosRequestException.badRequest("/runId", "invalid-run-id", "runId must be a UUID.", e);
+        } catch (IllegalArgumentException exception) {
+            throw ChaosRequestException.badRequest("/runId", "invalid-run-id", "runId must be a UUID.", exception);
         }
     }
 
@@ -174,8 +174,8 @@ final class ChaosControlService implements HttpService {
         }
         try {
             operation.execute();
-        } catch (RuntimeException e) {
-            sendProblem(response, ChaosProblemJson.from(e, instance));
+        } catch (RuntimeException exception) {
+            sendProblem(response, ChaosProblemJson.from(exception, instance));
         } finally {
             capacity.release();
         }

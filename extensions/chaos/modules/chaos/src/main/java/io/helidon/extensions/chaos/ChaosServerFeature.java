@@ -89,9 +89,9 @@ public final class ChaosServerFeature implements RuntimeType.Api<ChaosConfig>, S
             policy.applicationSockets().forEach(socket -> context.socket(socket)
                     .httpRouting()
                     .addFilter(new ChaosApplicationFilter(engine)));
-        } catch (RuntimeException e) {
+        } catch (RuntimeException exception) {
             engine.close();
-            throw e;
+            throw exception;
         }
     }
 

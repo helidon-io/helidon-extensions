@@ -37,9 +37,9 @@ record ChaosSyntheticResponse(int status,
                               byte[] body) implements ChaosEffect {
 
     ChaosSyntheticResponse {
-        headers = Collections.unmodifiableMap(new LinkedHashMap<>(headers));
-        mediaType = Objects.requireNonNull(mediaType);
-        body = body.clone();
+        headers = Collections.unmodifiableMap(new LinkedHashMap<>(Objects.requireNonNull(headers, "headers is null")));
+        Objects.requireNonNull(mediaType, "mediaType is null");
+        body = Objects.requireNonNull(body, "body is null").clone();
     }
 
     @Override

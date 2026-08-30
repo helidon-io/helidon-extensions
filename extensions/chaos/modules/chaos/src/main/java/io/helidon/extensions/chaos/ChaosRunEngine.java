@@ -111,9 +111,9 @@ final class ChaosRunEngine implements AutoCloseable {
                                                                                                 EXPIRED,
                                                                                                 REASON_EXPIRED));
                 run.tasks(completionTask, expirationTask);
-            } catch (RuntimeException e) {
+            } catch (RuntimeException exception) {
                 completionTask.cancel();
-                throw e;
+                throw exception;
             }
             runs.put(id, run);
             return run.view();
