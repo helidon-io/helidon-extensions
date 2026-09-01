@@ -721,8 +721,10 @@ class OciGenAiModelFactoryLifecycleTest {
     }
 
     @Test
-    void shutdownWakesServicesWaiterAndClosesRollbackOnlyLateModel() throws Exception {
+    void shutdownWakesWaiterClosesCurrentModelAndSkipsRemainingModels() throws Exception {
         var model = LifecycleTestModel.create();
+        var untouchedModel = LifecycleTestModel.create();
+        var untouchedSupplierCalls = new AtomicInteger();
         var constructionStarted = new CountDownLatch(1);
         var continueConstruction = new CountDownLatch(1);
         LifecycleTestModel.plan("rollback-only-shutdown-race-plan", () -> {
@@ -730,8 +732,12 @@ class OciGenAiModelFactoryLifecycleTest {
             await(continueConstruction);
             return model;
         });
+        LifecycleTestModel.plan("untouched-after-shutdown-plan", () -> {
+            untouchedSupplierCalls.incrementAndGet();
+            return untouchedModel;
+        });
         var lifecycle = new LifecycleTestModelFactoryLifecycle();
-        var factory = new LifecycleTestModelFactory(oneLifecycleModelConfig("rollback-only-shutdown-race-plan"),
+        var factory = new LifecycleTestModelFactory(shutdownRaceLifecycleModelConfig(),
                                                     testRegistry,
                                                     lifecycle);
         var servicesWaiterThread = new AtomicReference<Thread>();
@@ -741,6 +747,8 @@ class OciGenAiModelFactoryLifecycleTest {
             try {
                 var services = executor.submit(() -> factory.services().getFirst().get());
                 assertThat(constructionStarted.await(10, TimeUnit.SECONDS), is(true));
+                assertThat(LifecycleTestModel.buildCount(), is(1));
+                assertThat(untouchedSupplierCalls.get(), is(0));
                 var waitingServices = executor.submit(() -> {
                     servicesWaiterThread.set(Thread.currentThread());
                     servicesWaiterStarted.countDown();
@@ -769,8 +777,14 @@ class OciGenAiModelFactoryLifecycleTest {
 
         assertThat(factory.services(), is(empty()));
         assertThat(model.closeCount(), is(1));
+        assertThat(LifecycleTestModel.buildCount(), is(1));
+        assertThat(untouchedSupplierCalls.get(), is(0));
+        assertThat(untouchedModel.closeCount(), is(0));
         lifecycle.preDestroy();
         assertThat(model.closeCount(), is(1));
+        assertThat(LifecycleTestModel.buildCount(), is(1));
+        assertThat(untouchedSupplierCalls.get(), is(0));
+        assertThat(untouchedModel.closeCount(), is(0));
     }
 
     @Test
@@ -942,6 +956,21 @@ class OciGenAiModelFactoryLifecycleTest {
                       provider: lifecycle-test
                       plan: %s
                 """.formatted(plan);
+        return Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
+    }
+
+    private static Config shutdownRaceLifecycleModelConfig() {
+        // language=YAML
+        var yaml = """
+                langchain4j:
+                  models:
+                    first:
+                      provider: lifecycle-test
+                      plan: rollback-only-shutdown-race-plan
+                    second:
+                      provider: lifecycle-test
+                      plan: untouched-after-shutdown-plan
+                """;
         return Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
     }
 
