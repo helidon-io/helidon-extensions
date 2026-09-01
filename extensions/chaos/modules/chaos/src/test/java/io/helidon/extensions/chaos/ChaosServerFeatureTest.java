@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Set;
 
 import io.helidon.config.Config;
@@ -62,9 +63,9 @@ class ChaosServerFeatureTest {
         ChaosConfig unknownControl = enabledConfig("unknown", Set.of(WebServer.DEFAULT_SOCKET_NAME), true);
         ChaosConfig unknownApplication = enabledConfig("chaos-control", Set.of("unknown"), true);
 
-        assertThrows(IllegalStateException.class,
+        assertThrows(NoSuchElementException.class,
                      () -> ChaosSocketPolicy.validate(unknownControl, context("127.0.0.1", false, true)));
-        assertThrows(IllegalStateException.class,
+        assertThrows(NoSuchElementException.class,
                      () -> ChaosSocketPolicy.validate(unknownApplication, context("127.0.0.1", false, true)));
     }
 
@@ -147,7 +148,7 @@ class ChaosServerFeatureTest {
                 .addFeature(ChaosServerFeature.create(enabledConfig("missing-control",
                                                                       Set.of(WebServer.DEFAULT_SOCKET_NAME),
                                                                       true)));
-        assertThrows(IllegalStateException.class, missingControl::build);
+        assertThrows(NoSuchElementException.class, missingControl::build);
     }
 
     private static ChaosConfig enabledConfig(String controlSocket,
@@ -221,7 +222,7 @@ class ChaosServerFeatureTest {
             requestedSockets.add(socketName);
             ServerFeature.SocketBuilders builders = socketBuilders.get(socketName);
             if (builders == null) {
-                throw new IllegalArgumentException("Unknown test socket: " + socketName);
+                throw new NoSuchElementException("Unknown test socket: " + socketName);
             }
             return builders;
         }

@@ -22,7 +22,6 @@ import java.util.Objects;
 import java.util.Set;
 
 import io.helidon.webserver.ListenerConfig;
-import io.helidon.webserver.WebServer;
 import io.helidon.webserver.security.SecurityFeature;
 import io.helidon.webserver.spi.ServerFeature;
 
@@ -39,11 +38,10 @@ final class ChaosSocketPolicy {
         Objects.requireNonNull(context);
         String controlSocket = config.controlSocket()
                 .orElseThrow(() -> new IllegalStateException("Enabled chaos requires a control socket"));
-        requireSocket(context, controlSocket, "control");
-        ListenerConfig controlListener = controlListener(context, controlSocket);
+        ListenerConfig controlListener = listener(context, controlSocket);
         validateControlPayloadLimit(config.limits(), controlListener);
         for (String applicationSocket : config.applicationSockets()) {
-            requireSocket(context, applicationSocket, "application");
+            listener(context, applicationSocket);
             if (controlSocket.equals(applicationSocket)) {
                 throw new IllegalStateException("The chaos control socket cannot carry application traffic");
             }
@@ -73,19 +71,8 @@ final class ChaosSocketPolicy {
         }
     }
 
-    private static ListenerConfig controlListener(ServerFeature.ServerFeatureContext context, String controlSocket) {
-        if (WebServer.DEFAULT_SOCKET_NAME.equals(controlSocket)) {
-            return context.serverConfig();
-        }
-        // The server prototype is the authority for a named listener's actual binding configuration.
-        return Objects.requireNonNull(context.serverConfig().sockets().get(controlSocket),
-                                      "Missing named listener configuration: " + controlSocket);
-    }
-
-    private static void requireSocket(ServerFeature.ServerFeatureContext context, String socket, String purpose) {
-        if (!context.socketExists(socket)) {
-            throw new IllegalStateException("Configured chaos " + purpose + " socket does not exist: " + socket);
-        }
+    private static ListenerConfig listener(ServerFeature.ServerFeatureContext context, String socket) {
+        return context.socket(socket).listener();
     }
 
     private static boolean hasEnabledSecurityFeature(ServerFeature.ServerFeatureContext context) {
