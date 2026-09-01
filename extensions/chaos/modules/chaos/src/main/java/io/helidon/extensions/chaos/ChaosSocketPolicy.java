@@ -16,12 +16,17 @@
 package io.helidon.extensions.chaos;
 
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.net.UnixDomainSocketAddress;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Set;
 
 import io.helidon.webserver.ListenerConfig;
+import io.helidon.webserver.WebServer;
 import io.helidon.webserver.security.SecurityFeature;
 import io.helidon.webserver.spi.ServerFeature;
 
@@ -47,17 +52,16 @@ final class ChaosSocketPolicy {
             }
         }
 
-        boolean anonymousLoopback = config.security().allowUnauthenticatedLoopback();
-        if (anonymousLoopback) {
-            InetAddress address = controlListener.address();
-            if (address == null || address.isAnyLocalAddress() || !address.isLoopbackAddress()) {
-                throw new IllegalStateException("Anonymous chaos control access requires an explicit loopback binding");
+        boolean anonymousLocal = config.security().allowUnauthenticatedLocal();
+        if (anonymousLocal) {
+            if (!isLocal(controlListener)) {
+                throw new IllegalStateException("Anonymous chaos control access requires an explicit local binding");
             }
         } else if (!hasEnabledSecurityFeature(context)) {
             throw new IllegalStateException("Enabled chaos requires an enabled Helidon SecurityFeature");
         }
 
-        return new Result(controlSocket, config.applicationSockets(), anonymousLoopback);
+        return new Result(controlSocket, config.applicationSockets(), anonymousLocal);
     }
 
     private static void validateControlPayloadLimit(ChaosLimitsConfig limits, ListenerConfig listener) {
@@ -72,7 +76,31 @@ final class ChaosSocketPolicy {
     }
 
     private static ListenerConfig listener(ServerFeature.ServerFeatureContext context, String socket) {
-        return context.socket(socket).listener();
+        if (WebServer.DEFAULT_SOCKET_NAME.equals(socket)) {
+            return context.serverConfig();
+        }
+        ListenerConfig listener = context.serverConfig().sockets().get(socket);
+        if (listener == null) {
+            throw new NoSuchElementException("There is no socket configuration for socket named \"" + socket + "\"");
+        }
+        return listener;
+    }
+
+    private static boolean isLocal(ListenerConfig listener) {
+        return listener.bindAddress()
+                .map(ChaosSocketPolicy::isLocal)
+                .orElseGet(() -> isLoopback(listener.address()));
+    }
+
+    private static boolean isLocal(SocketAddress address) {
+        if (address instanceof InetSocketAddress inetAddress) {
+            return isLoopback(inetAddress.getAddress());
+        }
+        return address instanceof UnixDomainSocketAddress;
+    }
+
+    private static boolean isLoopback(InetAddress address) {
+        return address != null && !address.isAnyLocalAddress() && address.isLoopbackAddress();
     }
 
     private static boolean hasEnabledSecurityFeature(ServerFeature.ServerFeatureContext context) {
@@ -88,9 +116,9 @@ final class ChaosSocketPolicy {
      *
      * @param controlSocket dedicated control socket
      * @param applicationSockets sockets eligible for disruption
-     * @param anonymousLoopback whether explicit anonymous loopback mode is active
+     * @param anonymousLocal whether explicit anonymous local mode is active
      */
-    record Result(String controlSocket, Set<String> applicationSockets, boolean anonymousLoopback) {
+    record Result(String controlSocket, Set<String> applicationSockets, boolean anonymousLocal) {
         Result {
             applicationSockets = Collections.unmodifiableSet(new LinkedHashSet<>(applicationSockets));
         }

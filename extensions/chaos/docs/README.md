@@ -52,9 +52,9 @@ server:
 
 When disabled, the extension does not inspect sockets, create an engine, register routes, or add filters.
 
-### Loopback-only mode
+### Local-only mode
 
-Anonymous mode is available only when the control listener is bound to loopback.
+Anonymous mode is available only when the control listener is bound to loopback or to a Unix-domain socket.
 
 ```yaml
 server:
@@ -71,10 +71,10 @@ server:
       control-socket: chaos-control
       application-sockets: ["@default"]
       security:
-        allow-unauthenticated-loopback: true
+        allow-unauthenticated-local: true
 ```
 
-Startup fails if anonymous mode resolves to a wildcard or non-loopback binding.
+Startup fails if anonymous mode resolves to a wildcard, non-loopback, unresolved, or unsupported binding.
 
 ### Authenticated mode
 
@@ -105,7 +105,7 @@ server:
       application-sockets: ["@default"]
       security:
         required-role: chaos-operator
-        allow-unauthenticated-loopback: false
+        allow-unauthenticated-local: false
 ```
 
 HTTP Basic authentication is shown only as a self-contained test example. Use an appropriate Helidon authentication provider for your environment. Do not put plaintext credentials in configuration.

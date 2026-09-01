@@ -32,7 +32,7 @@ class ChaosConfigTest {
 
         assertThat(config.enabled(), is(false));
         assertThat(config.security().requiredRole(), is("chaos-operator"));
-        assertThat(config.security().allowUnauthenticatedLoopback(), is(false));
+        assertThat(config.security().allowUnauthenticatedLocal(), is(false));
         assertThat(config.limits().maximumActiveRuns(), is(1));
         assertThat(config.limits().maximumRunDuration(), is(Duration.ofMinutes(15)));
         assertThat(config.limits().maximumActivationsPerDisruption(), is(10_000L));

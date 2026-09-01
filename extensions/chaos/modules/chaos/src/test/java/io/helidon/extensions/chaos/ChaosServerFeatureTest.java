@@ -15,6 +15,10 @@
  */
 package io.helidon.extensions.chaos;
 
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.net.UnixDomainSocketAddress;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -70,12 +74,31 @@ class ChaosServerFeatureTest {
     }
 
     @Test
-    void anonymousModeRequiresActualLoopbackBinding() {
+    void anonymousModeRequiresActualLocalBinding() {
         ChaosConfig config = enabledConfig("chaos-control", Set.of(WebServer.DEFAULT_SOCKET_NAME), true);
 
-        assertThat(ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true)).anonymousLoopback(), is(true));
+        assertThat(ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true)).anonymousLocal(), is(true));
         assertThrows(IllegalStateException.class,
                      () -> ChaosSocketPolicy.validate(config, context("0.0.0.0", false, true)));
+        assertThat(ChaosSocketPolicy.validate(config,
+                                              context(new InetSocketAddress("127.0.0.1", 0), false, true))
+                           .anonymousLocal(),
+                   is(true));
+        assertThrows(IllegalStateException.class,
+                     () -> ChaosSocketPolicy.validate(config,
+                                                       context(new InetSocketAddress("0.0.0.0", 0), false, true)));
+        assertThrows(IllegalStateException.class,
+                     () -> ChaosSocketPolicy.validate(config,
+                                                       context(new InetSocketAddress("192.0.2.1", 0), false, true)));
+        assertThrows(IllegalStateException.class,
+                     () -> ChaosSocketPolicy.validate(config,
+                                                       context(InetSocketAddress.createUnresolved("localhost", 0),
+                                                               false,
+                                                               true)));
+        SocketAddress unixDomainSocket = UnixDomainSocketAddress.of(Path.of("target", "chaos-control.sock"));
+        assertThat(ChaosSocketPolicy.validate(config, context(unixDomainSocket, false, true))
+                           .anonymousLocal(),
+                   is(true));
     }
 
     @Test
@@ -86,7 +109,7 @@ class ChaosServerFeatureTest {
                      () -> ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true, -1)));
         assertThrows(IllegalStateException.class,
                      () -> ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true, 65_537)));
-        assertThat(ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true, 65_536)).anonymousLoopback(),
+        assertThat(ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true, 65_536)).anonymousLocal(),
                    is(true));
     }
 
@@ -98,7 +121,7 @@ class ChaosServerFeatureTest {
                      () -> ChaosSocketPolicy.validate(config, context("127.0.0.1", false, true)));
         assertThrows(IllegalStateException.class,
                      () -> ChaosSocketPolicy.validate(config, context("127.0.0.1", true, false)));
-        assertThat(ChaosSocketPolicy.validate(config, context("0.0.0.0", true, true)).anonymousLoopback(), is(false));
+        assertThat(ChaosSocketPolicy.validate(config, context("0.0.0.0", true, true)).anonymousLocal(), is(false));
     }
 
     @Test
@@ -153,13 +176,13 @@ class ChaosServerFeatureTest {
 
     private static ChaosConfig enabledConfig(String controlSocket,
                                              Set<String> applicationSockets,
-                                             boolean anonymousLoopback) {
+                                             boolean anonymousLocal) {
         return ChaosConfig.builder()
                 .enabled(true)
                 .controlSocket(controlSocket)
                 .applicationSockets(applicationSockets)
                 .security(ChaosSecurityConfig.builder()
-                                  .allowUnauthenticatedLoopback(anonymousLoopback)
+                                  .allowUnauthenticatedLocal(anonymousLocal)
                                   .build())
                 .buildPrototype();
     }
@@ -181,6 +204,25 @@ class ChaosServerFeatureTest {
                 .putSocket("chaos-control", socket -> socket.host(controlHost)
                         .port(0)
                         .maxPayloadSize(maximumPayloadSize));
+        if (securityFeature) {
+            Security security = Security.builder()
+                    .enabled(securityEnabled)
+                    .addAuthenticationProvider(request -> AuthenticationResponse.abstain())
+                    .build();
+            builder.addFeature(SecurityFeature.builder().security(security).build());
+        }
+        return new TestFeatureContext(builder.buildPrototype());
+    }
+
+    private static TestFeatureContext context(SocketAddress controlBindAddress,
+                                              boolean securityFeature,
+                                              boolean securityEnabled) {
+        WebServerConfig.Builder builder = WebServerConfig.builder()
+                .featuresDiscoverServices(false)
+                .host("127.0.0.1")
+                .port(0)
+                .putSocket("chaos-control", socket -> socket.bindAddress(controlBindAddress)
+                        .maxPayloadSize(65_536));
         if (securityFeature) {
             Security security = Security.builder()
                     .enabled(securityEnabled)

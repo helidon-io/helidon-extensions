@@ -28,7 +28,7 @@ server:
       application-sockets:
         - "@default"
       security:
-        allow-unauthenticated-loopback: true
+        allow-unauthenticated-local: true
       limits:
         maximum-run-duration: PT30S
         maximum-activations-per-disruption: 20

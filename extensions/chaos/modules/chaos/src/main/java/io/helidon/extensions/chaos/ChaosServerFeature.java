@@ -85,7 +85,7 @@ public final class ChaosServerFeature implements RuntimeType.Api<ChaosConfig>, S
         try {
             context.socket(policy.controlSocket())
                     .httpRouting()
-                    .register("/chaos/v1", new ChaosControlService(engine, prototype, policy.anonymousLoopback()));
+                    .register("/chaos/v1", new ChaosControlService(engine, prototype, policy.anonymousLocal()));
             policy.applicationSockets().forEach(socket -> context.socket(socket)
                     .httpRouting()
                     .addFilter(new ChaosApplicationFilter(engine)));

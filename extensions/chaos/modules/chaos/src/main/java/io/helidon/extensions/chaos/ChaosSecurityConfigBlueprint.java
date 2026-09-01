@@ -35,11 +35,11 @@ interface ChaosSecurityConfigBlueprint {
     String requiredRole();
 
     /**
-     * Whether an explicitly loopback-bound listener may be used without authentication.
+     * Whether an explicitly local listener may be used without authentication.
      *
-     * @return whether anonymous loopback access is allowed
+     * @return whether anonymous local access is allowed
      */
     @Option.Configured
     @Option.DefaultBoolean(false)
-    boolean allowUnauthenticatedLoopback();
+    boolean allowUnauthenticatedLocal();
 }

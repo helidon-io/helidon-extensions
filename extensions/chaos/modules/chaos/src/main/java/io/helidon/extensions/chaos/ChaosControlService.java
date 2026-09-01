@@ -44,26 +44,26 @@ final class ChaosControlService implements HttpService {
 
     private final ChaosRunEngine engine;
     private final ChaosLimitsConfig limits;
-    private final boolean anonymousLoopback;
+    private final boolean anonymousLocal;
     private final Handler authorization;
     private final Semaphore capacity;
 
-    ChaosControlService(ChaosRunEngine engine, ChaosConfig config, boolean anonymousLoopback) {
+    ChaosControlService(ChaosRunEngine engine, ChaosConfig config, boolean anonymousLocal) {
         this(engine,
              config,
-             anonymousLoopback,
+             anonymousLocal,
              new Semaphore(config.limits().maximumConcurrentControlRequests(), true));
     }
 
     ChaosControlService(ChaosRunEngine engine,
                         ChaosConfig config,
-                        boolean anonymousLoopback,
+                        boolean anonymousLocal,
                         Semaphore capacity) {
         this.engine = Objects.requireNonNull(engine);
         this.limits = Objects.requireNonNull(config).limits();
-        this.anonymousLoopback = anonymousLoopback;
+        this.anonymousLocal = anonymousLocal;
         this.capacity = Objects.requireNonNull(capacity);
-        this.authorization = anonymousLoopback
+        this.authorization = anonymousLocal
                 ? (request, response) -> response.next()
                 : SecurityFeature.rolesAllowed(config.security().requiredRole()).audit();
     }
@@ -182,7 +182,7 @@ final class ChaosControlService implements HttpService {
     }
 
     private String actor(ServerRequest request) {
-        if (anonymousLoopback) {
+        if (anonymousLocal) {
             return "anonymous-local";
         }
         String actor = request.context()
