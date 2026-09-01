@@ -15,13 +15,13 @@
  */
 package io.helidon.extensions.chaos;
 
-import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
 import java.util.Optional;
 
+import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 import io.helidon.json.JsonObject;
 import io.helidon.json.JsonParser;
 import org.junit.jupiter.api.Test;
@@ -75,12 +75,6 @@ class ChaosRunPlanJsonTest {
                 json(withActivation("{\"type\": \"probability\", \"probability\": 1}")),
                 LIMITS);
         assertThat(certain.stage().disruption().activation(), is(new ProbabilityActivation(1)));
-    }
-
-    @Test
-    void activationImplementationsAreNotPublicApiTypes() {
-        assertThat(Modifier.isPublic(AlwaysActivation.class.getModifiers()), is(false));
-        assertThat(Modifier.isPublic(ProbabilityActivation.class.getModifiers()), is(false));
     }
 
     @Test

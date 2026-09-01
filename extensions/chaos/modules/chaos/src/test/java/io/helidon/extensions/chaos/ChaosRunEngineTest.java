@@ -31,6 +31,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.common.media.type.MediaTypes;
+import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

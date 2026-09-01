@@ -26,6 +26,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.common.media.type.MediaTypes;
+import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 import io.helidon.json.JsonArray;
 import io.helidon.json.JsonObject;
 import io.helidon.json.JsonParser;

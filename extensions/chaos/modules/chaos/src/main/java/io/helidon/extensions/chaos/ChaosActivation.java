@@ -18,7 +18,7 @@ package io.helidon.extensions.chaos;
 /**
  * Determines whether a matched invocation attempts to reserve disruption budget.
  */
-sealed interface ChaosActivation permits AlwaysActivation, ProbabilityActivation {
+sealed interface ChaosActivation permits ChaosActivation.AlwaysActivation, ChaosActivation.ProbabilityActivation {
 
     /**
      * Shared activation that accepts every matched invocation.
@@ -28,25 +28,25 @@ sealed interface ChaosActivation permits AlwaysActivation, ProbabilityActivation
     static ChaosActivation always() {
         return ALWAYS;
     }
-}
 
-/**
- * Activates every matched invocation.
- */
-final class AlwaysActivation implements ChaosActivation {
-}
+    /**
+     * Activates every matched invocation.
+     */
+    final class AlwaysActivation implements ChaosActivation {
+    }
 
-/**
- * Activates a deterministic fraction of matched invocations.
- *
- * @param probability value greater than zero and at most one
- */
-record ProbabilityActivation(double probability) implements ChaosActivation {
-    private static final double MINIMUM = 0x1.0p-53;
+    /**
+     * Activates a deterministic fraction of matched invocations.
+     *
+     * @param probability value greater than zero and at most one
+     */
+    record ProbabilityActivation(double probability) implements ChaosActivation {
+        private static final double MINIMUM = 0x1.0p-53;
 
-    ProbabilityActivation {
-        if (!Double.isFinite(probability) || probability < MINIMUM || probability > 1) {
-            throw new IllegalArgumentException("probability must be between 2^-53 and one");
+        public ProbabilityActivation {
+            if (!Double.isFinite(probability) || probability < MINIMUM || probability > 1) {
+                throw new IllegalArgumentException("probability must be between 2^-53 and one");
+            }
         }
     }
 }

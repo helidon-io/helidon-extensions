@@ -17,6 +17,8 @@ package io.helidon.extensions.chaos;
 
 import java.nio.charset.StandardCharsets;
 
+import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
+
 /**
  * Stable activation decisions that do not depend on JDK random-generator implementations.
  */
