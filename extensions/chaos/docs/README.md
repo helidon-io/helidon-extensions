@@ -75,6 +75,8 @@ server:
 ```
 
 Startup fails if anonymous mode resolves to a wildcard, non-loopback, unresolved, or unsupported binding.
+For a Unix-domain control socket, restrict the socket path and its parent directories to trusted principals because
+filesystem permissions are the control API's access boundary.
 
 ### Authenticated mode
 
