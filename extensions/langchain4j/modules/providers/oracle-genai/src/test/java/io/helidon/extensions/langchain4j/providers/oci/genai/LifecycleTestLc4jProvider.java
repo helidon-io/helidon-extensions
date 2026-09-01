@@ -17,6 +17,7 @@
 package io.helidon.extensions.langchain4j.providers.oci.genai;
 
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
 
 import io.helidon.builder.api.Option;
 import io.helidon.extensions.langchain4j.AiProvider;
@@ -34,6 +35,15 @@ interface LifecycleTestLc4jProvider extends AiProvider.ModelLifecycle {
      */
     @Option.Configured
     Optional<String> plan();
+
+    /**
+     * Executor service resolved from the registry that owns the generated model factory.
+     *
+     * @return executor service
+     */
+    @Option.Configured
+    @Option.RegistryService
+    Optional<ExecutorService> executorService();
 
     @Override
     default boolean closeModelOnInitializationFailure() {
