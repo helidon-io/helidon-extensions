@@ -43,6 +43,7 @@ sealed interface ChaosActivation permits ChaosActivation.AlwaysActivation, Chaos
     record ProbabilityActivation(double probability) implements ChaosActivation {
         private static final double MINIMUM = 0x1.0p-53;
 
+        // must be public, as the record is implicitly public (on interface), even though it cannot be accessed
         public ProbabilityActivation {
             if (!Double.isFinite(probability) || probability < MINIMUM || probability > 1) {
                 throw new IllegalArgumentException("probability must be between 2^-53 and one");
