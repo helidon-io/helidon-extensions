@@ -68,6 +68,7 @@ class OciGenAiModelFactoryLifecycleTest {
     void resetLifecycleTestModel() {
         LifecycleTestModel.reset();
         LifecycleTestModelShutdownObserver.reset();
+        LifecycleTestRegistryShutdownGate.reset();
     }
 
     @Test
@@ -788,6 +789,127 @@ class OciGenAiModelFactoryLifecycleTest {
     }
 
     @Test
+    void registryShutdownDoesNotWaitForInitializationRequiringRegistryReadLock() throws Exception {
+        var firstModel = LifecycleTestModel.create();
+        var secondModelSupplierCalls = new AtomicInteger();
+        var configurationMappingStarted = new CountDownLatch(1);
+        var continueConfigurationMapping = new CountDownLatch(1);
+        var shutdownOwnsRegistryWriteLock = new CountDownLatch(1);
+        LifecycleTestModel.plan("registry-lock-first-plan", () -> firstModel);
+        LifecycleTestModel.plan("registry-lock-second-plan", () -> {
+            secondModelSupplierCalls.incrementAndGet();
+            return LifecycleTestModel.create();
+        });
+        LifecycleTestRegistryShutdownGate.onShutdown(() -> {
+            shutdownOwnsRegistryWriteLock.countDown();
+            continueConfigurationMapping.countDown();
+        });
+        var config = registryLockShutdownRaceConfig(configurationMappingStarted, continueConfigurationMapping);
+        var manager = registryLockShutdownRaceRegistry();
+        var registry = manager.registry();
+        registry.get(LifecycleTestRegistryShutdownGate.class);
+        var lifecycle = registry.get(LifecycleTestModelFactoryLifecycle.class);
+        var factory = new LifecycleTestModelFactory(config, registry, lifecycle);
+        var reference = factory.services().getFirst();
+        var executor = Executors.newFixedThreadPool(2,
+                                                    Thread.ofPlatform()
+                                                            .daemon()
+                                                            .name("lc4j-registry-shutdown-", 0)
+                                                            .factory());
+        var initialization = executor.submit(reference::get);
+
+        try {
+            assertThat(configurationMappingStarted.await(10, TimeUnit.SECONDS), is(true));
+            assertThat(LifecycleTestModel.buildCount(), is(1));
+            assertThat(firstModel.closeCount(), is(0));
+            assertThat(secondModelSupplierCalls.get(), is(0));
+            var shutdown = executor.submit(manager::shutdown);
+            try {
+                assertThat(shutdownOwnsRegistryWriteLock.await(10, TimeUnit.SECONDS), is(true));
+                shutdown.get(10, TimeUnit.SECONDS);
+
+                var initializationFailure = assertThrows(ExecutionException.class,
+                                                         () -> initialization.get(10, TimeUnit.SECONDS));
+                assertThat(initializationFailure.getCause(), instanceOf(RuntimeException.class));
+                assertThat(firstModel.closeCount(), is(1));
+                assertThat(LifecycleTestModel.buildCount(), is(1));
+                assertThat(secondModelSupplierCalls.get(), is(0));
+                assertThat(factory.services(), is(empty()));
+                manager.shutdown();
+            } finally {
+                shutdown.cancel(true);
+            }
+        } finally {
+            continueConfigurationMapping.countDown();
+            initialization.cancel(true);
+            executor.shutdownNow();
+            executor.awaitTermination(10, TimeUnit.SECONDS);
+            LifecycleTestRegistryShutdownGate.reset();
+        }
+    }
+
+    @Test
+    void cancellationCleanupFailureIsRetainedWithoutBlockingShutdown() throws Exception {
+        var cleanupFailure = new IllegalStateException("cancellation cleanup failed");
+        var model = LifecycleTestModel.create(() -> {
+            throw cleanupFailure;
+        });
+        var constructionStarted = new CountDownLatch(1);
+        var continueConstruction = new CountDownLatch(1);
+        LifecycleTestModel.plan("cancellation-cleanup-failure-plan", () -> {
+            constructionStarted.countDown();
+            await(continueConstruction);
+            return model;
+        });
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(oneLifecycleModelConfig("cancellation-cleanup-failure-plan"),
+                                                    testRegistry,
+                                                    lifecycle);
+        var executor = Executors.newFixedThreadPool(2,
+                                                    Thread.ofPlatform()
+                                                            .daemon()
+                                                            .name("lc4j-cancellation-cleanup-", 0)
+                                                            .factory());
+        var initialization = executor.submit(() -> factory.services().getFirst().get());
+
+        try {
+            assertThat(constructionStarted.await(10, TimeUnit.SECONDS), is(true));
+
+            var shutdown = executor.submit(lifecycle::preDestroy);
+            try {
+                shutdown.get(10, TimeUnit.SECONDS);
+            } finally {
+                shutdown.cancel(true);
+            }
+            var repeatedShutdown = executor.submit(lifecycle::preDestroy);
+            try {
+                repeatedShutdown.get(10, TimeUnit.SECONDS);
+            } finally {
+                repeatedShutdown.cancel(true);
+            }
+            assertThat(model.closeCount(), is(0));
+            continueConstruction.countDown();
+
+            var initializationFailure = assertThrows(ExecutionException.class,
+                                                     () -> initialization.get(10, TimeUnit.SECONDS));
+            assertThat(initializationFailure.getCause(), instanceOf(IllegalStateException.class));
+            assertThat(initializationFailure.getCause().getCause(), sameInstance(cleanupFailure));
+            assertThat(model.closeCount(), is(1));
+
+            var servicesFailure = assertThrows(IllegalStateException.class, factory::services);
+            assertThat(servicesFailure.getCause(), sameInstance(cleanupFailure));
+            var shutdownFailure = assertThrows(IllegalStateException.class, lifecycle::preDestroy);
+            assertThat(shutdownFailure.getCause(), sameInstance(cleanupFailure));
+            assertThat(model.closeCount(), is(1));
+        } finally {
+            continueConstruction.countDown();
+            initialization.cancel(true);
+            executor.shutdownNow();
+            executor.awaitTermination(10, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void lifecycleCoordinatorUsesTerminalShutdownOrder() {
         assertThat(OciGenAiChatModelFactoryLifecycle__ServiceDescriptor.INSTANCE.weight(), is(Double.MAX_VALUE));
         assertThat(OciGenAiChatModelFactoryLifecycle__ServiceDescriptor.INSTANCE.runLevel(),
@@ -974,6 +1096,31 @@ class OciGenAiModelFactoryLifecycleTest {
         return Config.just(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML));
     }
 
+    private static Config registryLockShutdownRaceConfig(CountDownLatch configurationMappingStarted,
+                                                         CountDownLatch continueConfigurationMapping) {
+        // language=YAML
+        var yaml = """
+                langchain4j:
+                  models:
+                    first:
+                      provider: lifecycle-test
+                      plan: registry-lock-first-plan
+                    second:
+                      provider: lifecycle-test
+                      plan: registry-lock-second-plan
+                      initialization-gate: block
+                """;
+        return Config.builder()
+                .sources(ConfigSources.create(yaml, MediaTypes.APPLICATION_X_YAML))
+                .addMapper(LifecycleTestModel.InitializationGate.class, configNode -> {
+                    assertThat(configNode.asString().orElseThrow(), is("block"));
+                    configurationMappingStarted.countDown();
+                    await(continueConfigurationMapping);
+                    return new LifecycleTestModel.InitializationGate();
+                })
+                .build();
+    }
+
     private static Config disabledLifecycleModelConfig() {
         // language=YAML
         var yaml = """
@@ -1044,6 +1191,17 @@ class OciGenAiModelFactoryLifecycleTest {
                 .addServiceDescriptor(MockExecutorServiceFactory__ServiceDescriptor.INSTANCE)
                 .build();
         return ServiceRegistryManager.create(registryConfig);
+    }
+
+    private static ServiceRegistryManager registryLockShutdownRaceRegistry() {
+        var registryConfig = ServiceRegistryConfig.builder()
+                .discoverServices(false)
+                .discoverServicesFromServiceLoader(false)
+                .addServiceDescriptor(LifecycleTestModelFactoryLifecycle__ServiceDescriptor.INSTANCE)
+                .addServiceDescriptor(MockExecutorServiceFactory__ServiceDescriptor.INSTANCE)
+                .addServiceDescriptor(LifecycleTestRegistryShutdownGate__ServiceDescriptor.INSTANCE)
+                .build();
+        return ServiceRegistryManager.start(registryConfig);
     }
 
     private static ServiceRegistryManager lifecycleRegistry(Config config) {

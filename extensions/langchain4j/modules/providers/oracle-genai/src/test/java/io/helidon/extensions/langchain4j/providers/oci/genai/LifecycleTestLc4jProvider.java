@@ -37,6 +37,14 @@ interface LifecycleTestLc4jProvider extends AiProvider.ModelLifecycle {
     Optional<String> plan();
 
     /**
+     * Test gate used to pause configuration before registry-service resolution.
+     *
+     * @return initialization gate
+     */
+    @Option.Configured
+    Optional<LifecycleTestModel.InitializationGate> initializationGate();
+
+    /**
      * Executor service resolved from the registry that owns the generated model factory.
      *
      * @return executor service

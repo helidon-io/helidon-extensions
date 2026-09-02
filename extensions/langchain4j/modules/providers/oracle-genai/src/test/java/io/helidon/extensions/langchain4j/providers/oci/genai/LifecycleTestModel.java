@@ -112,6 +112,11 @@ final class LifecycleTestModel implements ChatModel, AutoCloseable {
             return this;
         }
 
+        public Builder initializationGate(InitializationGate initializationGate) {
+            Objects.requireNonNull(initializationGate);
+            return this;
+        }
+
         public Builder executorService(ExecutorService executorService) {
             this.executorService = Objects.requireNonNull(executorService);
             return this;
@@ -127,5 +132,8 @@ final class LifecycleTestModel implements ChatModel, AutoCloseable {
             model.executorService = executorService;
             return model;
         }
+    }
+
+    static final class InitializationGate {
     }
 }
