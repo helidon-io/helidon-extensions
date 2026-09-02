@@ -194,5 +194,9 @@ Types of properties injectable by default:
 - `dev.langchain4j.http.client.HttpClientBuilder` Custom http client
 - `dev.langchain4j.model.chat.listener.ChatModelListener` Chat model listener
   for observability
+- `dev.langchain4j.model.embedding.listener.EmbeddingModelListener` Embedding model listener
+  for observability
+- `dev.langchain4j.model.moderation.listener.ModerationModelListener` Moderation model listener
+  for observability
 
 [helidon-integrat]: langchain4j.md#maven-coordinates

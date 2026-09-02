@@ -52,6 +52,17 @@ Configuration for LangChain4j model OllamaEmbeddingModel
 </tr>
 <tr>
 <td>
+<code>listeners</code>
+</td>
+<td>
+<code>List&lt;<wbr>Embedding<wbr>Model<wbr>Listener&gt;</code>
+</td>
+<td>
+</td>
+<td>Generated from <code>dev.<wbr>langchain4j.<wbr>model.<wbr>ollama.<wbr>Ollama<wbr>Embedding<wbr>Model.<wbr>Ollama<wbr>Embedding<wbr>Model<wbr>Builder#<wbr>listeners(<wbr>java.<wbr>util.<wbr>List)</code></td>
+</tr>
+<tr>
+<td>
 <code>http-<wbr>client-<wbr>builder-<wbr>discover-<wbr>services</code>
 </td>
 <td>
@@ -61,6 +72,18 @@ Configuration for LangChain4j model OllamaEmbeddingModel
 <code>true</code>
 </td>
 <td>Whether to enable automatic service discovery for <code>http-<wbr>client-<wbr>builder</code></td>
+</tr>
+<tr>
+<td>
+<code>listeners-<wbr>discover-<wbr>services</code>
+</td>
+<td>
+<code>Boolean</code>
+</td>
+<td>
+<code>true</code>
+</td>
+<td>Whether to enable automatic service discovery for <code>listeners</code></td>
 </tr>
 <tr>
 <td>
