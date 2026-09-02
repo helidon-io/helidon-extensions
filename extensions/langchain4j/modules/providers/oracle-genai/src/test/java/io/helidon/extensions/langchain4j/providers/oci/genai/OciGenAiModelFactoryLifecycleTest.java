@@ -16,13 +16,17 @@
 
 package io.helidon.extensions.langchain4j.providers.oci.genai;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -349,6 +353,104 @@ class OciGenAiModelFactoryLifecycleTest {
         assertThat(rolledBackModel.closeCount(), is(1));
         assertThat(firstModel.closeCount(), is(1));
         assertThat(secondModel.closeCount(), is(1));
+    }
+
+    @Test
+    void concurrentWaitersShareFailedGenerationBeforeLaterRetry() throws Exception {
+        int callerCount = 4;
+        var constructionFailure = new IllegalArgumentException("model construction failed");
+        var retryFirstModel = LifecycleTestModel.create();
+        var retrySecondModel = LifecycleTestModel.create();
+        var allowSuccessfulRetry = new AtomicBoolean();
+        var firstModelSupplierCalls = new AtomicInteger();
+        var secondModelSupplierCalls = new AtomicInteger();
+        var rollbackModels = new ConcurrentLinkedQueue<LifecycleTestModel>();
+        var failedConstructionStarted = new CountDownLatch(1);
+        var continueFailedConstruction = new CountDownLatch(1);
+        LifecycleTestModel.plan("first-plan", () -> {
+            firstModelSupplierCalls.incrementAndGet();
+            if (allowSuccessfulRetry.get()) {
+                return retryFirstModel;
+            }
+            var model = LifecycleTestModel.create();
+            rollbackModels.add(model);
+            return model;
+        });
+        LifecycleTestModel.plan("second-plan", () -> {
+            int invocation = secondModelSupplierCalls.incrementAndGet();
+            if (!allowSuccessfulRetry.get()) {
+                if (invocation == 1) {
+                    failedConstructionStarted.countDown();
+                    await(continueFailedConstruction);
+                }
+                throw constructionFailure;
+            }
+            return retrySecondModel;
+        });
+        var lifecycle = new LifecycleTestModelFactoryLifecycle();
+        var factory = new LifecycleTestModelFactory(twoLifecycleModelConfig(), testRegistry, lifecycle);
+        var references = factory.services();
+        var firstReference = references.getFirst();
+        var secondReference = references.get(1);
+        var callersStarted = new CountDownLatch(callerCount);
+        var start = new CountDownLatch(1);
+        var callerThreads = new Thread[callerCount];
+        var executor = Executors.newFixedThreadPool(callerCount,
+                                                    Thread.ofPlatform()
+                                                            .daemon()
+                                                            .name("lc4j-failed-generation-", 0)
+                                                            .factory());
+        var futures = new ArrayList<Future<LifecycleTestModel>>(callerCount);
+        for (int i = 0; i < callerCount; i++) {
+            int callerIndex = i;
+            futures.add(executor.submit(() -> {
+                callerThreads[callerIndex] = Thread.currentThread();
+                callersStarted.countDown();
+                await(start);
+                return firstReference.get();
+            }));
+        }
+
+        try {
+            assertThat(callersStarted.await(10, TimeUnit.SECONDS), is(true));
+            start.countDown();
+            assertThat(failedConstructionStarted.await(10, TimeUnit.SECONDS), is(true));
+            assertThat(awaitFailedGenerationWaiters(callerThreads), is(true));
+            assertThat(firstModelSupplierCalls.get(), is(1));
+            assertThat(secondModelSupplierCalls.get(), is(1));
+            assertThat(LifecycleTestModel.buildCount(), is(2));
+
+            continueFailedConstruction.countDown();
+            for (var future : futures) {
+                var actual = assertThrows(ExecutionException.class,
+                                          () -> future.get(10, TimeUnit.SECONDS));
+                assertThat(actual.getCause(), sameInstance(constructionFailure));
+            }
+            assertThat(firstModelSupplierCalls.get(), is(1));
+            assertThat(secondModelSupplierCalls.get(), is(1));
+            assertThat(LifecycleTestModel.buildCount(), is(2));
+            assertThat(rollbackModels, hasSize(1));
+            assertThat(rollbackModels.element().closeCount(), is(1));
+
+            allowSuccessfulRetry.set(true);
+            assertThat(firstReference.get(), sameInstance(retryFirstModel));
+            assertThat(secondReference.get(), sameInstance(retrySecondModel));
+            assertThat(firstModelSupplierCalls.get(), is(2));
+            assertThat(secondModelSupplierCalls.get(), is(2));
+            assertThat(LifecycleTestModel.buildCount(), is(4));
+
+            lifecycle.preDestroy();
+            assertThat(retryFirstModel.closeCount(), is(1));
+            assertThat(retrySecondModel.closeCount(), is(1));
+            assertThat(rollbackModels.element().closeCount(), is(1));
+        } finally {
+            start.countDown();
+            continueFailedConstruction.countDown();
+            futures.forEach(future -> future.cancel(true));
+            executor.shutdownNow();
+            executor.awaitTermination(10, TimeUnit.SECONDS);
+            lifecycle.preDestroy();
+        }
     }
 
     @Test
@@ -981,6 +1083,26 @@ class OciGenAiModelFactoryLifecycleTest {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (System.nanoTime() < deadline) {
             if (thread.getState() == Thread.State.WAITING) {
+                return true;
+            }
+            Thread.onSpinWait();
+        }
+        return false;
+    }
+
+    private static boolean awaitFailedGenerationWaiters(Thread[] threads) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            int waiting = 0;
+            int timedWaiting = 0;
+            for (var thread : threads) {
+                if (thread.getState() == Thread.State.WAITING) {
+                    waiting++;
+                } else if (thread.getState() == Thread.State.TIMED_WAITING) {
+                    timedWaiting++;
+                }
+            }
+            if (waiting == threads.length - 1 && timedWaiting == 1) {
                 return true;
             }
             Thread.onSpinWait();
