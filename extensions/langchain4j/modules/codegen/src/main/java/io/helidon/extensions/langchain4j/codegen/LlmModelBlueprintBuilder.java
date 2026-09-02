@@ -88,7 +88,7 @@ class LlmModelBlueprintBuilder extends IntrospectionBlueprintBuilder {
                 .filter(e -> e.hasAnnotation(LangchainTypes.OPT_CONFIGURED))
                 .collect(Collectors.toMap(info -> info.signature().name(),
                                           Function.identity(),
-                                          (mostSpecific, ignored) -> mostSpecific));
+                                          (mostSpecific, _) -> mostSpecific));
     }
 
     void addEnableProperty() {

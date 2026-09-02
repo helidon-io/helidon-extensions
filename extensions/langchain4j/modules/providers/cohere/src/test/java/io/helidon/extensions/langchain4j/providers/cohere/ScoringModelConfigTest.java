@@ -123,7 +123,7 @@ class ScoringModelConfigTest {
         var programmaticBuilder = new MockHttpClientFactory.TrackingHttpClientBuilder();
         var config = Config.builder()
                 .sources(ConfigSources.create(Map.of("http-client-builder", "configured")))
-                .addMapper(HttpClientBuilder.class, ignored -> configuredBuilder)
+                .addMapper(HttpClientBuilder.class, _ -> configuredBuilder)
                 .build();
 
         var programmaticWins = CohereScoringModelConfig.builder()

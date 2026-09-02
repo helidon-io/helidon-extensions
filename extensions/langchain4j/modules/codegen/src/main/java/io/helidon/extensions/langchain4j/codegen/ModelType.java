@@ -103,7 +103,7 @@ enum ModelType {
             }
 
             childCounts.putIfAbsent(currentType, 0);
-            Set<TypeName> currentParents = parents.computeIfAbsent(currentType, ignored -> new LinkedHashSet<>());
+            Set<TypeName> currentParents = parents.computeIfAbsent(currentType, _ -> new LinkedHashSet<>());
             current.superTypeInfo().ifPresent(parent -> addParent(parent,
                                                                   currentParents,
                                                                   childCounts,
@@ -122,7 +122,7 @@ enum ModelType {
             TypeName current = ready.removeFirst();
             lineage.add(types.get(current));
             for (TypeName parent : parents.getOrDefault(current, Set.of())) {
-                int remainingChildren = childCounts.compute(parent, (type, count) -> count - 1);
+                int remainingChildren = childCounts.compute(parent, (_, count) -> count - 1);
                 if (remainingChildren == 0) {
                     ready.addLast(parent);
                 }
