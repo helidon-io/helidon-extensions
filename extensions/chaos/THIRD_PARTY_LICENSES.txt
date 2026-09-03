@@ -1,0 +1,1 @@
+This module introduces no third-party runtime dependencies.
