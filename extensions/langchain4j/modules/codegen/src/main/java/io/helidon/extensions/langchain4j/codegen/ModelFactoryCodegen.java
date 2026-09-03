@@ -338,18 +338,6 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .addInterface(TypeName.builder(SVC_SERVICES_FACTORY).addTypeArgument(modelType).build());
     }
 
-    /*
-    @Override
-    public List<Service.QualifiedInstance<OciGenAiChatModel>> services() {
-        var modelOptional = model().get();
-        if (modelOptional.isEmpty()) {
-                return List.of();
-        }
-        var theModel = modelOptional.get();
-        return List.of(Service.QualifiedInstance.create(theModel),
-            Service.QualifiedInstance.create(theModel, OciGenAi.QUALIFIER));
-    }
-     */
     private static Method servicesMethod(TypeName modelType,
                                          TypeName lifecycleStateType,
                                          TypeName lifecyclePhaseType) {
@@ -1168,19 +1156,11 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .build();
     }
 
-    /*
-    protected static Optional<OciGenAiChatModel> buildModel(OciGenAiChatModelConfig.Builder configBuilder) {
-        if (!configBuilder.enabled()) {
-                return Optional.empty();
-        }
-        return Optional.of(create(configBuilder.build()));
-    }
-     */
     private static Method buildModelMethod(String modelClassNamePrefix, TypeName modelType, TypeName constantsClassTypeName) {
         return Method.builder()
                 .accessModifier(AccessModifier.PRIVATE)
                 .name("buildModel")
-                .description("Builds a new model configured with the given configuration builder.")
+                .description("Builds a new model for the given model name and configuration.")
                 .addParameter(Parameter.builder()
                                       .type(STRING)
                                       .description("Model name.")
@@ -1202,7 +1182,7 @@ class ModelFactoryCodegen implements CodegenExtension {
                                       .name("shutdownModels")
                                       .build())
                 .returnType(Returns.builder()
-                                    .description("New model configured with the given configuration builder.")
+                                    .description("New model for the given model name and configuration.")
                                     .type(TypeName.builder(OPTIONAL).addTypeArgument(modelType).build())
                                     .build())
                 .addContent("var mergedConfig = ")
@@ -1240,14 +1220,6 @@ class ModelFactoryCodegen implements CodegenExtension {
                 .build();
     }
 
-    /*
-      static OciGenAiChatModel create(OciGenAiChatModelConfig config) {
-          if (!config.enabled()) {
-                  throw new IllegalStateException("Cannot create a model when the configuration is disabled.");
-          }
-          return config.configuredBuilder().build();
-      }
-    */
     private static Method createMethod(TypeName modelType, TypeName modelConfigTypeName) {
         return Method.builder()
                 .name("create")
