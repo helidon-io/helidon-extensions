@@ -136,11 +136,11 @@ public final class A2AAgentConfigSupport {
             return validateServerUrl(agentType, config.a2aServerUrl().get());
         }
         if (!annotationUrl.isBlank()) {
-            return validateServerUrl(agentType, annotationUrl);
+            return annotationUrl;
         }
         if (supplierMethod.isPresent()) {
             checkReturnType(supplierMethod.get(), String.class);
-            return validateServerUrl(agentType, invokeStatic(supplierMethod.get()));
+            return invokeStatic(supplierMethod.get());
         }
 
         throw new IllegalArgumentException("A2A agent " + agentType.getName()

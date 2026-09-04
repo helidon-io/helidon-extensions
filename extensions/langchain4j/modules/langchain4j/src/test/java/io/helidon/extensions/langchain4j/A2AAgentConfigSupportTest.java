@@ -99,7 +99,7 @@ public class A2AAgentConfigSupportTest {
     void annotationValuesAreFallbacks() {
         A2AAgentConfigSupport.create(AnnotatedAgent.class, AgentsConfig.create());
 
-        assertThat(recordingService.serverUrl, is("https://annotation.example.test/a2a"));
+        assertThat(recordingService.serverUrl, is("a2a+test:annotation"));
         assertThat(recordingService.builder.outputKey, is("annotation-output"));
         assertThat(recordingService.builder.async, is(true));
     }
@@ -108,7 +108,7 @@ public class A2AAgentConfigSupportTest {
     void supplierAndTypedOutputKeyAreFallbacks() {
         A2AAgentConfigSupport.create(SuppliedAgent.class, AgentsConfig.create());
 
-        assertThat(recordingService.serverUrl, is("https://supplier.example.test/a2a"));
+        assertThat(recordingService.serverUrl, is("urn:a2a:supplied"));
         assertThat(recordingService.builder.outputKey, is("TypedOutput"));
         assertThat(recordingService.builder.async, is(false));
     }
@@ -148,7 +148,7 @@ public class A2AAgentConfigSupportTest {
         var invalid = assertThrows(IllegalArgumentException.class,
                                    () -> A2AAgentConfigSupport.create(MissingUrlAgent.class,
                                                                      AgentsConfig.builder()
-                                                                             .a2aServerUrl("file:///tmp/agent")
+                                                                             .a2aServerUrl("a2a+test:configured")
                                                                              .build()));
         assertThat(invalid.getMessage(), containsString("absolute HTTP or HTTPS URI"));
 
@@ -222,7 +222,7 @@ public class A2AAgentConfigSupportTest {
 
     @Ai.Agent("annotated-a2a")
     public interface AnnotatedAgent {
-        @A2AClientAgent(a2aServerUrl = "https://annotation.example.test/a2a",
+        @A2AClientAgent(a2aServerUrl = "a2a+test:annotation",
                         outputKey = "annotation-output",
                         async = true)
         String ask(@V("question") String question);
@@ -244,7 +244,7 @@ public class A2AAgentConfigSupportTest {
 
         @A2AServerUrlSupplier
         static String serverUrl() {
-            return "https://supplier.example.test/a2a";
+            return "urn:a2a:supplied";
         }
     }
 
