@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+    Copyright (c) 2026 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -16,73 +16,53 @@
     limitations under the License.
 
 -->
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.helidon.extensions.langchain4j.providers</groupId>
-        <artifactId>helidon-extensions-langchain4j-providers-project</artifactId>
+        <groupId>io.helidon.extensions.langchain4j.tests</groupId>
+        <artifactId>helidon-extensions-langchain4j-tests-project</artifactId>
         <version>27.0.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>helidon-extensions-langchain4j-providers-google-gemini</artifactId>
-    <name>Helidon Extensions Langchain4j Providers Gemini</name>
+    <artifactId>helidon-extensions-langchain4j-tests-agentic-a2a</artifactId>
+    <name>Helidon LangChain4j Agentic A2A Test Project</name>
 
     <dependencies>
-        <dependency>
-            <groupId>io.helidon.config</groupId>
-            <artifactId>helidon-config</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.helidon.config.metadata</groupId>
-            <artifactId>helidon-config-metadata</artifactId>
-            <optional>true</optional>
-        </dependency>
-        <dependency>
-            <groupId>io.helidon.common</groupId>
-            <artifactId>helidon-common-types</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.helidon.common</groupId>
-            <artifactId>helidon-common</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.helidon.service</groupId>
-            <artifactId>helidon-service-registry</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.helidon.builder</groupId>
-            <artifactId>helidon-builder-api</artifactId>
-        </dependency>
         <dependency>
             <groupId>io.helidon.extensions.langchain4j</groupId>
             <artifactId>helidon-extensions-langchain4j</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-core</artifactId>
+            <artifactId>langchain4j</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-google-ai-gemini</artifactId>
+            <artifactId>langchain4j-agentic</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-http-client</artifactId>
+            <artifactId>langchain4j-agentic-a2a</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
+            <groupId>io.helidon.config</groupId>
+            <artifactId>helidon-config-yaml</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.common.features</groupId>
-            <artifactId>helidon-common-features-api</artifactId>
-            <optional>true</optional>
+            <groupId>io.helidon.logging</groupId>
+            <artifactId>helidon-logging-jul</artifactId>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-jdk14</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.helidon.testing</groupId>
+            <artifactId>helidon-testing-junit5</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -96,16 +76,6 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>io.helidon.config</groupId>
-            <artifactId>helidon-config-yaml</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.helidon.testing</groupId>
-            <artifactId>helidon-testing-junit5</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
             <groupId>io.helidon.webserver</groupId>
             <artifactId>helidon-webserver</artifactId>
             <scope>test</scope>
@@ -115,30 +85,26 @@
             <artifactId>helidon-webserver-testing-junit5</artifactId>
             <scope>test</scope>
         </dependency>
-        <dependency>
-            <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-core</artifactId>
-            <scope>test</scope>
-        </dependency>
     </dependencies>
 
     <build>
         <plugins>
+            <!-- The upstream A2A SDK is not JPMS compatible due to a split package. -->
+            <plugin>
+                <groupId>io.helidon.build-tools</groupId>
+                <artifactId>helidon-services-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>generate-meta-inf-services</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
                     <annotationProcessorPaths>
-                        <path>
-                            <groupId>io.helidon.config.metadata</groupId>
-                            <artifactId>helidon-config-metadata-codegen</artifactId>
-                            <version>${helidon.version}</version>
-                        </path>
                         <path>
                             <groupId>io.helidon.codegen</groupId>
                             <artifactId>helidon-codegen-apt</artifactId>
@@ -155,28 +121,19 @@
                             <version>${helidon.version}</version>
                         </path>
                         <path>
-                            <groupId>io.helidon.codegen</groupId>
-                            <artifactId>helidon-codegen-helidon-copyright</artifactId>
-                            <version>${helidon.version}</version>
-                        </path>
-                        <path>
-                            <groupId>io.helidon.common.features</groupId>
-                            <artifactId>helidon-common-features-codegen</artifactId>
-                            <version>${helidon.version}</version>
-                        </path>
-                        <path>
                             <groupId>io.helidon.extensions.langchain4j</groupId>
                             <artifactId>helidon-extensions-langchain4j-codegen</artifactId>
                             <version>${langchain4j.extension.version}</version>
                         </path>
+                        <path>
+                            <groupId>io.helidon.codegen</groupId>
+                            <artifactId>helidon-codegen-helidon-copyright</artifactId>
+                            <version>${helidon.version}</version>
+                        </path>
                     </annotationProcessorPaths>
                 </configuration>
                 <dependencies>
-                    <dependency>
-                        <groupId>io.helidon.config.metadata</groupId>
-                        <artifactId>helidon-config-metadata-codegen</artifactId>
-                        <version>${helidon.version}</version>
-                    </dependency>
+                    <!-- This is not needed for applications that are not part of Helidon Maven reactor -->
                     <dependency>
                         <groupId>io.helidon.codegen</groupId>
                         <artifactId>helidon-codegen-apt</artifactId>
@@ -193,21 +150,29 @@
                         <version>${helidon.version}</version>
                     </dependency>
                     <dependency>
-                        <groupId>io.helidon.codegen</groupId>
-                        <artifactId>helidon-codegen-helidon-copyright</artifactId>
-                        <version>${helidon.version}</version>
-                    </dependency>
-                    <dependency>
-                        <groupId>io.helidon.common.features</groupId>
-                        <artifactId>helidon-common-features-codegen</artifactId>
-                        <version>${helidon.version}</version>
-                    </dependency>
-                    <dependency>
                         <groupId>io.helidon.extensions.langchain4j</groupId>
                         <artifactId>helidon-extensions-langchain4j-codegen</artifactId>
                         <version>${langchain4j.extension.version}</version>
                     </dependency>
+                    <dependency>
+                        <groupId>io.helidon.codegen</groupId>
+                        <artifactId>helidon-codegen-helidon-copyright</artifactId>
+                        <version>${helidon.version}</version>
+                    </dependency>
                 </dependencies>
+            </plugin>
+            <plugin>
+                <groupId>io.helidon.service</groupId>
+                <artifactId>helidon-service-maven-plugin</artifactId>
+                <version>${helidon.version}</version>
+                <executions>
+                    <execution>
+                        <id>create-application</id>
+                        <goals>
+                            <goal>create-application</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

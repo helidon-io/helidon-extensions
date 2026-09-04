@@ -37,6 +37,7 @@
 
     <properties>
         <langchain4j.extension.version>27.0.0-SNAPSHOT</langchain4j.extension.version>
+        <version.lib.langchain4j-agentic-a2a>1.18.1-beta28</version.lib.langchain4j-agentic-a2a>
     </properties>
 
     <dependencyManagement>
@@ -50,6 +51,11 @@
                 <groupId>io.helidon.extensions.langchain4j</groupId>
                 <artifactId>helidon-extensions-langchain4j-codegen</artifactId>
                 <version>${langchain4j.extension.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-agentic-a2a</artifactId>
+                <version>${version.lib.langchain4j-agentic-a2a}</version>
             </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.langchain4j.providers</groupId>

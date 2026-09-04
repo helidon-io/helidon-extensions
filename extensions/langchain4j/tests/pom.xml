@@ -43,6 +43,7 @@
 
     <modules>
         <module>agentic</module>
+        <module>agentic-a2a</module>
         <module>agentic-mcp</module>
     </modules>
 </project>

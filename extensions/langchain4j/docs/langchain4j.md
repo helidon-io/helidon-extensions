@@ -453,6 +453,65 @@ entries, for example to replace a chat model or adjust an output key.
 
 ![LangChain4j agents in Helidon](images/agents.svg)
 
+#### Remote A2A Agents
+
+The optional LangChain4j A2A module allows a Helidon agent to delegate to a
+remote agent using the Agent2Agent protocol. Add the following dependency; its
+version is managed by the Helidon LangChain4j extension BOM:
+
+```xml
+<dependency>
+    <groupId>dev.langchain4j</groupId>
+    <artifactId>langchain4j-agentic-a2a</artifactId>
+</dependency>
+```
+
+Define the remote agent as a normal named Helidon agent and annotate its method
+with LangChain4j `@A2AClientAgent`:
+
+```java
+@Ai.Agent("remote-writer")
+public interface RemoteWriter {
+
+    @A2AClientAgent(a2aServerUrl = "https://writer.example.com",
+                    outputKey = "draft",
+                    async = true)
+    String write(@V("topic") String topic);
+}
+```
+
+The A2A URL, output key, and asynchronous execution setting can be overridden
+without recompiling the application:
+
+```yaml
+langchain4j:
+  agents:
+    remote-writer:
+      a2a-server-url: http://writer.internal:8080
+      output-key: story
+      async: false
+```
+
+Configuration takes precedence over `@A2AClientAgent` values. If
+`a2a-server-url` is not configured, Helidon retains LangChain4j's normal URL
+resolution through the annotation or an `@A2AServerUrlSupplier` method. Remote
+agents are available as top-level Helidon services and can also participate as
+subagents in declarative sequence, loop, conditional, and other composed
+workflows. A remote A2A agent does not require a local chat model.
+Configuration overrides do not mask invalid annotation declarations that set
+mutually exclusive URL or output-key sources.
+
+> [!NOTE]
+> LangChain4j applies `@A2AClientCustomizer` after it discovers the remote
+> Agent Card. The customizer therefore cannot add authentication or TLS
+> customization to that initial discovery request.
+
+> [!WARNING]
+> The A2A Java SDK used by this version contains a split package across its
+> `common` and `spec` artifacts. Use the A2A integration on the class path;
+> named JPMS applications are not supported until the upstream SDK resolves
+> that module-path conflict.
+
 #### Agentic Workflow
 
 Helidon supports LangChain4j declarative agentic workflows such as sequence and
