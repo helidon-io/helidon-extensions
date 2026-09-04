@@ -17,6 +17,7 @@
 package io.helidon.extensions.langchain4j.codegen;
 
 import java.util.Collection;
+import java.util.Set;
 
 import io.helidon.codegen.CodegenException;
 import io.helidon.codegen.CodegenUtil;
@@ -39,11 +40,13 @@ import static io.helidon.common.types.AccessModifier.PACKAGE_PRIVATE;
 import static io.helidon.common.types.AccessModifier.PRIVATE;
 import static io.helidon.common.types.TypeNames.CLASS_WILDCARD;
 import static io.helidon.common.types.TypeNames.STRING;
+import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.A2A_AGENT_CONFIG_SUPPORT;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.AGENTS_CONFIG;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.AGENT_METADATA;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.AI_AGENT;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.AI_CHAT_MODEL;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.CONFIG;
+import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.LC_A2A_CLIENT_AGENT;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.LC_AGENTIC_SERVICES;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.LC_CHAT_MODEL;
 import static io.helidon.extensions.langchain4j.codegen.LangchainTypes.LC_DECLARATIVE_AGENT_CREATION_CONTEXT;
@@ -54,6 +57,14 @@ import static io.helidon.service.codegen.ServiceCodegenTypes.SERVICE_REGISTRY;
 
 class AgentCodegen implements CodegenExtension {
     private static final TypeName GENERATOR = TypeName.create(AgentCodegen.class);
+    private static final Set<TypeName> COMPOSED_AGENT_ANNOTATIONS = Set.of(
+            TypeName.create("dev.langchain4j.agentic.declarative.SequenceAgent"),
+            TypeName.create("dev.langchain4j.agentic.declarative.LoopAgent"),
+            TypeName.create("dev.langchain4j.agentic.declarative.ConditionalAgent"),
+            TypeName.create("dev.langchain4j.agentic.declarative.ParallelAgent"),
+            TypeName.create("dev.langchain4j.agentic.declarative.ParallelMapperAgent"),
+            TypeName.create("dev.langchain4j.agentic.declarative.SupervisorAgent"),
+            TypeName.create("dev.langchain4j.agentic.declarative.PlannerAgent"));
     static final String AGENTS_CONFIG_KEY = "langchain4j.agents";
 
     @Override
@@ -79,6 +90,7 @@ class AgentCodegen implements CodegenExtension {
     private void process(RoundContext roundCtx, TypeInfo agentInterface) {
         TypeName agentInterfaceType = agentInterface.typeName();
         TypeName generatedType = generatedTypeName(agentInterfaceType, "AiAgent");
+        boolean a2aAgent = isA2AAgent(agentInterface);
         AgentMetadataSupplierBuilder.build(agentInterface, roundCtx);
 
         var classModel = ClassModel.builder()
@@ -109,58 +121,71 @@ class AgentCodegen implements CodegenExtension {
                 .accessModifier(PRIVATE)
         );
 
-        classModel.addField(aiServices -> aiServices
-                .name("chatModel")
-                .type(LC_CHAT_MODEL)
-                .isFinal(true)
-                .accessModifier(PRIVATE)
-        );
+        if (!a2aAgent) {
+            classModel.addField(aiServices -> aiServices
+                    .name("chatModel")
+                    .type(LC_CHAT_MODEL)
+                    .isFinal(true)
+                    .accessModifier(PRIVATE)
+            );
+        }
 
         // constructor (parameters depend on annotations on interface)
         classModel.addConstructor(ctr -> ctr
                 .accessModifier(AccessModifier.PACKAGE_PRIVATE)
                 .addAnnotation(Annotation.create(ServiceCodegenTypes.SERVICE_ANNOTATION_INJECT))
                 .update(it -> {
-                    aiAgentsParameter(it,
-                                      true,
-                                      agentInterface,
-                                      AI_CHAT_MODEL,
-                                      LC_CHAT_MODEL,
-                                      "chatModel");
+                    if (a2aAgent) {
+                        agentBaseParameters(it);
+                    } else {
+                        aiAgentsParameter(it,
+                                          true,
+                                          agentInterface,
+                                          AI_CHAT_MODEL,
+                                          LC_CHAT_MODEL,
+                                          "chatModel");
+                    }
                 })
         );
 
         // and the get method (implementation of supplier)
-        classModel.addMethod(get -> get
-                .accessModifier(AccessModifier.PUBLIC)
-                .addAnnotation(Annotations.OVERRIDE)
-                .returnType(agentInterfaceType)
-                .name("get")
-                .addContent("var topAgentConfig = this.agenticConfig.get(")
-                .addContentLiteral(agentInterface.annotation(AI_AGENT).stringValue().orElseThrow())
-                .addContentLine(");")
-                .addContent("var configuredModel = topAgentConfig")
-                .addContent(".get(")
-                .addContentLiteral("chat-model")
-                .addContentLine(")")
-                .increaseContentPadding()
-                .addContentLine(".asString()")
-                .addContent(".map(n -> registry.getNamed(ChatModel.class, n))")
-                .addContentLine(".orElse(chatModel);")
-                .decreaseContentPadding()
-                .addContent("return ")
-                .addContent(LC_AGENTIC_SERVICES)
-                .addContent(".createAgenticSystem(")
-                .addContent(agentInterfaceType)
-                .addContent(".class, ")
-                .addContent("configuredModel, new ")
-                .addContent(LC_AGENTIC_SERVICES)
-                .addContent(".AgentConfigurator(this")
-                .addContentLine("::configureSubAgents, null, null));")
-                .addContentLine("")
-        );
+        classModel.addMethod(get -> {
+            get.accessModifier(AccessModifier.PUBLIC)
+                    .addAnnotation(Annotations.OVERRIDE)
+                    .returnType(agentInterfaceType)
+                    .name("get")
+                    .addContent("var agentsConfig = agentsConfig(")
+                    .addContent(agentInterfaceType)
+                    .addContentLine(".class);");
+            if (a2aAgent) {
+                get.addContent("return ")
+                        .addContent(A2A_AGENT_CONFIG_SUPPORT)
+                        .addContent(".create(")
+                        .addContent(agentInterfaceType)
+                        .addContentLine(".class, agentsConfig);");
+            } else {
+                get.addContent("var configuredModel = agentsConfig.chatModel()")
+                        .increaseContentPadding()
+                        .addContentLine()
+                        .addContentLine(".map(n -> registry.getNamed(ChatModel.class, n))")
+                        .addContentLine(".orElse(chatModel);")
+                        .decreaseContentPadding()
+                        .addContent("return ")
+                        .addContent(LC_AGENTIC_SERVICES)
+                        .addContent(".createAgenticSystem(")
+                        .addContent(agentInterfaceType)
+                        .addContent(".class, ")
+                        .addContent("configuredModel, new ")
+                        .addContent(LC_AGENTIC_SERVICES)
+                        .addContent(".AgentConfigurator(this")
+                        .addContentLine("::configureSubAgents, this::resolveSubAgent, null));")
+                        .addContentLine("");
+            }
+        });
 
+        classModel.addMethod(this::addAgentsConfigMethod);
         classModel.addMethod(this::addConfigureSubAgentsMethod);
+        classModel.addMethod(this::addResolveSubAgentMethod);
 
         roundCtx.addGeneratedType(generatedType, classModel, agentInterfaceType, agentInterface.originatingElementValue());
     }
@@ -171,21 +196,7 @@ class AgentCodegen implements CodegenExtension {
                                    TypeName aiModelAnnotation,
                                    TypeName lcModelType,
                                    String aiServicesMethodName) {
-
-        ctr.addParameter(Parameter.builder()
-                                 .type(CONFIG)
-                                 .name("config")
-                                 .build());
-
-        ctr.addParameter(Parameter.builder()
-                                 .type(SERVICE_REGISTRY)
-                                 .name("registry")
-                                 .build());
-
-        ctr.addContent("this.agenticConfig = config.get(")
-                .addContentLiteral(AGENTS_CONFIG_KEY)
-                .addContentLine(");");
-        ctr.addContentLine("this.registry = registry;");
+        agentBaseParameters(ctr);
 
         // if annotated, we have a named value (and that is mandatory)
         String modelName = aiInterface.findAnnotation(aiModelAnnotation)
@@ -218,18 +229,32 @@ class AgentCodegen implements CodegenExtension {
         }
     }
 
-    private void addConfigureSubAgentsMethod(Method.Builder mb) {
-        mb
-                .accessModifier(PACKAGE_PRIVATE)
+    private void agentBaseParameters(Constructor.Builder ctr) {
+        ctr.addParameter(Parameter.builder()
+                                 .type(CONFIG)
+                                 .name("config")
+                                 .build());
+
+        ctr.addParameter(Parameter.builder()
+                                 .type(SERVICE_REGISTRY)
+                                 .name("registry")
+                                 .build());
+
+        ctr.addContent("this.agenticConfig = config.get(")
+                .addContentLiteral(AGENTS_CONFIG_KEY)
+                .addContentLine(");");
+        ctr.addContentLine("this.registry = registry;");
+    }
+
+    private void addAgentsConfigMethod(Method.Builder mb) {
+        mb.accessModifier(PRIVATE)
+                .returnType(AGENTS_CONFIG)
                 .addParameter(Parameter.builder()
-                                      .name("ctx")
-                                      .type(LC_DECLARATIVE_AGENT_CREATION_CONTEXT)
+                                      .name("cls")
+                                      .type(CLASS_WILDCARD)
                                       .build())
-                .name("configureSubAgents")
-                .addContent(CLASS_WILDCARD)
-                .addContentLine(" cls = ctx.agentServiceClass();")
-                .addContentLine()
-                .addContentLine("// Get Agent metadata created from it's annotations in build-time")
+                .name("agentsConfig")
+                .addContentLine("// Get Agent metadata created from its annotations at build time")
                 .addContent("var metadata = registry.first(")
                 .addContent(AGENT_METADATA)
                 .addContent(".class, ")
@@ -243,20 +268,73 @@ class AgentCodegen implements CodegenExtension {
                 .addContent("+ cls +")
                 .addContentLiteral(" has no build time metadata available!")
                 .addContentLine("));")
-
                 .decreaseContentPadding()
                 .addContent(STRING)
                 .addContentLine(" agentName = metadata.agentName();")
                 .addContent("var agentsConfigBuilder = ")
                 .addContent(AGENTS_CONFIG)
-                .addContent(".builder(metadata.buildTimeConfig());")
-                .decreaseContentPadding()
-                .addContentLine()
-                .addContentLine()
-                .addContentLine("// Override annotation setup with config")
+                .addContentLine(".builder(metadata.buildTimeConfig());")
                 .addContentLine("agentsConfigBuilder.config(agenticConfig.get(agentName));")
-                .addContentLine("var agentsConfig = agentsConfigBuilder.build();")
-                .addContentLine("agentsConfig.configure(ctx, registry);");
+                .addContentLine("return agentsConfigBuilder.build();");
+    }
+
+    private void addConfigureSubAgentsMethod(Method.Builder mb) {
+        mb
+                .accessModifier(PACKAGE_PRIVATE)
+                .addParameter(Parameter.builder()
+                                      .name("ctx")
+                                      .type(LC_DECLARATIVE_AGENT_CREATION_CONTEXT)
+                                      .build())
+                .name("configureSubAgents")
+                .addContent(CLASS_WILDCARD)
+                .addContentLine(" cls = ctx.agentServiceClass();")
+                .addContentLine("agentsConfig(cls).configure(ctx, registry);");
+    }
+
+    private void addResolveSubAgentMethod(Method.Builder mb) {
+        mb.accessModifier(PRIVATE)
+                .returnType(TypeNames.OBJECT)
+                .addParameter(Parameter.builder()
+                                      .name("cls")
+                                      .type(CLASS_WILDCARD)
+                                      .build())
+                .name("resolveSubAgent")
+                .addContent("if (!")
+                .addContent(A2A_AGENT_CONFIG_SUPPORT)
+                .addContentLine(".isA2A(cls)) {")
+                .increaseContentPadding()
+                .addContentLine("return null;")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .addContent("if (registry.first(")
+                .addContent(AGENT_METADATA)
+                .addContent(".class, ")
+                .addContent(SERVICE_QUALIFIER)
+                .addContentLine(".createNamed(cls)).isEmpty()) {")
+                .increaseContentPadding()
+                .addContentLine("return null;")
+                .decreaseContentPadding()
+                .addContentLine("}")
+                .addContentLine("// Each workflow needs a fresh A2A proxy because it carries mutable parent state")
+                .addContent("return ")
+                .addContent(A2A_AGENT_CONFIG_SUPPORT)
+                .addContentLine(".create(cls, agentsConfig(cls));");
+    }
+
+    private boolean isA2AAgent(TypeInfo typeInfo) {
+        return hasAnnotation(typeInfo, LC_A2A_CLIENT_AGENT)
+                && COMPOSED_AGENT_ANNOTATIONS.stream().noneMatch(annotation -> hasAnnotation(typeInfo, annotation));
+    }
+
+    private boolean hasAnnotation(TypeInfo typeInfo, TypeName annotation) {
+        if (typeInfo.elementInfo()
+                .stream()
+                .anyMatch(element -> element.hasAnnotation(annotation))) {
+            return true;
+        }
+        return typeInfo.interfaceTypeInfo()
+                .stream()
+                .anyMatch(interfaceType -> hasAnnotation(interfaceType, annotation));
     }
 
     private TypeName generatedTypeName(TypeName aiInterfaceType, String suffix) {

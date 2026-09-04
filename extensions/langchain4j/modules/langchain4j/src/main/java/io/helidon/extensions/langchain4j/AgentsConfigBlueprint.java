@@ -40,6 +40,7 @@ import dev.langchain4j.guardrail.OutputGuardrail;
 @Prototype.Blueprint
 @Prototype.Configured("langchain4j.agents") // constants in annotations should not reference generated code
 @Prototype.CustomMethods(AgentsConfigSupport.class)
+@Prototype.IncludeDefaultMethods
 interface AgentsConfigBlueprint {
 
     /**
@@ -70,6 +71,19 @@ interface AgentsConfigBlueprint {
      */
     @Option.Configured
     Optional<String> description();
+
+    /**
+     * URL of the remote A2A agent server.
+     * <p>
+     * When configured for an A2A client agent, this value overrides the URL declared by
+     * {@code A2AClientAgent} or supplied by {@code A2AServerUrlSupplier}.
+     *
+    * @return configured A2A server URL, or empty if the annotation configuration should be used
+    */
+    @Option.Configured
+    default Optional<String> a2aServerUrl() {
+        return Optional.empty();
+    }
 
     /**
      * Key of the output variable that will be used to store the result of the agent's invocation.

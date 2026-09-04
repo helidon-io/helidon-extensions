@@ -19,6 +19,17 @@ Configuration for a single LangChain4j agent
 <tbody>
 <tr>
 <td>
+<code>a2a-<wbr>server-<wbr>url</code>
+</td>
+<td>
+<code>String</code>
+</td>
+<td>
+</td>
+<td>URL of the remote A2A agent server</td>
+</tr>
+<tr>
+<td>
 <code>chat-<wbr>model</code>
 </td>
 <td>
