@@ -32,14 +32,14 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
-import io.helidon.messaging.ConnectorDelivery;
-import io.helidon.messaging.ConnectorDeliveryReservation;
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.IncomingConnector;
-import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
+import io.helidon.messaging.spi.ConnectorDelivery;
+import io.helidon.messaging.spi.ConnectorDeliveryReservation;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingConnectorContext;
 
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.PulsarClient;
@@ -75,7 +75,7 @@ final class PulsarIncomingConnector {
     private static void validateDirection(PulsarConnectorConfig config) {
         Objects.requireNonNull(config);
         if (config.direction() != ConnectorDirection.INCOMING) {
-            throw new IllegalArgumentException("Pulsar connector configuration for channel " + config.channel()
+            throw new IllegalArgumentException("Pulsar connector configuration for channel " + config.channelName()
                                                        + " has direction " + config.direction()
                                                        + ", expected " + ConnectorDirection.INCOMING);
         }
@@ -330,16 +330,13 @@ final class PulsarIncomingConnector {
                 }
                 try {
                     delivery.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    if (forceCloseRequested.get()) {
+                } catch (RuntimeException e) {
+                    if (forceCloseRequested.get() && causedByInterruption(e)) {
                         return;
                     }
-                    MessagingException failure = new MessagingException(
-                            "Pulsar incoming message processing was interrupted", e);
-                    negativeAcknowledge(consumer, nativeMessage, failure);
-                    throw failure;
-                } catch (RuntimeException | Error e) {
+                    negativeAcknowledge(consumer, nativeMessage, e);
+                    throw e;
+                } catch (Error e) {
                     negativeAcknowledge(consumer, nativeMessage, e);
                     throw e;
                 }
@@ -358,9 +355,9 @@ final class PulsarIncomingConnector {
             try {
                 if (stopping()) {
                     throw new MessagingRejectedException(
-                            config.channel(),
+                            config.channelName(),
                             MessagingRejectedException.Reason.CANCELLED,
-                            "Pulsar delivery admission was cancelled on channel " + config.channel());
+                            "Pulsar delivery admission was cancelled on channel " + config.channelName());
                 }
                 deliveryStarting = true;
             } finally {
@@ -436,20 +433,20 @@ final class PulsarIncomingConnector {
             try {
                 acknowledgement = consumer.acknowledgeAsync(nativeMessage);
             } catch (RuntimeException e) {
-                throw new MessagingException("Cannot acknowledge Pulsar message on channel " + config.channel(), e);
+                throw new MessagingException("Cannot acknowledge Pulsar message on channel " + config.channelName(), e);
             }
             try {
                 acknowledgement.get(config.settlementTimeout().toNanos(), TimeUnit.NANOSECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new MessagingException("Pulsar acknowledgement was interrupted on channel "
-                                                     + config.channel(), e);
+                                                     + config.channelName(), e);
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause() == null ? e : e.getCause();
-                throw new MessagingException("Cannot acknowledge Pulsar message on channel " + config.channel(), cause);
+                throw new MessagingException("Cannot acknowledge Pulsar message on channel " + config.channelName(), cause);
             } catch (TimeoutException e) {
                 throw new MessagingException("Pulsar acknowledgement timed out after " + config.settlementTimeout()
-                                                     + " on channel " + config.channel(), e);
+                                                     + " on channel " + config.channelName(), e);
             }
         }
 
@@ -464,7 +461,7 @@ final class PulsarIncomingConnector {
                     return;
                 }
                 throw new MessagingException("Cannot negatively acknowledge Pulsar message on channel "
-                                                     + config.channel(), negativeAckFailure);
+                                                     + config.channelName(), negativeAckFailure);
             }
         }
 
@@ -499,7 +496,7 @@ final class PulsarIncomingConnector {
                         failure = mergeFailure(failure,
                                                new MessagingException(
                                                        "Cannot initiate Pulsar consumer close for channel "
-                                                               + config.channel(), e));
+                                                               + config.channelName(), e));
                     }
                 }
                 boolean clientClosed = client == null;
@@ -511,7 +508,7 @@ final class PulsarIncomingConnector {
                     } catch (RuntimeException e) {
                         failure = mergeFailure(failure,
                                                new MessagingException("Cannot initiate Pulsar client close for channel "
-                                                                              + config.channel(), e));
+                                                                              + config.channelName(), e));
                     }
                 }
                 if (clientClosed) {
@@ -551,11 +548,11 @@ final class PulsarIncomingConnector {
                 Throwable cause = e.getCause() == null ? e : e.getCause();
                 return mergeFailure(primary,
                                     new MessagingException("Cannot close Pulsar " + resource + " for channel "
-                                                                   + config.channel(), cause));
+                                                                   + config.channelName(), cause));
             } catch (TimeoutException e) {
                 return mergeFailure(primary,
                                     new MessagingException("Timed out closing Pulsar " + resource + " for channel "
-                                                                   + config.channel(), e));
+                                                                   + config.channelName(), e));
             }
         }
 
@@ -567,7 +564,7 @@ final class PulsarIncomingConnector {
                 client.shutdown();
                 return null;
             } catch (PulsarClientException e) {
-                return new MessagingException("Cannot shut down Pulsar client for channel " + config.channel(), e);
+                return new MessagingException("Cannot shut down Pulsar client for channel " + config.channelName(), e);
             }
         }
 
@@ -606,7 +603,7 @@ final class PulsarIncomingConnector {
                     long remaining = remainingNanos(deadline);
                     if (remaining == 0) {
                         throw new MessagingException("Timed out closing Pulsar connector while waiting for delivery "
-                                                             + "admission on channel " + config.channel());
+                                                             + "admission on channel " + config.channelName());
                     }
                     try {
                         deliveryStateChanged.awaitNanos(remaining);
@@ -629,7 +626,7 @@ final class PulsarIncomingConnector {
                 long remaining = remainingNanos(deadline);
                 if (remaining == 0 || !runCompletion.await(remaining, TimeUnit.NANOSECONDS)) {
                     throw new MessagingException("Timed out closing Pulsar incoming connector for channel "
-                                                         + config.channel());
+                                                         + config.channelName());
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

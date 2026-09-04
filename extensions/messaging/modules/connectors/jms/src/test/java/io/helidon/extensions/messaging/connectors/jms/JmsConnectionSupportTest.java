@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import io.helidon.messaging.ConnectorDirection;
+import io.helidon.messaging.spi.ConnectorDirection;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -120,7 +120,7 @@ class JmsConnectionSupportTest {
     private static JmsConnectorConfig config() {
         return JmsConnectorConfig.builder()
                 .direction(ConnectorDirection.OUTGOING)
-                .channel("orders")
+                .channelName("orders")
                 .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("orders")
                 .username("scott")

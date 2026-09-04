@@ -26,14 +26,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import io.helidon.messaging.BatchAtomicity;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.OutgoingConnector;
+import io.helidon.messaging.spi.BatchAtomicity;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.OutgoingConnector;
 
 import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;
@@ -1062,7 +1062,7 @@ class JmsOutgoingConnectorTest {
     private static JmsConnectorConfig config(boolean transacted, Duration closeTimeout) {
         return JmsConnectorConfig.builder()
                 .direction(ConnectorDirection.OUTGOING)
-                .channel(CHANNEL)
+                .channelName(CHANNEL)
                 .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("events")
                 .transacted(transacted)

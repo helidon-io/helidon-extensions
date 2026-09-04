@@ -21,7 +21,7 @@ import java.util.Map;
 import java.util.Set;
 
 import io.helidon.builder.api.Prototype;
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.messaging.spi.ConnectorConfig;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 
@@ -194,7 +194,7 @@ final class KafkaConnectorConfigSupport {
                                                   int maxDeliveryMessages) {
         Map<String, Object> properties = kafkaProperties(config);
         properties.put(BOOTSTRAP_SERVERS_PROPERTY, config.bootstrapServers());
-        properties.put(GROUP_ID_PROPERTY, config.groupId().orElse(config.channel()));
+        properties.put(GROUP_ID_PROPERTY, config.groupId().orElse(config.channelName()));
         properties.put(KEY_DESERIALIZER_PROPERTY, config.keyDeserializer());
         properties.put(VALUE_DESERIALIZER_PROPERTY, config.valueDeserializer());
         properties.put(AUTO_OFFSET_RESET_PROPERTY, config.autoOffsetReset());

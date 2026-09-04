@@ -37,7 +37,6 @@ import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.TextReceiver;
 import io.helidon.extensions.messaging.tests.jms.JmsMessagingTypes.TextSender;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.HeaderValue;
-import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRuntime;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryException;
@@ -54,7 +53,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
-import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
@@ -65,6 +63,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class JmsConnectorIT {
     private static final Duration WAIT_TIMEOUT = Duration.ofSeconds(20);
     private static final Duration POLL_TIMEOUT = Duration.ofMillis(300);
+    private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
+    private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
 
     @TempDir
     private Path brokerDataDirectory;
@@ -259,10 +259,10 @@ class JmsConnectorIT {
         assertThat("one outer messaging attempt",
                    deadLetter.getStringProperty(DeadLetterMessage.ATTEMPTS_HEADER),
                    is("1"));
-        assertThat(deadLetter.getStringProperty(DeadLetterMessage.FAILURE_TYPE_HEADER),
-                   is(IllegalStateException.class.getName()));
-        assertThat(deadLetter.getStringProperty(DeadLetterMessage.FAILURE_MESSAGE_HEADER),
-                   is(FtRetryPoisonReceiver.FAILURE_MESSAGE));
+        assertThat(deadLetter.propertyExists(DeadLetterMessage.FAILURE_TYPE_METADATA), is(false));
+        assertThat(deadLetter.propertyExists(DeadLetterMessage.FAILURE_MESSAGE_METADATA), is(false));
+        assertThat(deadLetter.propertyExists(LEGACY_FAILURE_TYPE_HEADER), is(false));
+        assertThat(deadLetter.propertyExists(LEGACY_FAILURE_MESSAGE_HEADER), is(false));
         await(() -> broker.queueDeliveringCount(incomingQueue) == 0
                         && broker.queuePendingMessageCount(incomingQueue) == 0,
               WAIT_TIMEOUT,
@@ -307,10 +307,10 @@ class JmsConnectorIT {
             assertThat(deadLetter.getStringProperty(DeadLetterMessage.SOURCE_CHANNEL_HEADER),
                        is(JmsMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL));
             assertThat(deadLetter.getStringProperty(DeadLetterMessage.ATTEMPTS_HEADER), is("3"));
-            assertThat(deadLetter.getStringProperty(DeadLetterMessage.FAILURE_TYPE_HEADER),
-                       is(IllegalStateException.class.getName()));
-            assertThat(deadLetter.getStringProperty(DeadLetterMessage.FAILURE_MESSAGE_HEADER),
-                       is("Expected poison JMS message failure"));
+            assertThat(deadLetter.propertyExists(DeadLetterMessage.FAILURE_TYPE_METADATA), is(false));
+            assertThat(deadLetter.propertyExists(DeadLetterMessage.FAILURE_MESSAGE_METADATA), is(false));
+            assertThat(deadLetter.propertyExists(LEGACY_FAILURE_TYPE_HEADER), is(false));
+            assertThat(deadLetter.propertyExists(LEGACY_FAILURE_MESSAGE_HEADER), is(false));
 
             JmsMessage<String> continued = receiver.awaitSuccessfulMessage(WAIT_TIMEOUT);
             assertThat("delivery after dead letter", continued, notNullValue());
@@ -399,10 +399,10 @@ class JmsConnectorIT {
         assertThat(deadLetter.getStringProperty(DeadLetterMessage.SOURCE_CHANNEL_HEADER),
                    is(JmsMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL));
         assertThat(deadLetter.getStringProperty(DeadLetterMessage.ATTEMPTS_HEADER), is("3"));
-        assertThat(deadLetter.getStringProperty(DeadLetterMessage.FAILURE_TYPE_HEADER),
-                   is(MessagingException.class.getName()));
-        assertThat(deadLetter.getStringProperty(DeadLetterMessage.FAILURE_MESSAGE_HEADER),
-                   containsString("ObjectMessage is disabled"));
+        assertThat(deadLetter.propertyExists(DeadLetterMessage.FAILURE_TYPE_METADATA), is(false));
+        assertThat(deadLetter.propertyExists(DeadLetterMessage.FAILURE_MESSAGE_METADATA), is(false));
+        assertThat(deadLetter.propertyExists(LEGACY_FAILURE_TYPE_HEADER), is(false));
+        assertThat(deadLetter.propertyExists(LEGACY_FAILURE_MESSAGE_HEADER), is(false));
 
         JmsMessage<String> continued = receiver.awaitSuccessfulMessage(WAIT_TIMEOUT);
         assertThat("delivery after dead-lettered ObjectMessage", continued, notNullValue());

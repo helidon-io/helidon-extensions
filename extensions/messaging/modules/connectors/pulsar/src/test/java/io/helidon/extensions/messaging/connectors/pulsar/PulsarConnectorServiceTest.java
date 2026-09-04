@@ -18,10 +18,10 @@ package io.helidon.extensions.messaging.connectors.pulsar;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.ConnectorProvider;
-import io.helidon.messaging.IncomingConnectorProvider;
-import io.helidon.messaging.OutgoingConnectorProvider;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.ConnectorProvider;
+import io.helidon.messaging.spi.IncomingConnectorProvider;
+import io.helidon.messaging.spi.OutgoingConnectorProvider;
 import io.helidon.service.registry.Service;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
@@ -76,7 +76,7 @@ class PulsarConnectorServiceTest {
             PulsarConnectorProvider provider = manager.registry().get(PulsarConnectorProvider.class);
             provider.createOutgoingConnector(PulsarConnectorConfig.builder()
                                                        .direction(ConnectorDirection.OUTGOING)
-                                                       .channel("registry-schema")
+                                                       .channelName("registry-schema")
                                                        .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
                                                        .serviceUrl("pulsar://127.0.0.1:6650")
                                                        .topic("persistent://public/default/registry-schema")

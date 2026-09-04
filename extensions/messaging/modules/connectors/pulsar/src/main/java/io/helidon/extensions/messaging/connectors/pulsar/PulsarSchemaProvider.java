@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
+import io.helidon.common.Api;
 import io.helidon.service.registry.Service;
 
 import org.apache.pulsar.client.api.Schema;
@@ -31,6 +32,7 @@ import org.apache.pulsar.client.api.Schema;
  * The Service Registry owns the provider lifecycle. The connector retains the returned schema for the binding lifecycle
  * but does not close the provider or schema.
  */
+@Api.Preview
 @Service.Contract
 public interface PulsarSchemaProvider {
     /**

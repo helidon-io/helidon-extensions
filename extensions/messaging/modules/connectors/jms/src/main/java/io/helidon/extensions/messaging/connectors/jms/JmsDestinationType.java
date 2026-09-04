@@ -16,9 +16,12 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
+import io.helidon.common.Api;
+
 /**
  * JMS destination type.
  */
+@Api.Preview
 public enum JmsDestinationType {
     /**
      * Point-to-point queue.

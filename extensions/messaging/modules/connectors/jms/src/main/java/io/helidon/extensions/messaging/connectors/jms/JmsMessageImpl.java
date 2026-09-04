@@ -42,8 +42,9 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
     static final String JMSX_GROUP_SEQ = "JMSXGroupSeq";
 
     private final T entity;
+    private final byte[] serializedEntity;
+    private final String serializedEntityType;
     private final boolean bodyAvailable;
-    private final boolean snapshotSerializableOnAccess;
     private final Map<String, Object> properties;
     private final MessageHeaders headers;
     private final Optional<String> messageId;
@@ -67,9 +68,26 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
                            Optional<Boolean> redelivered,
                            boolean bodyAvailable,
                            boolean snapshotSerializable) {
-        this.entity = snapshotBody(Objects.requireNonNull(entity, "entity"), snapshotSerializable);
+        T actualEntity = Objects.requireNonNull(entity, "entity");
+        if (snapshotSerializable
+                && !(actualEntity instanceof byte[])
+                && !(actualEntity instanceof Map<?, ?>)
+                && !(actualEntity instanceof java.util.List<?>)
+                && !(actualEntity instanceof String)) {
+            if (!(actualEntity instanceof Serializable serializable)) {
+                throw new IllegalArgumentException("Unsupported JMS message body type: "
+                                                           + actualEntity.getClass().getName());
+            }
+            this.serializedEntityType = actualEntity.getClass().getName();
+            this.serializedEntity = serializeBody(serializable);
+            validateSerializedBody(serializedEntity, serializedEntityType);
+            this.entity = null;
+        } else {
+            this.entity = snapshotBody(actualEntity, snapshotSerializable);
+            this.serializedEntity = null;
+            this.serializedEntityType = null;
+        }
         this.bodyAvailable = bodyAvailable;
-        this.snapshotSerializableOnAccess = snapshotSerializable;
         this.properties = snapshotProperties(properties);
         this.headers = portableHeaders(this.properties);
         this.messageId = messageId;
@@ -115,7 +133,7 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
                                     OptionalInt.of(message.getJMSPriority()),
                                     Optional.of(message.getJMSRedelivered()),
                                     true,
-                                    snapshotSerializable);
+                                    snapshotSerializable && message instanceof jakarta.jms.ObjectMessage);
     }
 
     static JmsMessage<Object> metadataOnly(Map<String, Object> properties,
@@ -223,23 +241,41 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
             return (T) list.stream().map(JmsMessageImpl::snapshotMapOrStreamValue).toList();
         }
         if (entity instanceof Serializable serializable && snapshotSerializable) {
-            try {
-                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-                try (ObjectOutputStream output = new ObjectOutputStream(bytes)) {
-                    output.writeObject(serializable);
-                }
-                try (ObjectInputStream input = new ObjectInputStream(new ByteArrayInputStream(bytes.toByteArray()))) {
-                    return (T) input.readObject();
-                }
-            } catch (IOException | ClassNotFoundException e) {
-                throw new IllegalArgumentException("Cannot defensively copy JMS object-message body of type "
-                                                           + entity.getClass().getName(), e);
-            }
+            return deserializeBody(serializeBody(serializable), entity.getClass().getName());
         }
         if (entity instanceof Serializable) {
             return entity;
         }
         throw new IllegalArgumentException("Unsupported JMS message body type: " + entity.getClass().getName());
+    }
+
+    private static byte[] serializeBody(Serializable entity) {
+        try {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            try (ObjectOutputStream output = new ObjectOutputStream(bytes)) {
+                output.writeObject(entity);
+            }
+            return bytes.toByteArray();
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Cannot defensively copy JMS object-message body of type "
+                                                       + entity.getClass().getName(), e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T deserializeBody(byte[] bytes, String entityType) {
+        try (ObjectInputStream input = new ObjectInputStream(new ByteArrayInputStream(bytes))) {
+            return (T) input.readObject();
+        } catch (IOException | ClassNotFoundException e) {
+            throw new IllegalArgumentException("Cannot defensively copy JMS object-message body of type "
+                                                       + entityType, e);
+        }
+    }
+
+    private static void validateSerializedBody(byte[] bytes, String entityType) {
+        if (deserializeBody(bytes, entityType) == null) {
+            throw new IllegalArgumentException("Cannot defensively copy JMS object-message body of type " + entityType);
+        }
     }
 
     static String requireMapName(Object name) {
@@ -305,12 +341,21 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
     @Override
     public T entity() {
         requireBodyAvailable();
-        return snapshotBody(entity, snapshotSerializableOnAccess);
+        return serializedEntity == null
+                ? snapshotBody(entity, false)
+                : deserializeBody(serializedEntity, serializedEntityType);
     }
 
     T entityForMapping(boolean allowObjectMessages) {
         requireBodyAvailable();
-        return snapshotBody(entity, allowObjectMessages);
+        if (serializedEntity == null) {
+            return snapshotBody(entity, allowObjectMessages);
+        }
+        if (!allowObjectMessages) {
+            throw new MessagingException("JMS ObjectMessage is disabled; set allow-object-messages=true only for "
+                                                 + "trusted data");
+        }
+        return deserializeBody(serializedEntity, serializedEntityType);
     }
 
     @Override

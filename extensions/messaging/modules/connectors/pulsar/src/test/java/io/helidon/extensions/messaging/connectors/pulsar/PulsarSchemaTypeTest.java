@@ -28,8 +28,8 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.MessagingException;
+import io.helidon.messaging.spi.ConnectorDirection;
 
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.schema.Field;

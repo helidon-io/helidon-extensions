@@ -16,11 +16,14 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
+import io.helidon.common.Api;
+
 import org.apache.pulsar.client.api.SubscriptionType;
 
 /**
  * Pulsar subscription dispatch type.
  */
+@Api.Preview
 public enum PulsarSubscriptionType {
     /** One consumer owns the subscription. */
     EXCLUSIVE,

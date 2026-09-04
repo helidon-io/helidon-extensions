@@ -36,18 +36,18 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
-import io.helidon.messaging.BatchAtomicity;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
-import io.helidon.messaging.ConnectorConfig;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessageHeaders;
+import io.helidon.messaging.MessageMetadata;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.OutgoingConnector;
+import io.helidon.messaging.spi.BatchAtomicity;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.OutgoingConnector;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.MockProducer;
@@ -72,6 +72,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class KafkaOutgoingConnectorTest {
     private static final String TOPIC = "audit-events";
+    private static final String LOCAL_SECRET_METADATA = "application.local.secret";
+    private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
+    private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
 
     @Test
     void testConnectorType() {
@@ -88,6 +91,7 @@ class KafkaOutgoingConnectorTest {
         start(connector, config())
                 .send(Message.builder("audit event")
                               .header("trace-id", "Příliš žluťoučký")
+                              .localMetadata(LOCAL_SECRET_METADATA, "must-not-leak")
                               .addHeader("duplicate", "first")
                               .addHeader("duplicate", "second")
                               .addHeader("binary", HeaderValue.binary(new byte[] {0x00, (byte) 0xFF}))
@@ -103,6 +107,7 @@ class KafkaOutgoingConnectorTest {
         assertThat(headerValues(record, "duplicate"), is(List.of("first", "second")));
         assertArrayEquals(new byte[] {0x00, (byte) 0xFF}, record.headers().lastHeader("binary").value());
         assertThat(record.headers().lastHeader("null-header").value(), nullValue());
+        assertThat(record.headers().lastHeader(LOCAL_SECRET_METADATA), nullValue());
     }
 
     @Test
@@ -209,7 +214,39 @@ class KafkaOutgoingConnectorTest {
     }
 
     @Test
-    void testSendsDeadLetterKafkaMessageWithNativeAndFailureMetadata() {
+    void testDeadLetterDoesNotMapPortableFailureDiagnostics() {
+        MockProducer<Object, Object> producer = mockProducer(true);
+        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        DeadLetterMessage<String> deadLetter = DeadLetterMessage.create(
+                Message.builder("audit event")
+                        .header(LEGACY_FAILURE_TYPE_HEADER, "forged-type")
+                        .header(LEGACY_FAILURE_MESSAGE_HEADER, "forged-message")
+                        .build(),
+                "orders-in",
+                2,
+                new IllegalStateException("dispatch failed"));
+        assertThat(deadLetter.localMetadata()
+                           .text(DeadLetterMessage.FAILURE_TYPE_METADATA)
+                           .orElseThrow(),
+                   is(IllegalStateException.class.getName()));
+        assertThat(deadLetter.localMetadata()
+                           .value(DeadLetterMessage.FAILURE_MESSAGE_METADATA)
+                           .orElseThrow(),
+                   is(HeaderValue.text("dispatch failed")));
+
+        start(connector, config()).send(deadLetter);
+
+        ProducerRecord<Object, Object> record = producer.history().getFirst();
+        assertThat(headerValue(record, DeadLetterMessage.SOURCE_CHANNEL_HEADER), is("orders-in"));
+        assertThat(headerValue(record, DeadLetterMessage.ATTEMPTS_HEADER), is("2"));
+        assertThat(record.headers().lastHeader(DeadLetterMessage.FAILURE_TYPE_METADATA), nullValue());
+        assertThat(record.headers().lastHeader(DeadLetterMessage.FAILURE_MESSAGE_METADATA), nullValue());
+        assertThat(record.headers().lastHeader(LEGACY_FAILURE_TYPE_HEADER), nullValue());
+        assertThat(record.headers().lastHeader(LEGACY_FAILURE_MESSAGE_HEADER), nullValue());
+    }
+
+    @Test
+    void testSendsDeadLetterKafkaMessageWithNativeMetadata() {
         MockProducer<Object, Object> producer = mockProducer(true);
         KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
         ConsumerRecord<String, String> sourceRecord = new ConsumerRecord<>(
@@ -229,6 +266,10 @@ class KafkaOutgoingConnectorTest {
                         .add("null-header", null)
                         .add(DeadLetterMessage.SOURCE_CHANNEL_HEADER,
                              "forged".getBytes(StandardCharsets.UTF_8))
+                        .add(LEGACY_FAILURE_TYPE_HEADER,
+                             "forged-type".getBytes(StandardCharsets.UTF_8))
+                        .add(LEGACY_FAILURE_MESSAGE_HEADER,
+                             "forged-message".getBytes(StandardCharsets.UTF_8))
                         .add(KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER,
                              "forged".getBytes(StandardCharsets.UTF_8))
                         .add(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_HEADER,
@@ -243,6 +284,14 @@ class KafkaOutgoingConnectorTest {
                                                                          "orders-in",
                                                                          3,
                                                                          processingFailure);
+        assertThat(deadLetter.localMetadata()
+                           .text(DeadLetterMessage.FAILURE_TYPE_METADATA)
+                           .orElseThrow(),
+                   is(IllegalStateException.class.getName()));
+        assertThat(deadLetter.localMetadata()
+                           .text(DeadLetterMessage.FAILURE_MESSAGE_METADATA)
+                           .orElseThrow(),
+                   is("dispatch failed"));
 
         start(connector, config()).send(deadLetter);
 
@@ -257,9 +306,10 @@ class KafkaOutgoingConnectorTest {
         assertThat(record.headers().lastHeader("null-header").value(), nullValue());
         assertThat(headerValue(record, DeadLetterMessage.SOURCE_CHANNEL_HEADER), is("orders-in"));
         assertThat(headerValue(record, DeadLetterMessage.ATTEMPTS_HEADER), is("3"));
-        assertThat(headerValue(record, DeadLetterMessage.FAILURE_TYPE_HEADER),
-                   is(IllegalStateException.class.getName()));
-        assertThat(headerValue(record, DeadLetterMessage.FAILURE_MESSAGE_HEADER), is("dispatch failed"));
+        assertThat(record.headers().lastHeader(DeadLetterMessage.FAILURE_TYPE_METADATA), nullValue());
+        assertThat(record.headers().lastHeader(DeadLetterMessage.FAILURE_MESSAGE_METADATA), nullValue());
+        assertThat(record.headers().lastHeader(LEGACY_FAILURE_TYPE_HEADER), nullValue());
+        assertThat(record.headers().lastHeader(LEGACY_FAILURE_MESSAGE_HEADER), nullValue());
         assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER), is("source-topic"));
         assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER), is("7"));
         assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER), is("42"));
@@ -323,8 +373,8 @@ class KafkaOutgoingConnectorTest {
         wrapperHeaders.put("trace-id", "wrapper");
         wrapperHeaders.put(DeadLetterMessage.SOURCE_CHANNEL_HEADER, "forged");
         wrapperHeaders.put(DeadLetterMessage.ATTEMPTS_HEADER, "999");
-        wrapperHeaders.put(DeadLetterMessage.FAILURE_TYPE_HEADER, "forged");
-        wrapperHeaders.put(DeadLetterMessage.FAILURE_MESSAGE_HEADER, "forged");
+        wrapperHeaders.put(LEGACY_FAILURE_TYPE_HEADER, "forged");
+        wrapperHeaders.put(LEGACY_FAILURE_MESSAGE_HEADER, "forged");
         wrapperHeaders.put(KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER, "forged");
         wrapperHeaders.put(KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER, "forged");
         wrapperHeaders.put(KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER, "forged");
@@ -334,6 +384,8 @@ class KafkaOutgoingConnectorTest {
         DeadLetterMessage<String> deadLetter = customDeadLetter(KafkaMessageImpl.create(sourceRecord),
                                                                 "wrapped event",
                                                                 wrapperHeaders);
+        assertThat(deadLetter.failureType(), is(IllegalArgumentException.class.getName()));
+        assertThat(deadLetter.failureMessage(), is("custom failure"));
 
         start(connector, config()).send(deadLetter);
 
@@ -346,9 +398,8 @@ class KafkaOutgoingConnectorTest {
         assertThat(record.headers().lastHeader("null-header").value(), nullValue());
         assertThat(headerValue(record, DeadLetterMessage.SOURCE_CHANNEL_HEADER), is("orders-in"));
         assertThat(headerValue(record, DeadLetterMessage.ATTEMPTS_HEADER), is("4"));
-        assertThat(headerValue(record, DeadLetterMessage.FAILURE_TYPE_HEADER),
-                   is(IllegalArgumentException.class.getName()));
-        assertThat(headerValue(record, DeadLetterMessage.FAILURE_MESSAGE_HEADER), is("custom failure"));
+        assertThat(record.headers().lastHeader(LEGACY_FAILURE_TYPE_HEADER), nullValue());
+        assertThat(record.headers().lastHeader(LEGACY_FAILURE_MESSAGE_HEADER), nullValue());
         assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER), is("source-topic"));
         assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER), is("7"));
         assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER), is("42"));
@@ -830,7 +881,7 @@ class KafkaOutgoingConnectorTest {
     private static KafkaConnectorConfig config(Duration sendTimeout) {
         return KafkaConnectorConfig.builder()
                 .direction(ConnectorDirection.OUTGOING)
-                .channel("audit")
+                .channelName("audit")
                 .connector(KafkaConnectorProvider.CONNECTOR_TYPE)
                 .bootstrapServers("localhost:9092")
                 .topic(TOPIC)
@@ -870,6 +921,10 @@ class KafkaOutgoingConnectorTest {
         MessageHeaders.Builder headers = MessageHeaders.builder().addAll(originalMessage.headers());
         additionalHeaders.forEach(headers::set);
         MessageHeaders immutableHeaders = headers.build();
+        MessageMetadata localMetadata = MessageMetadata.builder()
+                .set(DeadLetterMessage.FAILURE_TYPE_METADATA, IllegalArgumentException.class.getName())
+                .set(DeadLetterMessage.FAILURE_MESSAGE_METADATA, "custom failure")
+                .build();
         return new DeadLetterMessage<>() {
             @Override
             public Message<T> originalMessage() {
@@ -887,13 +942,8 @@ class KafkaOutgoingConnectorTest {
             }
 
             @Override
-            public String failureType() {
-                return IllegalArgumentException.class.getName();
-            }
-
-            @Override
-            public String failureMessage() {
-                return "custom failure";
+            public MessageMetadata localMetadata() {
+                return localMetadata;
             }
 
             @Override

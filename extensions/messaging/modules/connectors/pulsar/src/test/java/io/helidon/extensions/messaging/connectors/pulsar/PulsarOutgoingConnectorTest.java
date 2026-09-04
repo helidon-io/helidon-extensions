@@ -31,13 +31,13 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.OutgoingConnector;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.OutgoingConnector;
 
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.Producer;
@@ -57,6 +57,10 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PulsarOutgoingConnectorTest {
+    private static final String LOCAL_SECRET_METADATA = "application.local.secret";
+    private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
+    private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
+
     @Test
     void sendsPayloadMetadataAndCompleteBatchBeforeReturning() {
         FakeTransport transport = new FakeTransport();
@@ -72,7 +76,10 @@ class PulsarOutgoingConnectorTest {
                         .header("span-id", "first-span")
                         .eventTime(123)
                         .build(),
-                Message.builder("second").header("trace-id", "second-trace").build())));
+                Message.builder("second")
+                        .header("trace-id", "second-trace")
+                        .localMetadata(LOCAL_SECRET_METADATA, "must-not-leak")
+                        .build())));
         connector.close();
 
         assertThat(transport.values, is(List.of("first", "second")));
@@ -80,6 +87,7 @@ class PulsarOutgoingConnectorTest {
                    is(Map.of("trace-id", "first-trace", "span-id", "first-span")));
         assertThat(List.copyOf(transport.properties.get(0).keySet()), is(List.of("trace-id", "span-id")));
         assertThat(transport.properties.get(1), is(Map.of("trace-id", "second-trace")));
+        assertThat(transport.properties.get(1).containsKey(LOCAL_SECRET_METADATA), is(false));
         assertThat(transport.keys, is(List.of("key-1", "")));
         assertThat(transport.eventTimes, is(List.of(123L, -1L)));
         assertThat(transport.closed.get(), is(true));
@@ -223,12 +231,24 @@ class PulsarOutgoingConnectorTest {
         OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
                 .createOutgoingConnector(config(PulsarSchemaType.STRING));
         PulsarMessage<Object> original = PulsarMessageMapper.metadataOnly(
-                PulsarTestSupport.nativeMessage("oversized", 9));
+                PulsarTestSupport.nativeMessage("oversized",
+                                                9,
+                                                Map.of("trace-id", "pulsar-trace",
+                                                       LEGACY_FAILURE_TYPE_HEADER, "native-forged-type",
+                                                       LEGACY_FAILURE_MESSAGE_HEADER, "native-forged-message")));
         DeadLetterMessage<Object> deadLetter = DeadLetterMessage.create(
                 original,
                 "orders-in",
                 2,
                 new MessagingException("Pulsar message payload is unavailable"));
+        assertThat(deadLetter.localMetadata()
+                           .text(DeadLetterMessage.FAILURE_TYPE_METADATA)
+                           .orElseThrow(),
+                   is(MessagingException.class.getName()));
+        assertThat(deadLetter.localMetadata()
+                           .value(DeadLetterMessage.FAILURE_MESSAGE_METADATA)
+                           .orElseThrow(),
+                   is(HeaderValue.text("Pulsar message payload is unavailable")));
 
         connector.start();
         connector.sendBatch(MessageBatch.create(deadLetter));
@@ -239,6 +259,10 @@ class PulsarOutgoingConnectorTest {
         assertThat(transport.properties.getFirst().get("trace-id"), is("pulsar-trace"));
         assertThat(transport.properties.getFirst().get(DeadLetterMessage.SOURCE_CHANNEL_HEADER), is("orders-in"));
         assertThat(transport.properties.getFirst().get(DeadLetterMessage.ATTEMPTS_HEADER), is("2"));
+        assertThat(transport.properties.getFirst().containsKey(DeadLetterMessage.FAILURE_TYPE_METADATA), is(false));
+        assertThat(transport.properties.getFirst().containsKey(DeadLetterMessage.FAILURE_MESSAGE_METADATA), is(false));
+        assertThat(transport.properties.getFirst().containsKey(LEGACY_FAILURE_TYPE_HEADER), is(false));
+        assertThat(transport.properties.getFirst().containsKey(LEGACY_FAILURE_MESSAGE_HEADER), is(false));
         assertThat(transport.properties.getFirst().get(PulsarConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER),
                    is("persistent://public/default/input"));
     }
@@ -282,7 +306,7 @@ class PulsarOutgoingConnectorTest {
     private static PulsarConnectorConfig.Builder configBuilder(PulsarSchemaType schema) {
         return PulsarConnectorConfig.builder()
                 .direction(ConnectorDirection.OUTGOING)
-                .channel("out")
+                .channelName("out")
                 .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
                 .serviceUrl("pulsar://localhost:6650")
                 .topic("persistent://public/default/out")
