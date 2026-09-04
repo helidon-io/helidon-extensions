@@ -49,13 +49,13 @@ import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.Incomin
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonOutgoingSender;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonSchemaProvider;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.OutgoingSender;
-import io.helidon.messaging.ConnectorConfig;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingRuntime;
-import io.helidon.messaging.OutgoingConnector;
+import io.helidon.messaging.spi.ConnectorConfig;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.OutgoingConnector;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 
@@ -84,6 +84,8 @@ class PulsarConnectorIT {
     private static final Duration WAIT_TIMEOUT = Duration.ofSeconds(20);
     private static final Duration NO_MESSAGE_TIMEOUT = Duration.ofSeconds(2);
     private static final DockerImageName PULSAR_IMAGE = DockerImageName.parse("apachepulsar/pulsar:4.0.13");
+    private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
+    private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
 
     @Container
     private static final PulsarContainer PULSAR = new PulsarContainer(PULSAR_IMAGE)
@@ -431,12 +433,11 @@ class PulsarConnectorIT {
 
                 org.apache.pulsar.client.api.Message<String> nullDeadLetter = receiveOne(deadLetterConsumer);
                 org.apache.pulsar.client.api.Message<String> oversizedDeadLetter = receiveOne(deadLetterConsumer);
-                assertFailedMappingDeadLetter(nullDeadLetter, "null-key", "null", sourceTopic, "payload is null");
+                assertFailedMappingDeadLetter(nullDeadLetter, "null-key", "null", sourceTopic);
                 assertFailedMappingDeadLetter(oversizedDeadLetter,
                                               "oversized-key",
                                               "oversized",
-                                              sourceTopic,
-                                              "exceeds max-message-bytes 1");
+                                              sourceTopic);
                 assertThat("failed mappings must not reach the application handler",
                            receiver.awaitMessage(NO_MESSAGE_TIMEOUT),
                            nullValue());
@@ -665,14 +666,16 @@ class PulsarConnectorIT {
     private static void assertFailedMappingDeadLetter(org.apache.pulsar.client.api.Message<String> message,
                                                       String expectedKey,
                                                       String expectedKind,
-                                                      String sourceTopic,
-                                                      String failureMessagePart) {
+                                                      String sourceTopic) {
         assertThat(message.getValue(), nullValue());
         assertThat(message.getKey(), is(expectedKey));
         assertThat(message.getProperty("kind"), is(expectedKind));
         assertThat(message.getProperty(DeadLetterMessage.SOURCE_CHANNEL_HEADER),
                    is(PulsarMessagingTypes.FAILED_MAPPING_INCOMING_CHANNEL));
-        assertThat(message.getProperty(DeadLetterMessage.FAILURE_MESSAGE_HEADER).contains(failureMessagePart), is(true));
+        assertThat(message.getProperties().containsKey(DeadLetterMessage.FAILURE_TYPE_METADATA), is(false));
+        assertThat(message.getProperties().containsKey(DeadLetterMessage.FAILURE_MESSAGE_METADATA), is(false));
+        assertThat(message.getProperties().containsKey(LEGACY_FAILURE_TYPE_HEADER), is(false));
+        assertThat(message.getProperties().containsKey(LEGACY_FAILURE_MESSAGE_HEADER), is(false));
         assertThat(message.getProperty(PulsarConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER),
                    is(canonicalTopic(sourceTopic)));
     }

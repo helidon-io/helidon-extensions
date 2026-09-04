@@ -37,17 +37,16 @@ import java.util.function.Function;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.BatchItemStatus;
-import io.helidon.messaging.ConnectorConfig;
-import io.helidon.messaging.ConnectorDelivery;
-import io.helidon.messaging.ConnectorDeliveryReservation;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.HeaderValue;
-import io.helidon.messaging.IncomingConnector;
-import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
+import io.helidon.messaging.spi.ConnectorDelivery;
+import io.helidon.messaging.spi.ConnectorDeliveryReservation;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingConnectorContext;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -79,6 +78,37 @@ class KafkaIncomingConnectorTest {
     private static final String TOPIC = "audit-events";
     private static final TopicPartition TOPIC_PARTITION = new TopicPartition(TOPIC, 0);
     private static final TopicPartition SECOND_TOPIC_PARTITION = new TopicPartition(TOPIC, 1);
+
+    private static BatchDeliveryException indeterminateFailure(String operation,
+                                                               MessageBatch<?> batch,
+                                                               RuntimeException failure) {
+        List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
+        for (int i = 0; i < batch.size(); i++) {
+            outcomes.add(BatchItemOutcome.indeterminate(i, failure));
+        }
+        return new BatchDeliveryException(operation + " failed with indeterminate batch outcome",
+                                          failure,
+                                          batch,
+                                          outcomes);
+    }
+
+    private static void awaitLatch(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new MessagingException("Interrupted while waiting for test delivery", e);
+        }
+    }
+
+    private static boolean awaitLatch(CountDownLatch latch, Duration timeout) {
+        try {
+            return latch.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new MessagingException("Interrupted while waiting for test delivery", e);
+        }
+    }
 
     @Test
     void testConnectorType() {
@@ -877,7 +907,7 @@ class KafkaIncomingConnectorTest {
                                          ? BatchItemOutcome.succeeded(i)
                                          : BatchItemOutcome.failed(i, itemFailure));
                 }
-                throw new BatchDeliveryException("Expected runtime terminal failure", batch, outcomes, itemFailure);
+                throw new BatchDeliveryException("Expected runtime terminal failure", itemFailure, batch, outcomes);
             }
         };
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
@@ -912,9 +942,9 @@ class KafkaIncomingConnectorTest {
             protected void processBatch(MessageBatch<?> batch) {
                 throw new BatchDeliveryException(
                         "Expected runtime terminal failure",
+                        itemFailure,
                         batch,
-                        List.of(BatchItemOutcome.succeeded(0), BatchItemOutcome.failed(1, itemFailure)),
-                        itemFailure);
+                        List.of(BatchItemOutcome.succeeded(0), BatchItemOutcome.failed(1, itemFailure)));
             }
         };
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
@@ -945,12 +975,12 @@ class KafkaIncomingConnectorTest {
             protected void processBatch(MessageBatch<?> batch) {
                 throw new BatchDeliveryException(
                         "Expected runtime terminal failure",
+                        runtimeFailure,
                         batch,
                         List.of(BatchItemOutcome.succeeded(0),
                                 BatchItemOutcome.succeeded(1),
                                 BatchItemOutcome.failed(2, runtimeFailure),
-                                BatchItemOutcome.notAttempted(3)),
-                        runtimeFailure);
+                                BatchItemOutcome.notAttempted(3)));
             }
         };
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
@@ -1868,7 +1898,7 @@ class KafkaIncomingConnectorTest {
     private static KafkaConnectorConfig config(Duration closeTimeout, Map<String, String> properties) {
         return KafkaConnectorConfig.builder()
                 .direction(ConnectorDirection.INCOMING)
-                .channel("audit")
+                .channelName("audit")
                 .connector(KafkaConnectorProvider.CONNECTOR_TYPE)
                 .bootstrapServers("localhost:9092")
                 .topic(TOPIC)
@@ -2389,7 +2419,7 @@ class KafkaIncomingConnectorTest {
                         } catch (BatchDeliveryException e) {
                             failure.set(e);
                         } catch (RuntimeException e) {
-                            failure.set(BatchDeliveryException.indeterminate("Runtime delivery", batch, e));
+                            failure.set(indeterminateFailure("Runtime delivery", batch, e));
                         } catch (Throwable t) {
                             failure.set(t);
                         } finally {
@@ -2410,14 +2440,14 @@ class KafkaIncomingConnectorTest {
         }
 
         @Override
-        public void await() throws InterruptedException {
-            completion.await();
+        public void await() {
+            awaitLatch(completion);
             rethrowFailure();
         }
 
         @Override
-        public boolean await(Duration timeout) throws InterruptedException {
-            if (!completion.await(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
+        public boolean await(Duration timeout) {
+            if (!awaitLatch(completion, timeout)) {
                 return false;
             }
             rethrowFailure();
@@ -2505,12 +2535,12 @@ class KafkaIncomingConnectorTest {
         }
 
         @Override
-        public void await() throws InterruptedException {
+        public void await() {
             delegate.await();
         }
 
         @Override
-        public boolean await(Duration timeout) throws InterruptedException {
+        public boolean await(Duration timeout) {
             return delegate.await(timeout);
         }
 
@@ -2546,12 +2576,12 @@ class KafkaIncomingConnectorTest {
         }
 
         @Override
-        public void await() throws InterruptedException {
+        public void await() {
             delegate.await();
         }
 
         @Override
-        public boolean await(Duration timeout) throws InterruptedException {
+        public boolean await(Duration timeout) {
             timedAwaits.incrementAndGet();
             return delegate.await(timeout);
         }
@@ -2587,13 +2617,13 @@ class KafkaIncomingConnectorTest {
         }
 
         @Override
-        public void await() throws InterruptedException {
+        public void await() {
             delegate.await();
-            completionRelease.await();
+            awaitLatch(completionRelease);
         }
 
         @Override
-        public boolean await(Duration timeout) throws InterruptedException {
+        public boolean await(Duration timeout) {
             long started = System.nanoTime();
             if (!delegate.await(timeout)) {
                 return false;
@@ -2602,7 +2632,7 @@ class KafkaIncomingConnectorTest {
                 return true;
             }
             long remaining = timeout.toNanos() - (System.nanoTime() - started);
-            return remaining > 0 && completionRelease.await(remaining, TimeUnit.NANOSECONDS);
+            return remaining > 0 && awaitLatch(completionRelease, Duration.ofNanos(remaining));
         }
 
         @Override

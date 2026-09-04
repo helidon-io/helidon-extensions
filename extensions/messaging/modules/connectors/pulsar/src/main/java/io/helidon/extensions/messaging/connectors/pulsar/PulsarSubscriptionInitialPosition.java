@@ -16,11 +16,14 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
+import io.helidon.common.Api;
+
 import org.apache.pulsar.client.api.SubscriptionInitialPosition;
 
 /**
  * Initial position used when Pulsar creates a subscription.
  */
+@Api.Preview
 public enum PulsarSubscriptionInitialPosition {
     /** Start after messages which already exist. */
     LATEST,

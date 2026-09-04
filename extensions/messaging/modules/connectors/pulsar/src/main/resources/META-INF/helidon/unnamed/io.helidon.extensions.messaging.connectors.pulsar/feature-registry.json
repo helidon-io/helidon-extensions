@@ -1,0 +1,1 @@
+[{"module":"unnamed/io.helidon.extensions.messaging.connectors.pulsar","name":"Pulsar","path":["Messaging","Connectors","Pulsar"],"description":"Apache Pulsar connector for declarative messaging","flavor":["SE"],"status":"PREVIEW"}]

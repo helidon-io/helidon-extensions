@@ -22,11 +22,13 @@ import java.util.Optional;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
-import io.helidon.messaging.ConnectorConfig;
+import io.helidon.common.Api;
+import io.helidon.messaging.spi.ConnectorConfig;
 
 /**
  * Kafka connector configuration.
  */
+@Api.Preview
 @Prototype.Blueprint(decorator = KafkaConnectorConfigSupport.BuilderDecorator.class)
 @Prototype.Configured
 @Prototype.CustomMethods(KafkaConnectorConfigSupport.class)

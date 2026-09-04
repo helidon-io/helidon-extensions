@@ -24,6 +24,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
+import io.helidon.common.Api;
 import io.helidon.messaging.Message;
 
 /**
@@ -55,6 +56,7 @@ import io.helidon.messaging.Message;
  *
  * @param <T> payload type
  */
+@Api.Preview
 public interface JmsMessage<T> extends Message<T> {
     /**
      * Create an outgoing JMS message builder.
@@ -213,6 +215,7 @@ public interface JmsMessage<T> extends Message<T> {
      *
      * @param <T> payload type
      */
+    @Api.Preview
     final class Builder<T> {
         private final T entity;
         private final Map<String, Object> properties = new LinkedHashMap<>();

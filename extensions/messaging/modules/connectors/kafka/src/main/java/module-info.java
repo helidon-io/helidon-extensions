@@ -14,12 +14,24 @@
  * limitations under the License.
  */
 
+import io.helidon.common.features.api.Features;
+import io.helidon.common.features.api.HelidonFlavor;
+
+/**
+ * Kafka connector for declarative messaging.
+ */
+@Features.Name("Kafka")
+@Features.Description("Kafka connector for declarative messaging")
+@Features.Flavor(HelidonFlavor.SE)
+@Features.Path({"Messaging", "Connectors", "Kafka"})
+@Features.Preview
 @SuppressWarnings("requires-automatic")
 module io.helidon.extensions.messaging.connectors.kafka {
     requires transitive io.helidon.builder.api;
     requires transitive io.helidon.config;
 
     requires io.helidon.common;
+    requires static io.helidon.common.features.api;
     requires transitive io.helidon.messaging;
     requires io.helidon.service.registry;
     requires kafka.clients;

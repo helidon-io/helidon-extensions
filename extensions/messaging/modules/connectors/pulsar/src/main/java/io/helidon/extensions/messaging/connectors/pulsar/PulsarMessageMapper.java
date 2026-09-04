@@ -43,10 +43,12 @@ import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorP
 import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER;
 
 final class PulsarMessageMapper {
+    private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
+    private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
     private static final Set<String> RESERVED_HEADERS = Set.of(DeadLetterMessage.SOURCE_CHANNEL_HEADER,
                                                                 DeadLetterMessage.ATTEMPTS_HEADER,
-                                                                DeadLetterMessage.FAILURE_TYPE_HEADER,
-                                                                DeadLetterMessage.FAILURE_MESSAGE_HEADER,
+                                                                LEGACY_FAILURE_TYPE_HEADER,
+                                                                LEGACY_FAILURE_MESSAGE_HEADER,
                                                                 DLQ_ORIGINAL_TOPIC_HEADER,
                                                                 DLQ_ORIGINAL_MESSAGE_ID_HEADER,
                                                                 DLQ_ORIGINAL_PUBLISH_TIME_HEADER,
@@ -118,8 +120,6 @@ final class PulsarMessageMapper {
                 copyHeaders(deadLetterMessage.headers(), RESERVED_HEADERS));
         properties.put(DeadLetterMessage.SOURCE_CHANNEL_HEADER, deadLetterMessage.sourceChannel());
         properties.put(DeadLetterMessage.ATTEMPTS_HEADER, String.valueOf(deadLetterMessage.attempts()));
-        properties.put(DeadLetterMessage.FAILURE_TYPE_HEADER, deadLetterMessage.failureType());
-        properties.put(DeadLetterMessage.FAILURE_MESSAGE_HEADER, deadLetterMessage.failureMessage());
         if (pulsarMessage != null) {
             pulsarMessage.topic().ifPresent(value -> properties.put(DLQ_ORIGINAL_TOPIC_HEADER, value));
             pulsarMessage.messageId().ifPresent(value -> properties.put(DLQ_ORIGINAL_MESSAGE_ID_HEADER,

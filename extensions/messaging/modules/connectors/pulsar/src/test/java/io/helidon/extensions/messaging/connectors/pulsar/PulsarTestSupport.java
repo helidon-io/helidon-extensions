@@ -24,7 +24,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 
-import io.helidon.messaging.ConnectorDelivery;
+import io.helidon.messaging.spi.ConnectorDelivery;
 
 import org.apache.pulsar.client.api.MessageId;
 

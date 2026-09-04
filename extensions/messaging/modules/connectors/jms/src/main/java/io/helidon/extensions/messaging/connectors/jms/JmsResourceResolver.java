@@ -48,11 +48,11 @@ final class JmsResourceResolver implements JmsConnectionFactoryResolver {
             return registry.firstNamed(ConnectionFactory.class, name)
                     .orElseThrow(() -> new MessagingException("No JMS ConnectionFactory named " + name
                                                                       + " is registered for channel "
-                                                                      + config.channel()));
+                                                                      + config.channelName()));
         }
         return registry.first(ConnectionFactory.class)
                 .orElseThrow(() -> new MessagingException("No JMS ConnectionFactory is registered for channel "
-                                                                  + config.channel()));
+                                                                  + config.channelName()));
     }
 
     static Destination resolveDestination(Session session, JmsConnectorConfig config) throws JMSException {
@@ -75,7 +75,7 @@ final class JmsResourceResolver implements JmsConnectionFactoryResolver {
         case TOPIC -> destination instanceof Topic;
         };
         if (!expectedType) {
-            throw new MessagingException("JMS destination for channel " + config.channel()
+            throw new MessagingException("JMS destination for channel " + config.channelName()
                                                  + " does not match destination-type " + config.destinationType());
         }
         return destination;
@@ -94,7 +94,7 @@ final class JmsResourceResolver implements JmsConnectionFactoryResolver {
             return type.cast(result);
         } catch (NamingException e) {
             MessagingException failure = new MessagingException("Cannot resolve JMS resource " + name + " for channel "
-                                                                         + config.channel(), e);
+                                                                         + config.channelName(), e);
             lookupFailure = failure;
             throw failure;
         } catch (RuntimeException | Error e) {
@@ -116,7 +116,7 @@ final class JmsResourceResolver implements JmsConnectionFactoryResolver {
         } catch (NamingException | RuntimeException e) {
             JmsResourceCleanupException cleanupFailure = new JmsResourceCleanupException(
                     "Cannot close JNDI InitialContext after resolving JMS resource " + name + " for channel "
-                            + config.channel(),
+                            + config.channelName(),
                     e);
             if (lookupFailure instanceof Error) {
                 addSuppressed(lookupFailure, cleanupFailure);

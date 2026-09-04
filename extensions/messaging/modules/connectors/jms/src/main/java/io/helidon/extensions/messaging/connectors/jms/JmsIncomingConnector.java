@@ -32,13 +32,13 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
-import io.helidon.messaging.ConnectorDelivery;
-import io.helidon.messaging.ConnectorDeliveryReservation;
-import io.helidon.messaging.IncomingConnector;
-import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
+import io.helidon.messaging.spi.ConnectorDelivery;
+import io.helidon.messaging.spi.ConnectorDeliveryReservation;
+import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingConnectorContext;
 
 import jakarta.jms.Connection;
 import jakarta.jms.Destination;
@@ -253,7 +253,7 @@ final class JmsIncomingConnector {
                 long remaining = remainingNanos(closeDeadline);
                 if (remaining == 0 || !runCompletion.await(remaining, TimeUnit.NANOSECONDS)) {
                     throw new MessagingException("Timed out closing JMS incoming connector for channel "
-                                                         + config.channel());
+                                                         + config.channelName());
                 }
             } catch (InterruptedException e) {
                 interrupted = true;
@@ -337,13 +337,15 @@ final class JmsIncomingConnector {
                     }
                     try {
                         delivery.await();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
+                    } catch (MessagingException e) {
                         abandon(resources, e);
-                        if (closed.get()) {
-                            return DeliveryResult.STOP;
+                        if (causedByInterruption(e)) {
+                            Thread.currentThread().interrupt();
+                            if (closed.get()) {
+                                return DeliveryResult.STOP;
+                            }
                         }
-                        throw new MessagingException("JMS incoming message processing was interrupted", e);
+                        throw e;
                     } catch (RuntimeException | Error e) {
                         abandon(resources, e);
                         throw e;
@@ -506,7 +508,7 @@ final class JmsIncomingConnector {
                         if (cleanupFailure != null) {
                             cleanupFailure.addSuppressed(e);
                             throw new JmsResourceCleanupException(
-                                    "Cannot clean up failed JMS connection setup for channel " + config.channel(),
+                                    "Cannot clean up failed JMS connection setup for channel " + config.channelName(),
                                     cleanupFailure);
                         }
                     }
@@ -518,7 +520,7 @@ final class JmsIncomingConnector {
                         if (cleanupFailure != null) {
                             cleanupFailure.addSuppressed(e);
                             throw new JmsResourceCleanupException(
-                                    "Cannot clean up failed JMS connection setup for channel " + config.channel(),
+                                    "Cannot clean up failed JMS connection setup for channel " + config.channelName(),
                                     cleanupFailure);
                         }
                     }
@@ -590,7 +592,7 @@ final class JmsIncomingConnector {
                 if (cleanupFailure != null) {
                     cleanupFailure.addSuppressed(e);
                     throw new JmsResourceCleanupException("Cannot clean up failed JMS connection setup for channel "
-                                                                  + config.channel(), cleanupFailure);
+                                                                  + config.channelName(), cleanupFailure);
                 }
                 throw e;
             } catch (Error e) {
@@ -623,7 +625,7 @@ final class JmsIncomingConnector {
                 throw new IllegalStateException("JMS incoming connector is closed");
             }
             if (resources.broken()) {
-                throw new JMSException("JMS connection failed during setup for channel " + config.channel());
+                throw new JMSException("JMS connection failed during setup for channel " + config.channelName());
             }
         }
 
@@ -632,7 +634,7 @@ final class JmsIncomingConnector {
             if (config.durable()) {
                 if (!(destination instanceof Topic topic)) {
                     throw new MessagingException("Durable JMS destination is not a Topic for channel "
-                                                         + config.channel());
+                                                         + config.channelName());
                 }
                 return session.createDurableConsumer(topic,
                                                      config.subscriptionName().orElseThrow(),
@@ -647,7 +649,7 @@ final class JmsIncomingConnector {
             RuntimeException failure = closeResources(resources, deadline(config.closeTimeout()), true);
             if (failure != null) {
                 throw new JmsResourceCleanupException("Cannot clean up stale JMS resources for channel "
-                                                              + config.channel(), failure);
+                                                              + config.channelName(), failure);
             }
         }
 
@@ -729,7 +731,7 @@ final class JmsIncomingConnector {
                     long remaining = remainingNanos(closeDeadline);
                     if (remaining == 0) {
                         throw new MessagingException("Timed out closing JMS incoming connector while waiting for "
-                                                             + "delivery admission on channel " + config.channel());
+                                                             + "delivery admission on channel " + config.channelName());
                     }
                     try {
                         deliveryStateChanged.awaitNanos(remaining);
@@ -755,14 +757,14 @@ final class JmsIncomingConnector {
                 long remaining = remainingNanos(closeDeadline);
                 if (remaining == 0 || !resources.awaitClosed(Duration.ofNanos(remaining))) {
                     return reportFailure
-                            ? new MessagingException("Timed out closing JMS resources for channel " + config.channel())
+                            ? new MessagingException("Timed out closing JMS resources for channel " + config.channelName())
                             : null;
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return reportFailure ? new MessagingException("JMS resource close was interrupted", e) : null;
             }
-            RuntimeException closeFailure = resources.closeException(config.channel());
+            RuntimeException closeFailure = resources.closeException(config.channelName());
             ownedResources.remove(resources);
             if (closeFailure == null) {
                 return null;

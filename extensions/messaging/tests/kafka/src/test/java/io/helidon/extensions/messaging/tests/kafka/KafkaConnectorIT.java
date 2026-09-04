@@ -41,8 +41,8 @@ import io.helidon.extensions.messaging.connectors.kafka.KafkaMessage;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.AlwaysFailIncomingReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.AlwaysFailIncomingReceiver.FailedBatch;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.DropReceiver;
-import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.FailingForwardingReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.FailOnceIncomingReceiver;
+import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.FailingForwardingReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.ForwardingReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.IncomingAnnotatedReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.IncomingBatchReceiver;
@@ -68,7 +68,7 @@ import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingChannel;
 import io.helidon.messaging.MessagingGraph;
 import io.helidon.messaging.MessagingRuntime;
-import io.helidon.messaging.OutgoingConnector;
+import io.helidon.messaging.spi.OutgoingConnector;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryException;
 import io.helidon.service.registry.ServiceRegistryManager;
@@ -125,6 +125,8 @@ class KafkaConnectorIT {
     private static final Duration POLL_TIMEOUT = Duration.ofMillis(200);
     private static final Duration ADMIN_POLL_TIMEOUT = Duration.ofSeconds(1);
     private static final DockerImageName KAFKA_IMAGE = DockerImageName.parse("apache/kafka:4.3.1");
+    private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
+    private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
 
     @Container
     private static final KafkaContainer KAFKA = new KafkaContainer(KAFKA_IMAGE);
@@ -207,7 +209,7 @@ class KafkaConnectorIT {
         createTopic(topic);
         KafkaConnectorProvider provider = new KafkaConnectorProvider();
         OutgoingConnector connector = provider.createOutgoingConnector(outgoingConnectorConfig(topic));
-        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingGraph.Assembler builder = MessagingGraph.assembler();
         MessagingChannel<String> channel = builder.channel("kafka-output", String.class);
         builder.outgoingConnector(channel, connector);
 
@@ -783,7 +785,6 @@ class KafkaConnectorIT {
             registry.get(MessagingRuntime.class);
 
             int settledRecords = 0;
-            List<String> failureMessages = new ArrayList<>(2);
             while (settledRecords < 2) {
                 FailedBatch failedBatch = receiver.awaitFinalAttempt(WAIT_TIMEOUT);
                 assertThat("final delivery attempt", failedBatch, notNullValue());
@@ -797,9 +798,6 @@ class KafkaConnectorIT {
                 }
                 assertRecordCount(deadLetterTopic, settledRecords, Duration.ofMillis(500));
 
-                String failureMessage = "Expected permanent handler failure for "
-                        + failedBatch.entities().getFirst();
-                failedBatch.entities().forEach(ignored -> failureMessages.add(failureMessage));
                 failedBatch.allowFailure();
                 settledRecords += failedBatch.entities().size();
 
@@ -814,7 +812,6 @@ class KafkaConnectorIT {
                              "failed-key-1",
                              "failed first",
                              "dead-letter-trace-1",
-                             failureMessages.get(0),
                              firstTimestamp);
             assertDeadLetter(deadLetters.get(1),
                              topic,
@@ -822,7 +819,6 @@ class KafkaConnectorIT {
                              "failed-key-2",
                              "failed second",
                              "dead-letter-trace-2",
-                             failureMessages.get(1),
                              secondTimestamp);
             assertThat("delivery attempts per poll",
                        receiver.attemptCounts().values().stream().allMatch(attempts -> attempts == 3),
@@ -1345,7 +1341,6 @@ class KafkaConnectorIT {
                                          String expectedKey,
                                          String expectedValue,
                                          String expectedTraceId,
-                                         String expectedFailureMessage,
                                          long originalTimestamp) {
         assertThat(deadLetter.key(), is(expectedKey));
         assertThat(deadLetter.value(), is(expectedValue));
@@ -1364,10 +1359,10 @@ class KafkaConnectorIT {
         assertThat(header(deadLetter, DeadLetterMessage.SOURCE_CHANNEL_HEADER),
                    is(Optional.of(KafkaMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL)));
         assertThat(header(deadLetter, DeadLetterMessage.ATTEMPTS_HEADER), is(Optional.of("3")));
-        assertThat(header(deadLetter, DeadLetterMessage.FAILURE_TYPE_HEADER),
-                   is(Optional.of(IllegalStateException.class.getName())));
-        assertThat(header(deadLetter, DeadLetterMessage.FAILURE_MESSAGE_HEADER),
-                   is(Optional.of(expectedFailureMessage)));
+        assertThat(header(deadLetter, DeadLetterMessage.FAILURE_TYPE_METADATA), is(Optional.empty()));
+        assertThat(header(deadLetter, DeadLetterMessage.FAILURE_MESSAGE_METADATA), is(Optional.empty()));
+        assertThat(header(deadLetter, LEGACY_FAILURE_TYPE_HEADER), is(Optional.empty()));
+        assertThat(header(deadLetter, LEGACY_FAILURE_MESSAGE_HEADER), is(Optional.empty()));
     }
 
     private static Optional<String> header(ConsumerRecord<?, ?> record, String name) {

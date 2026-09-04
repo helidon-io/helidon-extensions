@@ -21,17 +21,19 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
 
+import io.helidon.common.Api;
 import io.helidon.config.Config;
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.IncomingConnector;
-import io.helidon.messaging.IncomingConnectorProvider;
-import io.helidon.messaging.OutgoingConnector;
-import io.helidon.messaging.OutgoingConnectorProvider;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingConnectorProvider;
+import io.helidon.messaging.spi.OutgoingConnector;
+import io.helidon.messaging.spi.OutgoingConnectorProvider;
 import io.helidon.service.registry.Service;
 
 /**
  * Stateless Apache Pulsar connector provider.
  */
+@Api.Preview
 @Service.Singleton
 public final class PulsarConnectorProvider
         implements IncomingConnectorProvider, OutgoingConnectorProvider {
@@ -136,7 +138,7 @@ public final class PulsarConnectorProvider
     private static void requireDirection(PulsarConnectorConfig config, ConnectorDirection expected) {
         Objects.requireNonNull(config);
         if (config.direction() != expected) {
-            throw new IllegalArgumentException("Pulsar connector configuration for channel " + config.channel()
+            throw new IllegalArgumentException("Pulsar connector configuration for channel " + config.channelName()
                                                        + " has direction " + config.direction()
                                                        + ", expected " + expected);
         }

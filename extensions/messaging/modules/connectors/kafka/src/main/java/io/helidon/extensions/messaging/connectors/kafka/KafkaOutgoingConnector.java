@@ -31,10 +31,8 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
-import io.helidon.messaging.BatchAtomicity;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
@@ -42,7 +40,9 @@ import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessageHeader;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.OutgoingConnector;
+import io.helidon.messaging.spi.BatchAtomicity;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.OutgoingConnector;
 
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
@@ -70,10 +70,12 @@ import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorPro
  * does not imply that a consumer has processed the message.
  */
 final class KafkaOutgoingConnector {
+    private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
+    private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
     private static final Set<String> DLQ_RESERVED_HEADERS = Set.of(DeadLetterMessage.SOURCE_CHANNEL_HEADER,
                                                                    DeadLetterMessage.ATTEMPTS_HEADER,
-                                                                   DeadLetterMessage.FAILURE_TYPE_HEADER,
-                                                                   DeadLetterMessage.FAILURE_MESSAGE_HEADER,
+                                                                   LEGACY_FAILURE_TYPE_HEADER,
+                                                                   LEGACY_FAILURE_MESSAGE_HEADER,
                                                                    DLQ_ORIGINAL_TOPIC_HEADER,
                                                                    DLQ_ORIGINAL_PARTITION_HEADER,
                                                                    DLQ_ORIGINAL_OFFSET_HEADER,
@@ -94,7 +96,7 @@ final class KafkaOutgoingConnector {
     OutgoingConnector createOutgoingConnector(KafkaConnectorConfig config) {
         Objects.requireNonNull(config);
         if (config.direction() != ConnectorDirection.OUTGOING) {
-            throw new IllegalArgumentException("Kafka connector configuration for channel " + config.channel()
+            throw new IllegalArgumentException("Kafka connector configuration for channel " + config.channelName()
                                                        + " has direction " + config.direction()
                                                        + ", expected " + ConnectorDirection.OUTGOING);
         }
@@ -324,7 +326,7 @@ final class KafkaOutgoingConnector {
             try {
                 current = readyProducer();
             } catch (RuntimeException failure) {
-                throw BatchDeliveryException.notAttempted("Kafka batch delivery", batch, failure);
+                throw notAttemptedFailure(batch, failure);
             }
             List<Future<RecordMetadata>> results = new ArrayList<>(batch.size());
             RuntimeException enqueueFailure = null;
@@ -378,9 +380,9 @@ final class KafkaOutgoingConnector {
             if (primaryFailure != null) {
                 throw new BatchDeliveryException("Cannot send Kafka message batch " + batch.id()
                                                          + " to topic " + topic,
+                                                 primaryFailure,
                                                  batch,
-                                                 outcomes,
-                                                 primaryFailure);
+                                                 outcomes);
             }
         }
 
@@ -424,11 +426,18 @@ final class KafkaOutgoingConnector {
             Message<?> originalMessage = message.originalMessage();
             if (!(originalMessage instanceof KafkaMessage<?, ?> kafkaMessage)) {
                 RecordHeaders headers = new RecordHeaders();
-                addPortableHeaders(headers, message.headers());
+                addPortableDeadLetterHeaders(headers, message.headers());
+                addReservedHeader(headers,
+                                  DeadLetterMessage.SOURCE_CHANNEL_HEADER,
+                                  message.sourceChannel());
+                addReservedHeader(headers,
+                                  DeadLetterMessage.ATTEMPTS_HEADER,
+                                  message.attempts());
                 return enqueue(current, null, message.entity(), headers);
             }
 
             RecordHeaders headers = kafkaHeaders(kafkaMessage);
+            removeLegacyFailureHeaders(headers);
             mergePortableWrapperHeaders(headers, message, originalMessage);
             addReservedHeader(headers,
                               DeadLetterMessage.SOURCE_CHANNEL_HEADER,
@@ -436,12 +445,6 @@ final class KafkaOutgoingConnector {
             addReservedHeader(headers,
                               DeadLetterMessage.ATTEMPTS_HEADER,
                               message.attempts());
-            addReservedHeader(headers,
-                              DeadLetterMessage.FAILURE_TYPE_HEADER,
-                              message.failureType());
-            addReservedHeader(headers,
-                              DeadLetterMessage.FAILURE_MESSAGE_HEADER,
-                              message.failureMessage());
             addKafkaMetadata(headers,
                              DLQ_ORIGINAL_TOPIC_HEADER,
                              kafkaMessage.topic().orElse(null));
@@ -634,6 +637,19 @@ final class KafkaOutgoingConnector {
             portableHeaders.forEach(header -> addPortableHeader(headers, header));
         }
 
+        private void addPortableDeadLetterHeaders(RecordHeaders headers, MessageHeaders portableHeaders) {
+            portableHeaders.forEach(header -> {
+                if (!DLQ_RESERVED_HEADERS.contains(header.name())) {
+                    addPortableHeader(headers, header);
+                }
+            });
+        }
+
+        private void removeLegacyFailureHeaders(RecordHeaders headers) {
+            headers.remove(LEGACY_FAILURE_TYPE_HEADER);
+            headers.remove(LEGACY_FAILURE_MESSAGE_HEADER);
+        }
+
         private void addPortableHeader(RecordHeaders headers, MessageHeader header) {
             headers.add(header.name(), kafkaHeaderValue(header));
         }
@@ -671,6 +687,17 @@ final class KafkaOutgoingConnector {
 
         private Throwable firstFailure(Throwable current, Throwable additional) {
             return current == null ? additional : current;
+        }
+
+        private BatchDeliveryException notAttemptedFailure(MessageBatch<?> batch, RuntimeException failure) {
+            List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
+            for (int i = 0; i < batch.size(); i++) {
+                outcomes.add(BatchItemOutcome.notAttempted(i));
+            }
+            return new BatchDeliveryException("Kafka batch delivery failed before attempting the batch",
+                                              failure,
+                                              batch,
+                                              outcomes);
         }
 
         private enum State {

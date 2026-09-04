@@ -30,12 +30,16 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessageHeaders;
+import io.helidon.messaging.MessageMetadata;
 import io.helidon.messaging.MessagingException;
 
 import jakarta.jms.BytesMessage;
@@ -54,12 +58,17 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class JmsMessageTest {
+    private static final String LOCAL_SECRET_METADATA = "application.local.secret";
+    private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
+    private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
+
     @Test
     void testProgrammaticMessageIsImmutable() {
         byte[] body = {1, 2};
@@ -116,14 +125,23 @@ class JmsMessageTest {
                 "orders",
                 2,
                 processingFailure);
+        assertThat(deadLetter.localMetadata()
+                           .text(DeadLetterMessage.FAILURE_TYPE_METADATA)
+                           .orElseThrow(),
+                   is(RuntimeException.class.getName()));
+        assertThat(deadLetter.localMetadata()
+                           .value(DeadLetterMessage.FAILURE_MESSAGE_METADATA)
+                           .orElseThrow(),
+                   is(HeaderValue.text("failed")));
 
         JmsMessageMapper.toJmsMessage(session, deadLetter, false);
 
         verify(nativeMessage).setStringProperty(DeadLetterMessage.SOURCE_CHANNEL_HEADER, "orders");
         verify(nativeMessage).setStringProperty(DeadLetterMessage.ATTEMPTS_HEADER, "2");
-        verify(nativeMessage).setStringProperty(DeadLetterMessage.FAILURE_TYPE_HEADER,
-                                                RuntimeException.class.getName());
-        verify(nativeMessage).setStringProperty(DeadLetterMessage.FAILURE_MESSAGE_HEADER, "failed");
+        verify(nativeMessage, never()).setStringProperty(eq(DeadLetterMessage.FAILURE_TYPE_METADATA), any());
+        verify(nativeMessage, never()).setStringProperty(eq(DeadLetterMessage.FAILURE_MESSAGE_METADATA), any());
+        verify(nativeMessage, never()).setStringProperty(eq(LEGACY_FAILURE_TYPE_HEADER), any());
+        verify(nativeMessage, never()).setStringProperty(eq(LEGACY_FAILURE_MESSAGE_HEADER), any());
         deadLetter.headers().forEach(header ->
                 assertThat(JmsMessageImpl.isApplicationPropertyName(header.name()), is(true)));
     }
@@ -255,6 +273,7 @@ class JmsMessageTest {
         JmsMessageMapper.toJmsMessage(session,
                                       io.helidon.messaging.Message.builder("portable")
                                               .header("text_value", "text")
+                                              .localMetadata(LOCAL_SECRET_METADATA, "must-not-leak")
                                               .header("boolean_value", HeaderValue.booleanValue(true))
                                               .header("integer_value", HeaderValue.integer(7))
                                               .header("float_value", HeaderValue.floatingPoint(8.5F))
@@ -267,6 +286,8 @@ class JmsMessageTest {
         verify(nativeMessage).setLongProperty("integer_value", 7L);
         verify(nativeMessage).setFloatProperty("float_value", 8.5F);
         verify(nativeMessage).setDoubleProperty("double_value", 9.5D);
+        verify(nativeMessage, never()).setStringProperty(eq(LOCAL_SECRET_METADATA), any());
+        verify(nativeMessage, never()).setObjectProperty(eq(LOCAL_SECRET_METADATA), any());
     }
 
     @Test
@@ -402,6 +423,10 @@ class JmsMessageTest {
                 "orders",
                 5,
                 new RuntimeException("failed"));
+        assertThat(deadLetter.localMetadata()
+                           .text(DeadLetterMessage.FAILURE_MESSAGE_METADATA)
+                           .orElseThrow(),
+                   is("failed"));
 
         JmsMessageMapper.toJmsMessage(session, deadLetter, false);
 
@@ -413,6 +438,8 @@ class JmsMessageTest {
         verify(nativeMessage).setStringProperty(DeadLetterMessage.ATTEMPTS_HEADER, "5");
         verify(nativeMessage).setJMSCorrelationID("correlation");
         verify(nativeMessage).setJMSType("kind");
+        verify(nativeMessage, never()).setStringProperty(eq(DeadLetterMessage.FAILURE_TYPE_METADATA), any());
+        verify(nativeMessage, never()).setStringProperty(eq(DeadLetterMessage.FAILURE_MESSAGE_METADATA), any());
     }
 
     @Test
@@ -423,6 +450,8 @@ class JmsMessageTest {
         JmsMessage<String> original = JmsMessage.<String>builder("body")
                 .property("byteValue", (byte) 1)
                 .property("region", "original")
+                .property(LEGACY_FAILURE_TYPE_HEADER, "native-forged-type")
+                .property(LEGACY_FAILURE_MESSAGE_HEADER, "native-forged-message")
                 .build();
         MessageHeaders wrapperHeaders = MessageHeaders.builder()
                 .addAll(original.headers())
@@ -430,8 +459,12 @@ class JmsMessageTest {
                 .add("added", "wrapper")
                 .set(DeadLetterMessage.SOURCE_CHANNEL_HEADER, "orders")
                 .set(DeadLetterMessage.ATTEMPTS_HEADER, "2")
-                .set(DeadLetterMessage.FAILURE_TYPE_HEADER, RuntimeException.class.getName())
-                .set(DeadLetterMessage.FAILURE_MESSAGE_HEADER, "failed")
+                .set(LEGACY_FAILURE_TYPE_HEADER, "wrapper-forged-type")
+                .set(LEGACY_FAILURE_MESSAGE_HEADER, "wrapper-forged-message")
+                .build();
+        MessageMetadata localMetadata = MessageMetadata.builder()
+                .set(DeadLetterMessage.FAILURE_TYPE_METADATA, RuntimeException.class.getName())
+                .set(DeadLetterMessage.FAILURE_MESSAGE_METADATA, "failed")
                 .build();
         DeadLetterMessage<String> deadLetter = new DeadLetterMessage<>() {
             @Override
@@ -450,13 +483,8 @@ class JmsMessageTest {
             }
 
             @Override
-            public String failureType() {
-                return RuntimeException.class.getName();
-            }
-
-            @Override
-            public String failureMessage() {
-                return "failed";
+            public MessageMetadata localMetadata() {
+                return localMetadata;
             }
 
             @Override
@@ -469,6 +497,8 @@ class JmsMessageTest {
                 return wrapperHeaders;
             }
         };
+        assertThat(deadLetter.failureType(), is(RuntimeException.class.getName()));
+        assertThat(deadLetter.failureMessage(), is("failed"));
 
         JmsMessageMapper.toJmsMessage(session, deadLetter, false);
 
@@ -476,6 +506,10 @@ class JmsMessageTest {
         verify(nativeMessage).setStringProperty("region", "replacement");
         verify(nativeMessage).setStringProperty("added", "wrapper");
         verify(nativeMessage, never()).setObjectProperty("region", "original");
+        verify(nativeMessage, never()).setStringProperty(eq(LEGACY_FAILURE_TYPE_HEADER), any());
+        verify(nativeMessage, never()).setStringProperty(eq(LEGACY_FAILURE_MESSAGE_HEADER), any());
+        verify(nativeMessage, never()).setObjectProperty(eq(LEGACY_FAILURE_TYPE_HEADER), any());
+        verify(nativeMessage, never()).setObjectProperty(eq(LEGACY_FAILURE_MESSAGE_HEADER), any());
     }
 
     @Test
@@ -654,6 +688,72 @@ class JmsMessageTest {
         verify(session).createObjectMessage(payload);
     }
 
+    @Test
+    void testIncomingObjectMessageSupportsConcurrentStableEntityReads() throws Exception {
+        ReadTrackingPayload.reset();
+        ReadTrackingPayload payload = new ReadTrackingPayload("trusted");
+        ObjectMessage incoming = mock(ObjectMessage.class);
+        when(incoming.getObject()).thenReturn(payload);
+        when(incoming.getPropertyNames()).thenReturn(Collections.emptyEnumeration());
+        JmsMessage<?> message = JmsMessageMapper.fromJmsMessage(incoming, true, 1024);
+        ReadTrackingPayload.blockDeserializations(2);
+        FutureTask<Object> first = new FutureTask<>(message::entity);
+        FutureTask<Object> second = new FutureTask<>(message::entity);
+        Thread firstThread = Thread.ofVirtual().start(first);
+        Thread secondThread = Thread.ofVirtual().start(second);
+
+        try {
+            assertThat(ReadTrackingPayload.awaitBlockedDeserializations(), is(true));
+            ReadTrackingPayload.releaseDeserializations();
+            Object firstEntity = first.get(5, TimeUnit.SECONDS);
+            Object secondEntity = second.get(5, TimeUnit.SECONDS);
+
+            assertThat(firstEntity, is(payload));
+            assertThat(secondEntity, is(payload));
+            assertNotSame(payload, firstEntity);
+            assertNotSame(firstEntity, secondEntity);
+            assertThat(ReadTrackingPayload.serializationCount(), is(1));
+            assertThat(ReadTrackingPayload.deserializationCount(), is(3));
+        } finally {
+            ReadTrackingPayload.releaseDeserializations();
+            firstThread.interrupt();
+            secondThread.interrupt();
+        }
+    }
+
+    @Test
+    void testDisabledForwardOfIncomingObjectMessageDoesNotDeserializeBody() throws Exception {
+        ReadTrackingPayload.reset();
+        ReadTrackingPayload payload = new ReadTrackingPayload("trusted");
+        ObjectMessage incoming = mock(ObjectMessage.class);
+        when(incoming.getObject()).thenReturn(payload);
+        when(incoming.getPropertyNames()).thenReturn(Collections.emptyEnumeration());
+        JmsMessage<?> message = JmsMessageMapper.fromJmsMessage(incoming, true, 1024);
+        Session session = mock(Session.class);
+
+        assertThrows(MessagingException.class, () -> JmsMessageMapper.toJmsMessage(session, message, false));
+
+        assertThat(ReadTrackingPayload.serializationCount(), is(1));
+        assertThat(ReadTrackingPayload.deserializationCount(), is(1));
+        verify(session, never()).createObjectMessage(any(Serializable.class));
+    }
+
+    @Test
+    void testIncomingStringObjectMessageCanForwardAsTextWhenObjectMessagesAreDisabled() throws Exception {
+        ObjectMessage incoming = mock(ObjectMessage.class);
+        when(incoming.getObject()).thenReturn("text");
+        when(incoming.getPropertyNames()).thenReturn(Collections.emptyEnumeration());
+        JmsMessage<?> message = JmsMessageMapper.fromJmsMessage(incoming, true, 1024);
+        Session session = mock(Session.class);
+        TextMessage outgoing = mock(TextMessage.class);
+        when(session.createTextMessage("text")).thenReturn(outgoing);
+
+        assertThat(JmsMessageMapper.toJmsMessage(session, message, false), is(outgoing));
+
+        verify(session).createTextMessage("text");
+        verify(session, never()).createObjectMessage(any(Serializable.class));
+    }
+
     private record TestPayload(String value) implements Serializable {
     }
 
@@ -662,6 +762,8 @@ class JmsMessageTest {
         private static final long serialVersionUID = 1L;
         private static final AtomicInteger SERIALIZATIONS = new AtomicInteger();
         private static final AtomicInteger DESERIALIZATIONS = new AtomicInteger();
+        private static volatile CountDownLatch deserializationsEntered = new CountDownLatch(0);
+        private static volatile CountDownLatch deserializationsRelease = new CountDownLatch(0);
 
         private final String value;
 
@@ -672,6 +774,8 @@ class JmsMessageTest {
         private static void reset() {
             SERIALIZATIONS.set(0);
             DESERIALIZATIONS.set(0);
+            deserializationsEntered = new CountDownLatch(0);
+            deserializationsRelease = new CountDownLatch(0);
         }
 
         private static int serializationCount() {
@@ -680,6 +784,19 @@ class JmsMessageTest {
 
         private static int deserializationCount() {
             return DESERIALIZATIONS.get();
+        }
+
+        private static void blockDeserializations(int expected) {
+            deserializationsEntered = new CountDownLatch(expected);
+            deserializationsRelease = new CountDownLatch(1);
+        }
+
+        private static boolean awaitBlockedDeserializations() throws InterruptedException {
+            return deserializationsEntered.await(5, TimeUnit.SECONDS);
+        }
+
+        private static void releaseDeserializations() {
+            deserializationsRelease.countDown();
         }
 
         @Serial
@@ -692,6 +809,15 @@ class JmsMessageTest {
         private void readObject(ObjectInputStream input) throws IOException, ClassNotFoundException {
             DESERIALIZATIONS.incrementAndGet();
             input.defaultReadObject();
+            deserializationsEntered.countDown();
+            try {
+                if (!deserializationsRelease.await(5, TimeUnit.SECONDS)) {
+                    throw new IOException("Timed out waiting to release test deserialization");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Interrupted while waiting to release test deserialization", e);
+            }
         }
 
         @Override
