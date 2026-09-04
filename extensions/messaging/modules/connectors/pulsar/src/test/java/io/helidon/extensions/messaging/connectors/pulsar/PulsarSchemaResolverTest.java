@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.helidon.messaging.ConnectorDirection;
+import io.helidon.messaging.spi.ConnectorDirection;
 
 import org.apache.pulsar.client.api.Schema;
 import org.junit.jupiter.api.Test;
@@ -217,7 +217,7 @@ class PulsarSchemaResolverTest {
     private static PulsarConnectorConfig config(ConnectorDirection direction, String schemaProvider) {
         PulsarConnectorConfig.Builder builder = PulsarConnectorConfig.builder()
                 .direction(direction)
-                .channel(CHANNEL)
+                .channelName(CHANNEL)
                 .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
                 .serviceUrl("pulsar://127.0.0.1:6650")
                 .topic("persistent://public/default/orders");

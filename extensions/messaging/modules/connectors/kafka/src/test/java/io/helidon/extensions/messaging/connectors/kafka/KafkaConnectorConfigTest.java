@@ -21,10 +21,10 @@ import java.util.Map;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
-import io.helidon.messaging.ConnectorConfig;
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.IncomingConnector;
-import io.helidon.messaging.OutgoingConnector;
+import io.helidon.messaging.spi.ConnectorConfig;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.OutgoingConnector;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.junit.jupiter.api.Test;
@@ -206,7 +206,7 @@ class KafkaConnectorConfigTest {
     private static KafkaConnectorConfig.Builder builder() {
         return KafkaConnectorConfig.builder()
                 .direction(ConnectorDirection.OUTGOING)
-                .channel(CHANNEL)
+                .channelName(CHANNEL)
                 .connector(KafkaConnectorProvider.CONNECTOR_TYPE);
     }
 

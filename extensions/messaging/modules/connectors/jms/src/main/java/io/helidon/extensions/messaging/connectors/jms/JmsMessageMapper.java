@@ -42,10 +42,12 @@ import jakarta.jms.StreamMessage;
 import jakarta.jms.TextMessage;
 
 final class JmsMessageMapper {
+    private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
+    private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
     private static final Set<String> DEAD_LETTER_HEADERS = Set.of(DeadLetterMessage.SOURCE_CHANNEL_HEADER,
                                                                   DeadLetterMessage.ATTEMPTS_HEADER,
-                                                                  DeadLetterMessage.FAILURE_TYPE_HEADER,
-                                                                  DeadLetterMessage.FAILURE_MESSAGE_HEADER);
+                                                                  LEGACY_FAILURE_TYPE_HEADER,
+                                                                  LEGACY_FAILURE_MESSAGE_HEADER);
 
     private JmsMessageMapper() {
     }
@@ -95,6 +97,10 @@ final class JmsMessageMapper {
             if (jmsMessage.type().isPresent()) {
                 result.setJMSType(jmsMessage.type().orElseThrow());
             }
+        } else if (message instanceof DeadLetterMessage<?> deadLetterMessage) {
+            portableHeaders(deadLetterMessage)
+                    .forEach((name, value) -> setPortableProperty(result, name, portableProperty(name, value)));
+            setDeadLetterProperties(result, deadLetterMessage);
         } else {
             copyPortableHeaders(result, message);
         }
@@ -140,12 +146,15 @@ final class JmsMessageMapper {
         if (originalMessage.type().isPresent()) {
             result.setJMSType(originalMessage.type().orElseThrow());
         }
-        setPortableProperty(result, DeadLetterMessage.SOURCE_CHANNEL_HEADER, deadLetterMessage.sourceChannel());
-        setPortableProperty(result, DeadLetterMessage.ATTEMPTS_HEADER,
-                            Integer.toString(deadLetterMessage.attempts()));
-        setPortableProperty(result, DeadLetterMessage.FAILURE_TYPE_HEADER, deadLetterMessage.failureType());
-        setPortableProperty(result, DeadLetterMessage.FAILURE_MESSAGE_HEADER, deadLetterMessage.failureMessage());
+        setDeadLetterProperties(result, deadLetterMessage);
         return result;
+    }
+
+    private static void setDeadLetterProperties(jakarta.jms.Message message, DeadLetterMessage<?> deadLetterMessage) {
+        setPortableProperty(message, DeadLetterMessage.SOURCE_CHANNEL_HEADER, deadLetterMessage.sourceChannel());
+        setPortableProperty(message,
+                            DeadLetterMessage.ATTEMPTS_HEADER,
+                            Integer.toString(deadLetterMessage.attempts()));
     }
 
     private static Map<String, HeaderValue> portableHeaders(Message<?> message) {

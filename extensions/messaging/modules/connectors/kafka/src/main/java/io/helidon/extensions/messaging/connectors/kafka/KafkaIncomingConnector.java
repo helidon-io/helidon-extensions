@@ -37,15 +37,15 @@ import java.util.concurrent.locks.ReentrantLock;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.BatchItemStatus;
-import io.helidon.messaging.ConnectorDelivery;
-import io.helidon.messaging.ConnectorDeliveryReservation;
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.IncomingConnector;
-import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
+import io.helidon.messaging.spi.ConnectorDelivery;
+import io.helidon.messaging.spi.ConnectorDeliveryReservation;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingConnectorContext;
 
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -94,7 +94,7 @@ final class KafkaIncomingConnector {
     IncomingConnector createIncomingConnector(KafkaConnectorConfig config) {
         Objects.requireNonNull(config);
         if (config.direction() != ConnectorDirection.INCOMING) {
-            throw new IllegalArgumentException("Kafka connector configuration for channel " + config.channel()
+            throw new IllegalArgumentException("Kafka connector configuration for channel " + config.channelName()
                                                        + " has direction " + config.direction()
                                                        + ", expected " + ConnectorDirection.INCOMING);
         }
@@ -104,6 +104,18 @@ final class KafkaIncomingConnector {
     @FunctionalInterface
     interface ConsumerFactory {
         Consumer<Object, Object> create(Map<String, Object> properties);
+    }
+
+    private static boolean interruptedWait(Throwable failure) {
+        if (!Thread.currentThread().isInterrupted()) {
+            return false;
+        }
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            if (current instanceof InterruptedException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private final class IncomingKafkaConnector implements IncomingConnector {
@@ -643,18 +655,16 @@ final class KafkaIncomingConnector {
             try {
                 deliveryTask.await();
                 pendingPoll.settleAll();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            } catch (BatchDeliveryException e) {
+                pendingPoll.settleSucceeded(e);
+                throw e;
+            } catch (MessagingException e) {
+                if (!interruptedWait(e)) {
+                    throw e;
+                }
                 if (!closed.get()) {
                     throw new MessagingException("Kafka incoming message processing was interrupted", e);
                 }
-            } catch (BatchDeliveryException e) {
-                RuntimeException aligned = BatchDeliveryException.align(pendingPoll.batch(), e);
-                if (!(aligned instanceof BatchDeliveryException batchFailure)) {
-                    throw aligned;
-                }
-                pendingPoll.settleSucceeded(batchFailure);
-                throw batchFailure;
             }
         }
 
@@ -668,11 +678,14 @@ final class KafkaIncomingConnector {
                 boolean stopped = false;
                 try {
                     stopped = deliveryTask.await(config.closeTimeout());
+                } catch (MessagingException e) {
+                    if (!interruptedWait(e)) {
+                        // Processing is quiescent; its failure belongs to the already-closing connector.
+                        stopped = true;
+                    }
                 } catch (RuntimeException e) {
                     // Processing is quiescent; its failure belongs to the already-closing connector.
                     stopped = true;
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
                 }
                 if (stopped) {
                     activeDelivery.compareAndSet(deliveryTask, null);
@@ -833,16 +846,20 @@ final class KafkaIncomingConnector {
             boolean stopped;
             try {
                 stopped = deliveryTask.await(timeout);
+            } catch (MessagingException e) {
+                if (!interruptedWait(e)) {
+                    // The delivery is quiescent. Its processing failure belongs to the connector owner thread.
+                    activeDelivery.compareAndSet(deliveryTask, null);
+                    return;
+                }
+                deliveryTask.releaseWhenFinished();
+                throw new MessagingException("Interrupted while waiting for active Kafka delivery on channel "
+                                                     + context.channel() + " to finish",
+                                             e);
             } catch (RuntimeException e) {
                 // The delivery is quiescent. Its processing failure belongs to the connector owner thread.
                 activeDelivery.compareAndSet(deliveryTask, null);
                 return;
-            } catch (InterruptedException e) {
-                deliveryTask.releaseWhenFinished();
-                Thread.currentThread().interrupt();
-                throw new MessagingException("Interrupted while waiting for active Kafka delivery on channel "
-                                                     + context.channel() + " to finish",
-                                             e);
             }
             if (stopped) {
                 activeDelivery.compareAndSet(deliveryTask, null);
@@ -978,12 +995,12 @@ final class KafkaIncomingConnector {
             }
 
             @Override
-            public void await() throws InterruptedException {
+            public void await() {
                 delegate().await();
             }
 
             @Override
-            public boolean await(Duration timeout) throws InterruptedException {
+            public boolean await(Duration timeout) {
                 return delegate().await(timeout);
             }
 
@@ -1033,8 +1050,12 @@ final class KafkaIncomingConnector {
                         try {
                             delegate().await();
                             break;
-                        } catch (InterruptedException e) {
+                        } catch (MessagingException e) {
+                            if (!interruptedWait(e)) {
+                                break;
+                            }
                             interrupted = true;
+                            Thread.interrupted();
                         } catch (RuntimeException | Error e) {
                             // A propagated processing failure also means the delegate has terminated.
                             break;
@@ -1208,9 +1229,9 @@ final class KafkaIncomingConnector {
                 }
             }
             return primary == null ? null : new BatchDeliveryException("Cannot map Kafka poll on channel " + channel,
+                                                                        primary,
                                                                         batch,
-                                                                        outcomes,
-                                                                        primary);
+                                                                        outcomes);
         }
 
         private MessageBatch<Object> batch() {

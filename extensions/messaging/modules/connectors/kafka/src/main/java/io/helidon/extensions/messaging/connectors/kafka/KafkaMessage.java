@@ -24,6 +24,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
+import io.helidon.common.Api;
 import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 
@@ -41,6 +42,7 @@ import io.helidon.messaging.Message;
  * @param <K> Kafka key type
  * @param <V> Kafka value type
  */
+@Api.Preview
 public interface KafkaMessage<K, V> extends Message<V> {
     /**
      * Create a keyed Kafka message without native headers.
@@ -131,6 +133,7 @@ public interface KafkaMessage<K, V> extends Message<V> {
     /**
      * Immutable snapshot of the Kafka record timestamp type.
      */
+    @Api.Preview
     enum TimestampType {
         /**
          * The record does not have a timestamp.
@@ -151,6 +154,7 @@ public interface KafkaMessage<K, V> extends Message<V> {
     /**
      * Immutable Kafka header view.
      */
+    @Api.Preview
     interface Header {
         /**
          * Header name.
@@ -175,6 +179,7 @@ public interface KafkaMessage<K, V> extends Message<V> {
      * @param <K> Kafka key type
      * @param <V> Kafka value type
      */
+    @Api.Preview
     final class Builder<K, V> {
         private final K key;
         private final V entity;

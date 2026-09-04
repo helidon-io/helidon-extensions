@@ -20,6 +20,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
+import io.helidon.common.Api;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageHeaders;
 
@@ -35,6 +36,7 @@ import io.helidon.messaging.MessageHeaders;
  *
  * @param <T> payload type
  */
+@Api.Preview
 public interface PulsarMessage<T> extends Message<T> {
     /**
      * Create a payload-only outgoing Pulsar message.
@@ -163,6 +165,7 @@ public interface PulsarMessage<T> extends Message<T> {
      *
      * @param <T> payload type
      */
+    @Api.Preview
     final class Builder<T> {
         private final T entity;
         private final MessageHeaders.Builder headers = MessageHeaders.builder();

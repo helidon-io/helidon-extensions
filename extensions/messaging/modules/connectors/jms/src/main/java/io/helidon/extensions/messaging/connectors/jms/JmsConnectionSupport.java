@@ -71,7 +71,7 @@ final class JmsConnectionSupport {
         lock.lock();
         try {
             if (closeRequested) {
-                throw new IllegalStateException("JMS connector is closed for channel " + config.channel());
+                throw new IllegalStateException("JMS connector is closed for channel " + config.channelName());
             }
             attempt = new ConnectionAttempt();
             attempts.add(attempt);
@@ -87,7 +87,7 @@ final class JmsConnectionSupport {
         lock.lock();
         try {
             if (closeRequested) {
-                throw new IllegalStateException("JMS connector is closed for channel " + config.channel());
+                throw new IllegalStateException("JMS connector is closed for channel " + config.channelName());
             }
             setupAttempts.add(attempt);
             attempt.start();
@@ -161,7 +161,7 @@ final class JmsConnectionSupport {
                 long remaining = remainingNanos(deadline);
                 if (remaining == 0) {
                     interruptActivity();
-                    throw new MessagingException("Timed out closing JMS resources for channel " + config.channel());
+                    throw new MessagingException("Timed out closing JMS resources for channel " + config.channelName());
                 }
                 try {
                     activityChanged.await(remaining, TimeUnit.NANOSECONDS);
@@ -247,7 +247,7 @@ final class JmsConnectionSupport {
         if (closeFailure instanceof Error error) {
             throw error;
         }
-        throw new MessagingException("Cannot close JMS resources for channel " + config.channel(), closeFailure);
+        throw new MessagingException("Cannot close JMS resources for channel " + config.channelName(), closeFailure);
     }
 
     private static long remainingNanos(long deadline) {
@@ -284,7 +284,7 @@ final class JmsConnectionSupport {
                     ? null
                     : JmsConnectionSupport.this.password.clone();
             this.worker = Thread.ofVirtual()
-                    .name("jms-connection-acquisition-" + config.channel())
+                    .name("jms-connection-acquisition-" + config.channelName())
                     .inheritInheritableThreadLocals(false)
                     .unstarted(this::acquire);
         }
@@ -300,7 +300,7 @@ final class JmsConnectionSupport {
                 abandon();
                 Thread.currentThread().interrupt();
                 throw new MessagingException("JMS connection acquisition was interrupted for channel "
-                                                     + config.channel(), e);
+                                                     + config.channelName(), e);
             } catch (ExecutionException e) {
                 Throwable failure = e.getCause();
                 if (failure instanceof JMSException jmsException) {
@@ -312,7 +312,7 @@ final class JmsConnectionSupport {
                 if (failure instanceof Error error) {
                     throw error;
                 }
-                throw new MessagingException("Cannot create JMS connection for channel " + config.channel(), failure);
+                throw new MessagingException("Cannot create JMS connection for channel " + config.channelName(), failure);
             }
         }
 
@@ -348,7 +348,7 @@ final class JmsConnectionSupport {
             String password;
             synchronized (this) {
                 if (abandoned.get()) {
-                    throw new IllegalStateException("JMS connector is closed for channel " + config.channel());
+                    throw new IllegalStateException("JMS connector is closed for channel " + config.channelName());
                 }
                 password = new String(Objects.requireNonNull(this.password));
                 clearPassword(this.password);
@@ -362,7 +362,7 @@ final class JmsConnectionSupport {
                 clearPassword(password);
             }
             result.completeExceptionally(new IllegalStateException("JMS connector is closed for channel "
-                                                                           + config.channel()));
+                                                                           + config.channelName()));
             interrupt();
             closeAsync(produced.get());
         }
@@ -438,7 +438,7 @@ final class JmsConnectionSupport {
             this.operation = Objects.requireNonNull(operation);
             this.setup = Objects.requireNonNull(setup);
             this.worker = Thread.ofVirtual()
-                    .name("jms-setup-" + config.channel() + "-" + operation)
+                    .name("jms-setup-" + config.channelName() + "-" + operation)
                     .inheritInheritableThreadLocals(false)
                     .unstarted(this::execute);
         }
@@ -455,14 +455,14 @@ final class JmsConnectionSupport {
                 abandon();
                 Thread.currentThread().interrupt();
                 throw new MessagingException("JMS " + operation + " was interrupted for channel "
-                                                     + config.channel(), e);
+                                                     + config.channelName(), e);
             } catch (ExecutionException e) {
                 throwSetupFailure(e.getCause());
                 throw new AssertionError("unreachable");
             }
             synchronized (this) {
                 if (abandoned) {
-                    throw new IllegalStateException("JMS connector is closed for channel " + config.channel());
+                    throw new IllegalStateException("JMS connector is closed for channel " + config.channelName());
                 }
                 claimed = true;
                 return value;
@@ -518,7 +518,7 @@ final class JmsConnectionSupport {
                 }
             }
             result.completeExceptionally(new IllegalStateException("JMS connector is closed for channel "
-                                                                           + config.channel()));
+                                                                           + config.channelName()));
             interrupt();
             closeLate(late);
         }
@@ -544,7 +544,7 @@ final class JmsConnectionSupport {
                 throw error;
             }
             throw new MessagingException("Cannot complete JMS " + operation + " for channel "
-                                                 + config.channel(), failure);
+                                                 + config.channelName(), failure);
         }
     }
 
@@ -557,7 +557,7 @@ final class JmsConnectionSupport {
         private CloseAttempt(AutoCloseable resource) {
             this.resource = resource;
             this.worker = Thread.ofVirtual()
-                    .name("jms-resource-close-" + config.channel() + "-" + closeSequence.incrementAndGet())
+                    .name("jms-resource-close-" + config.channelName() + "-" + closeSequence.incrementAndGet())
                     .inheritInheritableThreadLocals(false)
                     .unstarted(this::close);
         }
@@ -582,9 +582,9 @@ final class JmsConnectionSupport {
                 throw new MessagingException("JMS resource close was interrupted", e);
             } catch (TimeoutException e) {
                 worker.interrupt();
-                throw new MessagingException("Timed out closing JMS resources for channel " + config.channel(), e);
+                throw new MessagingException("Timed out closing JMS resources for channel " + config.channelName(), e);
             } catch (ExecutionException e) {
-                throw new MessagingException("Cannot close JMS resources for channel " + config.channel(), e.getCause());
+                throw new MessagingException("Cannot close JMS resources for channel " + config.channelName(), e.getCause());
             } finally {
                 if (interrupted) {
                     Thread.currentThread().interrupt();

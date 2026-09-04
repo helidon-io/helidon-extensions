@@ -18,12 +18,13 @@ package io.helidon.extensions.messaging.connectors.jms;
 
 import java.util.Objects;
 
+import io.helidon.common.Api;
 import io.helidon.config.Config;
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.IncomingConnector;
-import io.helidon.messaging.IncomingConnectorProvider;
-import io.helidon.messaging.OutgoingConnector;
-import io.helidon.messaging.OutgoingConnectorProvider;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingConnectorProvider;
+import io.helidon.messaging.spi.OutgoingConnector;
+import io.helidon.messaging.spi.OutgoingConnectorProvider;
 import io.helidon.service.registry.Service;
 import io.helidon.service.registry.ServiceRegistry;
 
@@ -32,6 +33,7 @@ import jakarta.jms.ConnectionFactory;
 /**
  * Stateless JMS connector provider.
  */
+@Api.Preview
 @Service.Singleton
 public final class JmsConnectorProvider
         implements IncomingConnectorProvider, OutgoingConnectorProvider {
@@ -100,7 +102,7 @@ public final class JmsConnectorProvider
     private static void requireDirection(JmsConnectorConfig config, ConnectorDirection expected) {
         Objects.requireNonNull(config);
         if (config.direction() != expected) {
-            throw new IllegalArgumentException("JMS connector configuration for channel " + config.channel()
+            throw new IllegalArgumentException("JMS connector configuration for channel " + config.channelName()
                                                        + " has direction " + config.direction()
                                                        + ", expected " + expected);
         }

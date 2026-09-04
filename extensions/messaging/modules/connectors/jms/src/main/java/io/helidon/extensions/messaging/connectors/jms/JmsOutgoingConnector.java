@@ -24,12 +24,12 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
-import io.helidon.messaging.BatchAtomicity;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.OutgoingConnector;
+import io.helidon.messaging.spi.BatchAtomicity;
+import io.helidon.messaging.spi.OutgoingConnector;
 
 import jakarta.jms.Connection;
 import jakarta.jms.Destination;
@@ -155,7 +155,7 @@ final class JmsOutgoingConnector {
                 operationLock.lockInterruptibly();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw BatchDeliveryException.notAttempted("JMS batch delivery", batch, e);
+                throw notAttempted("JMS batch delivery", batch, e);
             }
             try {
                 lifecycleLock.lock();
@@ -163,7 +163,7 @@ final class JmsOutgoingConnector {
                     requireStarted();
                     operationThread = Thread.currentThread();
                 } catch (RuntimeException e) {
-                    throw BatchDeliveryException.notAttempted("JMS batch delivery", batch, e);
+                    throw notAttempted("JMS batch delivery", batch, e);
                 } finally {
                     lifecycleLock.unlock();
                 }
@@ -172,7 +172,7 @@ final class JmsOutgoingConnector {
                 try {
                     current = readyResources();
                 } catch (RuntimeException e) {
-                    throw BatchDeliveryException.notAttempted("JMS batch delivery", batch, e);
+                    throw notAttempted("JMS batch delivery", batch, e);
                 }
                 if (config.transacted()) {
                     sendTransacted(current, batch);
@@ -230,7 +230,7 @@ final class JmsOutgoingConnector {
             try {
                 if (!operationLock.tryLock(remainingNanos(deadline), TimeUnit.NANOSECONDS)) {
                     throw new MessagingException("Timed out closing JMS outgoing connector for channel "
-                                                         + config.channel());
+                                                         + config.channelName());
                 }
             } catch (InterruptedException e) {
                 interrupted = true;
@@ -412,7 +412,7 @@ final class JmsOutgoingConnector {
                     throw new IllegalStateException("JMS outgoing connector is closed");
                 }
                 if (created.broken) {
-                    throw new JMSException("JMS connection failed during setup for channel " + config.channel());
+                    throw new JMSException("JMS connection failed during setup for channel " + config.channelName());
                 }
             } finally {
                 lifecycleLock.unlock();
@@ -472,7 +472,7 @@ final class JmsOutgoingConnector {
             try {
                 connectionSupport.closeAndAwait(stale, cleanupDeadline);
             } catch (RuntimeException failure) {
-                throw cleanupFailure("Cannot clean up stale JMS resources for channel " + config.channel(), failure);
+                throw cleanupFailure("Cannot clean up stale JMS resources for channel " + config.channelName(), failure);
             }
         }
 
@@ -489,10 +489,10 @@ final class JmsOutgoingConnector {
                     outcomes.add(BatchItemOutcome.failed(i, e));
                     addNotAttempted(outcomes, i + 1, batch.size());
                     throw new BatchDeliveryException("Cannot map JMS message batch " + batch.id()
-                                                             + " for channel " + config.channel(),
+                                                             + " for channel " + config.channelName(),
+                                                     e,
                                                      batch,
-                                                     outcomes,
-                                                     e);
+                                                     outcomes);
                 } catch (RuntimeException e) {
                     if (causedByJmsFailure(e)) {
                         current.broken = true;
@@ -500,10 +500,10 @@ final class JmsOutgoingConnector {
                     outcomes.add(BatchItemOutcome.failed(i, e));
                     addNotAttempted(outcomes, i + 1, batch.size());
                     throw new BatchDeliveryException("Cannot map JMS message batch " + batch.id()
-                                                             + " for channel " + config.channel(),
+                                                             + " for channel " + config.channelName(),
+                                                     e,
                                                      batch,
-                                                     outcomes,
-                                                     e);
+                                                     outcomes);
                 }
                 try {
                     executeProviderCall("message send", () -> current.producer.send(message));
@@ -513,19 +513,19 @@ final class JmsOutgoingConnector {
                     outcomes.add(BatchItemOutcome.indeterminate(i, e));
                     addNotAttempted(outcomes, i + 1, batch.size());
                     throw new BatchDeliveryException("Cannot send JMS message batch " + batch.id()
-                                                             + " to channel " + config.channel(),
+                                                             + " to channel " + config.channelName(),
+                                                     e,
                                                      batch,
-                                                     outcomes,
-                                                     e);
+                                                     outcomes);
                 } catch (RuntimeException e) {
                     current.broken = true;
                     outcomes.add(BatchItemOutcome.indeterminate(i, e));
                     addNotAttempted(outcomes, i + 1, batch.size());
                     throw new BatchDeliveryException("Cannot send JMS message batch " + batch.id()
-                                                             + " to channel " + config.channel(),
+                                                             + " to channel " + config.channelName(),
+                                                     e,
                                                      batch,
-                                                     outcomes,
-                                                     e);
+                                                     outcomes);
                 }
             }
         }
@@ -554,7 +554,7 @@ final class JmsOutgoingConnector {
                 }
             } catch (ProviderCallAbandonedException e) {
                 current.broken = true;
-                throw BatchDeliveryException.indeterminate("JMS transactional batch delivery", batch, e);
+                throw indeterminate("JMS transactional batch delivery", batch, e);
             } catch (JMSException | JMSRuntimeException e) {
                 current.broken = true;
                 throw rollbackAfterSendFailure(current, batch, e);
@@ -567,18 +567,18 @@ final class JmsOutgoingConnector {
                 executeProviderCall("transaction commit", current.session::commit);
             } catch (ProviderCallAbandonedException e) {
                 current.broken = true;
-                throw BatchDeliveryException.indeterminate("JMS transactional batch commit", batch, e);
+                throw indeterminate("JMS transactional batch commit", batch, e);
             } catch (TransactionRolledBackException | TransactionRolledBackRuntimeException e) {
                 current.broken = true;
                 throw atomicFailed(batch, e);
             } catch (JMSException | JMSRuntimeException e) {
                 current.broken = true;
                 rollbackBestEffort(current, e);
-                throw BatchDeliveryException.indeterminate("JMS transactional batch commit", batch, e);
+                throw indeterminate("JMS transactional batch commit", batch, e);
             } catch (RuntimeException e) {
                 current.broken = true;
                 rollbackBestEffort(current, e);
-                throw BatchDeliveryException.indeterminate("JMS transactional batch commit", batch, e);
+                throw indeterminate("JMS transactional batch commit", batch, e);
             }
         }
 
@@ -590,7 +590,7 @@ final class JmsOutgoingConnector {
                 return atomicFailed(batch, failure);
             } catch (JMSException | RuntimeException rollbackFailure) {
                 failure.addSuppressed(rollbackFailure);
-                return BatchDeliveryException.indeterminate("JMS transactional batch delivery", batch, failure);
+                return indeterminate("JMS transactional batch delivery", batch, failure);
             }
         }
 
@@ -634,10 +634,10 @@ final class JmsOutgoingConnector {
             outcomes.add(BatchItemOutcome.failed(failedIndex, failure));
             addNotAttempted(outcomes, failedIndex + 1, batch.size());
             return new BatchDeliveryException("Cannot map JMS transactional batch " + batch.id()
-                                                      + " for channel " + config.channel(),
+                                                      + " for channel " + config.channelName(),
+                                              failure,
                                               batch,
-                                              outcomes,
-                                              failure);
+                                              outcomes);
         }
 
         private BatchDeliveryException atomicFailed(MessageBatch<?> batch, Throwable failure) {
@@ -645,10 +645,34 @@ final class JmsOutgoingConnector {
             for (int i = 0; i < batch.size(); i++) {
                 outcomes.add(BatchItemOutcome.failed(i, failure));
             }
-            return new BatchDeliveryException("JMS transactional batch was rolled back for channel " + config.channel(),
+            return new BatchDeliveryException("JMS transactional batch was rolled back for channel " + config.channelName(),
+                                              failure,
                                               batch,
-                                              outcomes,
-                                              failure);
+                                              outcomes);
+        }
+
+        private static BatchDeliveryException notAttempted(String operation,
+                                                           MessageBatch<?> batch,
+                                                           Throwable failure) {
+            List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
+            addNotAttempted(outcomes, 0, batch.size());
+            return new BatchDeliveryException(operation + " failed before attempting the batch",
+                                              failure,
+                                              batch,
+                                              outcomes);
+        }
+
+        private static BatchDeliveryException indeterminate(String operation,
+                                                             MessageBatch<?> batch,
+                                                             Throwable failure) {
+            List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
+            for (int i = 0; i < batch.size(); i++) {
+                outcomes.add(BatchItemOutcome.indeterminate(i, failure));
+            }
+            return new BatchDeliveryException(operation + " failed with indeterminate batch outcome",
+                                              failure,
+                                              batch,
+                                              outcomes);
         }
 
         private static void addNotAttempted(List<BatchItemOutcome> outcomes, int firstIndex, int size) {
@@ -662,7 +686,7 @@ final class JmsOutgoingConnector {
                                                         long cleanupDeadline) {
             IllegalStateException failure = new IllegalStateException("JMS outgoing connector rejected a newly "
                                                                                + "created " + resourceType
-                                                                               + " for channel " + config.channel());
+                                                                               + " for channel " + config.channelName());
             if (closeRequested()) {
                 connectionSupport.closeAsync(resource);
                 return failure;
@@ -671,7 +695,7 @@ final class JmsOutgoingConnector {
                 connectionSupport.closeAndAwait(resource, cleanupDeadline);
             } catch (RuntimeException cleanupFailure) {
                 throw cleanupFailure("Cannot close rejected JMS " + resourceType + " for channel "
-                                             + config.channel(), cleanupFailure);
+                                             + config.channelName(), cleanupFailure);
             }
             return failure;
         }

@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
 
-import io.helidon.messaging.ConnectorDirection;
+import io.helidon.messaging.spi.ConnectorDirection;
 
 import org.apache.pulsar.client.api.Schema;
 
@@ -44,24 +44,24 @@ final class PulsarSchemaResolver {
         String selectedName = config.schemaProvider().orElseThrow();
         if (selectedName.isBlank()) {
             throw new IllegalArgumentException("Pulsar schema-provider must not be blank for channel "
-                                                       + config.channel());
+                                                       + config.channelName());
         }
         List<PulsarSchemaProvider> available;
         try {
             available = providers.get();
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("Cannot load Pulsar schema providers while resolving '" + selectedName
-                                                       + "' for channel " + config.channel(), e);
+                                                       + "' for channel " + config.channelName(), e);
         }
         if (available == null) {
             throw new IllegalArgumentException("Pulsar schema provider lookup returned null while resolving '"
-                                                       + selectedName + "' for channel " + config.channel());
+                                                       + selectedName + "' for channel " + config.channelName());
         }
         List<PulsarSchemaProvider> matches = new ArrayList<>();
         for (PulsarSchemaProvider provider : available) {
             if (provider == null) {
                 throw new IllegalArgumentException("Pulsar schema provider lookup contains null while resolving '"
-                                                           + selectedName + "' for channel " + config.channel());
+                                                           + selectedName + "' for channel " + config.channelName());
             }
             String providerName;
             try {
@@ -69,12 +69,12 @@ final class PulsarSchemaResolver {
             } catch (RuntimeException e) {
                 throw new IllegalArgumentException("Cannot read the name of Pulsar schema provider "
                                                            + provider.getClass().getName() + " while resolving '"
-                                                           + selectedName + "' for channel " + config.channel(), e);
+                                                           + selectedName + "' for channel " + config.channelName(), e);
             }
             if (providerName == null || providerName.isBlank()) {
                 throw new IllegalArgumentException("Pulsar schema provider " + provider.getClass().getName()
                                                            + " returned a null or blank name while resolving '"
-                                                           + selectedName + "' for channel " + config.channel());
+                                                           + selectedName + "' for channel " + config.channelName());
             }
             if (providerName.equals(selectedName)) {
                 matches.add(provider);
@@ -82,7 +82,7 @@ final class PulsarSchemaResolver {
         }
         if (matches.isEmpty()) {
             throw new IllegalArgumentException("No Pulsar schema provider named '" + selectedName
-                                                       + "' is registered for channel " + config.channel());
+                                                       + "' is registered for channel " + config.channelName());
         }
         if (matches.size() > 1) {
             String providerTypes = matches.stream()
@@ -92,7 +92,7 @@ final class PulsarSchemaResolver {
                     .reduce((first, second) -> first + ", " + second)
                     .orElseThrow();
             throw new IllegalArgumentException("Multiple Pulsar schema providers are named '" + selectedName
-                                                       + "' for channel " + config.channel() + ": " + providerTypes);
+                                                       + "' for channel " + config.channelName() + ": " + providerTypes);
         }
         PulsarSchemaProvider provider = matches.getFirst();
         Schema<?> schema;
@@ -101,12 +101,12 @@ final class PulsarSchemaResolver {
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("Pulsar schema provider '" + selectedName + "' ("
                                                        + provider.getClass().getName() + ") failed for channel "
-                                                       + config.channel(), e);
+                                                       + config.channelName(), e);
         }
         if (schema == null) {
             throw new IllegalArgumentException("Pulsar schema provider '" + selectedName + "' ("
                                                        + provider.getClass().getName() + ") returned null for channel "
-                                                       + config.channel());
+                                                       + config.channelName());
         }
         return new ResolvedSchema(schema(schema), null, selectedName, direction);
     }

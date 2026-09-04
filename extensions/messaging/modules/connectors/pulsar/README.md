@@ -213,6 +213,7 @@ disable the Maven module path. The upstream shaded `org.apache.pulsar:pulsar-cli
 `org.apache.pulsar:pulsar-client-api` must remain on the class path with the connector. Apache Pulsar 4.0.13 does not
 provide a clean module-path distribution; putting those client artifacts on the module path exposes overlapping
 `org.apache.pulsar.client.api` and `org.apache.pulsar.common.schema` packages and JPMS rejects the configuration.
+Apache Pulsar tracks this limitation in [apache/pulsar#20853](https://github.com/apache/pulsar/issues/20853).
 
 Applications using this connector should run the Helidon application, connector, and Pulsar client dependencies from
 the class path. Do not place the connector or either Pulsar client artifact on a strict module path. A mixed

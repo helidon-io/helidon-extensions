@@ -28,13 +28,13 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
 
-import io.helidon.messaging.BatchAtomicity;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.OutgoingConnector;
+import io.helidon.messaging.spi.BatchAtomicity;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.OutgoingConnector;
 
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.Producer;
@@ -69,7 +69,7 @@ final class PulsarOutgoingConnector {
     private static void validateDirection(PulsarConnectorConfig config) {
         Objects.requireNonNull(config);
         if (config.direction() != ConnectorDirection.OUTGOING) {
-            throw new IllegalArgumentException("Pulsar connector configuration for channel " + config.channel()
+            throw new IllegalArgumentException("Pulsar connector configuration for channel " + config.channelName()
                                                        + " has direction " + config.direction()
                                                        + ", expected " + ConnectorDirection.OUTGOING);
         }
@@ -200,7 +200,7 @@ final class PulsarOutgoingConnector {
             try {
                 current = acquireSend();
             } catch (RuntimeException e) {
-                throw BatchDeliveryException.notAttempted("Pulsar batch delivery", batch, e);
+                throw notAttemptedFailure(batch, e);
             }
             try {
                 sendBatch(current.producer(), batch);
@@ -372,9 +372,9 @@ final class PulsarOutgoingConnector {
             if (primaryFailure != null) {
                 throw new BatchDeliveryException("Cannot send Pulsar message batch " + batch.id()
                                                          + " to topic " + config.topic(),
+                                                 primaryFailure,
                                                  batch,
-                                                 outcomes,
-                                                 primaryFailure);
+                                                 outcomes);
             }
         }
 
@@ -413,7 +413,7 @@ final class PulsarOutgoingConnector {
                 producerClosed = producerFailure == null;
             } catch (RuntimeException e) {
                 failure = new MessagingException("Cannot initiate Pulsar producer close for channel "
-                                                         + config.channel(), e);
+                                                         + config.channelName(), e);
             }
             boolean clientClosed = false;
             try {
@@ -423,7 +423,7 @@ final class PulsarOutgoingConnector {
             } catch (RuntimeException e) {
                 failure = mergeFailure(failure,
                                        new MessagingException("Cannot initiate Pulsar client close for channel "
-                                                                      + config.channel(), e));
+                                                                      + config.channelName(), e));
             }
             boolean released = clientClosed || (current.client() == null && producerClosed);
             if (failure != null && !released) {
@@ -453,11 +453,11 @@ final class PulsarOutgoingConnector {
                 Throwable cause = e.getCause() == null ? e : e.getCause();
                 return mergeFailure(primary,
                                     new MessagingException("Cannot close Pulsar " + resource + " for channel "
-                                                                   + config.channel(), cause));
+                                                                   + config.channelName(), cause));
             } catch (TimeoutException e) {
                 return mergeFailure(primary,
                                     new MessagingException("Timed out closing Pulsar " + resource + " for channel "
-                                                                   + config.channel(), e));
+                                                                   + config.channelName(), e));
             }
         }
 
@@ -469,7 +469,7 @@ final class PulsarOutgoingConnector {
                 client.shutdown();
                 return null;
             } catch (PulsarClientException e) {
-                return new MessagingException("Cannot shut down Pulsar client for channel " + config.channel(), e);
+                return new MessagingException("Cannot shut down Pulsar client for channel " + config.channelName(), e);
             }
         }
 
@@ -482,14 +482,14 @@ final class PulsarOutgoingConnector {
                         long remaining = remainingNanos(deadline);
                         if (remaining == 0 || !lifecycleChanged.await(remaining, TimeUnit.NANOSECONDS)) {
                             throw new MessagingException("Timed out closing Pulsar connector while waiting for "
-                                                                 + operation + " on channel " + config.channel());
+                                                                 + operation + " on channel " + config.channelName());
                         }
                     }
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new MessagingException("Interrupted while waiting for Pulsar " + operation + " on channel "
-                                                     + config.channel(), e);
+                                                     + config.channelName(), e);
             }
         }
 
@@ -532,6 +532,17 @@ final class PulsarOutgoingConnector {
                 current.addSuppressed(additional);
             }
             return current;
+        }
+
+        private BatchDeliveryException notAttemptedFailure(MessageBatch<?> batch, RuntimeException failure) {
+            List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
+            for (int i = 0; i < batch.size(); i++) {
+                outcomes.add(BatchItemOutcome.notAttempted(i));
+            }
+            return new BatchDeliveryException("Pulsar batch delivery failed before attempting the batch",
+                                              failure,
+                                              batch,
+                                              outcomes);
         }
 
         private RuntimeException mergeFailure(RuntimeException primary, RuntimeException failure) {

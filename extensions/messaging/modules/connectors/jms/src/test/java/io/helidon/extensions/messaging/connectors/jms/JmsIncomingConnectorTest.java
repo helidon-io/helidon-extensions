@@ -28,14 +28,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import io.helidon.messaging.ConnectorDelivery;
-import io.helidon.messaging.ConnectorDeliveryReservation;
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.IncomingConnector;
-import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
+import io.helidon.messaging.spi.ConnectorDelivery;
+import io.helidon.messaging.spi.ConnectorDeliveryReservation;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingConnectorContext;
 
 import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;
@@ -360,7 +360,7 @@ class JmsIncomingConnectorTest {
         Duration hugeDelay = Duration.ofSeconds(Long.MAX_VALUE);
         JmsConnectorConfig defaultJitter = JmsConnectorConfig.builder()
                 .direction(ConnectorDirection.INCOMING)
-                .channel(CHANNEL)
+                .channelName(CHANNEL)
                 .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("events")
                 .reconnectInitialDelay(hugeDelay)
@@ -1250,7 +1250,7 @@ class JmsIncomingConnectorTest {
     private static JmsConnectorConfig config(boolean transacted) {
         return JmsConnectorConfig.builder()
                 .direction(ConnectorDirection.INCOMING)
-                .channel(CHANNEL)
+                .channelName(CHANNEL)
                 .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("events")
                 .transacted(transacted)
@@ -1465,18 +1465,29 @@ class JmsIncomingConnectorTest {
         }
 
         @Override
-        public void await() throws InterruptedException {
+        public void await() {
             started.countDown();
-            release.await();
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new MessagingException("Test delivery wait was interrupted", e);
+            }
             if (failure != null) {
                 throw failure;
             }
         }
 
         @Override
-        public boolean await(Duration timeout) throws InterruptedException {
+        public boolean await(Duration timeout) {
             started.countDown();
-            boolean completed = release.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+            boolean completed;
+            try {
+                completed = release.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new MessagingException("Test delivery wait was interrupted", e);
+            }
             if (completed && failure != null) {
                 throw failure;
             }

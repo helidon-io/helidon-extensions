@@ -14,6 +14,17 @@
  * limitations under the License.
  */
 
+import io.helidon.common.features.api.Features;
+import io.helidon.common.features.api.HelidonFlavor;
+
+/**
+ * Jakarta Messaging (JMS) connector for declarative messaging.
+ */
+@Features.Name("JMS")
+@Features.Description("Jakarta Messaging (JMS) connector for declarative messaging")
+@Features.Flavor(HelidonFlavor.SE)
+@Features.Path({"Messaging", "Connectors", "JMS"})
+@Features.Preview
 module io.helidon.extensions.messaging.connectors.jms {
     requires transitive io.helidon.builder.api;
     requires transitive io.helidon.config;
@@ -24,6 +35,7 @@ module io.helidon.extensions.messaging.connectors.jms {
     requires io.helidon.service.registry;
     requires java.naming;
 
+    requires static io.helidon.common.features.api;
     requires static io.helidon.config.metadata;
 
     exports io.helidon.extensions.messaging.connectors.jms;

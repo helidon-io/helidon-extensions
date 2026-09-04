@@ -28,13 +28,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.ConnectorDelivery;
-import io.helidon.messaging.ConnectorDeliveryReservation;
-import io.helidon.messaging.IncomingConnector;
-import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
+import io.helidon.messaging.spi.ConnectorDelivery;
+import io.helidon.messaging.spi.ConnectorDeliveryReservation;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingConnectorContext;
 
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.ConsumerBuilder;
@@ -213,6 +213,26 @@ class PulsarIncomingConnectorTest {
         assertThat(runFailure.get() instanceof IllegalStateException, is(true));
         assertThat(source.acks.get(), is(0));
         assertThat(source.negativeAcks.get(), is(1));
+        assertThat(source.closed.get(), is(true));
+    }
+
+    @Test
+    void forceCloseInterruptsActiveDeliveryWithoutSettlingTransport() throws Exception {
+        TestContext context = new TestContext(false, true);
+        FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage("payload", 7), context.reserved);
+        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
+                .createIncomingConnector(config(1024));
+        AtomicReference<Throwable> runFailure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
+
+        assertThat(context.deliveryEntered.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+        connector.forceClose();
+        owner.join(WAIT.toMillis());
+
+        assertThat(owner.isAlive(), is(false));
+        assertThat(runFailure.get(), nullValue());
+        assertThat(source.acks.get(), is(0));
+        assertThat(source.negativeAcks.get(), is(0));
         assertThat(source.closed.get(), is(true));
     }
 
@@ -408,7 +428,7 @@ class PulsarIncomingConnectorTest {
     private static PulsarConnectorConfig.Builder configBuilder(PulsarSchemaType schema, int maxMessageBytes) {
         return PulsarConnectorConfig.builder()
                 .direction(ConnectorDirection.INCOMING)
-                .channel("in")
+                .channelName("in")
                 .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
                 .serviceUrl("pulsar://localhost:6650")
                 .topic("persistent://public/default/in")
@@ -558,15 +578,25 @@ class PulsarIncomingConnectorTest {
                 }
 
                 @Override
-                public void await() throws InterruptedException {
+                public void await() {
                     deliveryEntered.countDown();
-                    allowDelivery.await();
+                    try {
+                        allowDelivery.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new MessagingException("Interrupted while waiting for test delivery", e);
+                    }
                 }
 
                 @Override
-                public boolean await(Duration timeout) throws InterruptedException {
+                public boolean await(Duration timeout) {
                     deliveryEntered.countDown();
-                    return allowDelivery.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+                    try {
+                        return allowDelivery.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new MessagingException("Interrupted while waiting for test delivery", e);
+                    }
                 }
 
                 @Override

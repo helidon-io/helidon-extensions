@@ -26,8 +26,9 @@ import java.time.LocalTime;
 import java.util.Date;
 import java.util.Objects;
 
-import io.helidon.messaging.ConnectorDirection;
+import io.helidon.common.Api;
 import io.helidon.messaging.MessagingException;
+import io.helidon.messaging.spi.ConnectorDirection;
 
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.schema.GenericRecord;
@@ -35,6 +36,7 @@ import org.apache.pulsar.client.api.schema.GenericRecord;
 /**
  * Built-in Pulsar payload schema.
  */
+@Api.Preview
 public enum PulsarSchemaType {
     /**
      * Broker-schema discovery, using {@link GenericRecord} for incoming messages and encoded {@code byte[]} for

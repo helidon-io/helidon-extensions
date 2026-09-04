@@ -20,12 +20,12 @@ import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorProvider
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.IncomingReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonSchemaProvider;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.OutgoingSender;
-import io.helidon.messaging.ConnectorProvider;
 import io.helidon.messaging.ConsumerRegistration;
 import io.helidon.messaging.EmitterRegistration;
-import io.helidon.messaging.IncomingConnectorProvider;
 import io.helidon.messaging.MessagingRuntime;
-import io.helidon.messaging.OutgoingConnectorProvider;
+import io.helidon.messaging.spi.ConnectorProvider;
+import io.helidon.messaging.spi.IncomingConnectorProvider;
+import io.helidon.messaging.spi.OutgoingConnectorProvider;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 

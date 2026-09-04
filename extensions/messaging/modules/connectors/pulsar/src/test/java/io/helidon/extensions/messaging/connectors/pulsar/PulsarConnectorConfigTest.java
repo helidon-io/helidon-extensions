@@ -21,8 +21,8 @@ import java.util.Map;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
-import io.helidon.messaging.ConnectorConfig;
-import io.helidon.messaging.ConnectorDirection;
+import io.helidon.messaging.spi.ConnectorConfig;
+import io.helidon.messaging.spi.ConnectorDirection;
 
 import org.junit.jupiter.api.Test;
 
@@ -133,7 +133,7 @@ class PulsarConnectorConfigTest {
     private static PulsarConnectorConfig.Builder builder() {
         return PulsarConnectorConfig.builder()
                 .direction(ConnectorDirection.OUTGOING)
-                .channel(CHANNEL)
+                .channelName(CHANNEL)
                 .connector(PulsarConnectorProvider.CONNECTOR_TYPE);
     }
 }

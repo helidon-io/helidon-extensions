@@ -16,12 +16,12 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.ConnectorProvider;
-import io.helidon.messaging.IncomingConnector;
-import io.helidon.messaging.IncomingConnectorProvider;
-import io.helidon.messaging.OutgoingConnector;
-import io.helidon.messaging.OutgoingConnectorProvider;
+import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.spi.ConnectorProvider;
+import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingConnectorProvider;
+import io.helidon.messaging.spi.OutgoingConnector;
+import io.helidon.messaging.spi.OutgoingConnectorProvider;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryConfig;
 import io.helidon.service.registry.ServiceRegistryManager;
@@ -84,7 +84,7 @@ class JmsConnectorServiceTest {
     private static JmsConnectorConfig config(ConnectorDirection direction) {
         return JmsConnectorConfig.builder()
                 .direction(direction)
-                .channel("orders")
+                .channelName("orders")
                 .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("orders")
                 .build();

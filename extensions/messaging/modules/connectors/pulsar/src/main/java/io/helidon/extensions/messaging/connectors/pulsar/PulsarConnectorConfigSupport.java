@@ -130,7 +130,7 @@ final class PulsarConnectorConfigSupport {
         ConsumerBuilder<Object> builder = client.newConsumer(schema.schema())
                 .loadConf(objectProperties(config.consumerProperties()))
                 .topic(config.topic())
-                .subscriptionName(config.subscriptionName().orElse(config.channel()))
+                .subscriptionName(config.subscriptionName().orElse(config.channelName()))
                 .subscriptionType(config.subscriptionType().nativeType())
                 .subscriptionMode(SubscriptionMode.Durable)
                 .subscriptionInitialPosition(config.subscriptionInitialPosition().nativePosition())
