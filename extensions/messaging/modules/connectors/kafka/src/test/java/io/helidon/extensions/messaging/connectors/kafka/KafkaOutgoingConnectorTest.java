@@ -39,9 +39,9 @@ import java.util.concurrent.locks.ReentrantLock;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
 import io.helidon.messaging.DeadLetterMessage;
-import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessageMetadata;
 import io.helidon.messaging.MessagingException;
@@ -94,8 +94,8 @@ class KafkaOutgoingConnectorTest {
                               .localMetadata(LOCAL_SECRET_METADATA, "must-not-leak")
                               .addHeader("duplicate", "first")
                               .addHeader("duplicate", "second")
-                              .addHeader("binary", HeaderValue.binary(new byte[] {0x00, (byte) 0xFF}))
-                              .addHeader("null-header", HeaderValue.nullValue())
+                              .addHeader("binary", MessageHeaderValue.binary(new byte[] {0x00, (byte) 0xFF}))
+                              .addHeader("null-header", MessageHeaderValue.nullValue())
                               .build());
 
         assertThat(producer.history().size(), is(1));
@@ -116,7 +116,7 @@ class KafkaOutgoingConnectorTest {
         KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
         OutgoingConnector outgoing = start(connector, config());
         Message<String> message = Message.builder("audit event")
-                .header("attempt", HeaderValue.integer(1))
+                .header("attempt", MessageHeaderValue.integer(1))
                 .build();
 
         MessagingException failure = assertThrows(MessagingException.class, () -> outgoing.send(message));
@@ -154,8 +154,8 @@ class KafkaOutgoingConnectorTest {
         assertArrayEquals(new byte[] {0x00, (byte) 0xFF}, headers[2].value());
         assertThat(headers[3].value(), nullValue());
         assertThat(message.headerValue("trace-id").orElseThrow(),
-                   is(HeaderValue.binary("second".getBytes(StandardCharsets.UTF_8))));
-        assertThat(message.headerValue("null-header").orElseThrow(), is(HeaderValue.nullValue()));
+                   is(MessageHeaderValue.binary("second".getBytes(StandardCharsets.UTF_8))));
+        assertThat(message.headerValue("null-header").orElseThrow(), is(MessageHeaderValue.nullValue()));
     }
 
     @Test
@@ -232,7 +232,7 @@ class KafkaOutgoingConnectorTest {
         assertThat(deadLetter.localMetadata()
                            .value(DeadLetterMessage.FAILURE_MESSAGE_METADATA)
                            .orElseThrow(),
-                   is(HeaderValue.text("dispatch failed")));
+                   is(MessageHeaderValue.text("dispatch failed")));
 
         start(connector, config()).send(deadLetter);
 

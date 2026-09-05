@@ -37,9 +37,9 @@ import java.util.function.Function;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.BatchItemStatus;
-import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
 import io.helidon.messaging.spi.ConnectorDelivery;
@@ -481,11 +481,11 @@ class KafkaIncomingConnectorTest {
         assertThat(events, is(List.of("dispatch", "commit")));
         assertThat(context.messages().stream().map(Message::entity).toList(), is(List.of("first", "second")));
         assertThat(context.messages().get(0).headerValue("null-header").orElseThrow(),
-                   is(HeaderValue.nullValue()));
+                   is(MessageHeaderValue.nullValue()));
         assertThat(context.messages().get(0).headerValue("trace-id").orElseThrow(),
-                   is(HeaderValue.binary("Příliš žluťoučký".getBytes(StandardCharsets.UTF_8))));
+                   is(MessageHeaderValue.binary("Příliš žluťoučký".getBytes(StandardCharsets.UTF_8))));
         assertThat(context.messages().get(1).headerValue("source").orElseThrow(),
-                   is(HeaderValue.binary("kafka".getBytes(StandardCharsets.UTF_8))));
+                   is(MessageHeaderValue.binary("kafka".getBytes(StandardCharsets.UTF_8))));
         assertThat(context.messages().get(0), instanceOf(KafkaMessage.class));
         KafkaMessage<?, ?> kafkaMessage = (KafkaMessage<?, ?>) context.messages().get(0);
         assertThat(kafkaMessage.key().orElseThrow(), is("audit-key"));
@@ -878,7 +878,7 @@ class KafkaIncomingConnectorTest {
         assertThrows(MessagingException.class, tombstone::entity);
         assertThat(tombstone.key().orElseThrow(), is("tombstone-key"));
         assertArrayEquals(new byte[] {1, 2},
-                          ((HeaderValue.BinaryValue) tombstone.headerValue("trace").orElseThrow()).value());
+                          ((MessageHeaderValue.BinaryValue) tombstone.headerValue("trace").orElseThrow()).value());
         assertThat(batch.get(1).entity(), is("second"));
         assertThat(mappingFailure.get().outcome(0).status(), is(BatchItemStatus.FAILED));
         assertThat(mappingFailure.get().outcome(1).status(), is(BatchItemStatus.NOT_ATTEMPTED));

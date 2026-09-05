@@ -31,7 +31,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
-import io.helidon.messaging.HeaderValue;
+import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
 
@@ -319,21 +319,21 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
         return result.build();
     }
 
-    private static HeaderValue portableHeaderValue(Object value) {
+    private static MessageHeaderValue portableHeaderValue(Object value) {
         if (value instanceof Boolean booleanValue) {
-            return HeaderValue.booleanValue(booleanValue);
+            return MessageHeaderValue.booleanValue(booleanValue);
         }
         if (value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long) {
-            return HeaderValue.integer(((Number) value).longValue());
+            return MessageHeaderValue.integer(((Number) value).longValue());
         }
         if (value instanceof Float floatValue) {
-            return HeaderValue.floatingPoint(floatValue);
+            return MessageHeaderValue.floatingPoint(floatValue);
         }
         if (value instanceof Double doubleValue) {
-            return HeaderValue.floatingPoint(doubleValue);
+            return MessageHeaderValue.floatingPoint(doubleValue);
         }
         if (value instanceof String stringValue) {
-            return HeaderValue.text(stringValue);
+            return MessageHeaderValue.text(stringValue);
         }
         throw new IllegalArgumentException("Unsupported JMS property type: " + value.getClass().getName());
     }

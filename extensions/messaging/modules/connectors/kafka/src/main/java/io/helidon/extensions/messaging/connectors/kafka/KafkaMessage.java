@@ -25,8 +25,8 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 
 import io.helidon.common.Api;
-import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
+import io.helidon.messaging.MessageHeaderValue;
 
 /**
  * Kafka-specific immutable message envelope.
@@ -36,7 +36,8 @@ import io.helidon.messaging.Message;
  * topic, partition, offset, timestamp, or leader epoch.
  * <p>
  * The portable {@link #headers()} view preserves native header order and duplicate names. Non-null native values are
- * exposed as {@link HeaderValue.BinaryValue}; native null values are exposed as {@link HeaderValue.NullValue}. Use
+ * exposed as {@link MessageHeaderValue.BinaryValue}; native null values are exposed as
+ * {@link MessageHeaderValue.NullValue}. Use
  * {@link #kafkaHeaders()} when Kafka-native header access is preferred.
  *
  * @param <K> Kafka key type
@@ -208,7 +209,7 @@ public interface KafkaMessage<K, V> extends Message<V> {
          * Append a native Kafka header.
          * <p>
          * Repeated names are retained in both header views. The supplied array is defensively copied. A {@code null}
-         * value represents a native null-valued header and is exposed as {@link HeaderValue.NullValue} in the portable
+         * value represents a native null-valued header and is exposed as {@link MessageHeaderValue.NullValue} in the portable
          * {@link KafkaMessage#headers()} view.
          *
          * @param name header name
