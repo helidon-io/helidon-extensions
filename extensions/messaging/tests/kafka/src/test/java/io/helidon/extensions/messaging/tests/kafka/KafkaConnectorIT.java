@@ -62,9 +62,9 @@ import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.RestartRe
 import io.helidon.extensions.messaging.tests.kafka.KafkaTestSerializers.BlockingStringSerializer;
 import io.helidon.extensions.messaging.tests.kafka.KafkaTestSerializers.FailingStringSerializer;
 import io.helidon.messaging.DeadLetterMessage;
-import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessagingChannel;
 import io.helidon.messaging.MessagingGraph;
 import io.helidon.messaging.MessagingRuntime;
@@ -647,7 +647,7 @@ class KafkaConnectorIT {
             assertThat(second.timestamp().orElseThrow(), is(secondTimestamp));
             assertThat(first.timestampType().isPresent(), is(true));
             assertThat(first.headerValue("duplicate").orElseThrow(), is(binaryHeaderValue("second")));
-            assertThat(first.headerValue("null-value").orElseThrow(), is(HeaderValue.nullValue()));
+            assertThat(first.headerValue("null-value").orElseThrow(), is(MessageHeaderValue.nullValue()));
 
             List<KafkaMessage.Header> headers = first.kafkaHeaders();
             assertThat(headers.stream().map(KafkaMessage.Header::name).toList(),
@@ -844,13 +844,12 @@ class KafkaConnectorIT {
 
     private static ServiceRegistryManager outgoingRegistryManager(String topic) {
         return registryManager("""
-                helidon:
-                  messaging:
-                    outgoing:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
+                messaging:
+                  outgoing:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
                 """.formatted(KafkaMessagingTypes.OUTGOING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic),
@@ -861,27 +860,26 @@ class KafkaConnectorIT {
                                                                     String outgoingTopic,
                                                                     String group) {
         return registryManager("""
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        group.id: "%s"
-                        auto.offset.reset: earliest
-                        poll.timeout: PT0.1S
-                        failure:
-                          retry:
-                            delay: PT0.05S
-                        properties:
-                          max.poll.records: "1"
-                    outgoing:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        value.serializer: "%s"
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      group.id: "%s"
+                      auto.offset.reset: earliest
+                      poll.timeout: PT0.1S
+                      failure:
+                        retry:
+                          delay: PT0.05S
+                      properties:
+                        max.poll.records: "1"
+                  outgoing:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      value.serializer: "%s"
                 """.formatted(KafkaMessagingTypes.FORWARDING_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                incomingTopic,
@@ -897,29 +895,28 @@ class KafkaConnectorIT {
                                                                            String outgoingTopic,
                                                                            String group) {
         return registryManager("""
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        group.id: "%s"
-                        auto.offset.reset: earliest
-                        poll.timeout: PT0.1S
-                        failure:
-                          retry:
-                            delay: PT0.05S
-                            max-attempts: 2
-                          on-exhausted: FAIL
-                        properties:
-                          max.poll.records: "1"
-                    outgoing:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        value.serializer: "%s"
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      group.id: "%s"
+                      auto.offset.reset: earliest
+                      poll.timeout: PT0.1S
+                      failure:
+                        retry:
+                          delay: PT0.05S
+                          max-attempts: 2
+                        on-exhausted: FAIL
+                      properties:
+                        max.poll.records: "1"
+                  outgoing:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      value.serializer: "%s"
                 """.formatted(KafkaMessagingTypes.FAILING_FORWARDING_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                incomingTopic,
@@ -933,23 +930,22 @@ class KafkaConnectorIT {
 
     private static ServiceRegistryManager restartRegistryManager(String topic, String group) {
         return registryManager("""
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        group.id: "%s"
-                        auto.offset.reset: earliest
-                        poll.timeout: PT0.1S
-                        failure:
-                          retry:
-                            delay: PT0.05S
-                            max-attempts: 1
-                          on-exhausted: FAIL
-                        properties:
-                          max.poll.records: "1"
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      group.id: "%s"
+                      auto.offset.reset: earliest
+                      poll.timeout: PT0.1S
+                      failure:
+                        retry:
+                          delay: PT0.05S
+                          max-attempts: 1
+                        on-exhausted: FAIL
+                      properties:
+                        max.poll.records: "1"
                 """.formatted(KafkaMessagingTypes.RESTART_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
@@ -959,23 +955,22 @@ class KafkaConnectorIT {
 
     private static ServiceRegistryManager dropRegistryManager(String topic, String group) {
         return registryManager("""
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        group.id: "%s"
-                        auto.offset.reset: earliest
-                        poll.timeout: PT0.1S
-                        failure:
-                          retry:
-                            delay: PT0.05S
-                            max-attempts: 2
-                          on-exhausted: DROP
-                        properties:
-                          max.poll.records: "2"
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      group.id: "%s"
+                      auto.offset.reset: earliest
+                      poll.timeout: PT0.1S
+                      failure:
+                        retry:
+                          delay: PT0.05S
+                          max-attempts: 2
+                        on-exhausted: DROP
+                      properties:
+                        max.poll.records: "2"
                 """.formatted(KafkaMessagingTypes.DROP_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
@@ -985,21 +980,20 @@ class KafkaConnectorIT {
 
     private static ServiceRegistryManager partitionRetryRegistryManager(String topic, String group) {
         return registryManager("""
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        group.id: "%s"
-                        auto.offset.reset: earliest
-                        poll.timeout: PT0.1S
-                        failure:
-                          retry:
-                            delay: PT0.05S
-                        properties:
-                          max.poll.records: "4"
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      group.id: "%s"
+                      auto.offset.reset: earliest
+                      poll.timeout: PT0.1S
+                      failure:
+                        retry:
+                          delay: PT0.05S
+                      properties:
+                        max.poll.records: "4"
                 """.formatted(KafkaMessagingTypes.PARTITION_RETRY_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
@@ -1009,27 +1003,26 @@ class KafkaConnectorIT {
 
     private static ServiceRegistryManager numericRegistryManager(String topic, String group) {
         return registryManager("""
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        group.id: "%s"
-                        key.deserializer: "%s"
-                        value.deserializer: "%s"
-                        auto.offset.reset: earliest
-                        poll.timeout: PT0.1S
-                        properties:
-                          max.poll.records: "1"
-                    outgoing:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        key.serializer: "%s"
-                        value.serializer: "%s"
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      group.id: "%s"
+                      key.deserializer: "%s"
+                      value.deserializer: "%s"
+                      auto.offset.reset: earliest
+                      poll.timeout: PT0.1S
+                      properties:
+                        max.poll.records: "1"
+                  outgoing:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      key.serializer: "%s"
+                      value.serializer: "%s"
                 """.formatted(KafkaMessagingTypes.NUMERIC_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
@@ -1047,18 +1040,17 @@ class KafkaConnectorIT {
 
     private static ServiceRegistryManager incomingRegistryManager(String topic, String group) {
         return registryManager("""
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        group.id: "%s"
-                        auto.offset.reset: earliest
-                        poll.timeout: PT0.1S
-                        properties:
-                          max.poll.records: "2"
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      group.id: "%s"
+                      auto.offset.reset: earliest
+                      poll.timeout: PT0.1S
+                      properties:
+                        max.poll.records: "2"
                 """.formatted(KafkaMessagingTypes.INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
@@ -1072,18 +1064,17 @@ class KafkaConnectorIT {
 
     private static ServiceRegistryManager metadataRegistryManager(String topic, String group) {
         return registryManager("""
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        group.id: "%s"
-                        auto.offset.reset: earliest
-                        poll.timeout: PT0.1S
-                        properties:
-                          max.poll.records: "2"
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      group.id: "%s"
+                      auto.offset.reset: earliest
+                      poll.timeout: PT0.1S
+                      properties:
+                        max.poll.records: "2"
                 """.formatted(KafkaMessagingTypes.METADATA_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
@@ -1095,21 +1086,20 @@ class KafkaConnectorIT {
 
     private static ServiceRegistryManager redeliveryRegistryManager(String topic, String group) {
         return registryManager("""
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        group.id: "%s"
-                        auto.offset.reset: earliest
-                        poll.timeout: PT0.1S
-                        failure:
-                          retry:
-                            delay: PT0.05S
-                        properties:
-                          max.poll.records: "1"
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      group.id: "%s"
+                      auto.offset.reset: earliest
+                      poll.timeout: PT0.1S
+                      failure:
+                        retry:
+                          delay: PT0.05S
+                      properties:
+                        max.poll.records: "1"
                 """.formatted(KafkaMessagingTypes.REDELIVERY_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
@@ -1122,22 +1112,21 @@ class KafkaConnectorIT {
                                                                    Duration retryDelay,
                                                                    Duration maxPollInterval) {
         return registryManager("""
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        group.id: "%s"
-                        auto.offset.reset: earliest
-                        poll.timeout: PT0.1S
-                        failure:
-                          retry:
-                            delay: %s
-                        properties:
-                          max.poll.records: "1"
-                          max.poll.interval.ms: "%d"
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      group.id: "%s"
+                      auto.offset.reset: earliest
+                      poll.timeout: PT0.1S
+                      failure:
+                        retry:
+                          delay: %s
+                      properties:
+                        max.poll.records: "1"
+                        max.poll.interval.ms: "%d"
                 """.formatted(KafkaMessagingTypes.REDELIVERY_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
@@ -1151,30 +1140,29 @@ class KafkaConnectorIT {
                                                                     String deadLetterTopic,
                                                                     String group) {
         return registryManager("""
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
-                        group.id: "%s"
-                        auto.offset.reset: earliest
-                        poll.timeout: PT0.1S
-                        failure:
-                          retry:
-                            delay: PT0.05S
-                            max-attempts: 3
-                          on-exhausted: DEAD_LETTER
-                          dead-letter:
-                            channel: %s
-                        properties:
-                          max.poll.records: "2"
-                    outgoing:
-                      %s:
-                        connector: helidon-kafka
-                        bootstrap.servers: "%s"
-                        topic: "%s"
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
+                      group.id: "%s"
+                      auto.offset.reset: earliest
+                      poll.timeout: PT0.1S
+                      failure:
+                        retry:
+                          delay: PT0.05S
+                          max-attempts: 3
+                        on-exhausted: DEAD_LETTER
+                        dead-letter:
+                          channel: %s
+                      properties:
+                        max.poll.records: "2"
+                  outgoing:
+                    %s:
+                      connector: helidon-kafka
+                      bootstrap.servers: "%s"
+                      topic: "%s"
                 """.formatted(KafkaMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL,
                                KAFKA.getBootstrapServers(),
                                topic,
@@ -1222,22 +1210,22 @@ class KafkaConnectorIT {
         }
     }
 
-    private static byte[] kafkaHeaderValue(HeaderValue value) {
-        if (value instanceof HeaderValue.NullValue) {
+    private static byte[] kafkaHeaderValue(MessageHeaderValue value) {
+        if (value instanceof MessageHeaderValue.NullValue) {
             return null;
         }
-        if (value instanceof HeaderValue.TextValue textValue) {
+        if (value instanceof MessageHeaderValue.TextValue textValue) {
             return textValue.value().getBytes(StandardCharsets.UTF_8);
         }
-        if (value instanceof HeaderValue.BinaryValue binaryValue) {
+        if (value instanceof MessageHeaderValue.BinaryValue binaryValue) {
             return binaryValue.value();
         }
         throw new IllegalArgumentException("Unsupported Kafka test header value type "
                                                    + value.getClass().getSimpleName());
     }
 
-    private static HeaderValue binaryHeaderValue(String value) {
-        return HeaderValue.binary(value.getBytes(StandardCharsets.UTF_8));
+    private static MessageHeaderValue binaryHeaderValue(String value) {
+        return MessageHeaderValue.binary(value.getBytes(StandardCharsets.UTF_8));
     }
 
     private static void sendRecords(List<ProducerRecord<String, String>> records) throws Exception {

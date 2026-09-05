@@ -25,9 +25,9 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import io.helidon.messaging.DeadLetterMessage;
-import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageHeader;
+import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
 
@@ -141,8 +141,8 @@ final class PulsarMessageMapper {
             if (excludedNames.contains(header.name())) {
                 continue;
             }
-            HeaderValue value = header.value();
-            if (!(value instanceof HeaderValue.TextValue textValue)) {
+            MessageHeaderValue value = header.value();
+            if (!(value instanceof MessageHeaderValue.TextValue textValue)) {
                 throw new MessagingException("Pulsar properties support only text message headers; header '"
                                                      + header.name() + "' has value type "
                                                      + value.getClass().getSimpleName());

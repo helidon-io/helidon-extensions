@@ -69,34 +69,33 @@ Do not combine `connection-factory` with `jndi.connection-factory`, or `destinat
 
 ## Configuration
 
-Connector defaults can be shared under `helidon.messaging.connector.helidon-jms`. Channel settings override them.
+Connector defaults can be shared under `messaging.connector.helidon-jms`. Channel settings override them.
 
 ```yaml
-helidon:
-  messaging:
-    connector:
-      helidon-jms:
-        connection-factory: primary-jms
-        reconnect:
-          initial-delay: PT0.1S
-          max-delay: PT30S
-          jitter: 0.2
-        max-body-bytes: 1048576
-        receive-timeout: PT0.1S
-        close-timeout: PT10S
+messaging:
+  connector:
+    helidon-jms:
+      connection-factory: primary-jms
+      reconnect:
+        initial-delay: PT0.1S
+        max-delay: PT30S
+        jitter: 0.2
+      max-body-bytes: 1048576
+      receive-timeout: PT0.1S
+      close-timeout: PT10S
 
-    incoming:
-      orders:
-        connector: helidon-jms
-        destination: orders
-        destination-type: QUEUE
-        message-selector: "region = 'EU'"
+  incoming:
+    orders:
+      connector: helidon-jms
+      destination: orders
+      destination-type: QUEUE
+      message-selector: "region = 'EU'"
 
-    outgoing:
-      order-results:
-        connector: helidon-jms
-        destination: order-results
-        destination-type: QUEUE
+  outgoing:
+    order-results:
+      connector: helidon-jms
+      destination: order-results
+      destination-type: QUEUE
 ```
 
 Connection credentials are optional but must be supplied together:
@@ -120,17 +119,16 @@ A non-durable topic consumer needs only `destination-type: TOPIC`. A durable top
 identifier:
 
 ```yaml
-helidon:
-  messaging:
-    incoming:
-      notifications:
-        connector: helidon-jms
-        destination: notifications
-        destination-type: TOPIC
-        durable: true
-        client-id: inventory-service
-        subscription-name: inventory-notifications
-        no-local: false
+messaging:
+  incoming:
+    notifications:
+      connector: helidon-jms
+      destination: notifications
+      destination-type: TOPIC
+      durable: true
+      client-id: inventory-service
+      subscription-name: inventory-notifications
+      no-local: false
 ```
 
 Omit `client-id` when the `ConnectionFactory` supplies an administratively configured client identifier. An explicitly

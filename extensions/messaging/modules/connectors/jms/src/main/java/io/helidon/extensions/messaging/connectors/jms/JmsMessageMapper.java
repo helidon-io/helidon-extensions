@@ -27,9 +27,9 @@ import java.util.Objects;
 import java.util.Set;
 
 import io.helidon.messaging.DeadLetterMessage;
-import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageHeader;
+import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessagingException;
 
 import jakarta.jms.BytesMessage;
@@ -111,8 +111,8 @@ final class JmsMessageMapper {
                                                               DeadLetterMessage<?> deadLetterMessage,
                                                               JmsMessage<?> originalMessage,
                                                               boolean allowObjectMessages) throws JMSException {
-        Map<String, HeaderValue> wrapperHeaders = portableHeaders(deadLetterMessage);
-        Map<String, HeaderValue> originalHeaders = portableHeaders(originalMessage);
+        Map<String, MessageHeaderValue> wrapperHeaders = portableHeaders(deadLetterMessage);
+        Map<String, MessageHeaderValue> originalHeaders = portableHeaders(originalMessage);
         Map<String, Object> nativeProperties = new LinkedHashMap<>();
         for (Map.Entry<String, Object> entry : originalMessage.jmsProperties().entrySet()) {
             String name = entry.getKey();
@@ -157,8 +157,8 @@ final class JmsMessageMapper {
                             Integer.toString(deadLetterMessage.attempts()));
     }
 
-    private static Map<String, HeaderValue> portableHeaders(Message<?> message) {
-        Map<String, HeaderValue> result = new LinkedHashMap<>();
+    private static Map<String, MessageHeaderValue> portableHeaders(Message<?> message) {
+        Map<String, MessageHeaderValue> result = new LinkedHashMap<>();
         for (MessageHeader header : message.headers()) {
             if (DEAD_LETTER_HEADERS.contains(header.name())) {
                 continue;
@@ -354,9 +354,9 @@ final class JmsMessageMapper {
         }
     }
 
-    private static Object portableProperty(String name, HeaderValue value) {
+    private static Object portableProperty(String name, MessageHeaderValue value) {
         Object result;
-        if (value instanceof HeaderValue.TextValue textValue) {
+        if (value instanceof MessageHeaderValue.TextValue textValue) {
             if (JmsMessageImpl.JMSX_GROUP_SEQ.equals(name)) {
                 try {
                     result = Integer.parseInt(textValue.value());
@@ -366,9 +366,9 @@ final class JmsMessageMapper {
             } else {
                 result = textValue.value();
             }
-        } else if (value instanceof HeaderValue.BooleanValue booleanValue) {
+        } else if (value instanceof MessageHeaderValue.BooleanValue booleanValue) {
             result = booleanValue.value();
-        } else if (value instanceof HeaderValue.IntegerValue integerValue) {
+        } else if (value instanceof MessageHeaderValue.IntegerValue integerValue) {
             try {
                 if (JmsMessageImpl.JMSX_GROUP_SEQ.equals(name)) {
                     result = integerValue.value().intValueExact();
@@ -378,9 +378,9 @@ final class JmsMessageMapper {
             } catch (ArithmeticException e) {
                 throw new MessagingException("Cannot map messaging header " + name + " to a JMS property", e);
             }
-        } else if (value instanceof HeaderValue.Float32Value floatValue) {
+        } else if (value instanceof MessageHeaderValue.Float32Value floatValue) {
             result = floatValue.value();
-        } else if (value instanceof HeaderValue.Float64Value doubleValue) {
+        } else if (value instanceof MessageHeaderValue.Float64Value doubleValue) {
             result = doubleValue.value();
         } else {
             throw new MessagingException("Unsupported JMS header value for " + name + ": "

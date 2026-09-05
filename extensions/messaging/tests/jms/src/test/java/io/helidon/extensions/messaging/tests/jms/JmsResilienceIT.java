@@ -144,27 +144,26 @@ class JmsResilienceIT {
                                                             String incomingDestination,
                                                             String outgoingDestination) {
         return JmsScenarioRegistry.create("""
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-jms
-                        destination: "%s"
-                        receive-timeout: PT0.05S
-                        close-timeout: PT5S
-                        reconnect:
-                          initial-delay: PT0.05S
-                          max-delay: PT0.05S
-                          jitter: 0
-                    outgoing:
-                      %s:
-                        connector: helidon-jms
-                        destination: "%s"
-                        close-timeout: PT5S
-                        reconnect:
-                          initial-delay: PT0.05S
-                          max-delay: PT0.05S
-                          jitter: 0
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-jms
+                      destination: "%s"
+                      receive-timeout: PT0.05S
+                      close-timeout: PT5S
+                      reconnect:
+                        initial-delay: PT0.05S
+                        max-delay: PT0.05S
+                        jitter: 0
+                  outgoing:
+                    %s:
+                      connector: helidon-jms
+                      destination: "%s"
+                      close-timeout: PT5S
+                      reconnect:
+                        initial-delay: PT0.05S
+                        max-delay: PT0.05S
+                        jitter: 0
                 """.formatted(JmsMessagingTypes.RECONNECT_INCOMING_CHANNEL,
                                incomingDestination,
                                JmsMessagingTypes.RECONNECT_OUTGOING_CHANNEL,
@@ -178,16 +177,15 @@ class JmsResilienceIT {
                                                           String topic,
                                                           String subscriptionName) {
         return JmsScenarioRegistry.create("""
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-jms
-                        destination: "%s"
-                        destination-type: TOPIC
-                        durable: true
-                        subscription-name: "%s"
-                        receive-timeout: PT0.05S
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-jms
+                      destination: "%s"
+                      destination-type: TOPIC
+                      durable: true
+                      subscription-name: "%s"
+                      receive-timeout: PT0.05S
                 """.formatted(JmsMessagingTypes.DURABLE_INCOMING_CHANNEL,
                                topic,
                                subscriptionName),
