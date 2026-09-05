@@ -71,29 +71,28 @@ class JmsJndiIT {
 
     private static String config(String destination, String connectionUrl) {
         return """
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-jms
-                        jndi:
-                          connection-factory: cf
-                          destination: orders
-                          environment:
-                            java.naming.factory.initial: org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory
-                            connectionFactory.cf: "%s"
-                            queue.orders: "%s"
-                        receive-timeout: PT0.05S
-                    outgoing:
-                      %s:
-                        connector: helidon-jms
-                        jndi:
-                          connection-factory: cf
-                          destination: orders
-                          environment:
-                            java.naming.factory.initial: org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory
-                            connectionFactory.cf: "%s"
-                            queue.orders: "%s"
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-jms
+                      jndi:
+                        connection-factory: cf
+                        destination: orders
+                        environment:
+                          java.naming.factory.initial: org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory
+                          connectionFactory.cf: "%s"
+                          queue.orders: "%s"
+                      receive-timeout: PT0.05S
+                  outgoing:
+                    %s:
+                      connector: helidon-jms
+                      jndi:
+                        connection-factory: cf
+                        destination: orders
+                        environment:
+                          java.naming.factory.initial: org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory
+                          connectionFactory.cf: "%s"
+                          queue.orders: "%s"
                 """.formatted(JmsMessagingTypes.TEXT_INCOMING_CHANNEL,
                                connectionUrl,
                                destination,

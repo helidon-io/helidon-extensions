@@ -32,9 +32,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
 import io.helidon.messaging.DeadLetterMessage;
-import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.OutgoingConnector;
@@ -124,7 +124,7 @@ class PulsarOutgoingConnectorTest {
         BatchDeliveryException typedFailure = assertThrows(
                 BatchDeliveryException.class,
                 () -> connector.sendBatch(MessageBatch.create(Message.builder("typed")
-                                                                       .header("priority", HeaderValue.integer(7))
+                                                                       .header("priority", MessageHeaderValue.integer(7))
                                                                        .build())));
         assertThat(typedFailure.getCause().getMessage(), containsString("only text message headers"));
 
@@ -248,7 +248,7 @@ class PulsarOutgoingConnectorTest {
         assertThat(deadLetter.localMetadata()
                            .value(DeadLetterMessage.FAILURE_MESSAGE_METADATA)
                            .orElseThrow(),
-                   is(HeaderValue.text("Pulsar message payload is unavailable")));
+                   is(MessageHeaderValue.text("Pulsar message payload is unavailable")));
 
         connector.start();
         connector.sendBatch(MessageBatch.create(deadLetter));

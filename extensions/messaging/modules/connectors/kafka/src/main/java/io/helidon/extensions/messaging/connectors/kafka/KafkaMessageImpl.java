@@ -23,7 +23,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
-import io.helidon.messaging.HeaderValue;
+import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
 
@@ -197,8 +197,8 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
         for (KafkaMessage.Header header : headers) {
             Optional<byte[]> value = header.value();
             result.add(header.name(), value.isPresent()
-                    ? HeaderValue.binary(value.orElseThrow())
-                    : HeaderValue.nullValue());
+                    ? MessageHeaderValue.binary(value.orElseThrow())
+                    : MessageHeaderValue.nullValue());
         }
         return result.build();
     }

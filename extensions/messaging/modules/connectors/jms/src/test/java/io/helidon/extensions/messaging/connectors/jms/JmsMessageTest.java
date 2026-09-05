@@ -36,8 +36,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.messaging.DeadLetterMessage;
-import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessageMetadata;
 import io.helidon.messaging.MessagingException;
@@ -87,7 +87,7 @@ class JmsMessageTest {
         assertThat(message.jmsProperties(), is(Map.of("attempt", 2)));
         assertThat(message.headers(),
                    is(MessageHeaders.builder()
-                              .add("attempt", HeaderValue.integer(2))
+                              .add("attempt", MessageHeaderValue.integer(2))
                               .build()));
     }
 
@@ -132,7 +132,7 @@ class JmsMessageTest {
         assertThat(deadLetter.localMetadata()
                            .value(DeadLetterMessage.FAILURE_MESSAGE_METADATA)
                            .orElseThrow(),
-                   is(HeaderValue.text("failed")));
+                   is(MessageHeaderValue.text("failed")));
 
         JmsMessageMapper.toJmsMessage(session, deadLetter, false);
 
@@ -249,7 +249,7 @@ class JmsMessageTest {
         JmsMessageMapper.toJmsMessage(session,
                                       io.helidon.messaging.Message.builder("portable")
                                               .header("JMSXGroupID", "orders")
-                                              .header("JMSXGroupSeq", HeaderValue.integer(8))
+                                              .header("JMSXGroupSeq", MessageHeaderValue.integer(8))
                                               .build(),
                                       false);
 
@@ -274,10 +274,10 @@ class JmsMessageTest {
                                       io.helidon.messaging.Message.builder("portable")
                                               .header("text_value", "text")
                                               .localMetadata(LOCAL_SECRET_METADATA, "must-not-leak")
-                                              .header("boolean_value", HeaderValue.booleanValue(true))
-                                              .header("integer_value", HeaderValue.integer(7))
-                                              .header("float_value", HeaderValue.floatingPoint(8.5F))
-                                              .header("double_value", HeaderValue.floatingPoint(9.5D))
+                                              .header("boolean_value", MessageHeaderValue.booleanValue(true))
+                                              .header("integer_value", MessageHeaderValue.integer(7))
+                                              .header("float_value", MessageHeaderValue.floatingPoint(8.5F))
+                                              .header("double_value", MessageHeaderValue.floatingPoint(9.5D))
                                               .build(),
                                       false);
 
@@ -310,7 +310,7 @@ class JmsMessageTest {
                      () -> JmsMessageMapper.toJmsMessage(
                              session,
                              io.helidon.messaging.Message.builder("binary")
-                                     .header("binary", HeaderValue.binary(new byte[] {1}))
+                                     .header("binary", MessageHeaderValue.binary(new byte[] {1}))
                                      .build(),
                              false));
     }
@@ -547,10 +547,10 @@ class JmsMessageTest {
                                                        "JMSXGroupSeq", 11)));
         assertThat(message.headers(),
                    is(MessageHeaders.builder()
-                              .add("attempt", HeaderValue.integer(2))
+                              .add("attempt", MessageHeaderValue.integer(2))
                               .add("region", "EU")
                               .add("JMSXGroupID", "orders")
-                              .add("JMSXGroupSeq", HeaderValue.integer(11))
+                              .add("JMSXGroupSeq", MessageHeaderValue.integer(11))
                               .build()));
         assertThat(message.messageId(), is(Optional.of("ID:42")));
         assertThat(message.correlationId(), is(Optional.of("order-42")));

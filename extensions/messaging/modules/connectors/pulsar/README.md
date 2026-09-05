@@ -17,34 +17,33 @@ second Pulsar client dependency.
 
 ## Configuration
 
-Connector defaults can be shared under `helidon.messaging.connector.helidon-pulsar`. Channel settings override those
+Connector defaults can be shared under `messaging.connector.helidon-pulsar`. Channel settings override those
 defaults.
 
 ```yaml
-helidon:
-  messaging:
-    connector:
-      helidon-pulsar:
-        service-url: pulsar://pulsar.example:6650
-        schema: STRING
-        receive-timeout: PT0.1S
-        send-timeout: PT30S
-        settlement-timeout: PT30S
-        negative-ack-redelivery-delay: PT1S
-        close-timeout: PT10S
+messaging:
+  connector:
+    helidon-pulsar:
+      service-url: pulsar://pulsar.example:6650
+      schema: STRING
+      receive-timeout: PT0.1S
+      send-timeout: PT30S
+      settlement-timeout: PT30S
+      negative-ack-redelivery-delay: PT1S
+      close-timeout: PT10S
 
-    incoming:
-      orders:
-        connector: helidon-pulsar
-        topic: persistent://commerce/orders/order-events
-        subscription-name: inventory-service
-        subscription-type: EXCLUSIVE
-        subscription-initial-position: LATEST
+  incoming:
+    orders:
+      connector: helidon-pulsar
+      topic: persistent://commerce/orders/order-events
+      subscription-name: inventory-service
+      subscription-type: EXCLUSIVE
+      subscription-initial-position: LATEST
 
-    outgoing:
-      order-results:
-        connector: helidon-pulsar
-        topic: persistent://commerce/orders/order-results
+  outgoing:
+    order-results:
+      connector: helidon-pulsar
+      topic: persistent://commerce/orders/order-results
 ```
 
 `service-url` and `topic` are required. For an incoming binding, `subscription-name` defaults to the channel name.
@@ -97,14 +96,13 @@ class OrderSchemaProvider implements PulsarSchemaProvider {
 ```
 
 ```yaml
-helidon:
-  messaging:
-    outgoing:
-      orders:
-        connector: helidon-pulsar
-        service-url: pulsar://pulsar.example:6650
-        topic: persistent://commerce/orders/order-events
-        schema-provider: orders-json
+messaging:
+  outgoing:
+    orders:
+      connector: helidon-pulsar
+      service-url: pulsar://pulsar.example:6650
+      topic: persistent://commerce/orders/order-events
+      schema-provider: orders-json
 ```
 
 Provider names are exact and case-sensitive. `schema-provider` overrides `schema`; missing or duplicate providers fail

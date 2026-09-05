@@ -155,13 +155,12 @@ class JmsBackPressureIT {
 
     private static String incomingConfig(String destination) {
         return """
-                helidon:
-                  messaging:
-                    incoming:
-                      %s:
-                        connector: helidon-jms
-                        destination: "%s"
-                        receive-timeout: PT0.05S
+                messaging:
+                  incoming:
+                    %s:
+                      connector: helidon-jms
+                      destination: "%s"
+                      receive-timeout: PT0.05S
                 """.formatted(JmsMessagingTypes.BACK_PRESSURE_INCOMING_CHANNEL, destination);
     }
 

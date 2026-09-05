@@ -34,10 +34,10 @@ import java.util.concurrent.locks.ReentrantLock;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.DeadLetterMessage;
-import io.helidon.messaging.HeaderValue;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessageHeader;
+import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.spi.BatchAtomicity;
@@ -655,14 +655,14 @@ final class KafkaOutgoingConnector {
         }
 
         private byte[] kafkaHeaderValue(MessageHeader header) {
-            HeaderValue value = header.value();
-            if (value instanceof HeaderValue.NullValue) {
+            MessageHeaderValue value = header.value();
+            if (value instanceof MessageHeaderValue.NullValue) {
                 return null;
             }
-            if (value instanceof HeaderValue.TextValue textValue) {
+            if (value instanceof MessageHeaderValue.TextValue textValue) {
                 return textValue.value().getBytes(StandardCharsets.UTF_8);
             }
-            if (value instanceof HeaderValue.BinaryValue binaryValue) {
+            if (value instanceof MessageHeaderValue.BinaryValue binaryValue) {
                 return binaryValue.value();
             }
             throw new MessagingException("Kafka header '" + header.name() + "' has unsupported portable value type "
