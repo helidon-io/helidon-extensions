@@ -71,6 +71,7 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -1079,7 +1080,7 @@ class KafkaIncomingConnectorTest {
 
         assertThat(actual.getCause(), sameInstance(commitFailure));
         assertThat(dispatches.get(), is(1));
-        assertThat(consumer.commitInitiationCount() >= 2, is(true));
+        assertThat(consumer.commitInitiationCount(), greaterThanOrEqualTo(2));
         assertThat(consumer.commitCount(), is(0));
         assertThat(consumer.closed(), is(true));
     }
