@@ -1146,6 +1146,70 @@ class KafkaIncomingConnectorTest {
     }
 
     @Test
+    void testCommitErrorIsPreserved() {
+        AssertionError expected = new AssertionError("fatal commit failure");
+        TrackingMockConsumer consumer = new TrackingMockConsumer() {
+            @Override
+            public void commitAsync(Map<TopicPartition, OffsetAndMetadata> offsets,
+                                    OffsetCommitCallback callback) {
+                throw expected;
+            }
+        };
+        scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
+        AtomicInteger dispatches = new AtomicInteger();
+        IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
+        IncomingConnectorContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            protected void processBatch(MessageBatch<?> batch) {
+                dispatches.incrementAndGet();
+            }
+        };
+
+        AssertionError actual = assertThrows(
+                AssertionError.class,
+                () -> connector.createIncomingConnector(config()).run(context));
+
+        assertThat(actual, sameInstance(expected));
+        assertThat(dispatches.get(), is(1));
+        assertThat(consumer.commitCount(), is(0));
+        assertThat(consumer.closed(), is(true));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testCommitErrorWinsOverRebalanceRecoveryAndClose() {
+        AssertionError expected = new AssertionError("fatal commit failure");
+        AtomicReference<Runnable> closeAction = new AtomicReference<>();
+        TrackingMockConsumer consumer = new TrackingMockConsumer() {
+            @Override
+            public void commitAsync(Map<TopicPartition, OffsetAndMetadata> offsets,
+                                    OffsetCommitCallback callback) {
+                rebalance(List.of(SECOND_TOPIC_PARTITION));
+                schedulePollTask(closeAction.get());
+                throw expected;
+            }
+        };
+        scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
+        AtomicInteger dispatches = new AtomicInteger();
+        IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
+        IncomingConnector incoming = connector.createIncomingConnector(config());
+        closeAction.set(connector::close);
+        IncomingConnectorContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            protected void processBatch(MessageBatch<?> batch) {
+                dispatches.incrementAndGet();
+            }
+        };
+
+        AssertionError actual = assertThrows(AssertionError.class, () -> incoming.run(context));
+
+        assertThat(actual, sameInstance(expected));
+        assertThat(dispatches.get(), is(1));
+        assertThat(consumer.commitCount(), is(0));
+        assertThat(consumer.closed(), is(true));
+    }
+
+    @Test
     void testCleanupFailureDoesNotMaskProcessingFailure() {
         TrackingMockConsumer consumer = trackingConsumer();
         scheduleRecords(consumer, record(0, "poison", new RecordHeaders()));
