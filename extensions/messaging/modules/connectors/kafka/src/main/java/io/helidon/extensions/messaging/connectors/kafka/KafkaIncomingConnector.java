@@ -34,6 +34,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
+import io.helidon.faulttolerance.Retry;
+import io.helidon.faulttolerance.RetryConfig;
+import io.helidon.faulttolerance.RetryContext;
+import io.helidon.faulttolerance.RetryException;
+import io.helidon.faulttolerance.SupplierHelper;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.BatchItemStatus;
@@ -80,6 +85,8 @@ final class KafkaIncomingConnector {
     private static final Duration MAX_MAINTENANCE_POLL_TIMEOUT = Duration.ofMillis(100);
     private static final Duration DEFAULT_COMMIT_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration DEFAULT_COMMIT_RETRY_BACKOFF = Duration.ofMillis(100);
+    private static final Duration COMMIT_RETRY_OVERALL_TIMEOUT = Duration.ofNanos(Long.MAX_VALUE);
+    private static final Duration MAX_COMMIT_RETRY_DELAY = Duration.ofNanos(Long.MAX_VALUE / 2);
 
     private final ConsumerFactory consumerFactory;
 
@@ -138,7 +145,7 @@ final class KafkaIncomingConnector {
         private final ReentrantLock consumerCloseLock = new ReentrantLock();
         private final Duration maintenancePollTimeout;
         private final Duration commitTimeout;
-        private final Duration commitRetryBackoff;
+        private final Retry commitRetry;
         private volatile IncomingConnectorContext context;
         private boolean deliveryStarting;
 
@@ -148,9 +155,10 @@ final class KafkaIncomingConnector {
             this.commitTimeout = durationProperty(config,
                                                    ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG,
                                                    DEFAULT_COMMIT_TIMEOUT);
-            this.commitRetryBackoff = durationProperty(config,
-                                                        ConsumerConfig.RETRY_BACKOFF_MS_CONFIG,
-                                                        DEFAULT_COMMIT_RETRY_BACKOFF);
+            Duration commitRetryBackoff = durationProperty(config,
+                                                           ConsumerConfig.RETRY_BACKOFF_MS_CONFIG,
+                                                           DEFAULT_COMMIT_RETRY_BACKOFF);
+            this.commitRetry = createCommitRetry(commitRetryBackoff);
         }
 
         @Override
@@ -487,77 +495,100 @@ final class KafkaIncomingConnector {
                 return true;
             }
             long commitStarted = System.nanoTime();
-            Exception previousCommitFailure = null;
-            while (!closed.get()) {
-                pendingPoll.invalidateMissing(consumer.assignment());
+            try {
+                return commitRetry.invoke(context -> commitOffsets(consumer,
+                                                                    pendingPoll,
+                                                                    offsets,
+                                                                    commitStarted,
+                                                                    context),
+                                          delay -> awaitCommitRetry(consumer,
+                                                                    pendingPoll,
+                                                                    commitStarted,
+                                                                    delay));
+            } catch (RetryException e) {
+                if (closed.get()) {
+                    return false;
+                }
                 if (pendingPoll.stale()) {
                     recoverStalePoll(consumer, pendingPoll);
                     return true;
                 }
-                if (previousCommitFailure != null && commitTimedOut(commitStarted)) {
-                    rethrowCommitFailure(previousCommitFailure);
+                if (e.getCause() == null) {
+                    throw new MessagingException("Kafka incoming connector commit retry failed", e);
                 }
-
-                AtomicBoolean completed = new AtomicBoolean();
-                AtomicReference<Exception> failure = new AtomicReference<>();
-                if (closed.get()) {
-                    return false;
-                }
-                commitLock.lock();
-                Thread commitOwner = Thread.currentThread();
-                commitInitiationOwner.set(commitOwner);
-                try {
-                    if (closed.get()) {
-                        return false;
-                    }
-                    if (previousCommitFailure != null && commitTimedOut(commitStarted)) {
-                        rethrowCommitFailure(previousCommitFailure);
-                    }
-                    try {
-                        consumer.commitAsync(offsets, (committedOffsets, exception) -> {
-                            failure.set(exception);
-                            completed.set(true);
-                        });
-                    } catch (RuntimeException e) {
-                        failure.set(e);
-                        completed.set(true);
-                    }
-                } finally {
-                    commitInitiationOwner.compareAndSet(commitOwner, null);
-                    commitLock.unlock();
-                }
-                while (!completed.get()) {
-                    if (closed.get()) {
-                        return false;
-                    }
-                    if (commitTimedOut(commitStarted)) {
-                        throw new MessagingException("Kafka incoming connector commit timed out after "
-                                                             + commitTimeout);
-                    }
-                    maintenancePoll(consumer);
-                }
-                if (closed.get()) {
-                    return false;
-                }
-
-                Exception commitFailure = failure.get();
-                if (commitFailure == null) {
-                    return true;
-                }
-                previousCommitFailure = commitFailure;
-                if (pendingPoll.stale()) {
-                    recoverStalePoll(consumer, pendingPoll);
-                    return true;
-                }
-                if (!isRetriableCommitFailure(commitFailure)
-                        || commitTimedOut(commitStarted)) {
-                    rethrowCommitFailure(commitFailure);
-                }
-                if (!awaitCommitRetry(consumer, pendingPoll, commitStarted)) {
-                    return false;
-                }
+                rethrowCommitFailure(e.getCause());
+                return false;
             }
-            return false;
+        }
+
+        private boolean commitOffsets(Consumer<Object, Object> consumer,
+                                      PendingPoll pendingPoll,
+                                      Map<TopicPartition, OffsetAndMetadata> offsets,
+                                      long commitStarted,
+                                      RetryContext context) {
+            pendingPoll.invalidateMissing(consumer.assignment());
+            if (pendingPoll.stale()) {
+                recoverStalePoll(consumer, pendingPoll);
+                return true;
+            }
+            if (context.previousThrowable().isPresent() && commitTimedOut(commitStarted)) {
+                rethrowCommitFailure(context.previousThrowable().orElseThrow());
+            }
+
+            AtomicBoolean completed = new AtomicBoolean();
+            AtomicReference<Exception> failure = new AtomicReference<>();
+            if (closed.get()) {
+                return false;
+            }
+            commitLock.lock();
+            Thread commitOwner = Thread.currentThread();
+            commitInitiationOwner.set(commitOwner);
+            try {
+                if (closed.get()) {
+                    return false;
+                }
+                if (context.previousThrowable().isPresent() && commitTimedOut(commitStarted)) {
+                    rethrowCommitFailure(context.previousThrowable().orElseThrow());
+                }
+                try {
+                    consumer.commitAsync(offsets, (committedOffsets, exception) -> {
+                        failure.set(exception);
+                        completed.set(true);
+                    });
+                } catch (RuntimeException e) {
+                    failure.set(e);
+                    completed.set(true);
+                }
+            } finally {
+                commitInitiationOwner.compareAndSet(commitOwner, null);
+                commitLock.unlock();
+            }
+            while (!completed.get()) {
+                if (closed.get()) {
+                    return false;
+                }
+                if (commitTimedOut(commitStarted)) {
+                    throw new MessagingException("Kafka incoming connector commit timed out after "
+                                                         + commitTimeout);
+                }
+                maintenancePoll(consumer);
+            }
+            if (closed.get()) {
+                return false;
+            }
+
+            Exception commitFailure = failure.get();
+            if (commitFailure == null) {
+                return true;
+            }
+            if (pendingPoll.stale()) {
+                recoverStalePoll(consumer, pendingPoll);
+                return true;
+            }
+            if (commitTimedOut(commitStarted)) {
+                rethrowCommitFailure(commitFailure);
+            }
+            throw SupplierHelper.toRuntimeException(commitFailure);
         }
 
         private void settlePartialPoll(Consumer<Object, Object> consumer, PendingPoll pendingPoll) {
@@ -575,33 +606,39 @@ final class KafkaIncomingConnector {
 
         private boolean awaitCommitRetry(Consumer<Object, Object> consumer,
                                          PendingPoll pendingPoll,
-                                         long commitStarted) {
+                                         long commitStarted,
+                                         Duration delay) {
             long retryStarted = System.nanoTime();
+            long delayNanos = saturatedNanos(delay);
+            boolean polled = false;
             do {
                 if (closed.get()) {
                     return false;
                 }
                 if (pendingPoll.stale()) {
-                    return true;
+                    return false;
                 }
                 if (commitTimedOut(commitStarted)) {
+                    return false;
+                }
+                long elapsed = System.nanoTime() - retryStarted;
+                if (polled && elapsed >= delayNanos) {
                     return true;
                 }
-                maintenancePoll(consumer);
-            } while (System.nanoTime() - retryStarted < commitRetryBackoff.toNanos());
-            return true;
+                Duration timeout = delayNanos == Long.MAX_VALUE
+                        ? maintenancePollTimeout
+                        : Duration.ofNanos(Math.min(maintenancePollTimeout.toNanos(),
+                                                   Math.max(0, delayNanos - elapsed)));
+                maintenancePoll(consumer, timeout);
+                polled = true;
+            } while (true);
         }
 
         private boolean commitTimedOut(long commitStarted) {
-            return System.nanoTime() - commitStarted >= commitTimeout.toNanos();
+            return System.nanoTime() - commitStarted >= saturatedNanos(commitTimeout);
         }
 
-        private boolean isRetriableCommitFailure(Exception failure) {
-            return failure instanceof RetriableCommitFailedException
-                    || failure instanceof RebalanceInProgressException;
-        }
-
-        private void rethrowCommitFailure(Exception failure) {
+        private void rethrowCommitFailure(Throwable failure) {
             if (failure instanceof RuntimeException runtimeException) {
                 throw runtimeException;
             }
@@ -1360,5 +1397,27 @@ final class KafkaIncomingConnector {
                                              Duration defaultValue) {
         String configured = config.properties().get(property);
         return configured == null ? defaultValue : Duration.ofMillis(Long.parseLong(configured));
+    }
+
+    private static long saturatedNanos(Duration duration) {
+        try {
+            return duration.toNanos();
+        } catch (ArithmeticException e) {
+            return duration.isNegative() ? Long.MIN_VALUE : Long.MAX_VALUE;
+        }
+    }
+
+    private static Retry createCommitRetry(Duration delay) {
+        Duration retryDelay = delay.compareTo(MAX_COMMIT_RETRY_DELAY) > 0 ? MAX_COMMIT_RETRY_DELAY : delay;
+        RetryConfig retryConfig = RetryConfig.builder()
+                .name("messaging-kafka-offset-commit")
+                .calls(Integer.MAX_VALUE)
+                .delay(retryDelay)
+                .delayFactor(1)
+                .overallTimeout(COMMIT_RETRY_OVERALL_TIMEOUT)
+                .addApplyOn(RetriableCommitFailedException.class)
+                .addApplyOn(RebalanceInProgressException.class)
+                .buildPrototype();
+        return Retry.create(retryConfig);
     }
 }

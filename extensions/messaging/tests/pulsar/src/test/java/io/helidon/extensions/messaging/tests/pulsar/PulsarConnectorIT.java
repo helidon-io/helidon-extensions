@@ -533,7 +533,7 @@ class PulsarConnectorIT {
                           failure:
                             retry:
                               delay: PT0.01S
-                              max-attempts: 1
+                              calls: 1
                             on-exhausted: FAIL
                     """.formatted(channel,
                                    PULSAR.getPulsarBrokerUrl(),
@@ -574,7 +574,7 @@ class PulsarConnectorIT {
                       receive-timeout: PT0.1S
                       failure:
                         retry:
-                          max-attempts: 1
+                          calls: 1
                         on-exhausted: DEAD_LETTER
                         dead-letter:
                           channel: %s

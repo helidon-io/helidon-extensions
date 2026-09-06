@@ -221,7 +221,7 @@ interface JmsConnectorConfigBlueprint extends ConnectorConfig {
     Duration closeTimeout();
 
     /**
-     * Initial delay between reconnection attempts.
+     * Initial delay between reconnection attempts, which must be at least 1 millisecond.
      *
      * @return initial reconnect delay
      */
@@ -230,7 +230,7 @@ interface JmsConnectorConfigBlueprint extends ConnectorConfig {
     Duration reconnectInitialDelay();
 
     /**
-     * Maximum delay between reconnection attempts.
+     * Maximum delay between reconnection attempts, which must be at least 1 millisecond.
      *
      * @return maximum reconnect delay
      */

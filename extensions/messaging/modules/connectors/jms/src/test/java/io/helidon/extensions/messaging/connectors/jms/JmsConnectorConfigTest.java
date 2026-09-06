@@ -299,6 +299,10 @@ class JmsConnectorConfigTest {
     @Test
     void testReconnectRangeValidation() {
         assertThrows(IllegalArgumentException.class,
+                     () -> incomingBuilder().reconnectInitialDelay(Duration.ofNanos(999_999)).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> incomingBuilder().reconnectMaxDelay(Duration.ofNanos(999_999)).build());
+        assertThrows(IllegalArgumentException.class,
                      () -> incomingBuilder()
                              .reconnectInitialDelay(Duration.ofSeconds(2))
                              .reconnectMaxDelay(Duration.ofSeconds(1))

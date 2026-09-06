@@ -398,7 +398,7 @@ class JmsConnectorIT {
         assertThat(deadLetter.getStringProperty("source_prop"), is("source-value"));
         assertThat(deadLetter.getStringProperty(DeadLetterMessage.SOURCE_CHANNEL_HEADER),
                    is(JmsMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL));
-        assertThat(deadLetter.getStringProperty(DeadLetterMessage.ATTEMPTS_HEADER), is("3"));
+        assertThat(deadLetter.getStringProperty(DeadLetterMessage.ATTEMPTS_HEADER), is("1"));
         assertThat(deadLetter.propertyExists(DeadLetterMessage.FAILURE_TYPE_METADATA), is(false));
         assertThat(deadLetter.propertyExists(DeadLetterMessage.FAILURE_MESSAGE_METADATA), is(false));
         assertThat(deadLetter.propertyExists(LEGACY_FAILURE_TYPE_HEADER), is(false));
@@ -598,7 +598,7 @@ class JmsConnectorIT {
                       failure:
                         retry:
                           delay: PT0.02S
-                          max-attempts: %d
+                          calls: %d
                         on-exhausted: DEAD_LETTER
                         dead-letter:
                           channel: %s
@@ -629,7 +629,7 @@ class JmsConnectorIT {
                       failure:
                         retry:
                           delay: PT0.02S
-                          max-attempts: 3
+                          calls: 3
                         on-exhausted: DROP
                 """.formatted(JmsMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL, queue);
     }
@@ -647,7 +647,7 @@ class JmsConnectorIT {
                       failure:
                         retry:
                           delay: PT0.02S
-                          max-attempts: 1
+                          calls: 1
                         on-exhausted: FAIL
                 """.formatted(JmsMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL, queue);
     }
@@ -666,7 +666,7 @@ class JmsConnectorIT {
                       failure:
                         retry:
                           delay: PT0.02S
-                          max-attempts: 1
+                          calls: 1
                         on-exhausted: FAIL
                 """.formatted(JmsMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL, queue);
     }

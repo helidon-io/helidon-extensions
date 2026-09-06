@@ -907,7 +907,7 @@ class KafkaConnectorIT {
                       failure:
                         retry:
                           delay: PT0.05S
-                          max-attempts: 2
+                          calls: 2
                         on-exhausted: FAIL
                       properties:
                         max.poll.records: "1"
@@ -942,7 +942,7 @@ class KafkaConnectorIT {
                       failure:
                         retry:
                           delay: PT0.05S
-                          max-attempts: 1
+                          calls: 1
                         on-exhausted: FAIL
                       properties:
                         max.poll.records: "1"
@@ -967,7 +967,7 @@ class KafkaConnectorIT {
                       failure:
                         retry:
                           delay: PT0.05S
-                          max-attempts: 2
+                          calls: 2
                         on-exhausted: DROP
                       properties:
                         max.poll.records: "2"
@@ -1152,7 +1152,7 @@ class KafkaConnectorIT {
                       failure:
                         retry:
                           delay: PT0.05S
-                          max-attempts: 3
+                          calls: 3
                         on-exhausted: DEAD_LETTER
                         dead-letter:
                           channel: %s

@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
@@ -129,9 +130,15 @@ final class JmsConnectorConfigSupport {
         target.clearConfiguredPassword();
     }
 
-    private static void requirePositive(String name, java.time.Duration duration) {
+    private static void requirePositive(String name, Duration duration) {
         if (duration.isZero() || duration.isNegative()) {
             throw new IllegalArgumentException(name + " must be greater than zero");
+        }
+    }
+
+    private static void requireRetryDelay(String name, Duration duration) {
+        if (duration.compareTo(Duration.ofMillis(1)) < 0) {
+            throw new IllegalArgumentException(name + " must be at least 1 millisecond");
         }
     }
 
@@ -203,8 +210,8 @@ final class JmsConnectorConfigSupport {
 
             requirePositive(RECEIVE_TIMEOUT_PROPERTY, target.receiveTimeout());
             requirePositive(CLOSE_TIMEOUT_PROPERTY, target.closeTimeout());
-            requirePositive(RECONNECT_INITIAL_DELAY_PROPERTY, target.reconnectInitialDelay());
-            requirePositive(RECONNECT_MAX_DELAY_PROPERTY, target.reconnectMaxDelay());
+            requireRetryDelay(RECONNECT_INITIAL_DELAY_PROPERTY, target.reconnectInitialDelay());
+            requireRetryDelay(RECONNECT_MAX_DELAY_PROPERTY, target.reconnectMaxDelay());
             if (target.reconnectMaxDelay().compareTo(target.reconnectInitialDelay()) < 0) {
                 throw new IllegalArgumentException(RECONNECT_MAX_DELAY_PROPERTY + " must not be less than "
                                                            + RECONNECT_INITIAL_DELAY_PROPERTY);

@@ -290,8 +290,8 @@ Reconnection is connector-owned. The messaging graph does not discard and recrea
 
 When startup or an established connection fails, the connector closes the old connection, session, consumer, or
 producer and retries with exponential backoff. The delay starts at `reconnect.initial-delay`, is capped at
-`reconnect.max-delay`, and receives the configured fractional jitter. Reconnection continues while the graph remains
-active; graph startup and shutdown deadlines can interrupt it.
+`reconnect.max-delay`, and receives the configured fractional jitter. Both delay values must be at least 1 millisecond.
+Reconnection continues while the graph remains active; graph startup and shutdown deadlines can interrupt it.
 
 A replacement connection is opened only after the previous resource generation closes successfully. A cleanup failure
 or `close-timeout` expiry is terminal because continuing could overlap or leak provider resources.

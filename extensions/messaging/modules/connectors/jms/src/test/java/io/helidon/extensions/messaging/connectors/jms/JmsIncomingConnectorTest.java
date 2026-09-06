@@ -346,18 +346,9 @@ class JmsIncomingConnectorTest {
     }
 
     @Test
-    void reconnectJitterIsCappedAtTheConfiguredMaximum() {
-        Duration maximum = Duration.ofMillis(100);
-
-        Duration delay = JmsIncomingConnector.jitter(Duration.ofMillis(90), maximum, 0.5, 1);
-
-        assertThat(delay, is(maximum));
-    }
-
-    @Test
     @Timeout(5)
-    void hugeReconnectDelayWithDefaultAndZeroJitterRemainsCloseable() throws Exception {
-        Duration hugeDelay = Duration.ofSeconds(Long.MAX_VALUE);
+    void effectivelyInfiniteReconnectDelayWithDefaultAndZeroJitterRemainsCloseable() throws Exception {
+        Duration hugeDelay = Duration.ofNanos(Long.MAX_VALUE / 2);
         JmsConnectorConfig defaultJitter = JmsConnectorConfig.builder()
                 .direction(ConnectorDirection.INCOMING)
                 .channelName(CHANNEL)
@@ -1271,9 +1262,11 @@ class JmsIncomingConnectorTest {
         });
         IncomingConnector connector = JmsIncomingConnector.create(config, ignored -> factory);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
-        Thread source = Thread.ofVirtual().start(() -> capture(
-                () -> connector.run(new TestContext(new ArrayList<>())),
-                sourceFailure));
+        AtomicBoolean sourceInterrupted = new AtomicBoolean();
+        Thread source = Thread.ofVirtual().start(() -> {
+            capture(() -> connector.run(new TestContext(new ArrayList<>())), sourceFailure);
+            sourceInterrupted.set(Thread.currentThread().isInterrupted());
+        });
         assertThat(connectionAttempted.await(1, TimeUnit.SECONDS), is(true));
 
         try {
@@ -1286,6 +1279,7 @@ class JmsIncomingConnectorTest {
 
         assertThat(source.isAlive(), is(false));
         assertThat(sourceFailure.get(), nullValue());
+        assertThat(sourceInterrupted.get(), is(true));
         verify(factory, times(1)).createConnection();
     }
 

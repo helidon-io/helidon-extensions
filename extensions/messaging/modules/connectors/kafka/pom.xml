@@ -55,6 +55,10 @@
             <optional>true</optional>
         </dependency>
         <dependency>
+            <groupId>io.helidon.fault-tolerance</groupId>
+            <artifactId>helidon-fault-tolerance</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.helidon.messaging</groupId>
             <artifactId>helidon-messaging</artifactId>
         </dependency>
