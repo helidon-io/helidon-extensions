@@ -253,6 +253,12 @@ final class JmsOutgoingConnector {
             }
         }
 
+        private static void addSuppressed(Throwable primary, Throwable suppressed) {
+            if (primary != suppressed) {
+                primary.addSuppressed(suppressed);
+            }
+        }
+
         private Resources readyResources() {
             Resources stale = null;
             lifecycleLock.lock();
@@ -589,7 +595,7 @@ final class JmsOutgoingConnector {
                 executeProviderCall("transaction rollback", current.session::rollback);
                 return atomicFailed(batch, failure);
             } catch (JMSException | RuntimeException rollbackFailure) {
-                failure.addSuppressed(rollbackFailure);
+                addSuppressed(failure, rollbackFailure);
                 return indeterminate("JMS transactional batch delivery", batch, failure);
             }
         }
@@ -598,7 +604,7 @@ final class JmsOutgoingConnector {
             try {
                 executeProviderCall("transaction rollback", current.session::rollback);
             } catch (JMSException | RuntimeException rollbackFailure) {
-                failure.addSuppressed(rollbackFailure);
+                addSuppressed(failure, rollbackFailure);
             }
         }
 
@@ -889,7 +895,7 @@ final class JmsOutgoingConnector {
                 if (previous == null) {
                     return failure;
                 }
-                previous.addSuppressed(failure);
+                addSuppressed(previous, failure);
             }
             return previous;
         }

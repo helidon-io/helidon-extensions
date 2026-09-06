@@ -51,6 +51,7 @@ import org.junit.jupiter.api.Timeout;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.AdditionalAnswers.delegatesTo;
@@ -302,6 +303,43 @@ class JmsOutgoingConnectorTest {
 
         assertStatuses(failure, BatchItemStatus.INDETERMINATE, BatchItemStatus.INDETERMINATE);
         assertThat(failure.getCause().getSuppressed()[0], is(rollbackFailure));
+        connector.close();
+    }
+
+    @Test
+    void transactedSendAndRollbackSameFailureRemainIndeterminate() throws Exception {
+        JmsClient client = client();
+        JMSRuntimeException sharedFailure = new JMSRuntimeException("send and rollback failed");
+        doThrow(sharedFailure).when(client.producer).send(any(jakarta.jms.Message.class));
+        doThrow(sharedFailure).when(client.session).rollback();
+        OutgoingConnector connector = start(config(true), ignored -> client.factory);
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                       () -> connector.sendBatch(batch("first", "second")));
+
+        assertStatuses(failure, BatchItemStatus.INDETERMINATE, BatchItemStatus.INDETERMINATE);
+        assertThat(failure.getCause(), sameInstance(sharedFailure));
+        assertThat(sharedFailure.getSuppressed().length, is(0));
+        verify(client.session).rollback();
+        connector.close();
+    }
+
+    @Test
+    void transactedCommitAndRollbackSameFailureRemainIndeterminate() throws Exception {
+        JmsClient client = client();
+        JMSRuntimeException sharedFailure = new JMSRuntimeException("commit and rollback failed");
+        doThrow(sharedFailure).when(client.session).commit();
+        doThrow(sharedFailure).when(client.session).rollback();
+        OutgoingConnector connector = start(config(true), ignored -> client.factory);
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                       () -> connector.sendBatch(batch("first", "second")));
+
+        assertStatuses(failure, BatchItemStatus.INDETERMINATE, BatchItemStatus.INDETERMINATE);
+        assertThat(failure.getCause(), sameInstance(sharedFailure));
+        assertThat(sharedFailure.getSuppressed().length, is(0));
+        verify(client.producer, times(2)).send(any(jakarta.jms.Message.class));
+        verify(client.session).rollback();
         connector.close();
     }
 
@@ -964,6 +1002,25 @@ class JmsOutgoingConnectorTest {
         assertThat(first.getCause(), is(second.getCause()));
         assertThat(first.getCause().getCause(), is(connectionFailure));
         assertThat(List.of(connectionFailure.getSuppressed()), is(List.of(producerFailure, sessionFailure)));
+        verify(client.connection, times(1)).close();
+        verify(client.producer, times(1)).close();
+        verify(client.session, times(1)).close();
+    }
+
+    @Test
+    void sameResourceCleanupFailureStillClosesEveryResource() throws Exception {
+        JmsClient client = client();
+        JMSException sharedFailure = new JMSException("connection and producer close failed");
+        JMSException sessionFailure = new JMSException("session close failed");
+        doThrow(sharedFailure).when(client.connection).close();
+        doThrow(sharedFailure).when(client.producer).close();
+        doThrow(sessionFailure).when(client.session).close();
+        OutgoingConnector connector = start(config(false), ignored -> client.factory);
+
+        MessagingException failure = assertThrows(MessagingException.class, connector::close);
+
+        assertThat(failure.getCause().getCause(), sameInstance(sharedFailure));
+        assertThat(List.of(sharedFailure.getSuppressed()), is(List.of(sessionFailure)));
         verify(client.connection, times(1)).close();
         verify(client.producer, times(1)).close();
         verify(client.session, times(1)).close();
