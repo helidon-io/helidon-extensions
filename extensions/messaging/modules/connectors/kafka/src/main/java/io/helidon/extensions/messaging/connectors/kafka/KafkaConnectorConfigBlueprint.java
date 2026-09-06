@@ -105,7 +105,8 @@ interface KafkaConnectorConfigBlueprint extends ConnectorConfig {
     String autoOffsetReset();
 
     /**
-     * Maximum duration to wait for records during one consumer poll.
+     * Maximum duration to wait for records during one consumer poll. Must be at least one millisecond and representable
+     * in milliseconds.
      *
      * @return poll timeout
      */
@@ -116,6 +117,7 @@ interface KafkaConnectorConfigBlueprint extends ConnectorConfig {
     /**
      * Maximum duration to wait for the future returned by a Kafka producer send.
      * Successful completion follows the producer {@code acks} configuration.
+     * Must be positive and representable in nanoseconds.
      *
      * @return send timeout
      */
@@ -127,6 +129,7 @@ interface KafkaConnectorConfigBlueprint extends ConnectorConfig {
      * Maximum duration to wait for an active incoming delivery to become quiescent after interruption,
      * and while closing a Kafka client. If an incoming delivery does not finish within this duration,
      * connector close reports a failure and retains the delivery until it finishes.
+     * Must not be negative and must be representable in nanoseconds. Zero requests shutdown without waiting.
      *
      * @return close timeout
      */

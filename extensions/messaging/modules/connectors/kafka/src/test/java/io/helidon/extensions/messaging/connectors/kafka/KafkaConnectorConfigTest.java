@@ -30,6 +30,7 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -91,6 +92,87 @@ class KafkaConnectorConfigTest {
         assertThat(configDescription, not(containsString(password)));
         assertThat(configDescription, not(containsString(jaasConfig)));
         assertThat(config.properties().get("sasl.jaas.config"), is(jaasConfig));
+    }
+
+    @Test
+    void testPollTimeoutMustBeAtLeastOneMillisecond() {
+        IllegalArgumentException zero = assertThrows(IllegalArgumentException.class,
+                                                      () -> configuredBuilder()
+                                                              .pollTimeout(Duration.ZERO)
+                                                              .build());
+        IllegalArgumentException negative = assertThrows(IllegalArgumentException.class,
+                                                          () -> configuredBuilder()
+                                                                  .pollTimeout(Duration.ofNanos(-1))
+                                                                  .build());
+        IllegalArgumentException subMillisecond = assertThrows(IllegalArgumentException.class,
+                                                                () -> configuredBuilder()
+                                                                        .pollTimeout(Duration.ofNanos(999_999))
+                                                                        .build());
+
+        assertThat(zero.getMessage(), is("poll.timeout must be greater than zero"));
+        assertThat(negative.getMessage(), is("poll.timeout must be greater than zero"));
+        assertThat(subMillisecond.getMessage(), is("poll.timeout must be at least 1 ms"));
+    }
+
+    @Test
+    void testSendTimeoutMustBePositive() {
+        IllegalArgumentException zero = assertThrows(IllegalArgumentException.class,
+                                                      () -> configuredBuilder()
+                                                              .sendTimeout(Duration.ZERO)
+                                                              .build());
+        IllegalArgumentException negative = assertThrows(IllegalArgumentException.class,
+                                                          () -> configuredBuilder()
+                                                                  .sendTimeout(Duration.ofNanos(-1))
+                                                                  .build());
+
+        assertThat(zero.getMessage(), is("send.timeout must be greater than zero"));
+        assertThat(negative.getMessage(), is("send.timeout must be greater than zero"));
+    }
+
+    @Test
+    void testTimeoutOverflowIsRejected() {
+        Duration millisecondOverflow = Duration.ofMillis(Long.MAX_VALUE).plusMillis(1);
+        Duration nanosecondOverflow = Duration.ofNanos(Long.MAX_VALUE).plusNanos(1);
+
+        IllegalArgumentException poll = assertThrows(IllegalArgumentException.class,
+                                                      () -> configuredBuilder()
+                                                              .pollTimeout(millisecondOverflow)
+                                                              .build());
+        IllegalArgumentException send = assertThrows(IllegalArgumentException.class,
+                                                      () -> configuredBuilder()
+                                                              .sendTimeout(nanosecondOverflow)
+                                                              .build());
+        IllegalArgumentException close = assertThrows(IllegalArgumentException.class,
+                                                       () -> configuredBuilder()
+                                                               .closeTimeout(nanosecondOverflow)
+                                                               .build());
+
+        assertThat(poll.getMessage(), is("poll.timeout must be representable in milliseconds"));
+        assertThat(send.getMessage(), is("send.timeout must be representable in nanoseconds"));
+        assertThat(close.getMessage(), is("close.timeout must be representable in nanoseconds"));
+        assertThat(poll.getCause(), instanceOf(ArithmeticException.class));
+        assertThat(send.getCause(), instanceOf(ArithmeticException.class));
+        assertThat(close.getCause(), instanceOf(ArithmeticException.class));
+    }
+
+    @Test
+    void testTimeoutRepresentationBoundariesAreAccepted() {
+        Duration minimumPollTimeout = Duration.ofMillis(1);
+        Duration maximumMilliseconds = Duration.ofMillis(Long.MAX_VALUE);
+        Duration maximumNanoseconds = Duration.ofNanos(Long.MAX_VALUE);
+        KafkaConnectorConfig minimumPoll = configuredBuilder()
+                .pollTimeout(minimumPollTimeout)
+                .build();
+        KafkaConnectorConfig config = configuredBuilder()
+                .pollTimeout(maximumMilliseconds)
+                .sendTimeout(maximumNanoseconds)
+                .closeTimeout(maximumNanoseconds)
+                .build();
+
+        assertThat(minimumPoll.pollTimeout(), is(minimumPollTimeout));
+        assertThat(config.pollTimeout(), is(maximumMilliseconds));
+        assertThat(config.sendTimeout(), is(maximumNanoseconds));
+        assertThat(config.closeTimeout(), is(maximumNanoseconds));
     }
 
     @Test
@@ -208,6 +290,12 @@ class KafkaConnectorConfigTest {
                 .direction(ConnectorDirection.OUTGOING)
                 .channelName(CHANNEL)
                 .connector(KafkaConnectorProvider.CONNECTOR_TYPE);
+    }
+
+    private static KafkaConnectorConfig.Builder configuredBuilder() {
+        return builder()
+                .bootstrapServers("broker:9092")
+                .topic(TOPIC);
     }
 
     private static Config rawConfig(ConnectorDirection direction) {
