@@ -103,6 +103,7 @@ class OpenApiUiPermitAllTest {
     @Test
     void uiRedirectRequiresAuthorization() {
         ClientResponseTyped<String> response = client.get("/openapi/ui")
+                .followRedirects(false)
                 .accept(MediaTypes.TEXT_HTML)
                 .request(String.class);
 
@@ -129,6 +130,7 @@ class OpenApiUiPermitAllTest {
     @Test
     void customUiRedirectRequiresAuthorization() {
         ClientResponseTyped<String> response = client.get("/my-ui")
+                .followRedirects(false)
                 .accept(MediaTypes.TEXT_HTML)
                 .request(String.class);
 
