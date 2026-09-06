@@ -506,6 +506,10 @@ final class KafkaIncomingConnector {
                                                                     commitStarted,
                                                                     delay));
             } catch (RetryException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof Error error) {
+                    throw error;
+                }
                 if (closed.get()) {
                     return false;
                 }
@@ -513,10 +517,10 @@ final class KafkaIncomingConnector {
                     recoverStalePoll(consumer, pendingPoll);
                     return true;
                 }
-                if (e.getCause() == null) {
+                if (cause == null) {
                     throw new MessagingException("Kafka incoming connector commit retry failed", e);
                 }
-                rethrowCommitFailure(e.getCause());
+                rethrowCommitFailure(cause);
                 return false;
             }
         }
@@ -639,6 +643,9 @@ final class KafkaIncomingConnector {
         }
 
         private void rethrowCommitFailure(Throwable failure) {
+            if (failure instanceof Error error) {
+                throw error;
+            }
             if (failure instanceof RuntimeException runtimeException) {
                 throw runtimeException;
             }
