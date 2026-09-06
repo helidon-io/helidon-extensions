@@ -22,5 +22,7 @@
  * {@link io.helidon.extensions.messaging.connectors.kafka.KafkaMessage#kafkaHeaders()} provides the corresponding
  * Kafka-native view. A Kafka tombstone has no Helidon payload and therefore enters the configured pre-dispatch failure
  * policy with its key, headers, topic, partition, and offset retained for settlement or dead-letter handling.
+ * Retriable offset commits use {@code retry.backoff.ms}, remain bounded by {@code default.api.timeout.ms}, and continue
+ * polling for consumer-group maintenance while awaiting callbacks and between retry attempts.
  */
 package io.helidon.extensions.messaging.connectors.kafka;

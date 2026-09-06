@@ -1055,6 +1055,37 @@ class KafkaIncomingConnectorTest {
 
     @Test
     @Timeout(value = 5)
+    void testRepeatedRetriableCommitFailureStopsAtKafkaTimeoutAndPreservesCause() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer, record(7, "first", new RecordHeaders()));
+        RetriableCommitFailedException commitFailure =
+                new RetriableCommitFailedException("coordinator remains unavailable");
+        consumer.failCommit(commitFailure);
+        AtomicInteger dispatches = new AtomicInteger();
+        IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
+        IncomingConnectorContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            protected void processBatch(MessageBatch<?> batch) {
+                dispatches.incrementAndGet();
+            }
+        };
+
+        MessagingException actual = assertThrows(
+                MessagingException.class,
+                () -> connector.createIncomingConnector(config(Map.of(
+                                ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "100",
+                                ConsumerConfig.RETRY_BACKOFF_MS_CONFIG, "10")))
+                        .run(context));
+
+        assertThat(actual.getCause(), sameInstance(commitFailure));
+        assertThat(dispatches.get(), is(1));
+        assertThat(consumer.commitInitiationCount() >= 2, is(true));
+        assertThat(consumer.commitCount(), is(0));
+        assertThat(consumer.closed(), is(true));
+    }
+
+    @Test
+    @Timeout(value = 5)
     void testMissingCommitCallbackTimesOutWhilePolling() {
         TrackingMockConsumer consumer = trackingConsumer();
         scheduleRecords(consumer, record(7, "first", new RecordHeaders()));

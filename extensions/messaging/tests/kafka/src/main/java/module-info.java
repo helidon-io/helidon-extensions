@@ -18,5 +18,8 @@ module io.helidon.extensions.messaging.tests.kafka {
     requires io.helidon.common;
     requires io.helidon.messaging;
     requires io.helidon.extensions.messaging.connectors.kafka;
+    // required for generated binding
+    requires io.helidon.http;
+    requires io.helidon.metrics.api;
     requires io.helidon.service.registry;
 }

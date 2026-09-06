@@ -31,6 +31,7 @@ module io.helidon.extensions.messaging.connectors.kafka {
     requires transitive io.helidon.config;
 
     requires io.helidon.common;
+    requires io.helidon.faulttolerance;
     requires static io.helidon.common.features.api;
     requires transitive io.helidon.messaging;
     requires io.helidon.service.registry;

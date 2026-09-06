@@ -23,7 +23,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -32,6 +31,11 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
+import io.helidon.faulttolerance.Retry;
+import io.helidon.faulttolerance.RetryConfig;
+import io.helidon.faulttolerance.RetryException;
+import io.helidon.faulttolerance.RetryOutcome;
+import io.helidon.faulttolerance.SupplierHelper;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
@@ -60,43 +64,6 @@ final class JmsIncomingConnector {
         return new Connector(Objects.requireNonNull(config), Objects.requireNonNull(connectionFactoryResolver));
     }
 
-    static Duration jitter(Duration delay,
-                           Duration maximum,
-                           double variation,
-                           double sample) {
-        Objects.requireNonNull(delay);
-        Objects.requireNonNull(maximum);
-        if (delay.isZero() || delay.isNegative() || maximum.isZero() || maximum.isNegative()) {
-            throw new IllegalArgumentException("JMS reconnect delays must be positive");
-        }
-        if (!(variation >= 0 && variation < 1)) {
-            throw new IllegalArgumentException("JMS reconnect jitter must be at least 0 and less than 1");
-        }
-        if (!(sample >= 0 && sample <= 1)) {
-            throw new IllegalArgumentException("JMS reconnect jitter sample must be between 0 and 1");
-        }
-
-        Duration cappedDelay = delay.compareTo(maximum) > 0 ? maximum : delay;
-        if (variation == 0) {
-            return cappedDelay;
-        }
-
-        long delayNanos;
-        try {
-            delayNanos = cappedDelay.toNanos();
-        } catch (ArithmeticException e) {
-            // Duration can represent a much larger value than the nanosecond-based wait APIs.
-            return cappedDelay;
-        }
-        long maximumNanos = saturatedNanos(maximum);
-        double multiplier = (1 - variation) + 2 * variation * sample;
-        double randomizedNanos = delayNanos * multiplier;
-        long nanos = randomizedNanos >= maximumNanos
-                ? maximumNanos
-                : Math.max(1, (long) randomizedNanos);
-        return Duration.ofNanos(nanos);
-    }
-
     private static long saturatedNanos(Duration duration) {
         try {
             return duration.toNanos();
@@ -107,9 +74,11 @@ final class JmsIncomingConnector {
 
     private static final class Connector implements IncomingConnector {
         private static final Duration MAX_ADMISSION_RETRY_DELAY = Duration.ofMillis(100);
+        private static final Duration RECONNECT_OVERALL_TIMEOUT = Duration.ofNanos(Long.MAX_VALUE);
 
         private final JmsConnectorConfig config;
         private final JmsConnectionSupport connectionSupport;
+        private final Retry reconnectRetry;
         private final AtomicBoolean closed = new AtomicBoolean();
         private final AtomicBoolean closeRequested = new AtomicBoolean();
         private final AtomicBoolean forceCloseRequested = new AtomicBoolean();
@@ -132,6 +101,7 @@ final class JmsIncomingConnector {
                           JmsConnectionFactoryResolver connectionFactoryResolver) {
             this.connectionSupport = new JmsConnectionSupport(config, connectionFactoryResolver);
             this.config = connectionSupport.runtimeConfig();
+            this.reconnectRetry = createReconnectRetry(this.config);
         }
 
         @Override
@@ -486,62 +456,97 @@ final class JmsIncomingConnector {
         }
 
         private Resources connectWithRetry(Resources candidate, boolean startConnection) {
-            Duration delay = config.reconnectInitialDelay();
-            Resources resources = candidate;
-            while (!closed.get() && !draining.get()) {
-                try {
-                    if (resources == null) {
-                        resources = connect();
-                    }
-                    if (startConnection) {
-                        start(resources);
-                    }
-                    if (closed.get() || draining.get()) {
-                        closeResources(resources, resourceCleanupDeadline(), false);
-                        return null;
-                    }
-                    return resources;
-                } catch (JmsResourceCleanupException e) {
-                    if (resources != null) {
-                        RuntimeException cleanupFailure = cleanupFailedSetup(resources);
-                        resources = null;
-                        if (cleanupFailure != null) {
-                            cleanupFailure.addSuppressed(e);
-                            throw new JmsResourceCleanupException(
-                                    "Cannot clean up failed JMS connection setup for channel " + config.channelName(),
-                                    cleanupFailure);
-                        }
-                    }
-                    throw e;
-                } catch (JMSException | RuntimeException e) {
-                    if (resources != null) {
-                        RuntimeException cleanupFailure = cleanupFailedSetup(resources);
-                        resources = null;
-                        if (cleanupFailure != null) {
-                            cleanupFailure.addSuppressed(e);
-                            throw new JmsResourceCleanupException(
-                                    "Cannot clean up failed JMS connection setup for channel " + config.channelName(),
-                                    cleanupFailure);
-                        }
-                    }
-                    if (closed.get() || draining.get()) {
-                        return null;
-                    }
-                    if (!awaitReconnect(jitter(delay))) {
-                        return null;
-                    }
-                    delay = doubleDelay(delay, config.reconnectMaxDelay());
-                } catch (Error e) {
-                    if (resources != null) {
-                        RuntimeException cleanupFailure = cleanupFailedSetup(resources);
-                        if (cleanupFailure != null) {
-                            e.addSuppressed(cleanupFailure);
-                        }
-                    }
-                    throw e;
+            AtomicReference<Resources> resources = new AtomicReference<>(candidate);
+            try {
+                return reconnectRetry.invoke(ignored -> connect(resources, startConnection), this::awaitReconnect);
+            } catch (RetryException e) {
+                Throwable failure = e.getCause();
+                if (failure instanceof JmsResourceCleanupException cleanupFailure) {
+                    throw cleanupFailure;
                 }
+                if (failure instanceof Error error) {
+                    throw error;
+                }
+                if (closed.get() || draining.get()) {
+                    return null;
+                }
+                if (e.termination() == RetryOutcome.Termination.INTERRUPTED) {
+                    if (failure != null) {
+                        e.outcome().lastThrowable().ifPresent(lastFailure -> {
+                            if (lastFailure != failure && !causeChainContains(lastFailure, failure)) {
+                                failure.addSuppressed(lastFailure);
+                            }
+                        });
+                    }
+                    Thread.currentThread().interrupt();
+                    throw new MessagingException("JMS reconnect was interrupted",
+                                                 failure == null
+                                                         ? new InterruptedException("JMS reconnect was interrupted")
+                                                         : failure);
+                }
+                if (failure instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                throw new MessagingException("JMS reconnect failed",
+                                             failure == null ? e : failure);
             }
-            return null;
+        }
+
+        private Resources connect(AtomicReference<Resources> resourceReference,
+                                  boolean startConnection) {
+            Resources resources = resourceReference.get();
+            if (closed.get() || draining.get()) {
+                return null;
+            }
+            try {
+                if (resources == null) {
+                    resources = connect();
+                    resourceReference.set(resources);
+                }
+                if (startConnection) {
+                    start(resources);
+                }
+                if (closed.get() || draining.get()) {
+                    closeResources(resources, resourceCleanupDeadline(), false);
+                    return null;
+                }
+                return resources;
+            } catch (JmsResourceCleanupException e) {
+                if (resources != null) {
+                    RuntimeException cleanupFailure = cleanupFailedSetup(resources);
+                    resourceReference.set(null);
+                    if (cleanupFailure != null) {
+                        cleanupFailure.addSuppressed(e);
+                        throw new JmsResourceCleanupException(
+                                "Cannot clean up failed JMS connection setup for channel " + config.channelName(),
+                                cleanupFailure);
+                    }
+                }
+                throw e;
+            } catch (JMSException | RuntimeException e) {
+                if (resources != null) {
+                    RuntimeException cleanupFailure = cleanupFailedSetup(resources);
+                    resourceReference.set(null);
+                    if (cleanupFailure != null) {
+                        cleanupFailure.addSuppressed(e);
+                        throw new JmsResourceCleanupException(
+                                "Cannot clean up failed JMS connection setup for channel " + config.channelName(),
+                                cleanupFailure);
+                    }
+                }
+                if (closed.get() || draining.get()) {
+                    return null;
+                }
+                throw SupplierHelper.toRuntimeException(e);
+            } catch (Error e) {
+                if (resources != null) {
+                    RuntimeException cleanupFailure = cleanupFailedSetup(resources);
+                    if (cleanupFailure != null) {
+                        e.addSuppressed(cleanupFailure);
+                    }
+                }
+                throw e;
+            }
         }
 
         private Resources connect() throws JMSException {
@@ -800,12 +805,6 @@ final class JmsIncomingConnector {
                             || failure.reason() == MessagingRejectedException.Reason.SHUTDOWN);
         }
 
-        private Duration jitter(Duration delay) {
-            double variation = config.reconnectJitter();
-            double sample = variation == 0 ? 0.5 : ThreadLocalRandom.current().nextDouble();
-            return JmsIncomingConnector.jitter(delay, config.reconnectMaxDelay(), variation, sample);
-        }
-
         private static long receiveTimeoutMillis(Duration timeout) {
             long secondsAsMillis;
             try {
@@ -840,23 +839,25 @@ final class JmsIncomingConnector {
             }
         }
 
-        private static Duration doubleDelay(Duration delay, Duration maximum) {
-            if (delay.compareTo(maximum) >= 0) {
-                return maximum;
-            }
-            try {
-                Duration doubled = delay.multipliedBy(2);
-                return doubled.compareTo(maximum) > 0 ? maximum : doubled;
-            } catch (ArithmeticException e) {
-                return maximum;
-            }
-        }
-
         private static boolean causedByInterruption(Throwable failure) {
             Throwable current = failure;
             while (current != null) {
                 if (current instanceof InterruptedException) {
                     return true;
+                }
+                current = current.getCause();
+            }
+            return false;
+        }
+
+        private static boolean causeChainContains(Throwable failure, Throwable expectedCause) {
+            Throwable current = failure;
+            for (int i = 0; current != null && i < 64; i++) {
+                if (current == expectedCause) {
+                    return true;
+                }
+                if (current.getCause() == current) {
+                    return false;
                 }
                 current = current.getCause();
             }
@@ -881,6 +882,22 @@ final class JmsIncomingConnector {
                     primary.addSuppressed(failure);
                 }
             }
+        }
+
+        private static Retry createReconnectRetry(JmsConnectorConfig config) {
+            RetryConfig retryConfig = RetryConfig.builder()
+                    .name("messaging-jms-incoming-reconnect")
+                    .calls(Integer.MAX_VALUE)
+                    .delay(config.reconnectInitialDelay())
+                    .delayFactor(2)
+                    .jitterFactor(config.reconnectJitter())
+                    .maxDelay(config.reconnectMaxDelay())
+                    .overallTimeout(RECONNECT_OVERALL_TIMEOUT)
+                    .addApplyOn(JMSException.class)
+                    .addApplyOn(RuntimeException.class)
+                    .addSkipOn(JmsResourceCleanupException.class)
+                    .buildPrototype();
+            return Retry.create(retryConfig);
         }
 
     }

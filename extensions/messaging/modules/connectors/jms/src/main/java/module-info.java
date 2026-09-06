@@ -32,6 +32,7 @@ module io.helidon.extensions.messaging.connectors.jms {
     requires transitive jakarta.messaging;
 
     requires io.helidon.common;
+    requires io.helidon.faulttolerance;
     requires io.helidon.service.registry;
     requires java.naming;
 

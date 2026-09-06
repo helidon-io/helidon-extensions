@@ -20,10 +20,14 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
+import io.helidon.faulttolerance.Retry;
+import io.helidon.faulttolerance.RetryConfig;
+import io.helidon.faulttolerance.RetryException;
+import io.helidon.faulttolerance.RetryOutcome;
+import io.helidon.faulttolerance.SupplierHelper;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.MessageBatch;
@@ -52,49 +56,12 @@ final class JmsOutgoingConnector {
         return new Connector(Objects.requireNonNull(config), Objects.requireNonNull(connectionFactoryResolver));
     }
 
-    static Duration jitter(Duration delay, Duration maximum, double variation, double sample) {
-        Objects.requireNonNull(delay);
-        Objects.requireNonNull(maximum);
-        if (delay.isZero() || delay.isNegative() || maximum.isZero() || maximum.isNegative()) {
-            throw new IllegalArgumentException("JMS reconnect delays must be positive");
-        }
-        if (!(variation >= 0 && variation < 1)) {
-            throw new IllegalArgumentException("JMS reconnect jitter must be at least 0 and less than 1");
-        }
-        if (!(sample >= 0 && sample <= 1)) {
-            throw new IllegalArgumentException("JMS reconnect jitter sample must be between 0 and 1");
-        }
-
-        Duration cappedDelay = delay.compareTo(maximum) > 0 ? maximum : delay;
-        if (variation == 0) {
-            return cappedDelay;
-        }
-
-        long delayNanos;
-        try {
-            delayNanos = cappedDelay.toNanos();
-        } catch (ArithmeticException e) {
-            // Duration can represent a much larger value than the nanosecond-based sleep APIs.
-            return cappedDelay;
-        }
-        long maximumNanos;
-        try {
-            maximumNanos = maximum.toNanos();
-        } catch (ArithmeticException e) {
-            maximumNanos = Long.MAX_VALUE;
-        }
-
-        double multiplier = (1 - variation) + 2 * variation * sample;
-        double randomizedNanos = delayNanos * multiplier;
-        long nanos = randomizedNanos >= maximumNanos
-                ? maximumNanos
-                : Math.max(1, (long) randomizedNanos);
-        return Duration.ofNanos(nanos);
-    }
-
     private static final class Connector implements OutgoingConnector {
+        private static final Duration RECONNECT_OVERALL_TIMEOUT = Duration.ofNanos(Long.MAX_VALUE);
+
         private final JmsConnectorConfig config;
         private final JmsConnectionSupport connectionSupport;
+        private final Retry reconnectRetry;
         private final ReentrantLock operationLock = new ReentrantLock();
         private final ReentrantLock lifecycleLock = new ReentrantLock();
         private State state = State.NEW;
@@ -107,6 +74,7 @@ final class JmsOutgoingConnector {
                           JmsConnectionFactoryResolver connectionFactoryResolver) {
             this.connectionSupport = new JmsConnectionSupport(config, connectionFactoryResolver);
             this.config = connectionSupport.runtimeConfig();
+            this.reconnectRetry = createReconnectRetry(this.config);
         }
 
         @Override
@@ -276,26 +244,58 @@ final class JmsOutgoingConnector {
         }
 
         private Resources connectWithRetry() {
-            Duration delay = config.reconnectInitialDelay();
-            Throwable lastFailure = null;
-            while (true) {
-                requireOpenForReconnect(lastFailure);
-                try {
-                    Resources created = connect();
-                    if (promoteResources(created)) {
-                        return created;
-                    }
-                    disposeConnecting(created);
-                    lastFailure = new JMSException("JMS connection failed before it became ready");
-                } catch (JmsResourceCleanupException e) {
+            try {
+                return reconnectRetry.invoke(context -> connect(context.previousThrowable().orElse(null)),
+                                             this::awaitReconnect);
+            } catch (RetryException e) {
+                Throwable failure = e.getCause();
+                if (failure instanceof JmsResourceCleanupException cleanupFailure) {
                     enterTerminalState();
-                    throw e;
-                } catch (JMSException | RuntimeException e) {
-                    lastFailure = e;
+                    throw cleanupFailure;
                 }
-                requireOpenForReconnect(lastFailure);
-                sleepBeforeReconnect(jitter(delay), lastFailure);
-                delay = doubleDelay(delay, config.reconnectMaxDelay());
+                if (failure instanceof ReconnectClosedException closedFailure) {
+                    throw closedFailure;
+                }
+                if (failure instanceof Error error) {
+                    throw error;
+                }
+                if (e.termination() == RetryOutcome.Termination.INTERRUPTED) {
+                    if (failure != null) {
+                        e.outcome().lastThrowable().ifPresent(lastFailure -> {
+                            if (lastFailure != failure && !causeChainContains(lastFailure, failure)) {
+                                failure.addSuppressed(lastFailure);
+                            }
+                        });
+                    }
+                    Thread.currentThread().interrupt();
+                    throw new MessagingException("JMS reconnect was interrupted",
+                                                 failure == null
+                                                         ? new InterruptedException("JMS reconnect was interrupted")
+                                                         : failure);
+                }
+                if (isCloseRequested()) {
+                    throw reconnectClosed(failure);
+                }
+                if (failure instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                throw new MessagingException("JMS reconnect failed",
+                                             failure == null ? e : failure);
+            }
+        }
+
+        private Resources connect(Throwable lastFailure) {
+            requireOpenForReconnect(lastFailure);
+            try {
+                Resources created = connect();
+                if (promoteResources(created)) {
+                    return created;
+                }
+                disposeConnecting(created);
+                throw SupplierHelper.toRuntimeException(
+                        new JMSException("JMS connection failed before it became ready"));
+            } catch (JMSException e) {
+                throw SupplierHelper.toRuntimeException(e);
             }
         }
 
@@ -753,6 +753,20 @@ final class JmsOutgoingConnector {
             return false;
         }
 
+        private static boolean causeChainContains(Throwable failure, Throwable expectedCause) {
+            Throwable current = failure;
+            for (int i = 0; current != null && i < 64; i++) {
+                if (current == expectedCause) {
+                    return true;
+                }
+                if (current.getCause() == current) {
+                    return false;
+                }
+                current = current.getCause();
+            }
+            return false;
+        }
+
         private void closeOwnedResources() {
             List<Resources> current = new ArrayList<>(2);
             if (resources != null) {
@@ -798,11 +812,7 @@ final class JmsOutgoingConnector {
             lifecycleLock.lock();
             try {
                 if (closeRequested) {
-                    IllegalStateException closed = new IllegalStateException("JMS outgoing connector is closed");
-                    if (failure != null) {
-                        closed.addSuppressed(failure);
-                    }
-                    throw closed;
+                    throw reconnectClosed(failure);
                 }
             } finally {
                 lifecycleLock.unlock();
@@ -817,35 +827,34 @@ final class JmsOutgoingConnector {
             }
         }
 
-        private void sleepBeforeReconnect(Duration delay, Throwable failure) {
+        private boolean awaitReconnect(Duration delay) {
+            if (isCloseRequested()) {
+                return false;
+            }
             try {
                 Thread.sleep(delay);
+                return !isCloseRequested();
             } catch (InterruptedException e) {
-                if (failure != null) {
-                    e.addSuppressed(failure);
-                }
                 Thread.currentThread().interrupt();
                 throw new MessagingException("JMS reconnect was interrupted", e);
             }
         }
 
-        private Duration jitter(Duration delay) {
-            return JmsOutgoingConnector.jitter(delay,
-                                               config.reconnectMaxDelay(),
-                                               config.reconnectJitter(),
-                                               ThreadLocalRandom.current().nextDouble());
+        private boolean isCloseRequested() {
+            lifecycleLock.lock();
+            try {
+                return closeRequested;
+            } finally {
+                lifecycleLock.unlock();
+            }
         }
 
-        private static Duration doubleDelay(Duration delay, Duration maximum) {
-            if (delay.compareTo(maximum) >= 0) {
-                return maximum;
+        private static ReconnectClosedException reconnectClosed(Throwable failure) {
+            ReconnectClosedException closed = new ReconnectClosedException();
+            if (failure != null) {
+                closed.addSuppressed(failure);
             }
-            try {
-                Duration doubled = delay.multipliedBy(2);
-                return doubled.compareTo(maximum) > 0 ? maximum : doubled;
-            } catch (ArithmeticException e) {
-                return maximum;
-            }
+            return closed;
         }
 
         private static void closeResources(Resources resources) {
@@ -900,6 +909,23 @@ final class JmsOutgoingConnector {
             return previous;
         }
 
+        private static Retry createReconnectRetry(JmsConnectorConfig config) {
+            RetryConfig retryConfig = RetryConfig.builder()
+                    .name("messaging-jms-outgoing-reconnect")
+                    .calls(Integer.MAX_VALUE)
+                    .delay(config.reconnectInitialDelay())
+                    .delayFactor(2)
+                    .jitterFactor(config.reconnectJitter())
+                    .maxDelay(config.reconnectMaxDelay())
+                    .overallTimeout(RECONNECT_OVERALL_TIMEOUT)
+                    .addApplyOn(JMSException.class)
+                    .addApplyOn(RuntimeException.class)
+                    .addSkipOn(JmsResourceCleanupException.class)
+                    .addSkipOn(ReconnectClosedException.class)
+                    .buildPrototype();
+            return Retry.create(retryConfig);
+        }
+
         private enum State {
             NEW,
             READY,
@@ -914,6 +940,14 @@ final class JmsOutgoingConnector {
         private static final class ProviderCallAbandonedException extends MessagingException {
             private ProviderCallAbandonedException(String operation, Throwable cause) {
                 super("JMS " + operation + " completion is indeterminate", cause);
+            }
+        }
+
+        private static final class ReconnectClosedException extends IllegalStateException {
+            private static final long serialVersionUID = 6974796805953798536L;
+
+            private ReconnectClosedException() {
+                super("JMS outgoing connector is closed");
             }
         }
 

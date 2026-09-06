@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -50,6 +51,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -529,14 +531,23 @@ class JmsOutgoingConnectorTest {
             throw new MessagingException("offline");
         });
         AtomicReference<Throwable> startupFailure = new AtomicReference<>();
-        Thread starter = Thread.ofVirtual().start(() -> capture(connector::start, startupFailure));
+        AtomicBoolean starterInterrupted = new AtomicBoolean();
+        Thread starter = Thread.ofVirtual().start(() -> {
+            capture(connector::start, startupFailure);
+            starterInterrupted.set(Thread.currentThread().isInterrupted());
+        });
         assertThat(attempted.await(1, TimeUnit.SECONDS), is(true));
 
         connector.forceClose();
         starter.join(Duration.ofSeconds(2));
 
         assertThat(starter.isAlive(), is(false));
-        assertThat(startupFailure.get() instanceof RuntimeException, is(true));
+        Throwable reconnectFailure = startupFailure.get();
+        assertThat(reconnectFailure, instanceOf(MessagingException.class));
+        assertThat(reconnectFailure.getCause(), instanceOf(InterruptedException.class));
+        assertThat(reconnectFailure.getCause().getSuppressed().length, is(1));
+        assertThat(reconnectFailure.getCause().getSuppressed()[0].getMessage(), containsString("offline"));
+        assertThat(starterInterrupted.get(), is(true));
         BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
                                                        () -> connector.send("not-sent"));
         assertStatuses(failure, BatchItemStatus.NOT_ATTEMPTED);
@@ -1060,37 +1071,6 @@ class JmsOutgoingConnectorTest {
                 connector.forceClose();
             }
         }
-    }
-
-    @Test
-    void reconnectJitterIsCappedAtTheConfiguredMaximum() {
-        Duration maximum = Duration.ofMillis(100);
-
-        Duration actual = JmsOutgoingConnector.jitter(Duration.ofMillis(90), maximum, 0.5, 1);
-
-        assertThat(actual, is(maximum));
-    }
-
-    @Test
-    void reconnectJitterAcceptsATinyNonZeroVariation() {
-        Duration delay = Duration.ofNanos(1);
-
-        Duration actual = JmsOutgoingConnector.jitter(delay,
-                                                      Duration.ofSeconds(1),
-                                                      Double.MIN_VALUE,
-                                                      0.5);
-
-        assertThat(actual, is(delay));
-    }
-
-    @Test
-    void reconnectJitterHandlesDurationsLargerThanNanosecondsCanRepresent() {
-        Duration huge = Duration.ofSeconds(Long.MAX_VALUE);
-
-        Duration actual = JmsOutgoingConnector.jitter(huge, huge, 0.5, 1);
-
-        assertThat(actual.compareTo(huge) <= 0, is(true));
-        assertThat(actual.isPositive(), is(true));
     }
 
     private static JmsClient client() throws Exception {
