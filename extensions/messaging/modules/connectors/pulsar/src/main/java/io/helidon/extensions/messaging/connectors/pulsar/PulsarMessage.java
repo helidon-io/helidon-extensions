@@ -112,7 +112,8 @@ public interface PulsarMessage<T> extends Message<T> {
     OptionalLong publishTime();
 
     /**
-     * Application event time.
+     * Application event time in epoch milliseconds. Pulsar represents an unset event time as zero, which is exposed as
+     * empty.
      *
      * @return event time
      */
@@ -226,14 +227,15 @@ public interface PulsarMessage<T> extends Message<T> {
         }
 
         /**
-         * Configure a non-negative application event time in epoch milliseconds.
+         * Configure a positive application event time in epoch milliseconds.
          *
          * @param eventTime event time
          * @return updated builder
+         * @throws IllegalArgumentException if {@code eventTime} is not positive
          */
         public Builder<T> eventTime(long eventTime) {
-            if (eventTime < 0) {
-                throw new IllegalArgumentException("Pulsar event time must not be negative");
+            if (eventTime <= 0) {
+                throw new IllegalArgumentException("Pulsar event time must be positive");
             }
             this.eventTime = eventTime;
             return this;

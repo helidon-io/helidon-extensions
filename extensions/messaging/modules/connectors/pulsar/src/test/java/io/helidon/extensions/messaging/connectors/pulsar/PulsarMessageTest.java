@@ -38,6 +38,18 @@ class PulsarMessageTest {
     }
 
     @Test
+    void rejectsNonPositiveEventTimes() {
+        IllegalArgumentException zero = assertThrows(IllegalArgumentException.class,
+                                                     () -> PulsarMessage.builder("payload").eventTime(0));
+        IllegalArgumentException negative = assertThrows(IllegalArgumentException.class,
+                                                         () -> PulsarMessage.builder("payload").eventTime(-1));
+
+        assertThat(zero.getMessage(), is("Pulsar event time must be positive"));
+        assertThat(negative.getMessage(), is("Pulsar event time must be positive"));
+        assertThat(PulsarMessage.create("payload").eventTime().isEmpty(), is(true));
+    }
+
+    @Test
     void failedMappingEnvelopeRetainsMetadataWithoutReadingRawPayload() {
         AtomicInteger dataReads = new AtomicInteger();
         PulsarMessage<Object> message = PulsarMessageMapper.metadataOnly(
@@ -103,6 +115,7 @@ class PulsarMessageTest {
         assertThat(message.topic().orElseThrow(), is("persistent://public/default/input"));
         assertThat(Arrays.equals(message.messageId().orElseThrow(), new byte[] {1, 2, 3}), is(true));
         assertThat(message.publishTime().orElseThrow(), is(1234L));
+        assertThat(message.eventTime().isEmpty(), is(true));
         assertThat(message.sequenceId().isEmpty(), is(true));
         assertThat(message.producerName().orElseThrow(), is("source-producer"));
         assertThat(message.redeliveryCount().orElseThrow(), is(2));
