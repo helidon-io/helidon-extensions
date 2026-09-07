@@ -1428,14 +1428,6 @@ class JmsIncomingConnectorTest {
             this.failure = failure;
         }
 
-        private static TestDelivery completed() {
-            return new TestDelivery(new CountDownLatch(0), new CountDownLatch(0), null);
-        }
-
-        private static TestDelivery failed(RuntimeException failure) {
-            return new TestDelivery(new CountDownLatch(0), new CountDownLatch(0), null, failure);
-        }
-
         @Override
         public boolean isDone() {
             return release.getCount() == 0;
@@ -1485,6 +1477,14 @@ class JmsIncomingConnectorTest {
         @Override
         public void close() {
             closed.set(true);
+        }
+
+        private static TestDelivery completed() {
+            return new TestDelivery(new CountDownLatch(0), new CountDownLatch(0), null);
+        }
+
+        private static TestDelivery failed(RuntimeException failure) {
+            return new TestDelivery(new CountDownLatch(0), new CountDownLatch(0), null, failure);
         }
 
         private boolean closed() {

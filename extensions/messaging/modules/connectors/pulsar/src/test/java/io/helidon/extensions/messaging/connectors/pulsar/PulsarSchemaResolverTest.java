@@ -242,11 +242,11 @@ class PulsarSchemaResolverTest {
         };
     }
 
-    private record TestProvider(String name, Schema<?> schema) implements PulsarSchemaProvider {
-    }
-
     @FunctionalInterface
     private interface SchemaSupplier {
         Schema<?> get();
+    }
+
+    private record TestProvider(String name, Schema<?> schema) implements PulsarSchemaProvider {
     }
 }

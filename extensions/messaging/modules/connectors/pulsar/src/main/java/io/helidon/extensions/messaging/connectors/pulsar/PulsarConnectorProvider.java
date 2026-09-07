@@ -56,7 +56,6 @@ public final class PulsarConnectorProvider
     private final PulsarIncomingConnector incomingFactory;
     private final PulsarOutgoingConnector outgoingFactory;
 
-
     @Service.Inject
     PulsarConnectorProvider(Supplier<List<PulsarSchemaProvider>> schemaProviders) {
         this(schemaProviders, new PulsarIncomingConnector(), new PulsarOutgoingConnector());
@@ -79,6 +78,7 @@ public final class PulsarConnectorProvider
     public static PulsarConnectorProvider create(PulsarSchemaProvider... schemaProviders) {
         return new PulsarConnectorProvider(fixedProviders(schemaProviders));
     }
+
     @Override
     public String connectorType() {
         return CONNECTOR_TYPE;

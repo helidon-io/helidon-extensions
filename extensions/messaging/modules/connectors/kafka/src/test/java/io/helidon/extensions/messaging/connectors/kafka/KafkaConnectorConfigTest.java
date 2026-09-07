@@ -17,6 +17,7 @@
 package io.helidon.extensions.messaging.connectors.kafka;
 
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.Map;
 
 import io.helidon.config.Config;
@@ -91,6 +92,19 @@ class KafkaConnectorConfigTest {
         assertThat(configDescription, not(containsString(password)));
         assertThat(configDescription, not(containsString(jaasConfig)));
         assertThat(config.properties().get("sasl.jaas.config"), is(jaasConfig));
+    }
+
+    @Test
+    void testAdditionalPropertiesRejectNullEntries() {
+        Map<String, String> nullKey = new HashMap<>();
+        nullKey.put(null, "value");
+        Map<String, String> nullValue = new HashMap<>();
+        nullValue.put("key", null);
+
+        assertThrows(NullPointerException.class,
+                     () -> configuredBuilder().properties(nullKey).build());
+        assertThrows(NullPointerException.class,
+                     () -> configuredBuilder().addProperties(nullValue).build());
     }
 
     @Test

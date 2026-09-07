@@ -995,14 +995,14 @@ class KafkaOutgoingConnectorTest {
             super.close(timeout);
         }
 
-        private Duration closeTimeout() {
-            return closeTimeout.get();
-        }
-
         private static Serializer<Object> serializer() {
             return (topic, data) -> data == null
                     ? null
                     : String.valueOf(data).getBytes(StandardCharsets.UTF_8);
+        }
+
+        private Duration closeTimeout() {
+            return closeTimeout.get();
         }
     }
 

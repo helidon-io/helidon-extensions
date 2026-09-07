@@ -79,37 +79,6 @@ class KafkaIncomingConnectorTest {
     private static final TopicPartition TOPIC_PARTITION = new TopicPartition(TOPIC, 0);
     private static final TopicPartition SECOND_TOPIC_PARTITION = new TopicPartition(TOPIC, 1);
 
-    private static BatchDeliveryException indeterminateFailure(String operation,
-                                                               MessageBatch<?> batch,
-                                                               RuntimeException failure) {
-        List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
-        for (int i = 0; i < batch.size(); i++) {
-            outcomes.add(BatchItemOutcome.indeterminate(i, failure));
-        }
-        return new BatchDeliveryException(operation + " failed with indeterminate batch outcome",
-                                          failure,
-                                          batch,
-                                          outcomes);
-    }
-
-    private static void awaitLatch(CountDownLatch latch) {
-        try {
-            latch.await();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new MessagingException("Interrupted while waiting for test delivery", e);
-        }
-    }
-
-    private static boolean awaitLatch(CountDownLatch latch, Duration timeout) {
-        try {
-            return latch.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new MessagingException("Interrupted while waiting for test delivery", e);
-        }
-    }
-
     @Test
     void testConnectorType() {
         KafkaConnectorProvider provider = KafkaConnectorProvider.create();
@@ -2029,6 +1998,37 @@ class KafkaIncomingConnectorTest {
 
     private static TrackingMockConsumer trackingConsumer() {
         return new TrackingMockConsumer();
+    }
+
+    private static BatchDeliveryException indeterminateFailure(String operation,
+                                                               MessageBatch<?> batch,
+                                                               RuntimeException failure) {
+        List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
+        for (int i = 0; i < batch.size(); i++) {
+            outcomes.add(BatchItemOutcome.indeterminate(i, failure));
+        }
+        return new BatchDeliveryException(operation + " failed with indeterminate batch outcome",
+                                          failure,
+                                          batch,
+                                          outcomes);
+    }
+
+    private static void awaitLatch(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new MessagingException("Interrupted while waiting for test delivery", e);
+        }
+    }
+
+    private static boolean awaitLatch(CountDownLatch latch, Duration timeout) {
+        try {
+            return latch.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new MessagingException("Interrupted while waiting for test delivery", e);
+        }
     }
 
     @SafeVarargs

@@ -67,6 +67,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class JmsMessageTest {
+    private static final String LOCAL_SECRET_METADATA = "application.local.secret";
+    private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
+    private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
+
     @Test
     void rejectsNullBuilderState() {
         JmsMessage.Builder<String> builder = JmsMessage.builder("body");
@@ -89,10 +93,6 @@ class JmsMessageTest {
         assertThat(message.type().isEmpty(), is(true));
         assertThat(message.jmsProperties(), is(Map.of("attempt", 1)));
     }
-
-    private static final String LOCAL_SECRET_METADATA = "application.local.secret";
-    private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
-    private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
 
     @Test
     void testProgrammaticMessageIsImmutable() {
@@ -251,10 +251,6 @@ class JmsMessageTest {
         verify(nativeMessage).setObjectProperty("attempt", 2);
         verify(nativeMessage).setJMSCorrelationID("correlation");
         verify(nativeMessage).setJMSType("kind");
-    }
-
-    private static <T> JmsMessage<T> genericMessage(T entity) {
-        return JmsMessage.create(entity);
     }
 
     @Test
@@ -779,6 +775,10 @@ class JmsMessageTest {
         verify(session, never()).createObjectMessage(any(Serializable.class));
     }
 
+    private static <T> JmsMessage<T> genericMessage(T entity) {
+        return JmsMessage.create(entity);
+    }
+
     private record TestPayload(String value) implements Serializable {
     }
 
@@ -794,6 +794,16 @@ class JmsMessageTest {
 
         private ReadTrackingPayload(String value) {
             this.value = value;
+        }
+
+        @Override
+        public boolean equals(Object object) {
+            return object instanceof ReadTrackingPayload other && value.equals(other.value);
+        }
+
+        @Override
+        public int hashCode() {
+            return value.hashCode();
         }
 
         private static void reset() {
@@ -845,14 +855,5 @@ class JmsMessageTest {
             }
         }
 
-        @Override
-        public boolean equals(Object object) {
-            return object instanceof ReadTrackingPayload other && value.equals(other.value);
-        }
-
-        @Override
-        public int hashCode() {
-            return value.hashCode();
-        }
     }
 }

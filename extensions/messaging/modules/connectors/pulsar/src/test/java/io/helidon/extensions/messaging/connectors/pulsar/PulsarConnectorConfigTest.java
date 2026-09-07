@@ -17,6 +17,7 @@
 package io.helidon.extensions.messaging.connectors.pulsar;
 
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.Map;
 
 import io.helidon.config.Config;
@@ -89,6 +90,27 @@ class PulsarConnectorConfigTest {
         assertThat(config.toString(), containsString("consumerProperties=****"));
         assertThat(config.toString(), containsString("producerProperties=****"));
         assertThat(config.toString(), not(containsString(secret)));
+    }
+
+    @Test
+    void passThroughPropertiesRejectNullEntries() {
+        Map<String, String> nullKey = new HashMap<>();
+        nullKey.put(null, "value");
+        Map<String, String> nullValue = new HashMap<>();
+        nullValue.put("key", null);
+
+        assertThrows(NullPointerException.class,
+                     () -> completeBuilder().clientProperties(nullKey).build());
+        assertThrows(NullPointerException.class,
+                     () -> completeBuilder().addClientProperties(nullValue).build());
+        assertThrows(NullPointerException.class,
+                     () -> completeBuilder().consumerProperties(nullKey).build());
+        assertThrows(NullPointerException.class,
+                     () -> completeBuilder().addConsumerProperties(nullValue).build());
+        assertThrows(NullPointerException.class,
+                     () -> completeBuilder().producerProperties(nullKey).build());
+        assertThrows(NullPointerException.class,
+                     () -> completeBuilder().addProducerProperties(nullValue).build());
     }
 
     @Test

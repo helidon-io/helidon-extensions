@@ -334,8 +334,6 @@ class PulsarOutgoingConnectorTest {
         private final AtomicBoolean closed = new AtomicBoolean();
         private final AtomicInteger shutdowns = new AtomicInteger();
         private final AtomicReference<Schema<?>> schema = new AtomicReference<>();
-        private CompletableFuture<Void> producerCloseFuture = CompletableFuture.completedFuture(null);
-        private CompletableFuture<Void> clientCloseFuture = CompletableFuture.completedFuture(null);
         private final MessageId messageId = PulsarTestSupport.proxy(MessageId.class,
                                                                     (ignored, method, args) -> method.getName()
                                                                             .equals("compareTo")
@@ -344,6 +342,8 @@ class PulsarOutgoingConnectorTest {
         private final Producer<Object> producer = producer();
         private final ProducerBuilder<Object> producerBuilder = producerBuilder();
         private final PulsarClient client = clientProxy();
+        private CompletableFuture<Void> producerCloseFuture = CompletableFuture.completedFuture(null);
+        private CompletableFuture<Void> clientCloseFuture = CompletableFuture.completedFuture(null);
 
         private PulsarClient client() {
             return client;
