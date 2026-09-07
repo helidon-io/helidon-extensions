@@ -32,7 +32,6 @@ import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.BatchAtomicity;
 import io.helidon.messaging.spi.OutgoingConnector;
 
 import jakarta.jms.Connection;
@@ -109,11 +108,6 @@ final class JmsOutgoingConnector {
                 }
                 operationLock.unlock();
             }
-        }
-
-        @Override
-        public BatchAtomicity batchAtomicity() {
-            return config.transacted() ? BatchAtomicity.ATOMIC : BatchAtomicity.PER_MESSAGE;
         }
 
         @Override

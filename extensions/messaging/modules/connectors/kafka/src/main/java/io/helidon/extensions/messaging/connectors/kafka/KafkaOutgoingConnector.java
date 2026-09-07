@@ -40,7 +40,6 @@ import io.helidon.messaging.MessageHeader;
 import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.BatchAtomicity;
 import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.OutgoingConnector;
 
@@ -312,11 +311,6 @@ final class KafkaOutgoingConnector {
             } finally {
                 lifecycleLock.unlock();
             }
-        }
-
-        @Override
-        public BatchAtomicity batchAtomicity() {
-            return BatchAtomicity.PER_MESSAGE;
         }
 
         @Override

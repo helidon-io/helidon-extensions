@@ -45,7 +45,6 @@ import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessageMetadata;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.BatchAtomicity;
 import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.OutgoingConnector;
 
@@ -446,7 +445,6 @@ class KafkaOutgoingConnectorTest {
         ExecutionException executionException = assertThrows(ExecutionException.class,
                                                               () -> sending.get(1, TimeUnit.SECONDS));
         BatchDeliveryException failure = (BatchDeliveryException) executionException.getCause();
-        assertThat(outgoing.batchAtomicity(), is(BatchAtomicity.PER_MESSAGE));
         assertThat(failure.batch(), sameInstance(batch));
         assertThat(failure.getCause(), sameInstance(firstFailure));
         assertThat(failure.outcomes().stream().map(outcome -> outcome.status()).toList(),
