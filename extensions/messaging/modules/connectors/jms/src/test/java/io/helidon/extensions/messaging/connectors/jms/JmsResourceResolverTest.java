@@ -26,8 +26,8 @@ import javax.naming.Context;
 import javax.naming.NamingException;
 import javax.naming.spi.InitialContextFactory;
 
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.service.registry.ServiceRegistry;
 
 import jakarta.jms.ConnectionFactory;

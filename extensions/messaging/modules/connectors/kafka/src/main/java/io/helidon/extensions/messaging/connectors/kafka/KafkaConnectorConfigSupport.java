@@ -22,7 +22,6 @@ import java.util.Map;
 import java.util.Set;
 
 import io.helidon.builder.api.Prototype;
-import io.helidon.messaging.spi.ConnectorConfig;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 
@@ -156,8 +155,8 @@ final class KafkaConnectorConfigSupport {
     @Prototype.Constant
     static final String DEFAULT_CLOSE_TIMEOUT = "PT10S";
 
-    private static final Set<String> CONNECTOR_PROPERTIES = Set.of(ConnectorConfig.CONNECTOR_ATTRIBUTE,
-                                                                   ConnectorConfig.CHANNEL_NAME_ATTRIBUTE,
+    private static final Set<String> CONNECTOR_PROPERTIES = Set.of("connector",
+                                                                   "channel-name",
                                                                    "direction",
                                                                    TOPIC_PROPERTY,
                                                                    POLL_TIMEOUT_PROPERTY,

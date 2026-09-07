@@ -21,8 +21,7 @@ import java.util.Map;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
-import io.helidon.messaging.spi.ConnectorConfig;
-import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.ConnectorDirection;
 
 import org.junit.jupiter.api.Test;
 
@@ -57,8 +56,8 @@ class PulsarConnectorConfigTest {
     void readsNestedClasspathClientProperties() {
         PulsarConnectorConfig config = PulsarConnectorConfig.create(Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("direction", "INCOMING"),
-                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, CHANNEL),
-                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, PulsarConnectorProvider.CONNECTOR_TYPE),
+                Map.entry("channel-name", CHANNEL),
+                Map.entry("connector", PulsarConnectorProvider.CONNECTOR_TYPE),
                 Map.entry(PulsarConnectorConfig.SERVICE_URL_PROPERTY, "pulsar://broker:6650"),
                 Map.entry(PulsarConnectorConfig.TOPIC_PROPERTY, TOPIC),
                 Map.entry(PulsarConnectorConfig.SCHEMA_PROPERTY, "BYTES"),
@@ -112,7 +111,7 @@ class PulsarConnectorConfigTest {
                      () -> completeBuilder().schemaProvider(" ").build());
         completeBuilder().closeTimeout(Duration.ZERO).build();
 
-        PulsarConnectorProvider provider = new PulsarConnectorProvider();
+        PulsarConnectorProvider provider = PulsarConnectorProvider.create();
         PulsarConnectorConfig outgoing = completeBuilder().build();
         PulsarConnectorConfig incoming = completeBuilder()
                 .direction(ConnectorDirection.INCOMING)

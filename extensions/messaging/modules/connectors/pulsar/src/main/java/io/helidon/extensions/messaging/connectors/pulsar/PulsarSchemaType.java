@@ -27,8 +27,8 @@ import java.util.Date;
 import java.util.Objects;
 
 import io.helidon.common.Api;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.ConnectorDirection;
 
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.schema.GenericRecord;

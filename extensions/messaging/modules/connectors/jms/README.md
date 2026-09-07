@@ -25,7 +25,7 @@ For an imperatively assembled messaging graph, construct the provider directly:
 
 ```java
 ConnectionFactory factory = createVendorConnectionFactory();
-JmsConnectorProvider provider = new JmsConnectorProvider(factory);
+JmsConnectorProvider provider = JmsConnectorProvider.create(factory);
 ```
 
 Every binding created by this provider uses that factory.

@@ -295,8 +295,7 @@ final class JmsMessageMapper {
             }
             return session.createObjectMessage(serializable);
         }
-        throw new MessagingException("Unsupported outgoing JMS payload type: "
-                                             + (entity == null ? "null" : entity.getClass().getName()));
+        throw new MessagingException("Unsupported outgoing JMS payload type: " + entity.getClass().getName());
     }
 
     private static Map<String, Object> readProperties(jakarta.jms.Message message) throws JMSException {

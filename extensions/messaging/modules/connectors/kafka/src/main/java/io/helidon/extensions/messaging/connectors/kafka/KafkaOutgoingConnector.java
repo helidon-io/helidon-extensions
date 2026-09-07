@@ -30,9 +30,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
 
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
@@ -40,7 +42,6 @@ import io.helidon.messaging.MessageHeader;
 import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.OutgoingConnector;
 
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -143,9 +144,7 @@ final class KafkaOutgoingConnector {
         public void start() {
             lifecycleLock.lock();
             try {
-                while (state == State.STARTING && !closeRequested) {
-                    awaitLifecycleChange("connector startup");
-                }
+                awaitLifecycleChange("connector startup", () -> state == State.STARTING && !closeRequested);
                 if (state == State.CLOSED || closeRequested) {
                     throw new IllegalStateException("Kafka outgoing connector is closed");
                 }
@@ -518,9 +517,7 @@ final class KafkaOutgoingConnector {
                     interruptLifecycle(closeOwner == null ? startOwner : closeOwner);
                     return;
                 }
-                while (closing) {
-                    awaitLifecycleChange("connector close");
-                }
+                awaitLifecycleChange("connector close", () -> closing);
                 if (state == State.CLOSED) {
                     return;
                 }
@@ -591,9 +588,11 @@ final class KafkaOutgoingConnector {
             return new MessagingException("Kafka outgoing connector lifecycle failed for topic " + topic, failure);
         }
 
-        private void awaitLifecycleChange(String operation) {
+        private void awaitLifecycleChange(String operation, BooleanSupplier waiting) {
             try {
-                lifecycleChanged.await();
+                while (waiting.getAsBoolean()) {
+                    lifecycleChanged.await();
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new MessagingException("Interrupted while waiting for Kafka outgoing " + operation

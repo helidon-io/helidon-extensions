@@ -31,6 +31,10 @@
     <name>Helidon Extensions Messaging JMS Connector</name>
     <description>JMS connector for declarative messaging</description>
 
+    <properties>
+        <spotbugs.exclude>etc/spotbugs/exclude.xml</spotbugs.exclude>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>io.helidon.builder</groupId>

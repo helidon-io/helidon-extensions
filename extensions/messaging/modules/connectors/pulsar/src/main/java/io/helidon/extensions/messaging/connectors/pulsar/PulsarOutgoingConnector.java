@@ -30,9 +30,9 @@ import java.util.function.BooleanSupplier;
 
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.OutgoingConnector;
 
 import org.apache.pulsar.client.api.MessageId;

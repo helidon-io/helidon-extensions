@@ -49,12 +49,11 @@ import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.Incomin
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonOutgoingSender;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonSchemaProvider;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.OutgoingSender;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingRuntime;
-import io.helidon.messaging.spi.ConnectorConfig;
-import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.OutgoingConnector;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
@@ -245,13 +244,13 @@ class PulsarConnectorIT {
         String topic = uniqueName("schema-" + schemaCase.type());
         Config config = Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("direction", ConnectorDirection.OUTGOING.name()),
-                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, uniqueName("schema-out")),
-                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, PulsarConnectorProvider.CONNECTOR_TYPE),
+                Map.entry("channel-name", uniqueName("schema-out")),
+                Map.entry("connector", PulsarConnectorProvider.CONNECTOR_TYPE),
                 Map.entry(PulsarConnectorConfig.SERVICE_URL_PROPERTY, PULSAR.getPulsarBrokerUrl()),
                 Map.entry(PulsarConnectorConfig.TOPIC_PROPERTY, topic),
                 Map.entry(PulsarConnectorConfig.SCHEMA_PROPERTY, schemaCase.type().name()))));
 
-        try (OutgoingConnector connector = new PulsarConnectorProvider().createOutgoingConnector(config)) {
+        try (OutgoingConnector connector = PulsarConnectorProvider.create().createOutgoingConnector(config)) {
             connector.start();
             try (Consumer<T> consumer = consumer(client,
                                                  schemaCase.schema(),

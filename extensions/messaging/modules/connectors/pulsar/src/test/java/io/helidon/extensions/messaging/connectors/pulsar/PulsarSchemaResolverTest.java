@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.ConnectorDirection;
 
 import org.apache.pulsar.client.api.Schema;
 import org.junit.jupiter.api.Test;
@@ -197,16 +197,16 @@ class PulsarSchemaResolverTest {
             return Schema.STRING;
         });
         PulsarSchemaProvider[] providers = {custom};
-        PulsarConnectorProvider connectorProvider = new PulsarConnectorProvider(providers);
+        PulsarConnectorProvider connectorProvider = PulsarConnectorProvider.create(providers);
         providers[0] = new TestProvider("replacement", Schema.BYTES);
 
         connectorProvider.createOutgoingConnector(config(ConnectorDirection.OUTGOING, "custom"));
 
         assertThat(invocations.get(), is(1));
         assertThrows(NullPointerException.class,
-                     () -> new PulsarConnectorProvider((PulsarSchemaProvider[]) null));
+                     () -> PulsarConnectorProvider.create((PulsarSchemaProvider[]) null));
         assertThrows(NullPointerException.class,
-                     () -> new PulsarConnectorProvider(new PulsarSchemaProvider[] {null}));
+                     () -> PulsarConnectorProvider.create(new PulsarSchemaProvider[] {null}));
     }
 
     private static PulsarSchemaResolver.ResolvedSchema resolve(String name, List<PulsarSchemaProvider> providers) {
