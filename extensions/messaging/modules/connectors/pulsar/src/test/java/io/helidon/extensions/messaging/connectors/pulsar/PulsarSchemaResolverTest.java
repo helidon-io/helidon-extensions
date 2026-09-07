@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -136,7 +137,7 @@ class PulsarSchemaResolverTest {
 
         IllegalArgumentException nullProvider = assertThrows(
                 IllegalArgumentException.class,
-                () -> resolve("custom", java.util.Arrays.asList((PulsarSchemaProvider) null)));
+                () -> resolve("custom", Arrays.asList((PulsarSchemaProvider) null)));
         assertThat(nullProvider.getMessage(), containsString("lookup contains null"));
         assertThat(nullProvider.getMessage(), containsString(CHANNEL));
 

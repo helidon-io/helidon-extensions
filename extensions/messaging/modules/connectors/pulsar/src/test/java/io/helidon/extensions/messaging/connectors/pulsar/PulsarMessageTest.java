@@ -35,6 +35,28 @@ class PulsarMessageTest {
     @Test
     void rejectsNullPayloads() {
         assertThrows(NullPointerException.class, () -> PulsarMessage.builder(null));
+        assertThrows(NullPointerException.class, () -> PulsarMessage.builder().entity(null));
+        assertThrows(NullPointerException.class, () -> PulsarMessage.builder().build());
+    }
+
+    @Test
+    void supportsStandardBuilderShape() {
+        PulsarMessage<String> message = PulsarMessage.<String>builder()
+                .entity("payload")
+                .key("key")
+                .clearKey()
+                .orderingKey(new byte[] {1})
+                .clearOrderingKey()
+                .eventTime(1)
+                .clearEventTime()
+                .update(builder -> builder.header("trace", "value"))
+                .get();
+
+        assertThat(message.entity(), is("payload"));
+        assertThat(message.key().isEmpty(), is(true));
+        assertThat(message.orderingKey().isEmpty(), is(true));
+        assertThat(message.eventTime().isEmpty(), is(true));
+        assertThat(message.header("trace").orElseThrow(), is("value"));
     }
 
     @Test

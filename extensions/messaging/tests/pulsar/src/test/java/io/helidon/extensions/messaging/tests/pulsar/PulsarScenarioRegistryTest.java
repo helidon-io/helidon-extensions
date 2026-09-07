@@ -36,7 +36,6 @@ import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 class PulsarScenarioRegistryTest {
     @Test
@@ -60,7 +59,7 @@ class PulsarScenarioRegistryTest {
         try {
             ServiceRegistry registry = manager.registry();
 
-            assertDoesNotThrow(() -> registry.get(MessagingRuntime.class));
+            registry.get(MessagingRuntime.class);
             assertThat(registry.all(EmitterRegistration.class).isEmpty(), is(true));
             assertThat(registry.all(ConsumerRegistration.class).size(), is(1));
         } finally {

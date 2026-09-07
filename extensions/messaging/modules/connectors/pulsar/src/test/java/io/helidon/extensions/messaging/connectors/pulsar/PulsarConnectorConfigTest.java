@@ -30,7 +30,6 @@ import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PulsarConnectorConfigTest {
@@ -111,7 +110,7 @@ class PulsarConnectorConfigTest {
                      () -> completeBuilder().closeTimeout(Duration.ofNanos(-1)).build());
         assertThrows(IllegalArgumentException.class,
                      () -> completeBuilder().schemaProvider(" ").build());
-        assertDoesNotThrow(() -> completeBuilder().closeTimeout(Duration.ZERO).build());
+        completeBuilder().closeTimeout(Duration.ZERO).build();
 
         PulsarConnectorProvider provider = new PulsarConnectorProvider();
         PulsarConnectorConfig outgoing = completeBuilder().build();

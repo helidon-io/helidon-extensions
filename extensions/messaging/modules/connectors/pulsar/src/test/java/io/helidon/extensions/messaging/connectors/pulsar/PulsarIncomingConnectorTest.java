@@ -49,11 +49,10 @@ import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PulsarIncomingConnectorTest {
@@ -189,7 +188,7 @@ class PulsarIncomingConnectorTest {
         assertThat(context.failedStarts.get(), is(1));
         assertThat(source.acks.get(), is(1));
         assertThat(source.negativeAcks.get(), is(0));
-        assertArrayEquals(new Throwable[] {metadataFailure}, context.mappingFailure.get().getSuppressed());
+        assertThat(context.mappingFailure.get().getSuppressed(), is(new Throwable[] {metadataFailure}));
         PulsarMessage<?> rejected = (PulsarMessage<?>) context.failedBatch.get().get(0);
         assertThat(((PulsarMessageImpl<?>) rejected).entityAvailable(), is(false));
         assertThrows(MessagingException.class, rejected::entity);
@@ -391,11 +390,11 @@ class PulsarIncomingConnectorTest {
         PulsarMessage<?> message = deliveredMessage(context);
         ByteBuffer delivered = (ByteBuffer) message.entity();
         assertThat(source.schema.get(), sameInstance(Schema.BYTEBUFFER));
-        assertNotSame(payload, delivered);
+        assertThat(delivered, not(sameInstance(payload)));
         assertThat(payload.position(), is(2));
         assertThat(payload.limit(), is(5));
         payload.put(0, (byte) 9);
-        assertArrayEquals(new byte[] {0, 1, 2, 3, 4}, Schema.BYTEBUFFER.encode(delivered));
+        assertThat(Schema.BYTEBUFFER.encode(delivered), is(new byte[] {0, 1, 2, 3, 4}));
         assertThat(payload.position(), is(2));
         assertThat(payload.limit(), is(5));
         assertThat(runFailure.get(), nullValue());

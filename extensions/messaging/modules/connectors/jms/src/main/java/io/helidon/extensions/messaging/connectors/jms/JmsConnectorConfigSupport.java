@@ -142,7 +142,7 @@ final class JmsConnectorConfigSupport {
         }
     }
 
-    private static void requireNonBlank(String name, java.util.Optional<String> value) {
+    private static void requireNonBlank(String name, Optional<String> value) {
         value.ifPresent(it -> {
             if (it.isBlank()) {
                 throw new IllegalArgumentException(name + " must not be blank");
@@ -253,13 +253,13 @@ final class JmsConnectorConfigSupport {
             this.password = password.map(char[]::clone).orElse(null);
         }
 
-        private static PasswordSupplier empty() {
-            return new PasswordSupplier(Optional.empty());
-        }
-
         @Override
         public Optional<char[]> get() {
             return Optional.ofNullable(password).map(char[]::clone);
+        }
+
+        private static PasswordSupplier empty() {
+            return new PasswordSupplier(Optional.empty());
         }
     }
 }

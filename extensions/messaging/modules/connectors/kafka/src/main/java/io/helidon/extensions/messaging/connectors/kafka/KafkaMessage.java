@@ -31,9 +31,9 @@ import io.helidon.messaging.MessageHeaderValue;
 /**
  * Kafka-specific immutable message envelope.
  * <p>
- * Incoming messages expose a snapshot of their Kafka record metadata. Messages created by
- * {@link #builder(Object, Object)} expose a key and native headers for an outgoing Kafka binding, but have no source
- * topic, partition, offset, timestamp, or leader epoch.
+ * Incoming messages expose a snapshot of their Kafka record metadata. Application-created messages expose an optional
+ * key and native headers for an outgoing Kafka binding, but have no source topic, partition, offset, timestamp, or
+ * leader epoch.
  * <p>
  * The portable {@link #headers()} view preserves native header order and duplicate names. Non-null native values are
  * exposed as {@link MessageHeaderValue.BinaryValue}; native null values are exposed as
@@ -46,37 +46,59 @@ import io.helidon.messaging.MessageHeaderValue;
 @Api.Preview
 public interface KafkaMessage<K, V> extends Message<V> {
     /**
-     * Create a keyed Kafka message without native headers.
+     * Create a builder for an outgoing Kafka message.
      *
-     * @param key Kafka key, may be {@code null}
-     * @param entity non-null message payload
      * @param <K> Kafka key type
+     * @param <V> Kafka value type
+     * @return Kafka message builder
+     */
+    static <K, V> Builder<K, V> builder() {
+        return new Builder<>();
+    }
+
+    /**
+     * Create a Kafka message without a key or native headers.
+     *
+     * @param entity non-null message payload
      * @param <V> Kafka value type
      * @return immutable Kafka message
      * @throws NullPointerException if {@code entity} is {@code null}
      */
-    static <K, V> KafkaMessage<K, V> create(K key, V entity) {
-        return builder(key, entity).build();
+    static <V> KafkaMessage<Void, V> create(V entity) {
+        return KafkaMessage.<Void, V>builder(entity).build();
     }
 
     /**
-     * Create a builder for an outgoing Kafka message.
+     * Create a keyed Kafka message without native headers.
      *
-     * @param key Kafka key, may be {@code null}
+     * @param key non-null Kafka key
+     * @param entity non-null message payload
+     * @param <K> Kafka key type
+     * @param <V> Kafka value type
+     * @return immutable Kafka message
+     * @throws NullPointerException if {@code key} or {@code entity} is {@code null}
+     */
+    static <K, V> KafkaMessage<K, V> create(K key, V entity) {
+        return KafkaMessage.<K, V>builder(entity).key(key).build();
+    }
+
+    /**
+     * Create a builder for an outgoing Kafka message without a key.
+     *
      * @param entity non-null message payload
      * @param <K> Kafka key type
      * @param <V> Kafka value type
      * @return Kafka message builder
      * @throws NullPointerException if {@code entity} is {@code null}
      */
-    static <K, V> Builder<K, V> builder(K key, V entity) {
-        return new Builder<>(key, entity);
+    static <K, V> Builder<K, V> builder(V entity) {
+        return KafkaMessage.<K, V>builder().entity(entity);
     }
 
     /**
      * Kafka key.
      *
-     * @return Kafka key, or empty for a null key
+     * @return Kafka key, or empty when the message has no key
      */
     Optional<K> key();
 
@@ -181,14 +203,46 @@ public interface KafkaMessage<K, V> extends Message<V> {
      * @param <V> Kafka value type
      */
     @Api.Preview
-    final class Builder<K, V> {
-        private final K key;
-        private final V entity;
+    final class Builder<K, V> implements io.helidon.common.Builder<Builder<K, V>, KafkaMessage<K, V>> {
         private final List<Header> headers = new ArrayList<>();
+        private K key;
+        private V entity;
 
-        private Builder(K key, V entity) {
-            this.key = key;
+        private Builder() {
+        }
+
+        /**
+         * Set the message payload.
+         *
+         * @param entity non-null message payload
+         * @return updated builder
+         * @throws NullPointerException if {@code entity} is {@code null}
+         */
+        public Builder<K, V> entity(V entity) {
             this.entity = Objects.requireNonNull(entity, "entity");
+            return this;
+        }
+
+        /**
+         * Set the Kafka key.
+         *
+         * @param key non-null Kafka key
+         * @return updated builder
+         * @throws NullPointerException if {@code key} is {@code null}
+         */
+        public Builder<K, V> key(K key) {
+            this.key = Objects.requireNonNull(key, "key");
+            return this;
+        }
+
+        /**
+         * Clear the Kafka key.
+         *
+         * @return updated builder
+         */
+        public Builder<K, V> clearKey() {
+            this.key = null;
+            return this;
         }
 
         /**
@@ -200,24 +254,44 @@ public interface KafkaMessage<K, V> extends Message<V> {
          * @param name header name
          * @param value header value
          * @return updated builder
+         * @throws NullPointerException if {@code name} or {@code value} is {@code null}
          */
-        public Builder<K, V> header(String name, String value) {
-            return rawHeader(name, value.getBytes(StandardCharsets.UTF_8));
+        public Builder<K, V> addHeader(String name, String value) {
+            Objects.requireNonNull(name, "name");
+            Objects.requireNonNull(value, "value");
+            return addRawHeader(name, value.getBytes(StandardCharsets.UTF_8));
         }
 
         /**
          * Append a native Kafka header.
          * <p>
-         * Repeated names are retained in both header views. The supplied array is defensively copied. A {@code null}
-         * value represents a native null-valued header and is exposed as {@link MessageHeaderValue.NullValue} in the portable
-         * {@link KafkaMessage#headers()} view.
+         * Repeated names are retained in both header views. The supplied array is defensively copied.
          *
          * @param name header name
-         * @param value raw header value, may be {@code null}
+         * @param value raw header value
          * @return updated builder
+         * @throws NullPointerException if {@code name} or {@code value} is {@code null}
          */
-        public Builder<K, V> rawHeader(String name, byte[] value) {
+        public Builder<K, V> addRawHeader(String name, byte[] value) {
+            Objects.requireNonNull(name, "name");
+            Objects.requireNonNull(value, "value");
             headers.add(KafkaMessageImpl.header(name, value));
+            return this;
+        }
+
+        /**
+         * Append a native Kafka null-valued header.
+         * <p>
+         * Repeated names are retained in both header views. The value is exposed as
+         * {@link MessageHeaderValue.NullValue} in the portable {@link KafkaMessage#headers()} view.
+         *
+         * @param name header name
+         * @return updated builder
+         * @throws NullPointerException if {@code name} is {@code null}
+         */
+        public Builder<K, V> addNullHeader(String name) {
+            Objects.requireNonNull(name, "name");
+            headers.add(KafkaMessageImpl.header(name, null));
             return this;
         }
 
@@ -226,8 +300,9 @@ public interface KafkaMessage<K, V> extends Message<V> {
          *
          * @return immutable Kafka message
          */
+        @Override
         public KafkaMessage<K, V> build() {
-            return KafkaMessageImpl.create(key, entity, headers);
+            return KafkaMessageImpl.create(key, Objects.requireNonNull(entity, "entity"), headers);
         }
     }
 }

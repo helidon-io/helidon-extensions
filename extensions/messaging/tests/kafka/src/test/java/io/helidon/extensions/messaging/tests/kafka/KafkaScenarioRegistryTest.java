@@ -36,7 +36,6 @@ import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 class KafkaScenarioRegistryTest {
     @Test
@@ -50,7 +49,7 @@ class KafkaScenarioRegistryTest {
         try {
             ServiceRegistry registry = manager.registry();
 
-            assertDoesNotThrow(() -> registry.get(MessagingRuntime.class));
+            registry.get(MessagingRuntime.class);
             assertThat(registry.first(ForwardingReceiver.class).isEmpty(), is(true));
             assertThat(registry.all(EmitterRegistration.class).isEmpty(), is(true));
             assertThat(registry.all(ProcessorRegistration.class).isEmpty(), is(true));

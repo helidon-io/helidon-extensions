@@ -66,7 +66,6 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class KafkaOutgoingConnectorTest {
@@ -104,7 +103,7 @@ class KafkaOutgoingConnectorTest {
         Header header = record.headers().lastHeader("trace-id");
         assertThat(new String(header.value(), StandardCharsets.UTF_8), is("Příliš žluťoučký"));
         assertThat(headerValues(record, "duplicate"), is(List.of("first", "second")));
-        assertArrayEquals(new byte[] {0x00, (byte) 0xFF}, record.headers().lastHeader("binary").value());
+        assertThat(record.headers().lastHeader("binary").value(), is(new byte[] {0x00, (byte) 0xFF}));
         assertThat(record.headers().lastHeader("null-header").value(), nullValue());
         assertThat(record.headers().lastHeader(LOCAL_SECRET_METADATA), nullValue());
     }
@@ -130,11 +129,12 @@ class KafkaOutgoingConnectorTest {
         MockProducer<Object, Object> producer = mockProducer(true);
         KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
         byte[] binaryHeader = new byte[] {0x00, (byte) 0xFF};
-        KafkaMessage<String, String> message = KafkaMessage.<String, String>builder("audit-key", "audit event")
-                .header("trace-id", "first")
-                .header("trace-id", "second")
-                .rawHeader("binary", binaryHeader)
-                .rawHeader("null-header", null)
+        KafkaMessage<String, String> message = KafkaMessage.<String, String>builder("audit event")
+                .key("audit-key")
+                .addHeader("trace-id", "first")
+                .addHeader("trace-id", "second")
+                .addRawHeader("binary", binaryHeader)
+                .addNullHeader("null-header")
                 .build();
         binaryHeader[0] = 0x7F;
 
@@ -148,9 +148,9 @@ class KafkaOutgoingConnectorTest {
         Header[] headers = record.headers().toArray();
         assertThat(List.of(headers).stream().map(Header::key).toList(),
                    is(List.of("trace-id", "trace-id", "binary", "null-header")));
-        assertArrayEquals("first".getBytes(StandardCharsets.UTF_8), headers[0].value());
-        assertArrayEquals("second".getBytes(StandardCharsets.UTF_8), headers[1].value());
-        assertArrayEquals(new byte[] {0x00, (byte) 0xFF}, headers[2].value());
+        assertThat(headers[0].value(), is("first".getBytes(StandardCharsets.UTF_8)));
+        assertThat(headers[1].value(), is("second".getBytes(StandardCharsets.UTF_8)));
+        assertThat(headers[2].value(), is(new byte[] {0x00, (byte) 0xFF}));
         assertThat(headers[3].value(), nullValue());
         assertThat(message.headerValue("trace-id").orElseThrow(),
                    is(MessageHeaderValue.binary("second".getBytes(StandardCharsets.UTF_8))));
@@ -182,7 +182,7 @@ class KafkaOutgoingConnectorTest {
         assertThat(record.timestamp(), nullValue());
         assertThat(record.key(), is("source-key"));
         assertThat(record.value(), is("audit event"));
-        assertArrayEquals(new byte[] {0x01}, record.headers().lastHeader("source").value());
+        assertThat(record.headers().lastHeader("source").value(), is(new byte[] {0x01}));
     }
 
     @Test
@@ -301,7 +301,7 @@ class KafkaOutgoingConnectorTest {
         assertThat(record.key(), is("source-key"));
         assertThat(record.value(), is("audit event"));
         assertThat(headerValues(record, "trace-id"), is(List.of("first", "second")));
-        assertArrayEquals(new byte[] {0x00, (byte) 0xFF}, record.headers().lastHeader("binary").value());
+        assertThat(record.headers().lastHeader("binary").value(), is(new byte[] {0x00, (byte) 0xFF}));
         assertThat(record.headers().lastHeader("null-header").value(), nullValue());
         assertThat(headerValue(record, DeadLetterMessage.SOURCE_CHANNEL_HEADER), is("orders-in"));
         assertThat(headerValue(record, DeadLetterMessage.ATTEMPTS_HEADER), is("3"));
@@ -322,13 +322,14 @@ class KafkaOutgoingConnectorTest {
     void testDeadLetterKafkaMessageWithoutSourceMetadataRemovesForgedReservedHeaders() {
         MockProducer<Object, Object> producer = mockProducer(true);
         KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        KafkaMessage<String, String> original = KafkaMessage.<String, String>builder("source-key", "audit event")
-                .header(KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER, "forged")
-                .header(KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER, "forged")
-                .header(KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER, "forged")
-                .header(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_HEADER, "forged")
-                .header(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER, "forged")
-                .header(KafkaConnectorProvider.DLQ_ORIGINAL_LEADER_EPOCH_HEADER, "forged")
+        KafkaMessage<String, String> original = KafkaMessage.<String, String>builder("audit event")
+                .key("source-key")
+                .addHeader(KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER, "forged")
+                .addHeader(KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER, "forged")
+                .addHeader(KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER, "forged")
+                .addHeader(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_HEADER, "forged")
+                .addHeader(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER, "forged")
+                .addHeader(KafkaConnectorProvider.DLQ_ORIGINAL_LEADER_EPOCH_HEADER, "forged")
                 .build();
         DeadLetterMessage<String> deadLetter = DeadLetterMessage.create(original,
                                                                          "orders-in",
@@ -393,7 +394,7 @@ class KafkaOutgoingConnectorTest {
         assertThat(record.value(), is("wrapped event"));
         assertThat(headerValues(record, "trace-id"), is(List.of("first", "second", "wrapper")));
         assertThat(headerValue(record, "wrapper-only"), is("portable"));
-        assertArrayEquals(new byte[] {0x00, (byte) 0xFF}, record.headers().lastHeader("binary").value());
+        assertThat(record.headers().lastHeader("binary").value(), is(new byte[] {0x00, (byte) 0xFF}));
         assertThat(record.headers().lastHeader("null-header").value(), nullValue());
         assertThat(headerValue(record, DeadLetterMessage.SOURCE_CHANNEL_HEADER), is("orders-in"));
         assertThat(headerValue(record, DeadLetterMessage.ATTEMPTS_HEADER), is("4"));

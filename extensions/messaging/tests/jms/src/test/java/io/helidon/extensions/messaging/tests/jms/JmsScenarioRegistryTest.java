@@ -40,7 +40,6 @@ import org.junit.jupiter.api.Test;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 class JmsScenarioRegistryTest {
     private static final ConnectionFactory UNUSED_CONNECTION_FACTORY = new UnusedConnectionFactory();
@@ -53,7 +52,7 @@ class JmsScenarioRegistryTest {
         try {
             ServiceRegistry registry = manager.registry();
 
-            assertDoesNotThrow(() -> registry.get(MessagingRuntime.class));
+            registry.get(MessagingRuntime.class);
             assertThat(registry.get(ConnectionFactory.class), sameInstance(UNUSED_CONNECTION_FACTORY));
             assertThat(registry.first(BytesReceiver.class).isEmpty(), is(true));
             assertThat(registry.all(EmitterRegistration.class).isEmpty(), is(true));

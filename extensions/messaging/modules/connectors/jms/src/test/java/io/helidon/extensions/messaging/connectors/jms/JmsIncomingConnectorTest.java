@@ -16,7 +16,6 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
-import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -57,7 +56,6 @@ import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -207,7 +205,7 @@ class JmsIncomingConnectorTest {
     }
 
     @Test
-    void naturalRunCompletionClearsConnectorOwnedCredentials() throws Exception {
+    void naturalRunCompletionUsesConfiguredCredentialsAndClosesConnection() throws Exception {
         JmsClient client = client();
         when(client.factory.createConnection("scott", "tiger")).thenReturn(client.connection);
         JmsConnectorConfig credentialConfig = JmsConnectorConfig.builder()
@@ -216,7 +214,6 @@ class JmsIncomingConnectorTest {
                 .password("tiger")
                 .build();
         IncomingConnector connector = JmsIncomingConnector.create(credentialConfig, ignored -> client.factory);
-        char[] connectorPassword = connectorPassword(connector);
 
         connector.run(new TestContext(new ArrayList<>()) {
             @Override
@@ -225,7 +222,7 @@ class JmsIncomingConnectorTest {
             }
         });
 
-        assertArrayEquals(new char[connectorPassword.length], connectorPassword);
+        verify(client.factory).createConnection("scott", "tiger");
         verify(client.connection, never()).start();
         verify(client.connection).close();
     }
@@ -480,7 +477,7 @@ class JmsIncomingConnectorTest {
         assertThat(reservation.failedStarts(), is(1));
         assertThat(reservation.failure(), sameInstance(providerFailure));
         assertThat(providerFailure.getCause(), sameInstance(rootCause));
-        assertArrayEquals(new Throwable[] {priorSuppressed}, providerFailure.getSuppressed());
+        assertThat(providerFailure.getSuppressed(), is(new Throwable[] {priorSuppressed}));
         JmsMessage<?> rejectedMessage = (JmsMessage<?>) reservation.failedBatch().get(0);
         assertThat(rejectedMessage.bodyAvailable(), is(false));
         assertThrows(MessagingException.class, rejectedMessage::entity);
@@ -1227,15 +1224,6 @@ class JmsIncomingConnectorTest {
         when(message.getText()).thenReturn(body);
         when(message.getPropertyNames()).thenReturn(Collections.emptyEnumeration());
         return message;
-    }
-
-    private static char[] connectorPassword(IncomingConnector connector) throws Exception {
-        Field connectionSupportField = connector.getClass().getDeclaredField("connectionSupport");
-        connectionSupportField.setAccessible(true);
-        Object connectionSupport = connectionSupportField.get(connector);
-        Field passwordField = JmsConnectionSupport.class.getDeclaredField("password");
-        passwordField.setAccessible(true);
-        return (char[]) passwordField.get(connectionSupport);
     }
 
     private static JmsConnectorConfig config(boolean transacted) {

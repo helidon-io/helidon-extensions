@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
@@ -39,6 +40,16 @@ import io.helidon.messaging.MessageHeaders;
 @Api.Preview
 public interface PulsarMessage<T> extends Message<T> {
     /**
+     * Create an outgoing Pulsar message builder.
+     *
+     * @param <T> payload type
+     * @return builder
+     */
+    static <T> Builder<T> builder() {
+        return new Builder<>();
+    }
+
+    /**
      * Create a payload-only outgoing Pulsar message.
      *
      * @param entity non-null payload
@@ -59,7 +70,7 @@ public interface PulsarMessage<T> extends Message<T> {
      * @throws NullPointerException if {@code entity} is {@code null}
      */
     static <T> Builder<T> builder(T entity) {
-        return new Builder<>(entity);
+        return PulsarMessage.<T>builder().entity(entity);
     }
 
     /**
@@ -167,16 +178,27 @@ public interface PulsarMessage<T> extends Message<T> {
      * @param <T> payload type
      */
     @Api.Preview
-    final class Builder<T> {
-        private final T entity;
+    final class Builder<T> implements io.helidon.common.Builder<Builder<T>, PulsarMessage<T>> {
         private final MessageHeaders.Builder headers = MessageHeaders.builder();
+        private T entity;
         private String key;
         private byte[] keyBytes;
         private byte[] orderingKey;
         private Long eventTime;
 
-        private Builder(T entity) {
-            this.entity = java.util.Objects.requireNonNull(entity, "entity");
+        private Builder() {
+        }
+
+        /**
+         * Set the message payload.
+         *
+         * @param entity non-null payload
+         * @return updated builder
+         * @throws NullPointerException if {@code entity} is {@code null}
+         */
+        public Builder<T> entity(T entity) {
+            this.entity = Objects.requireNonNull(entity, "entity");
+            return this;
         }
 
         /**
@@ -186,7 +208,7 @@ public interface PulsarMessage<T> extends Message<T> {
          * @return updated builder
          */
         public Builder<T> key(String key) {
-            this.key = java.util.Objects.requireNonNull(key);
+            this.key = Objects.requireNonNull(key);
             this.keyBytes = null;
             return this;
         }
@@ -198,8 +220,19 @@ public interface PulsarMessage<T> extends Message<T> {
          * @return updated builder
          */
         public Builder<T> keyBytes(byte[] key) {
-            this.keyBytes = java.util.Objects.requireNonNull(key).clone();
+            this.keyBytes = Objects.requireNonNull(key).clone();
             this.key = null;
+            return this;
+        }
+
+        /**
+         * Clear the partitioning key.
+         *
+         * @return updated builder
+         */
+        public Builder<T> clearKey() {
+            this.key = null;
+            this.keyBytes = null;
             return this;
         }
 
@@ -210,7 +243,17 @@ public interface PulsarMessage<T> extends Message<T> {
          * @return updated builder
          */
         public Builder<T> orderingKey(byte[] key) {
-            this.orderingKey = java.util.Objects.requireNonNull(key).clone();
+            this.orderingKey = Objects.requireNonNull(key).clone();
+            return this;
+        }
+
+        /**
+         * Clear the ordering key.
+         *
+         * @return updated builder
+         */
+        public Builder<T> clearOrderingKey() {
+            this.orderingKey = null;
             return this;
         }
 
@@ -242,12 +285,28 @@ public interface PulsarMessage<T> extends Message<T> {
         }
 
         /**
+         * Clear the application event time.
+         *
+         * @return updated builder
+         */
+        public Builder<T> clearEventTime() {
+            this.eventTime = null;
+            return this;
+        }
+
+        /**
          * Create the immutable message.
          *
          * @return immutable Pulsar message
          */
+        @Override
         public PulsarMessage<T> build() {
-            return PulsarMessageImpl.outgoing(entity, headers.build(), key, keyBytes, orderingKey, eventTime);
+            return PulsarMessageImpl.outgoing(Objects.requireNonNull(entity, "entity"),
+                                              headers.build(),
+                                              key,
+                                              keyBytes,
+                                              orderingKey,
+                                              eventTime);
         }
     }
 }

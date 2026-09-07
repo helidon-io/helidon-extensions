@@ -31,19 +31,46 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class KafkaMessageTest {
     @Test
-    void rejectsNullPayloads() {
-        assertThrows(NullPointerException.class, () -> KafkaMessage.builder("key", null));
+    void rejectsNullConstructionState() {
+        assertThrows(NullPointerException.class, () -> KafkaMessage.create((String) null));
+        assertThrows(NullPointerException.class, () -> KafkaMessage.create(null, "payload"));
+        assertThrows(NullPointerException.class, () -> KafkaMessage.builder((String) null));
+        assertThrows(NullPointerException.class, () -> KafkaMessage.builder().entity(null));
+        assertThrows(NullPointerException.class, () -> KafkaMessage.builder().key(null));
+        assertThrows(NullPointerException.class, () -> KafkaMessage.builder().build());
         ConsumerRecord<String, String> tombstone = new ConsumerRecord<>("topic", 0, 1L, "key", null);
         assertThrows(NullPointerException.class, () -> KafkaMessageImpl.create(tombstone));
     }
 
     @Test
+    void rejectsNullHeaderState() {
+        KafkaMessage.Builder<Void, String> builder = KafkaMessage.builder("payload");
+
+        assertThrows(NullPointerException.class, () -> builder.addHeader(null, "value"));
+        assertThrows(NullPointerException.class, () -> builder.addHeader("name", null));
+        assertThrows(NullPointerException.class, () -> builder.addRawHeader(null, new byte[0]));
+        assertThrows(NullPointerException.class, () -> builder.addRawHeader("name", null));
+        assertThrows(NullPointerException.class, () -> builder.addNullHeader(null));
+    }
+
+    @Test
+    void createsKeylessMessage() {
+        KafkaMessage<Void, String> message = KafkaMessage.create("payload");
+
+        assertThat(message.key().isEmpty(), is(true));
+        assertThat(message.entity(), is("payload"));
+    }
+
+    @Test
     void testProgrammaticMessageContainsOnlyOutgoingMetadata() {
         byte[] binary = {1, 2};
-        KafkaMessage<String, String> message = KafkaMessage.<String, String>builder("key", "payload")
-                .header("trace", "abc")
-                .rawHeader("binary", binary)
-                .build();
+        KafkaMessage<String, String> message = KafkaMessage.<String, String>builder("payload")
+                .key("key")
+                .addHeader("trace", "abc")
+                .addRawHeader("binary", binary)
+                .update(KafkaMessage.Builder::clearKey)
+                .key("key")
+                .get();
         binary[0] = 9;
 
         assertThat(message.key().orElseThrow(), is("key"));
@@ -61,12 +88,13 @@ class KafkaMessageTest {
 
     @Test
     void testPortableHeadersPreserveNativeOrderDuplicatesBinaryAndNullValues() {
-        KafkaMessage<String, String> message = KafkaMessage.<String, String>builder("key", "payload")
-                .header("trace", "first")
-                .rawHeader("trace", null)
-                .header("trace", "last")
-                .rawHeader("trace", null)
-                .rawHeader("only-null", null)
+        KafkaMessage<String, String> message = KafkaMessage.<String, String>builder("payload")
+                .key("key")
+                .addHeader("trace", "first")
+                .addNullHeader("trace")
+                .addHeader("trace", "last")
+                .addNullHeader("trace")
+                .addNullHeader("only-null")
                 .build();
 
         assertThat(message.headers().entries(), is(List.of(

@@ -107,6 +107,18 @@ final class JmsMessageMapper {
         return result;
     }
 
+    static void copyPortableHeaders(jakarta.jms.Message target, Message<?> source) {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        for (MessageHeader header : source.headers()) {
+            String name = JmsMessageImpl.requirePropertyName(header.name());
+            if (properties.containsKey(name)) {
+                throw new MessagingException("JMS application properties do not support duplicate header: " + name);
+            }
+            properties.put(name, portableProperty(name, header.value()));
+        }
+        properties.forEach((name, value) -> setPortableProperty(target, name, value));
+    }
+
     private static jakarta.jms.Message toJmsDeadLetterMessage(Session session,
                                                               DeadLetterMessage<?> deadLetterMessage,
                                                               JmsMessage<?> originalMessage,
@@ -169,18 +181,6 @@ final class JmsMessageMapper {
             }
         }
         return result;
-    }
-
-    static void copyPortableHeaders(jakarta.jms.Message target, Message<?> source) {
-        Map<String, Object> properties = new LinkedHashMap<>();
-        for (MessageHeader header : source.headers()) {
-            String name = JmsMessageImpl.requirePropertyName(header.name());
-            if (properties.containsKey(name)) {
-                throw new MessagingException("JMS application properties do not support duplicate header: " + name);
-            }
-            properties.put(name, portableProperty(name, header.value()));
-        }
-        properties.forEach((name, value) -> setPortableProperty(target, name, value));
     }
 
     private static Object readBody(jakarta.jms.Message message,

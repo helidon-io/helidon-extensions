@@ -120,10 +120,10 @@ final class JmsMessagingTypes {
             deliveries.add(message);
             JmsMessage.Builder<String> result = JmsMessage.builder("forwarded: " + message.entity());
             message.correlationId().ifPresent(result::correlationId);
-            message.jmsProperties().forEach(result::property);
+            message.jmsProperties().forEach(result::putProperty);
             return result.type("forwarded-message")
-                    .property("route", "forwarded")
-                    .property("processor", "jms-forwarder")
+                    .putProperty("route", "forwarded")
+                    .putProperty("processor", "jms-forwarder")
                     .build();
         }
 

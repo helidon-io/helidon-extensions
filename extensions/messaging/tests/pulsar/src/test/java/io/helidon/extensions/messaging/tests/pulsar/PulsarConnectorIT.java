@@ -77,7 +77,6 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
 @Testcontainers(disabledWithoutDocker = true)
 class PulsarConnectorIT {
@@ -489,7 +488,7 @@ class PulsarConnectorIT {
                 PulsarMessage<String> redelivered = secondReceiver.awaitDelivery(WAIT_TIMEOUT);
                 assertThat(redelivered, notNullValue());
                 assertThat(redelivered.entity(), is("redeliver me"));
-                assertArrayEquals(failedMessageId, redelivered.messageId().orElseThrow());
+                assertThat(redelivered.messageId().orElseThrow(), is(failedMessageId));
                 assertThat(FailOnceReceiver.attemptCount(), is(2));
             } finally {
                 secondManager.shutdown();
@@ -692,9 +691,9 @@ class PulsarConnectorIT {
     private record SchemaRoundTrip<T>(PulsarSchemaType type, Schema<T> schema, T payload, T expected) {
         private void assertPayload(T actual) {
             if (expected instanceof byte[] expectedBytes && actual instanceof byte[] actualBytes) {
-                assertArrayEquals(expectedBytes, actualBytes);
+                assertThat(actualBytes, is(expectedBytes));
             } else if (expected instanceof ByteBuffer expectedBuffer && actual instanceof ByteBuffer actualBuffer) {
-                assertArrayEquals(bytes(expectedBuffer), bytes(actualBuffer));
+                assertThat(bytes(actualBuffer), is(bytes(expectedBuffer)));
             } else {
                 assertThat(actual, is(expected));
             }
