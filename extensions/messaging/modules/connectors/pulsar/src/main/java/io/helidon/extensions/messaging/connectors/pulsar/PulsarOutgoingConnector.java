@@ -74,9 +74,28 @@ final class PulsarOutgoingConnector {
         }
     }
 
+    private enum State {
+        NEW,
+        STARTING,
+        READY,
+        CLOSING,
+        FAILED,
+        CLOSED
+    }
+
     @FunctionalInterface
     interface ClientFactory {
         PulsarClient create(PulsarConnectorConfig config) throws PulsarClientException;
+    }
+
+    private record Resources(PulsarClient client, Producer<Object> producer) {
+        private Resources {
+            Objects.requireNonNull(client);
+            Objects.requireNonNull(producer);
+        }
+    }
+
+    private record CleanupResult(RuntimeException failure, boolean released) {
     }
 
     private final class Connector implements OutgoingConnector {
@@ -494,7 +513,7 @@ final class PulsarOutgoingConnector {
             return ((now ^ result) & (timeout ^ result)) < 0 ? Long.MAX_VALUE : result;
         }
 
-        private synchronized void recordCloseFailure(RuntimeException failure) {
+        private void recordCloseFailure(RuntimeException failure) {
             if (closeFailure == null) {
                 closeFailure = failure;
             } else if (closeFailure != failure) {
@@ -558,22 +577,4 @@ final class PulsarOutgoingConnector {
         }
     }
 
-    private record Resources(PulsarClient client, Producer<Object> producer) {
-        private Resources {
-            Objects.requireNonNull(client);
-            Objects.requireNonNull(producer);
-        }
-    }
-
-    private record CleanupResult(RuntimeException failure, boolean released) {
-    }
-
-    private enum State {
-        NEW,
-        STARTING,
-        READY,
-        CLOSING,
-        FAILED,
-        CLOSED
-    }
 }

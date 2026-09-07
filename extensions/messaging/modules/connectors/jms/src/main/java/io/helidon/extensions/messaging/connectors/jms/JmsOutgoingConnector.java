@@ -221,6 +221,169 @@ final class JmsOutgoingConnector {
             }
         }
 
+        private static BatchDeliveryException notAttempted(String operation,
+                                                            MessageBatch<?> batch,
+                                                            Throwable failure) {
+            List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
+            addNotAttempted(outcomes, 0, batch.size());
+            return new BatchDeliveryException(operation + " failed before attempting the batch",
+                                              failure,
+                                              batch,
+                                              outcomes);
+        }
+
+        private static BatchDeliveryException indeterminate(String operation,
+                                                             MessageBatch<?> batch,
+                                                             Throwable failure) {
+            List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
+            for (int i = 0; i < batch.size(); i++) {
+                outcomes.add(BatchItemOutcome.indeterminate(i, failure));
+            }
+            return new BatchDeliveryException(operation + " failed with indeterminate batch outcome",
+                                              failure,
+                                              batch,
+                                              outcomes);
+        }
+
+        private static void addNotAttempted(List<BatchItemOutcome> outcomes, int firstIndex, int size) {
+            for (int i = firstIndex; i < size; i++) {
+                outcomes.add(BatchItemOutcome.notAttempted(i));
+            }
+        }
+
+        private static boolean causedByJmsFailure(Throwable failure) {
+            Throwable current = failure;
+            while (current != null) {
+                if (current instanceof JMSException || current instanceof JMSRuntimeException) {
+                    return true;
+                }
+                current = current.getCause();
+            }
+            return false;
+        }
+
+        private static boolean causedByInterruption(Throwable failure) {
+            Throwable current = failure;
+            while (current != null) {
+                if (current instanceof InterruptedException) {
+                    return true;
+                }
+                current = current.getCause();
+            }
+            return false;
+        }
+
+        private static boolean causeChainContains(Throwable failure, Throwable expectedCause) {
+            Throwable current = failure;
+            for (int i = 0; current != null && i < 64; i++) {
+                if (current == expectedCause) {
+                    return true;
+                }
+                if (current.getCause() == current) {
+                    return false;
+                }
+                current = current.getCause();
+            }
+            return false;
+        }
+
+        private static long deadline(Duration timeout) {
+            long now = System.nanoTime();
+            try {
+                return Math.addExact(now, timeout.toNanos());
+            } catch (ArithmeticException e) {
+                return Long.MAX_VALUE;
+            }
+        }
+
+        private static long remainingNanos(long deadline) {
+            try {
+                return Math.max(0, Math.subtractExact(deadline, System.nanoTime()));
+            } catch (ArithmeticException e) {
+                return Long.MAX_VALUE;
+            }
+        }
+
+        private static ReconnectClosedException reconnectClosed(Throwable failure) {
+            ReconnectClosedException closed = new ReconnectClosedException();
+            if (failure != null) {
+                closed.addSuppressed(failure);
+            }
+            return closed;
+        }
+
+        private static void closeResources(Resources resources) {
+            if (resources == null) {
+                return;
+            }
+            resources.closeLock.lock();
+            try {
+                if (resources.closeAttempted) {
+                    throwCloseFailure(resources.closeFailure);
+                    return;
+                }
+                resources.closeAttempted = true;
+                Throwable failure = close(resources.connectionHandle, null);
+                if (failure != null) {
+                    // A connection owns its children. Try them directly only if connection cleanup failed.
+                    failure = close(resources.producer, failure);
+                    failure = close(resources.session, failure);
+                }
+                resources.closeFailure = normalizeCloseFailure(failure);
+                throwCloseFailure(resources.closeFailure);
+            } finally {
+                resources.closeLock.unlock();
+            }
+        }
+
+        private static Throwable normalizeCloseFailure(Throwable failure) {
+            if (failure == null || failure instanceof RuntimeException || failure instanceof Error) {
+                return failure;
+            }
+            return new MessagingException("Cannot close JMS resources", failure);
+        }
+
+        private static void throwCloseFailure(Throwable failure) {
+            if (failure instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (failure instanceof Error error) {
+                throw error;
+            }
+        }
+
+        private static Throwable close(AutoCloseable closeable, Throwable previous) {
+            if (closeable == null) {
+                return previous;
+            }
+            try {
+                closeable.close();
+            } catch (Throwable failure) {
+                if (previous == null) {
+                    return failure;
+                }
+                addSuppressed(previous, failure);
+            }
+            return previous;
+        }
+
+        private static Retry createReconnectRetry(JmsConnectorConfig config) {
+            RetryConfig retryConfig = RetryConfig.builder()
+                    .name("messaging-jms-outgoing-reconnect")
+                    .calls(Integer.MAX_VALUE)
+                    .delay(config.reconnectInitialDelay())
+                    .delayFactor(2)
+                    .jitterFactor(config.reconnectJitter())
+                    .maxDelay(config.reconnectMaxDelay())
+                    .overallTimeout(RECONNECT_OVERALL_TIMEOUT)
+                    .addApplyOn(JMSException.class)
+                    .addApplyOn(RuntimeException.class)
+                    .addSkipOn(JmsResourceCleanupException.class)
+                    .addSkipOn(ReconnectClosedException.class)
+                    .buildPrototype();
+            return Retry.create(retryConfig);
+        }
+
         private Resources readyResources() {
             Resources stale = null;
             lifecycleLock.lock();
@@ -651,36 +814,6 @@ final class JmsOutgoingConnector {
                                               outcomes);
         }
 
-        private static BatchDeliveryException notAttempted(String operation,
-                                                           MessageBatch<?> batch,
-                                                           Throwable failure) {
-            List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
-            addNotAttempted(outcomes, 0, batch.size());
-            return new BatchDeliveryException(operation + " failed before attempting the batch",
-                                              failure,
-                                              batch,
-                                              outcomes);
-        }
-
-        private static BatchDeliveryException indeterminate(String operation,
-                                                             MessageBatch<?> batch,
-                                                             Throwable failure) {
-            List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
-            for (int i = 0; i < batch.size(); i++) {
-                outcomes.add(BatchItemOutcome.indeterminate(i, failure));
-            }
-            return new BatchDeliveryException(operation + " failed with indeterminate batch outcome",
-                                              failure,
-                                              batch,
-                                              outcomes);
-        }
-
-        private static void addNotAttempted(List<BatchItemOutcome> outcomes, int firstIndex, int size) {
-            for (int i = firstIndex; i < size; i++) {
-                outcomes.add(BatchItemOutcome.notAttempted(i));
-            }
-        }
-
         private IllegalStateException rejectedResource(String resourceType,
                                                         AutoCloseable resource,
                                                         long cleanupDeadline) {
@@ -725,42 +858,6 @@ final class JmsOutgoingConnector {
             connectionSupport.forceClose();
         }
 
-        private static boolean causedByJmsFailure(Throwable failure) {
-            Throwable current = failure;
-            while (current != null) {
-                if (current instanceof JMSException || current instanceof JMSRuntimeException) {
-                    return true;
-                }
-                current = current.getCause();
-            }
-            return false;
-        }
-
-        private static boolean causedByInterruption(Throwable failure) {
-            Throwable current = failure;
-            while (current != null) {
-                if (current instanceof InterruptedException) {
-                    return true;
-                }
-                current = current.getCause();
-            }
-            return false;
-        }
-
-        private static boolean causeChainContains(Throwable failure, Throwable expectedCause) {
-            Throwable current = failure;
-            for (int i = 0; current != null && i < 64; i++) {
-                if (current == expectedCause) {
-                    return true;
-                }
-                if (current.getCause() == current) {
-                    return false;
-                }
-                current = current.getCause();
-            }
-            return false;
-        }
-
         private void closeOwnedResources() {
             List<Resources> current = new ArrayList<>(2);
             if (resources != null) {
@@ -774,23 +871,6 @@ final class JmsOutgoingConnector {
 
         private void closeResourcesAsync(Resources resources) {
             connectionSupport.closeAsync(resources);
-        }
-
-        private static long deadline(Duration timeout) {
-            long now = System.nanoTime();
-            try {
-                return Math.addExact(now, timeout.toNanos());
-            } catch (ArithmeticException e) {
-                return Long.MAX_VALUE;
-            }
-        }
-
-        private static long remainingNanos(long deadline) {
-            try {
-                return Math.max(0, Math.subtractExact(deadline, System.nanoTime()));
-            } catch (ArithmeticException e) {
-                return Long.MAX_VALUE;
-            }
         }
 
         private void requireStarted() {
@@ -843,83 +923,6 @@ final class JmsOutgoingConnector {
             }
         }
 
-        private static ReconnectClosedException reconnectClosed(Throwable failure) {
-            ReconnectClosedException closed = new ReconnectClosedException();
-            if (failure != null) {
-                closed.addSuppressed(failure);
-            }
-            return closed;
-        }
-
-        private static void closeResources(Resources resources) {
-            if (resources == null) {
-                return;
-            }
-            synchronized (resources) {
-                if (resources.closeAttempted) {
-                    throwCloseFailure(resources.closeFailure);
-                    return;
-                }
-                resources.closeAttempted = true;
-                Throwable failure = close(resources.connectionHandle, null);
-                if (failure != null) {
-                    // A connection owns its children. Try them directly only if connection cleanup failed.
-                    failure = close(resources.producer, failure);
-                    failure = close(resources.session, failure);
-                }
-                resources.closeFailure = normalizeCloseFailure(failure);
-                throwCloseFailure(resources.closeFailure);
-            }
-        }
-
-        private static Throwable normalizeCloseFailure(Throwable failure) {
-            if (failure == null || failure instanceof RuntimeException || failure instanceof Error) {
-                return failure;
-            }
-            return new MessagingException("Cannot close JMS resources", failure);
-        }
-
-        private static void throwCloseFailure(Throwable failure) {
-            if (failure instanceof RuntimeException runtimeException) {
-                throw runtimeException;
-            }
-            if (failure instanceof Error error) {
-                throw error;
-            }
-        }
-
-        private static Throwable close(AutoCloseable closeable, Throwable previous) {
-            if (closeable == null) {
-                return previous;
-            }
-            try {
-                closeable.close();
-            } catch (Throwable failure) {
-                if (previous == null) {
-                    return failure;
-                }
-                addSuppressed(previous, failure);
-            }
-            return previous;
-        }
-
-        private static Retry createReconnectRetry(JmsConnectorConfig config) {
-            RetryConfig retryConfig = RetryConfig.builder()
-                    .name("messaging-jms-outgoing-reconnect")
-                    .calls(Integer.MAX_VALUE)
-                    .delay(config.reconnectInitialDelay())
-                    .delayFactor(2)
-                    .jitterFactor(config.reconnectJitter())
-                    .maxDelay(config.reconnectMaxDelay())
-                    .overallTimeout(RECONNECT_OVERALL_TIMEOUT)
-                    .addApplyOn(JMSException.class)
-                    .addApplyOn(RuntimeException.class)
-                    .addSkipOn(JmsResourceCleanupException.class)
-                    .addSkipOn(ReconnectClosedException.class)
-                    .buildPrototype();
-            return Retry.create(retryConfig);
-        }
-
         private enum State {
             NEW,
             READY,
@@ -966,11 +969,12 @@ final class JmsOutgoingConnector {
     private static final class Resources implements AutoCloseable {
         private final JmsConnectionSupport.ConnectionHandle connectionHandle;
         private final Connection connection;
+        private final ReentrantLock closeLock = new ReentrantLock();
         private volatile Session session;
         private volatile MessageProducer producer;
         private volatile boolean broken;
-        private volatile boolean closeAttempted;
-        private volatile Throwable closeFailure;
+        private boolean closeAttempted;
+        private Throwable closeFailure;
 
         private Resources(JmsConnectionSupport.ConnectionHandle connectionHandle) {
             this.connectionHandle = connectionHandle;

@@ -17,6 +17,7 @@
 package io.helidon.extensions.messaging.connectors.jms;
 
 import java.util.Hashtable;
+import java.util.Objects;
 
 import javax.naming.InitialContext;
 import javax.naming.NamingException;
@@ -35,24 +36,7 @@ final class JmsResourceResolver implements JmsConnectionFactoryResolver {
     private final ServiceRegistry registry;
 
     JmsResourceResolver(ServiceRegistry registry) {
-        this.registry = java.util.Objects.requireNonNull(registry);
-    }
-
-    @Override
-    public ConnectionFactory resolve(JmsConnectorConfig config) {
-        if (config.jndiConnectionFactory().isPresent()) {
-            return lookup(config, config.jndiConnectionFactory().orElseThrow(), ConnectionFactory.class);
-        }
-        if (config.connectionFactory().isPresent()) {
-            String name = config.connectionFactory().orElseThrow();
-            return registry.firstNamed(ConnectionFactory.class, name)
-                    .orElseThrow(() -> new MessagingException("No JMS ConnectionFactory named " + name
-                                                                      + " is registered for channel "
-                                                                      + config.channelName()));
-        }
-        return registry.first(ConnectionFactory.class)
-                .orElseThrow(() -> new MessagingException("No JMS ConnectionFactory is registered for channel "
-                                                                  + config.channelName()));
+        this.registry = Objects.requireNonNull(registry);
     }
 
     static Destination resolveDestination(Session session, JmsConnectorConfig config) throws JMSException {
@@ -79,6 +63,23 @@ final class JmsResourceResolver implements JmsConnectionFactoryResolver {
                                                  + " does not match destination-type " + config.destinationType());
         }
         return destination;
+    }
+
+    @Override
+    public ConnectionFactory resolve(JmsConnectorConfig config) {
+        if (config.jndiConnectionFactory().isPresent()) {
+            return lookup(config, config.jndiConnectionFactory().orElseThrow(), ConnectionFactory.class);
+        }
+        if (config.connectionFactory().isPresent()) {
+            String name = config.connectionFactory().orElseThrow();
+            return registry.firstNamed(ConnectionFactory.class, name)
+                    .orElseThrow(() -> new MessagingException("No JMS ConnectionFactory named " + name
+                                                                      + " is registered for channel "
+                                                                      + config.channelName()));
+        }
+        return registry.first(ConnectionFactory.class)
+                .orElseThrow(() -> new MessagingException("No JMS ConnectionFactory is registered for channel "
+                                                                  + config.channelName()));
     }
 
     private static <T> T lookup(JmsConnectorConfig config, String name, Class<T> type) {

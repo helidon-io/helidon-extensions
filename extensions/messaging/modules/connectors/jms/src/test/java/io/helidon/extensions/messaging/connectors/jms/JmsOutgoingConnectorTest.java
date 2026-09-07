@@ -1115,7 +1115,7 @@ class JmsOutgoingConnectorTest {
     }
 
     private static MessageBatch<String> batch(String... values) {
-        return MessageBatch.create(java.util.Arrays.stream(values).map(Message::create).toList());
+        return MessageBatch.create(Arrays.stream(values).map(Message::create).toList());
     }
 
     private static void assertStatuses(BatchDeliveryException failure, BatchItemStatus... statuses) {

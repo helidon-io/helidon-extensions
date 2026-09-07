@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
@@ -53,8 +54,9 @@ import jakarta.jms.TextMessage;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.not;
+import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -65,6 +67,29 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class JmsMessageTest {
+    @Test
+    void rejectsNullBuilderState() {
+        JmsMessage.Builder<String> builder = JmsMessage.builder("body");
+
+        assertThrows(NullPointerException.class, () -> builder.correlationId(null));
+        assertThrows(NullPointerException.class, () -> builder.type(null));
+    }
+
+    @Test
+    void supportsStandardBuilderShape() {
+        JmsMessage<String> message = JmsMessage.builder("body")
+                .correlationId("correlation")
+                .type("type")
+                .clearCorrelationId()
+                .clearType()
+                .update(builder -> builder.putProperty("attempt", 1))
+                .get();
+
+        assertThat(message.correlationId().isEmpty(), is(true));
+        assertThat(message.type().isEmpty(), is(true));
+        assertThat(message.jmsProperties(), is(Map.of("attempt", 1)));
+    }
+
     private static final String LOCAL_SECRET_METADATA = "application.local.secret";
     private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
     private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
@@ -75,7 +100,7 @@ class JmsMessageTest {
         JmsMessage<byte[]> message = JmsMessage.<byte[]>builder(body)
                 .correlationId("order-42")
                 .type("order")
-                .property("attempt", 2)
+                .putProperty("attempt", 2)
                 .build();
         body[0] = 9;
         byte[] returned = message.entity();
@@ -94,21 +119,21 @@ class JmsMessageTest {
     @Test
     void testPropertyTypesAreValidated() {
         assertThrows(IllegalArgumentException.class,
-                     () -> JmsMessage.builder("body").property("bad", List.of(1)).build());
+                     () -> JmsMessage.builder("body").putProperty("bad", List.of(1)).build());
         assertThrows(IllegalArgumentException.class,
-                     () -> JmsMessage.builder("body").property("bad-name", "value").build());
+                     () -> JmsMessage.builder("body").putProperty("bad-name", "value").build());
         assertThrows(IllegalArgumentException.class,
-                     () -> JmsMessage.builder("body").property("JMSXDeliveryCount", 2).build());
+                     () -> JmsMessage.builder("body").putProperty("JMSXDeliveryCount", 2).build());
         assertThrows(IllegalArgumentException.class,
-                     () -> JmsMessage.builder("body").property("JMSXGroupID", 2).build());
+                     () -> JmsMessage.builder("body").putProperty("JMSXGroupID", 2).build());
         assertThrows(IllegalArgumentException.class,
-                     () -> JmsMessage.builder("body").property("JMSXGroupSeq", "2").build());
+                     () -> JmsMessage.builder("body").putProperty("JMSXGroupSeq", "2").build());
         assertThrows(IllegalArgumentException.class,
-                     () -> JmsMessage.builder("body").property("and", true).build());
+                     () -> JmsMessage.builder("body").putProperty("and", true).build());
         assertThat(JmsMessage.builder("body")
-                           .property("_valid$property", true)
-                           .property("JMSXGroupID", "orders")
-                           .property("JMSXGroupSeq", 2)
+                           .putProperty("_valid$property", true)
+                           .putProperty("JMSXGroupID", "orders")
+                           .putProperty("JMSXGroupSeq", 2)
                            .build()
                            .jmsProperties(),
                    is(Map.of("_valid$property", true, "JMSXGroupID", "orders", "JMSXGroupSeq", 2)));
@@ -184,7 +209,7 @@ class JmsMessageTest {
         listBody.add("later");
         bytes[0] = 9;
 
-        assertThat(mapMessage.entity().keySet(), is(java.util.Set.of("bytes")));
+        assertThat(mapMessage.entity().keySet(), is(Set.of("bytes")));
         assertThat(((byte[]) mapMessage.entity().get("bytes"))[0], is((byte) 1));
         assertThat(listMessage.entity(), is(List.of("first", 2)));
         assertThrows(UnsupportedOperationException.class,
@@ -219,7 +244,7 @@ class JmsMessageTest {
         JmsMessage<String> message = JmsMessage.<String>builder("body")
                 .correlationId("correlation")
                 .type("kind")
-                .property("attempt", 2)
+                .putProperty("attempt", 2)
                 .build();
 
         assertThat(JmsMessageMapper.toJmsMessage(session, message, false), is(nativeMessage));
@@ -242,8 +267,8 @@ class JmsMessageTest {
 
         JmsMessageMapper.toJmsMessage(session,
                                       JmsMessage.builder("typed")
-                                              .property("JMSXGroupID", "orders")
-                                              .property("JMSXGroupSeq", 7)
+                                              .putProperty("JMSXGroupID", "orders")
+                                              .putProperty("JMSXGroupSeq", 7)
                                               .build(),
                                       false);
         JmsMessageMapper.toJmsMessage(session,
@@ -385,7 +410,7 @@ class JmsMessageTest {
         Message bodyless = mock(Message.class);
         when(session.createMessage()).thenReturn(bodyless);
         when(bodyless.getBody(Object.class)).thenReturn(null);
-        when(bodyless.getPropertyNames()).thenReturn(java.util.Collections.emptyEnumeration());
+        when(bodyless.getPropertyNames()).thenReturn(Collections.emptyEnumeration());
 
         assertThrows(NullPointerException.class, () -> JmsMessage.create((Object) null));
         assertThrows(NullPointerException.class, () -> JmsMessageMapper.fromJmsMessage(bodyless, false, 1024));
@@ -412,11 +437,11 @@ class JmsMessageTest {
         JmsMessage<String> original = JmsMessage.<String>builder("body")
                 .correlationId("correlation")
                 .type("kind")
-                .property("byteValue", (byte) 1)
-                .property("shortValue", (short) 2)
-                .property("intValue", 3)
-                .property("longValue", 4L)
-                .property(DeadLetterMessage.ATTEMPTS_HEADER, "caller-value")
+                .putProperty("byteValue", (byte) 1)
+                .putProperty("shortValue", (short) 2)
+                .putProperty("intValue", 3)
+                .putProperty("longValue", 4L)
+                .putProperty(DeadLetterMessage.ATTEMPTS_HEADER, "caller-value")
                 .build();
         DeadLetterMessage<String> deadLetter = DeadLetterMessage.create(
                 original,
@@ -448,10 +473,10 @@ class JmsMessageTest {
         TextMessage nativeMessage = mock(TextMessage.class);
         when(session.createTextMessage("body")).thenReturn(nativeMessage);
         JmsMessage<String> original = JmsMessage.<String>builder("body")
-                .property("byteValue", (byte) 1)
-                .property("region", "original")
-                .property(LEGACY_FAILURE_TYPE_HEADER, "native-forged-type")
-                .property(LEGACY_FAILURE_MESSAGE_HEADER, "native-forged-message")
+                .putProperty("byteValue", (byte) 1)
+                .putProperty("region", "original")
+                .putProperty(LEGACY_FAILURE_TYPE_HEADER, "native-forged-type")
+                .putProperty(LEGACY_FAILURE_MESSAGE_HEADER, "native-forged-message")
                 .build();
         MessageHeaders wrapperHeaders = MessageHeaders.builder()
                 .addAll(original.headers())
@@ -663,7 +688,7 @@ class JmsMessageTest {
         org.mockito.ArgumentCaptor<Serializable> snapshot = org.mockito.ArgumentCaptor.forClass(Serializable.class);
         verify(session).createObjectMessage(snapshot.capture());
         assertThat(snapshot.getValue(), is(payload));
-        assertNotSame(payload, snapshot.getValue());
+        assertThat(snapshot.getValue(), not(sameInstance(payload)));
         assertThat(ReadTrackingPayload.serializationCount(), is(1));
         assertThat(ReadTrackingPayload.deserializationCount(), is(1));
     }
@@ -710,8 +735,8 @@ class JmsMessageTest {
 
             assertThat(firstEntity, is(payload));
             assertThat(secondEntity, is(payload));
-            assertNotSame(payload, firstEntity);
-            assertNotSame(firstEntity, secondEntity);
+            assertThat(firstEntity, not(sameInstance(payload)));
+            assertThat(secondEntity, not(sameInstance(firstEntity)));
             assertThat(ReadTrackingPayload.serializationCount(), is(1));
             assertThat(ReadTrackingPayload.deserializationCount(), is(3));
         } finally {

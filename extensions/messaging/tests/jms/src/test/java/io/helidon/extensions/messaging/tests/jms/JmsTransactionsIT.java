@@ -21,6 +21,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -116,7 +117,7 @@ class JmsTransactionsIT {
     }
 
     private static MessageBatch<String> batch(String... payloads) {
-        return MessageBatch.create(java.util.Arrays.stream(payloads).map(Message::create).toList());
+        return MessageBatch.create(Arrays.stream(payloads).map(Message::create).toList());
     }
 
     private static ConnectionFactory failSecondSend(ConnectionFactory delegate, AtomicInteger rollbacks) {

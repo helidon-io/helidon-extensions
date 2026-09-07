@@ -252,6 +252,35 @@ final class PulsarIncomingConnector {
             }
         }
 
+        private static long remainingNanos(long deadline) {
+            long remaining = deadline - System.nanoTime();
+            return remaining <= 0 ? 0 : remaining;
+        }
+
+        private static boolean causedByInterruption(Throwable failure) {
+            Throwable current = failure;
+            while (current != null) {
+                if (current instanceof InterruptedException) {
+                    return true;
+                }
+                current = current.getCause();
+            }
+            return false;
+        }
+
+        private static RuntimeException mergeFailure(RuntimeException primary, RuntimeException failure) {
+            if (failure == null) {
+                return primary;
+            }
+            if (primary == null) {
+                return failure;
+            }
+            if (primary != failure) {
+                primary.addSuppressed(failure);
+            }
+            return primary;
+        }
+
         private void consume(Consumer<Object> consumer) {
             while (!stopping()) {
                 ConnectorDeliveryReservation reservation = awaitReservation();
@@ -671,41 +700,10 @@ final class PulsarIncomingConnector {
             return ((now ^ result) & (timeout ^ result)) < 0 ? Long.MAX_VALUE : result;
         }
 
-        private static long remainingNanos(long deadline) {
-            long remaining = deadline - System.nanoTime();
-            return remaining <= 0 ? 0 : remaining;
-        }
-
-        private static boolean causedByInterruption(Throwable failure) {
-            Throwable current = failure;
-            while (current != null) {
-                if (current instanceof InterruptedException) {
-                    return true;
-                }
-                current = current.getCause();
-            }
-            return false;
-        }
-
-        private static RuntimeException mergeFailure(RuntimeException primary, RuntimeException failure) {
-            if (failure == null) {
-                return primary;
-            }
-            if (primary == null) {
-                return failure;
-            }
-            if (primary != failure) {
-                primary.addSuppressed(failure);
-            }
-            return primary;
-        }
-
         private void recordCloseFailure(RuntimeException failure) {
             RuntimeException primary = connectorCloseFailure.compareAndExchange(null, failure);
             if (primary != null && primary != failure) {
-                synchronized (primary) {
-                    primary.addSuppressed(failure);
-                }
+                primary.addSuppressed(failure);
             }
         }
     }

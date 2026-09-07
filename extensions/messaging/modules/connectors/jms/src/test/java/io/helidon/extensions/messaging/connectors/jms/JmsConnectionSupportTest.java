@@ -16,10 +16,7 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.time.Duration;
-import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -27,45 +24,54 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.messaging.spi.ConnectorDirection;
 
+import jakarta.jms.ConnectionFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 class JmsConnectionSupportTest {
     @Test
-    void forceCloseClearsConnectorOwnedPasswordAndRetainsNoCredentialsInRuntimeConfig() throws Exception {
+    void forceCloseRejectsNewConnectionsAndRetainsNoCredentialsInRuntimeConfig() {
         JmsConnectorConfig source = config();
+        AtomicBoolean resolved = new AtomicBoolean();
         JmsConnectionSupport support = new JmsConnectionSupport(
                 source,
-                ignored -> mock(jakarta.jms.ConnectionFactory.class));
-        char[] connectorPassword = connectorPassword(support);
+                ignored -> {
+                    resolved.set(true);
+                    return mock(ConnectionFactory.class);
+                });
 
         assertThat(support.runtimeConfig().username().isEmpty(), is(true));
         assertThat(support.runtimeConfig().password().isEmpty(), is(true));
-        assertArrayEquals("tiger".toCharArray(), connectorPassword);
 
         support.forceClose();
 
-        assertArrayEquals(new char[connectorPassword.length], connectorPassword);
+        assertThrows(IllegalStateException.class, support::createConnection);
+        assertThat(resolved.get(), is(false));
         assertThat(source.username().orElseThrow(), is("scott"));
-        assertArrayEquals("tiger".toCharArray(), source.password().orElseThrow());
+        assertThat(source.password().orElseThrow(), is("tiger".toCharArray()));
     }
 
     @Test
     @Timeout(5)
-    void forceCloseClearsPasswordOwnedByAStuckConnectionAttempt() throws Exception {
+    void forceCloseRejectsCallerBlockedInConnectionFactoryResolution() throws Exception {
         CountDownLatch resolving = new CountDownLatch(1);
         CountDownLatch releaseResolver = new CountDownLatch(1);
+        AtomicBoolean resolverCompleted = new AtomicBoolean();
+        ConnectionFactory factory = mock(ConnectionFactory.class);
         JmsConnectionSupport support = new JmsConnectionSupport(config(), ignored -> {
             resolving.countDown();
             awaitIgnoringInterruption(releaseResolver);
-            return mock(jakarta.jms.ConnectionFactory.class);
+            resolverCompleted.set(true);
+            return factory;
         });
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread caller = Thread.ofVirtual().start(() -> {
@@ -76,45 +82,24 @@ class JmsConnectionSupportTest {
             }
         });
         assertThat(resolving.await(1, TimeUnit.SECONDS), is(true));
-        Object attempt = onlyAttempt(support, "attempts");
-        char[] attemptPassword = password(attempt);
-        Thread worker = worker(attempt);
-        assertArrayEquals("tiger".toCharArray(), attemptPassword);
 
         try {
             support.forceClose();
             caller.join(Duration.ofSeconds(1));
 
-            assertFalse(caller.isAlive());
-            assertInstanceOf(IllegalStateException.class, failure.get());
-            assertArrayEquals(new char[attemptPassword.length], attemptPassword);
+            assertThat(caller.isAlive(), is(false));
+            assertThat(failure.get(), instanceOf(IllegalStateException.class));
+            assertThrows(IllegalStateException.class, support::createConnection);
+            assertThat(resolverCompleted.get(), is(false));
         } finally {
             releaseResolver.countDown();
-            worker.join(Duration.ofSeconds(1));
+            support.awaitClose(System.nanoTime() + Duration.ofSeconds(1).toNanos());
             caller.join(Duration.ofSeconds(1));
         }
-    }
 
-    @Test
-    @Timeout(5)
-    void forceClosePreventsAnAbandonedSetupOperationFromStarting() throws Exception {
-        JmsConnectionSupport support = new JmsConnectionSupport(
-                config(),
-                ignored -> mock(jakarta.jms.ConnectionFactory.class));
-        AtomicBoolean invoked = new AtomicBoolean();
-        Object attempt = setupAttempt(support, () -> {
-            invoked.set(true);
-            return null;
-        });
-        attempts(support, "setupAttempts").add(attempt);
-        Thread worker = worker(attempt);
-
-        support.forceClose();
-        invoke(attempt, "start");
-        worker.join(Duration.ofSeconds(1));
-
-        assertFalse(worker.isAlive());
-        assertFalse(invoked.get());
+        assertThat(resolverCompleted.get(), is(true));
+        verify(factory, never()).createConnection();
+        verify(factory, never()).createConnection(anyString(), anyString());
     }
 
     private static JmsConnectorConfig config() {
@@ -126,51 +111,6 @@ class JmsConnectionSupportTest {
                 .username("scott")
                 .password("tiger")
                 .build();
-    }
-
-    private static char[] connectorPassword(JmsConnectionSupport support) throws Exception {
-        return password(support);
-    }
-
-    private static char[] password(Object owner) throws Exception {
-        Field field = owner.getClass().getDeclaredField("password");
-        field.setAccessible(true);
-        return (char[]) field.get(owner);
-    }
-
-    private static Thread worker(Object attempt) throws Exception {
-        Field field = attempt.getClass().getDeclaredField("worker");
-        field.setAccessible(true);
-        return (Thread) field.get(attempt);
-    }
-
-    private static Object onlyAttempt(JmsConnectionSupport support, String fieldName) throws Exception {
-        Set<Object> attempts = attempts(support, fieldName);
-        assertThat(attempts.size(), is(1));
-        return attempts.iterator().next();
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Set<Object> attempts(JmsConnectionSupport support, String fieldName) throws Exception {
-        Field field = JmsConnectionSupport.class.getDeclaredField(fieldName);
-        field.setAccessible(true);
-        return (Set<Object>) field.get(support);
-    }
-
-    private static Object setupAttempt(JmsConnectionSupport support,
-                                       JmsConnectionSupport.SetupOperation<Void> operation) throws Exception {
-        Class<?> type = Class.forName(JmsConnectionSupport.class.getName() + "$SetupAttempt");
-        var constructor = type.getDeclaredConstructor(JmsConnectionSupport.class,
-                                                      String.class,
-                                                      JmsConnectionSupport.SetupOperation.class);
-        constructor.setAccessible(true);
-        return constructor.newInstance(support, "test operation", operation);
-    }
-
-    private static void invoke(Object target, String methodName) throws Exception {
-        Method method = target.getClass().getDeclaredMethod(methodName);
-        method.setAccessible(true);
-        method.invoke(target);
     }
 
     private static void awaitIgnoringInterruption(CountDownLatch latch) {

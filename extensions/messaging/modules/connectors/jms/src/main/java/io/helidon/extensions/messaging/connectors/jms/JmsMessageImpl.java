@@ -24,6 +24,7 @@ import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -72,7 +73,7 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
         if (snapshotSerializable
                 && !(actualEntity instanceof byte[])
                 && !(actualEntity instanceof Map<?, ?>)
-                && !(actualEntity instanceof java.util.List<?>)
+                && !(actualEntity instanceof List<?>)
                 && !(actualEntity instanceof String)) {
             if (!(actualEntity instanceof Serializable serializable)) {
                 throw new IllegalArgumentException("Unsupported JMS message body type: "
@@ -224,6 +225,88 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
         throw new IllegalArgumentException("Unsupported JMS property type: " + actual.getClass().getName());
     }
 
+    static String requireMapName(Object name) {
+        if (!(name instanceof String actual) || actual.isEmpty()) {
+            throw new IllegalArgumentException("JMS map-message names must be non-empty strings");
+        }
+        return actual;
+    }
+
+    @Override
+    public T entity() {
+        requireBodyAvailable();
+        return serializedEntity == null
+                ? snapshotBody(entity, false)
+                : deserializeBody(serializedEntity, serializedEntityType);
+    }
+
+    T entityForMapping(boolean allowObjectMessages) {
+        requireBodyAvailable();
+        if (serializedEntity == null) {
+            return snapshotBody(entity, allowObjectMessages);
+        }
+        if (!allowObjectMessages) {
+            throw new MessagingException("JMS ObjectMessage is disabled; set allow-object-messages=true only for "
+                                                 + "trusted data");
+        }
+        return deserializeBody(serializedEntity, serializedEntityType);
+    }
+
+    @Override
+    public boolean bodyAvailable() {
+        return bodyAvailable;
+    }
+
+    @Override
+    public MessageHeaders headers() {
+        return headers;
+    }
+
+    @Override
+    public Optional<String> messageId() {
+        return messageId;
+    }
+
+    @Override
+    public Optional<String> correlationId() {
+        return correlationId;
+    }
+
+    @Override
+    public Optional<String> type() {
+        return type;
+    }
+
+    @Override
+    public OptionalLong timestamp() {
+        return timestamp;
+    }
+
+    @Override
+    public OptionalLong expiration() {
+        return expiration;
+    }
+
+    @Override
+    public OptionalLong deliveryTime() {
+        return deliveryTime;
+    }
+
+    @Override
+    public OptionalInt priority() {
+        return priority;
+    }
+
+    @Override
+    public Optional<Boolean> redelivered() {
+        return redelivered;
+    }
+
+    @Override
+    public Map<String, Object> jmsProperties() {
+        return properties;
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T snapshotBody(T entity, boolean snapshotSerializable) {
         if (entity instanceof byte[] bytes) {
@@ -237,7 +320,7 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
             });
             return (T) Collections.unmodifiableMap(result);
         }
-        if (entity instanceof java.util.List<?> list) {
+        if (entity instanceof List<?> list) {
             return (T) list.stream().map(JmsMessageImpl::snapshotMapOrStreamValue).toList();
         }
         if (entity instanceof Serializable serializable && snapshotSerializable) {
@@ -276,13 +359,6 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
         if (deserializeBody(bytes, entityType) == null) {
             throw new IllegalArgumentException("Cannot defensively copy JMS object-message body of type " + entityType);
         }
-    }
-
-    static String requireMapName(Object name) {
-        if (!(name instanceof String actual) || actual.isEmpty()) {
-            throw new IllegalArgumentException("JMS map-message names must be non-empty strings");
-        }
-        return actual;
     }
 
     private static Object snapshotMapOrStreamValue(Object value) {
@@ -338,85 +414,10 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
         throw new IllegalArgumentException("Unsupported JMS property type: " + value.getClass().getName());
     }
 
-    @Override
-    public T entity() {
-        requireBodyAvailable();
-        return serializedEntity == null
-                ? snapshotBody(entity, false)
-                : deserializeBody(serializedEntity, serializedEntityType);
-    }
-
-    T entityForMapping(boolean allowObjectMessages) {
-        requireBodyAvailable();
-        if (serializedEntity == null) {
-            return snapshotBody(entity, allowObjectMessages);
-        }
-        if (!allowObjectMessages) {
-            throw new MessagingException("JMS ObjectMessage is disabled; set allow-object-messages=true only for "
-                                                 + "trusted data");
-        }
-        return deserializeBody(serializedEntity, serializedEntityType);
-    }
-
-    @Override
-    public boolean bodyAvailable() {
-        return bodyAvailable;
-    }
-
     private void requireBodyAvailable() {
         if (!bodyAvailable) {
             throw new MessagingException("JMS message body is unavailable");
         }
-    }
-
-    @Override
-    public MessageHeaders headers() {
-        return headers;
-    }
-
-    @Override
-    public Optional<String> messageId() {
-        return messageId;
-    }
-
-    @Override
-    public Optional<String> correlationId() {
-        return correlationId;
-    }
-
-    @Override
-    public Optional<String> type() {
-        return type;
-    }
-
-    @Override
-    public OptionalLong timestamp() {
-        return timestamp;
-    }
-
-    @Override
-    public OptionalLong expiration() {
-        return expiration;
-    }
-
-    @Override
-    public OptionalLong deliveryTime() {
-        return deliveryTime;
-    }
-
-    @Override
-    public OptionalInt priority() {
-        return priority;
-    }
-
-    @Override
-    public Optional<Boolean> redelivered() {
-        return redelivered;
-    }
-
-    @Override
-    public Map<String, Object> jmsProperties() {
-        return properties;
     }
 
     private enum UnavailableBody {

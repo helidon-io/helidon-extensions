@@ -57,7 +57,6 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class JmsConnectorIT {
@@ -110,10 +109,10 @@ class JmsConnectorIT {
         sender.send(JmsMessage.<String>builder("queue message")
                             .correlationId("correlation-42")
                             .type("order-created")
-                            .property("region", "EU")
-                            .property("attempt", 7)
-                            .property("JMSXGroupID", "order-group")
-                            .property("JMSXGroupSeq", 3)
+                            .putProperty("region", "EU")
+                            .putProperty("attempt", 7)
+                            .putProperty("JMSXGroupID", "order-group")
+                            .putProperty("JMSXGroupSeq", 3)
                             .build());
 
         JmsMessage<String> received = receiver.awaitMessage(WAIT_TIMEOUT);
@@ -149,20 +148,20 @@ class JmsConnectorIT {
 
         runtime.emit(JmsMessagingTypes.BYTES_OUTGOING_CHANNEL,
                      JmsMessage.<byte[]>builder(body)
-                             .property("boolean_value", true)
-                             .property("byte_value", (byte) 1)
-                             .property("short_value", (short) 2)
-                             .property("integer_value", 3)
-                             .property("long_value", 4L)
-                             .property("float_value", 5.5F)
-                             .property("double_value", 6.5D)
-                             .property("string_value", "seven")
+                             .putProperty("boolean_value", true)
+                             .putProperty("byte_value", (byte) 1)
+                             .putProperty("short_value", (short) 2)
+                             .putProperty("integer_value", 3)
+                             .putProperty("long_value", 4L)
+                             .putProperty("float_value", 5.5F)
+                             .putProperty("double_value", 6.5D)
+                             .putProperty("string_value", "seven")
                              .build());
         body[0] = 99;
 
         JmsMessage<byte[]> received = receiver.awaitMessage(WAIT_TIMEOUT);
         assertThat("bytes delivery", received, notNullValue());
-        assertArrayEquals(new byte[] {0, 1, 2, (byte) 0xFF}, received.entity());
+        assertThat(received.entity(), is(new byte[] {0, 1, 2, (byte) 0xFF}));
         assertThat(received.jmsProperties(), is(Map.of(
                 "boolean_value", true,
                 "byte_value", (byte) 1,

@@ -176,10 +176,10 @@ Use `JmsMessage` when native correlation, type, or typed application properties 
 JmsMessage<String> message = JmsMessage.<String>builder("accepted")
         .correlationId("order-42")
         .type("order-result")
-        .property("region", "EU")
-        .property("attempt", 1)
-        .property("JMSXGroupID", "order-42")
-        .property("JMSXGroupSeq", 1)
+        .putProperty("region", "EU")
+        .putProperty("attempt", 1)
+        .putProperty("JMSXGroupID", "order-42")
+        .putProperty("JMSXGroupSeq", 1)
         .build();
 results.emit(message);
 ```

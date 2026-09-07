@@ -144,31 +144,18 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
                                        null);
     }
 
-    private static <T> PulsarMessage<T> incoming(T entity,
-                                                  org.apache.pulsar.client.api.Message<?> message,
-                                                  boolean entityAvailable) {
-        Objects.requireNonNull(message);
-        boolean hasKey = message.hasKey();
-        long eventTime = message.getEventTime();
-        long sequenceId = message.getSequenceId();
-        byte[] schemaVersion = message.getSchemaVersion();
-        return new PulsarMessageImpl<>(entity,
-                                       entityAvailable,
-                                       messageHeaders(message.getProperties()),
-                                       hasKey ? message.getKey() : null,
-                                       hasKey ? message.getKeyBytes() : null,
-                                       hasKey && message.hasBase64EncodedKey(),
-                                       message.hasOrderingKey() ? message.getOrderingKey() : null,
-                                       message.getTopicName(),
-                                       message.getMessageId() == null ? null : message.getMessageId().toByteArray(),
-                                       message.getPublishTime(),
-                                       eventTime == 0 ? null : eventTime,
-                                       sequenceId < 0 ? null : sequenceId,
-                                       message.getProducerName(),
-                                       message.getRedeliveryCount(),
-                                       schemaVersion,
-                                       message.getBrokerPublishTime().orElse(null),
-                                       message.getIndex().orElse(null));
+    @SuppressWarnings("unchecked")
+    static <T> T snapshotEntity(T entity) {
+        if (entity instanceof byte[] bytes) {
+            return (T) bytes.clone();
+        }
+        if (entity instanceof ByteBuffer buffer) {
+            return (T) copy(buffer);
+        }
+        if (entity instanceof Date date) {
+            return (T) date.clone();
+        }
+        return entity;
     }
 
     @Override
@@ -258,18 +245,31 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
         return optionalLong(index);
     }
 
-    @SuppressWarnings("unchecked")
-    static <T> T snapshotEntity(T entity) {
-        if (entity instanceof byte[] bytes) {
-            return (T) bytes.clone();
-        }
-        if (entity instanceof ByteBuffer buffer) {
-            return (T) copy(buffer);
-        }
-        if (entity instanceof Date date) {
-            return (T) date.clone();
-        }
-        return entity;
+    private static <T> PulsarMessage<T> incoming(T entity,
+                                                  org.apache.pulsar.client.api.Message<?> message,
+                                                  boolean entityAvailable) {
+        Objects.requireNonNull(message);
+        boolean hasKey = message.hasKey();
+        long eventTime = message.getEventTime();
+        long sequenceId = message.getSequenceId();
+        byte[] schemaVersion = message.getSchemaVersion();
+        return new PulsarMessageImpl<>(entity,
+                                       entityAvailable,
+                                       messageHeaders(message.getProperties()),
+                                       hasKey ? message.getKey() : null,
+                                       hasKey ? message.getKeyBytes() : null,
+                                       hasKey && message.hasBase64EncodedKey(),
+                                       message.hasOrderingKey() ? message.getOrderingKey() : null,
+                                       message.getTopicName(),
+                                       message.getMessageId() == null ? null : message.getMessageId().toByteArray(),
+                                       message.getPublishTime(),
+                                       eventTime == 0 ? null : eventTime,
+                                       sequenceId < 0 ? null : sequenceId,
+                                       message.getProducerName(),
+                                       message.getRedeliveryCount(),
+                                       schemaVersion,
+                                       message.getBrokerPublishTime().orElse(null),
+                                       message.getIndex().orElse(null));
     }
 
     private static MessageHeaders messageHeaders(Map<String, String> properties) {

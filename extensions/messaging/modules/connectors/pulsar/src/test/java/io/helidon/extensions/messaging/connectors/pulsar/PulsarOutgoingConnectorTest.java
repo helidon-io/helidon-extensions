@@ -49,11 +49,10 @@ import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PulsarOutgoingConnectorTest {
@@ -196,9 +195,9 @@ class PulsarOutgoingConnectorTest {
 
         byte[] sent = (byte[]) transport.values.getFirst();
         assertThat(transport.schema.get().getClass().equals(Schema.AUTO_PRODUCE_BYTES().getClass()), is(true));
-        assertNotSame(payload, sent);
+        assertThat(sent, not(sameInstance(payload)));
         payload[0] = 9;
-        assertArrayEquals(new byte[] {1, 2, 3}, sent);
+        assertThat(sent, is(new byte[] {1, 2, 3}));
     }
 
     @Test
@@ -216,11 +215,11 @@ class PulsarOutgoingConnectorTest {
 
         ByteBuffer sent = (ByteBuffer) transport.values.getFirst();
         assertThat(transport.schema.get(), sameInstance(Schema.BYTEBUFFER));
-        assertNotSame(payload, sent);
+        assertThat(sent, not(sameInstance(payload)));
         assertThat(payload.position(), is(2));
         assertThat(payload.limit(), is(5));
         payload.put(0, (byte) 9);
-        assertArrayEquals(new byte[] {0, 1, 2, 3, 4}, Schema.BYTEBUFFER.encode(sent));
+        assertThat(Schema.BYTEBUFFER.encode(sent), is(new byte[] {0, 1, 2, 3, 4}));
         assertThat(payload.position(), is(2));
         assertThat(payload.limit(), is(5));
     }

@@ -72,6 +72,12 @@ final class JmsIncomingConnector {
         }
     }
 
+    private enum DeliveryResult {
+        CONTINUE,
+        RECONNECT,
+        STOP
+    }
+
     private static final class Connector implements IncomingConnector {
         private static final Duration MAX_ADMISSION_RETRY_DELAY = Duration.ofMillis(100);
         private static final Duration RECONNECT_OVERALL_TIMEOUT = Duration.ofNanos(Long.MAX_VALUE);
@@ -245,6 +251,92 @@ final class JmsIncomingConnector {
             if (failure != null) {
                 throw failure;
             }
+        }
+
+        private static long receiveTimeoutMillis(Duration timeout) {
+            long secondsAsMillis;
+            try {
+                secondsAsMillis = Math.multiplyExact(timeout.getSeconds(), 1000);
+            } catch (ArithmeticException e) {
+                return Long.MAX_VALUE;
+            }
+            long fractionalMillis = (timeout.getNano() + 999_999L) / 1_000_000L;
+            return Long.MAX_VALUE - secondsAsMillis < fractionalMillis
+                    ? Long.MAX_VALUE
+                    : Math.max(1, secondsAsMillis + fractionalMillis);
+        }
+
+        private static Duration min(Duration first, Duration second) {
+            return first.compareTo(second) <= 0 ? first : second;
+        }
+
+        private static long deadline(Duration timeout) {
+            long now = System.nanoTime();
+            try {
+                return Math.addExact(now, timeout.toNanos());
+            } catch (ArithmeticException e) {
+                return Long.MAX_VALUE;
+            }
+        }
+
+        private static long remainingNanos(long deadline) {
+            try {
+                return Math.max(0, Math.subtractExact(deadline, System.nanoTime()));
+            } catch (ArithmeticException e) {
+                return Long.MAX_VALUE;
+            }
+        }
+
+        private static boolean causedByInterruption(Throwable failure) {
+            Throwable current = failure;
+            while (current != null) {
+                if (current instanceof InterruptedException) {
+                    return true;
+                }
+                current = current.getCause();
+            }
+            return false;
+        }
+
+        private static boolean causeChainContains(Throwable failure, Throwable expectedCause) {
+            Throwable current = failure;
+            for (int i = 0; current != null && i < 64; i++) {
+                if (current == expectedCause) {
+                    return true;
+                }
+                if (current.getCause() == current) {
+                    return false;
+                }
+                current = current.getCause();
+            }
+            return false;
+        }
+
+        private static RuntimeException mergeFailure(RuntimeException primary, RuntimeException failure) {
+            if (failure == null || failure == primary) {
+                return primary;
+            }
+            if (primary == null) {
+                return failure;
+            }
+            primary.addSuppressed(failure);
+            return primary;
+        }
+
+        private static Retry createReconnectRetry(JmsConnectorConfig config) {
+            RetryConfig retryConfig = RetryConfig.builder()
+                    .name("messaging-jms-incoming-reconnect")
+                    .calls(Integer.MAX_VALUE)
+                    .delay(config.reconnectInitialDelay())
+                    .delayFactor(2)
+                    .jitterFactor(config.reconnectJitter())
+                    .maxDelay(config.reconnectMaxDelay())
+                    .overallTimeout(RECONNECT_OVERALL_TIMEOUT)
+                    .addApplyOn(JMSException.class)
+                    .addApplyOn(RuntimeException.class)
+                    .addSkipOn(JmsResourceCleanupException.class)
+                    .buildPrototype();
+            return Retry.create(retryConfig);
         }
 
         private DeliveryResult receiveAndDeliver(Resources resources) {
@@ -805,99 +897,11 @@ final class JmsIncomingConnector {
                             || failure.reason() == MessagingRejectedException.Reason.SHUTDOWN);
         }
 
-        private static long receiveTimeoutMillis(Duration timeout) {
-            long secondsAsMillis;
-            try {
-                secondsAsMillis = Math.multiplyExact(timeout.getSeconds(), 1000);
-            } catch (ArithmeticException e) {
-                return Long.MAX_VALUE;
-            }
-            long fractionalMillis = (timeout.getNano() + 999_999L) / 1_000_000L;
-            return Long.MAX_VALUE - secondsAsMillis < fractionalMillis
-                    ? Long.MAX_VALUE
-                    : Math.max(1, secondsAsMillis + fractionalMillis);
-        }
-
-        private static Duration min(Duration first, Duration second) {
-            return first.compareTo(second) <= 0 ? first : second;
-        }
-
-        private static long deadline(Duration timeout) {
-            long now = System.nanoTime();
-            try {
-                return Math.addExact(now, timeout.toNanos());
-            } catch (ArithmeticException e) {
-                return Long.MAX_VALUE;
-            }
-        }
-
-        private static long remainingNanos(long deadline) {
-            try {
-                return Math.max(0, Math.subtractExact(deadline, System.nanoTime()));
-            } catch (ArithmeticException e) {
-                return Long.MAX_VALUE;
-            }
-        }
-
-        private static boolean causedByInterruption(Throwable failure) {
-            Throwable current = failure;
-            while (current != null) {
-                if (current instanceof InterruptedException) {
-                    return true;
-                }
-                current = current.getCause();
-            }
-            return false;
-        }
-
-        private static boolean causeChainContains(Throwable failure, Throwable expectedCause) {
-            Throwable current = failure;
-            for (int i = 0; current != null && i < 64; i++) {
-                if (current == expectedCause) {
-                    return true;
-                }
-                if (current.getCause() == current) {
-                    return false;
-                }
-                current = current.getCause();
-            }
-            return false;
-        }
-
-        private static RuntimeException mergeFailure(RuntimeException primary, RuntimeException failure) {
-            if (failure == null || failure == primary) {
-                return primary;
-            }
-            if (primary == null) {
-                return failure;
-            }
-            primary.addSuppressed(failure);
-            return primary;
-        }
-
         private void recordConnectorCloseFailure(RuntimeException failure) {
             RuntimeException primary = connectorCloseFailure.compareAndExchange(null, failure);
             if (primary != null && primary != failure) {
-                synchronized (primary) {
-                    primary.addSuppressed(failure);
-                }
+                primary.addSuppressed(failure);
             }
-        }
-
-        private static Retry createReconnectRetry(JmsConnectorConfig config) {
-            RetryConfig retryConfig = RetryConfig.builder()
-                    .name("messaging-jms-incoming-reconnect")
-                    .calls(Integer.MAX_VALUE)
-                    .delay(config.reconnectInitialDelay())
-                    .delayFactor(2)
-                    .jitterFactor(config.reconnectJitter())
-                    .maxDelay(config.reconnectMaxDelay())
-                    .overallTimeout(RECONNECT_OVERALL_TIMEOUT)
-                    .addApplyOn(JMSException.class)
-                    .addApplyOn(RuntimeException.class)
-                    .addSkipOn(JmsResourceCleanupException.class)
-                    .buildPrototype();
-            return Retry.create(retryConfig);
         }
 
     }
@@ -1087,9 +1091,4 @@ final class JmsIncomingConnector {
         }
     }
 
-    private enum DeliveryResult {
-        CONTINUE,
-        RECONNECT,
-        STOP
-    }
 }

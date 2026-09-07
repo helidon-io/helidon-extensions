@@ -208,6 +208,83 @@ final class KafkaOutgoingConnector {
             }
         }
 
+        @Override
+        public void sendBatch(MessageBatch<?> batch) {
+            Objects.requireNonNull(batch);
+            Producer<Object, Object> current;
+            try {
+                current = readyProducer();
+            } catch (RuntimeException failure) {
+                throw notAttemptedFailure(batch, failure);
+            }
+            List<Future<RecordMetadata>> results = new ArrayList<>(batch.size());
+            RuntimeException enqueueFailure = null;
+            int enqueueFailureIndex = -1;
+            for (int i = 0; i < batch.size(); i++) {
+                try {
+                    results.add(enqueue(current, batch.get(i)));
+                } catch (RuntimeException e) {
+                    enqueueFailure = e;
+                    enqueueFailureIndex = i;
+                    break;
+                }
+            }
+
+            List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
+            Throwable primaryFailure = enqueueFailure;
+            boolean interrupted = false;
+            for (int i = 0; i < results.size(); i++) {
+                Future<RecordMetadata> result = results.get(i);
+                try {
+                    result.get(interrupted ? 0 : sendTimeout.toNanos(), TimeUnit.NANOSECONDS);
+                    outcomes.add(BatchItemOutcome.succeeded(i));
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                    primaryFailure = firstFailure(primaryFailure, e);
+                    outcomes.add(BatchItemOutcome.indeterminate(i, e));
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause() == null ? e : e.getCause();
+                    primaryFailure = firstFailure(primaryFailure, cause);
+                    // A producer future failure proves that the configured success point was not observed, but it
+                    // does not prove that the broker never appended the record (for example, an acknowledgement may
+                    // have been lost). Retrying therefore carries duplicate-delivery risk.
+                    outcomes.add(BatchItemOutcome.indeterminate(i, cause));
+                } catch (TimeoutException | CancellationException e) {
+                    primaryFailure = firstFailure(primaryFailure, e);
+                    outcomes.add(BatchItemOutcome.indeterminate(i, e));
+                } catch (RuntimeException e) {
+                    primaryFailure = firstFailure(primaryFailure, e);
+                    outcomes.add(BatchItemOutcome.indeterminate(i, e));
+                }
+            }
+            if (enqueueFailureIndex >= 0) {
+                outcomes.add(BatchItemOutcome.failed(enqueueFailureIndex, enqueueFailure));
+                for (int i = enqueueFailureIndex + 1; i < batch.size(); i++) {
+                    outcomes.add(BatchItemOutcome.notAttempted(i));
+                }
+            }
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            if (primaryFailure != null) {
+                throw new BatchDeliveryException("Cannot send Kafka message batch " + batch.id()
+                                                         + " to topic " + topic,
+                                                 primaryFailure,
+                                                 batch,
+                                                 outcomes);
+            }
+        }
+
+        @Override
+        public void forceClose() {
+            close(Duration.ZERO, true);
+        }
+
+        @Override
+        public void close() {
+            close(closeTimeout, false);
+        }
+
         private boolean publishProducer(Producer<Object, Object> created) {
             lifecycleLock.lock();
             try {
@@ -311,83 +388,6 @@ final class KafkaOutgoingConnector {
             } finally {
                 lifecycleLock.unlock();
             }
-        }
-
-        @Override
-        public void sendBatch(MessageBatch<?> batch) {
-            Objects.requireNonNull(batch);
-            Producer<Object, Object> current;
-            try {
-                current = readyProducer();
-            } catch (RuntimeException failure) {
-                throw notAttemptedFailure(batch, failure);
-            }
-            List<Future<RecordMetadata>> results = new ArrayList<>(batch.size());
-            RuntimeException enqueueFailure = null;
-            int enqueueFailureIndex = -1;
-            for (int i = 0; i < batch.size(); i++) {
-                try {
-                    results.add(enqueue(current, batch.get(i)));
-                } catch (RuntimeException e) {
-                    enqueueFailure = e;
-                    enqueueFailureIndex = i;
-                    break;
-                }
-            }
-
-            List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
-            Throwable primaryFailure = enqueueFailure;
-            boolean interrupted = false;
-            for (int i = 0; i < results.size(); i++) {
-                Future<RecordMetadata> result = results.get(i);
-                try {
-                    result.get(interrupted ? 0 : sendTimeout.toNanos(), TimeUnit.NANOSECONDS);
-                    outcomes.add(BatchItemOutcome.succeeded(i));
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                    primaryFailure = firstFailure(primaryFailure, e);
-                    outcomes.add(BatchItemOutcome.indeterminate(i, e));
-                } catch (ExecutionException e) {
-                    Throwable cause = e.getCause() == null ? e : e.getCause();
-                    primaryFailure = firstFailure(primaryFailure, cause);
-                    // A producer future failure proves that the configured success point was not observed, but it
-                    // does not prove that the broker never appended the record (for example, an acknowledgement may
-                    // have been lost). Retrying therefore carries duplicate-delivery risk.
-                    outcomes.add(BatchItemOutcome.indeterminate(i, cause));
-                } catch (TimeoutException | CancellationException e) {
-                    primaryFailure = firstFailure(primaryFailure, e);
-                    outcomes.add(BatchItemOutcome.indeterminate(i, e));
-                } catch (RuntimeException e) {
-                    primaryFailure = firstFailure(primaryFailure, e);
-                    outcomes.add(BatchItemOutcome.indeterminate(i, e));
-                }
-            }
-            if (enqueueFailureIndex >= 0) {
-                outcomes.add(BatchItemOutcome.failed(enqueueFailureIndex, enqueueFailure));
-                for (int i = enqueueFailureIndex + 1; i < batch.size(); i++) {
-                    outcomes.add(BatchItemOutcome.notAttempted(i));
-                }
-            }
-            if (interrupted) {
-                Thread.currentThread().interrupt();
-            }
-            if (primaryFailure != null) {
-                throw new BatchDeliveryException("Cannot send Kafka message batch " + batch.id()
-                                                         + " to topic " + topic,
-                                                 primaryFailure,
-                                                 batch,
-                                                 outcomes);
-            }
-        }
-
-        @Override
-        public void forceClose() {
-            close(Duration.ZERO, true);
-        }
-
-        @Override
-        public void close() {
-            close(closeTimeout, false);
         }
 
         private Future<RecordMetadata> enqueue(Producer<Object, Object> current, Message<?> message) {

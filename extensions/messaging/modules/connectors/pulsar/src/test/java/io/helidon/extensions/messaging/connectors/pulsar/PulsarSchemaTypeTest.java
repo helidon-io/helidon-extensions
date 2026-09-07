@@ -41,7 +41,6 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PulsarSchemaTypeTest {
@@ -67,8 +66,8 @@ class PulsarSchemaTypeTest {
                 Map.entry(PulsarSchemaType.LOCAL_DATE_TIME, LocalDateTime.of(LocalDate.EPOCH, LocalTime.NOON)));
 
         payloads.forEach((schema, payload) -> {
-            assertDoesNotThrow(() -> schema.snapshot(payload, ConnectorDirection.INCOMING));
-            assertDoesNotThrow(() -> schema.snapshot(payload, ConnectorDirection.OUTGOING));
+            schema.snapshot(payload, ConnectorDirection.INCOMING);
+            schema.snapshot(payload, ConnectorDirection.OUTGOING);
         });
         for (PulsarSchemaType schema : PulsarSchemaType.values()) {
             assertThat(schema.snapshot(null, ConnectorDirection.INCOMING), is((Object) null));

@@ -167,47 +167,6 @@ final class KafkaConnectorConfigSupport {
     private KafkaConnectorConfigSupport() {
     }
 
-    private static void requirePositive(String name, Duration value) {
-        if (value.isZero() || value.isNegative()) {
-            throw new IllegalArgumentException(name + " must be greater than zero");
-        }
-    }
-
-    private static void requirePollTimeout(Duration value) {
-        requirePositive(POLL_TIMEOUT_PROPERTY, value);
-        try {
-            if (value.toMillis() == 0) {
-                throw new IllegalArgumentException(POLL_TIMEOUT_PROPERTY + " must be at least 1 ms");
-            }
-        } catch (ArithmeticException e) {
-            throw new IllegalArgumentException(POLL_TIMEOUT_PROPERTY + " must be representable in milliseconds", e);
-        }
-    }
-
-    private static void requireNanosecondRange(String name, Duration value) {
-        try {
-            value.toNanos();
-        } catch (ArithmeticException e) {
-            throw new IllegalArgumentException(name + " must be representable in nanoseconds", e);
-        }
-    }
-
-    /**
-     * Validates Kafka connector configuration.
-     */
-    static final class BuilderDecorator implements Prototype.BuilderDecorator<KafkaConnectorConfig.BuilderBase<?, ?>> {
-        @Override
-        public void decorate(KafkaConnectorConfig.BuilderBase<?, ?> target) {
-            requirePollTimeout(target.pollTimeout());
-            requirePositive(SEND_TIMEOUT_PROPERTY, target.sendTimeout());
-            requireNanosecondRange(SEND_TIMEOUT_PROPERTY, target.sendTimeout());
-            if (target.closeTimeout().isNegative()) {
-                throw new IllegalArgumentException(CLOSE_TIMEOUT_PROPERTY + " must not be negative");
-            }
-            requireNanosecondRange(CLOSE_TIMEOUT_PROPERTY, target.closeTimeout());
-        }
-    }
-
     static Map<String, Object> producerProperties(KafkaConnectorConfig config) {
         Map<String, Object> properties = kafkaProperties(config);
         properties.put(BOOTSTRAP_SERVERS_PROPERTY, config.bootstrapServers());
@@ -236,6 +195,31 @@ final class KafkaConnectorConfigSupport {
         return Map.copyOf(properties);
     }
 
+    private static void requirePositive(String name, Duration value) {
+        if (value.isZero() || value.isNegative()) {
+            throw new IllegalArgumentException(name + " must be greater than zero");
+        }
+    }
+
+    private static void requirePollTimeout(Duration value) {
+        requirePositive(POLL_TIMEOUT_PROPERTY, value);
+        try {
+            if (value.toMillis() == 0) {
+                throw new IllegalArgumentException(POLL_TIMEOUT_PROPERTY + " must be at least 1 ms");
+            }
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(POLL_TIMEOUT_PROPERTY + " must be representable in milliseconds", e);
+        }
+    }
+
+    private static void requireNanosecondRange(String name, Duration value) {
+        try {
+            value.toNanos();
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(name + " must be representable in nanoseconds", e);
+        }
+    }
+
     private static void bound(Map<String, Object> properties,
                               String name,
                               int runtimeLimit,
@@ -251,5 +235,21 @@ final class KafkaConnectorConfigSupport {
         Map<String, Object> properties = new LinkedHashMap<>(config.properties());
         properties.keySet().removeAll(CONNECTOR_PROPERTIES);
         return properties;
+    }
+
+    /**
+     * Validates Kafka connector configuration.
+     */
+    static final class BuilderDecorator implements Prototype.BuilderDecorator<KafkaConnectorConfig.BuilderBase<?, ?>> {
+        @Override
+        public void decorate(KafkaConnectorConfig.BuilderBase<?, ?> target) {
+            requirePollTimeout(target.pollTimeout());
+            requirePositive(SEND_TIMEOUT_PROPERTY, target.sendTimeout());
+            requireNanosecondRange(SEND_TIMEOUT_PROPERTY, target.sendTimeout());
+            if (target.closeTimeout().isNegative()) {
+                throw new IllegalArgumentException(CLOSE_TIMEOUT_PROPERTY + " must not be negative");
+            }
+            requireNanosecondRange(CLOSE_TIMEOUT_PROPERTY, target.closeTimeout());
+        }
     }
 }

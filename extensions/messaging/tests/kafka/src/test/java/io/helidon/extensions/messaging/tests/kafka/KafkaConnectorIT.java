@@ -171,11 +171,12 @@ class KafkaConnectorIT {
 
         try {
             OutgoingSender sender = manager.registry().get(OutgoingSender.class);
-            KafkaMessage<String, String> message = KafkaMessage.builder("message-key", "kafka message")
-                    .rawHeader("duplicate", "first".getBytes(StandardCharsets.UTF_8))
-                    .rawHeader("duplicate", "second".getBytes(StandardCharsets.UTF_8))
-                    .rawHeader("binary", new byte[] {0, (byte) 0xFF})
-                    .rawHeader("null-value", null)
+            KafkaMessage<String, String> message = KafkaMessage.<String, String>builder("kafka message")
+                    .key("message-key")
+                    .addRawHeader("duplicate", "first".getBytes(StandardCharsets.UTF_8))
+                    .addRawHeader("duplicate", "second".getBytes(StandardCharsets.UTF_8))
+                    .addRawHeader("binary", new byte[] {0, (byte) 0xFF})
+                    .addNullHeader("null-value")
                     .build();
             MessageBatch<String> batch = MessageBatch.create(List.of(
                     KafkaMessage.create("batch-key-1", "kafka batch first"),

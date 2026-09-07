@@ -72,7 +72,6 @@ import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class KafkaIncomingConnectorTest {
@@ -499,19 +498,19 @@ class KafkaIncomingConnectorTest {
         assertThat(kafkaMessage.kafkaHeaders().stream().map(KafkaMessage.Header::name).toList(),
                    is(List.of("null-header", "trace-id", "trace-id", "binary")));
         assertThat(kafkaMessage.kafkaHeaders().get(0).value(), is(Optional.empty()));
-        assertArrayEquals("old".getBytes(StandardCharsets.UTF_8),
-                          kafkaMessage.kafkaHeaders().get(1).value().orElseThrow());
-        assertArrayEquals("Příliš žluťoučký".getBytes(StandardCharsets.UTF_8),
-                          kafkaMessage.kafkaHeaders().get(2).value().orElseThrow());
-        assertArrayEquals(new byte[] {0x00, (byte) 0xFF},
-                          kafkaMessage.kafkaHeaders().get(3).value().orElseThrow());
+        assertThat(kafkaMessage.kafkaHeaders().get(1).value().orElseThrow(),
+                   is("old".getBytes(StandardCharsets.UTF_8)));
+        assertThat(kafkaMessage.kafkaHeaders().get(2).value().orElseThrow(),
+                   is("Příliš žluťoučký".getBytes(StandardCharsets.UTF_8)));
+        assertThat(kafkaMessage.kafkaHeaders().get(3).value().orElseThrow(),
+                   is(new byte[] {0x00, (byte) 0xFF}));
 
         binaryHeader[0] = 0x7F;
         firstHeaders.add("late-header", "late".getBytes(StandardCharsets.UTF_8));
         byte[] exposedValue = kafkaMessage.kafkaHeaders().get(3).value().orElseThrow();
         exposedValue[1] = 0x00;
-        assertArrayEquals(new byte[] {0x00, (byte) 0xFF},
-                          kafkaMessage.kafkaHeaders().get(3).value().orElseThrow());
+        assertThat(kafkaMessage.kafkaHeaders().get(3).value().orElseThrow(),
+                   is(new byte[] {0x00, (byte) 0xFF}));
         assertThat(kafkaMessage.kafkaHeaders().size(), is(4));
         assertThrows(UnsupportedOperationException.class, () -> kafkaMessage.kafkaHeaders().clear());
         assertThat(consumer.commitCount(), is(1));
@@ -878,8 +877,8 @@ class KafkaIncomingConnectorTest {
         assertThat(tombstone.entityAvailable(), is(false));
         assertThrows(MessagingException.class, tombstone::entity);
         assertThat(tombstone.key().orElseThrow(), is("tombstone-key"));
-        assertArrayEquals(new byte[] {1, 2},
-                          ((MessageHeaderValue.BinaryValue) tombstone.headerValue("trace").orElseThrow()).value());
+        assertThat(((MessageHeaderValue.BinaryValue) tombstone.headerValue("trace").orElseThrow()).value(),
+                   is(new byte[] {1, 2}));
         assertThat(batch.get(1).entity(), is("second"));
         assertThat(mappingFailure.get().outcome(0).status(), is(BatchItemStatus.FAILED));
         assertThat(mappingFailure.get().outcome(1).status(), is(BatchItemStatus.NOT_ATTEMPTED));

@@ -216,7 +216,7 @@ public interface JmsMessage<T> extends Message<T> {
      * @param <T> payload type
      */
     @Api.Preview
-    final class Builder<T> {
+    final class Builder<T> implements io.helidon.common.Builder<Builder<T>, JmsMessage<T>> {
         private final T entity;
         private final Map<String, Object> properties = new LinkedHashMap<>();
         private String correlationId;
@@ -231,9 +231,20 @@ public interface JmsMessage<T> extends Message<T> {
          *
          * @param correlationId correlation identifier
          * @return updated builder
+         * @throws NullPointerException if {@code correlationId} is {@code null}
          */
         public Builder<T> correlationId(String correlationId) {
-            this.correlationId = correlationId;
+            this.correlationId = Objects.requireNonNull(correlationId, "correlationId");
+            return this;
+        }
+
+        /**
+         * Clear the JMS correlation identifier.
+         *
+         * @return updated builder
+         */
+        public Builder<T> clearCorrelationId() {
+            this.correlationId = null;
             return this;
         }
 
@@ -242,9 +253,20 @@ public interface JmsMessage<T> extends Message<T> {
          *
          * @param type JMS type
          * @return updated builder
+         * @throws NullPointerException if {@code type} is {@code null}
          */
         public Builder<T> type(String type) {
-            this.type = type;
+            this.type = Objects.requireNonNull(type, "type");
+            return this;
+        }
+
+        /**
+         * Clear the JMS type.
+         *
+         * @return updated builder
+         */
+        public Builder<T> clearType() {
+            this.type = null;
             return this;
         }
 
@@ -255,7 +277,7 @@ public interface JmsMessage<T> extends Message<T> {
          * @param value supported JMS property value
          * @return updated builder
          */
-        public Builder<T> property(String name, Object value) {
+        public Builder<T> putProperty(String name, Object value) {
             String actualName = JmsMessageImpl.requirePropertyName(name);
             properties.put(actualName, JmsMessageImpl.snapshotProperty(actualName, value));
             return this;
@@ -266,6 +288,7 @@ public interface JmsMessage<T> extends Message<T> {
          *
          * @return JMS message
          */
+        @Override
         public JmsMessage<T> build() {
             return JmsMessageImpl.outgoing(entity, correlationId, type, properties);
         }
