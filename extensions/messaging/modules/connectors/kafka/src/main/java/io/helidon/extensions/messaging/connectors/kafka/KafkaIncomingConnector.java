@@ -704,7 +704,7 @@ final class KafkaIncomingConnector {
                 RuntimeException mappingFailure = pendingPoll.mappingFailure();
                 admitted = mappingFailure == null
                         ? reservation.tryStart(pendingPoll.batch())
-                        : Optional.of(reservation.startFailed(pendingPoll.batch(), mappingFailure));
+                        : reservation.tryStartFailed(pendingPoll.batch(), mappingFailure);
                 admitted.ifPresent(active::attach);
             } catch (RuntimeException | Error e) {
                 finishDeliveryStart();

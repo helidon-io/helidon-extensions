@@ -817,9 +817,14 @@ class KafkaIncomingConnectorTest {
 
                     @Override
                     public ConnectorDelivery startFailed(MessageBatch<?> batch, RuntimeException failure) {
+                        throw new AssertionError("A mapped tombstone poll must use non-blocking failed admission");
+                    }
+
+                    @Override
+                    public Optional<ConnectorDelivery> tryStartFailed(MessageBatch<?> batch, RuntimeException failure) {
                         failedBatch.set(batch);
                         mappingFailure.set((BatchDeliveryException) failure);
-                        return new RuntimeDelivery(batch, () -> { });
+                        return Optional.of(new RuntimeDelivery(batch, () -> { }));
                     }
 
                     @Override
@@ -1239,6 +1244,47 @@ class KafkaIncomingConnectorTest {
 
         assertThat(admissionAttempts.get(), is(3));
         assertThat("the owner must maintenance-poll after every unavailable admission attempt",
+                   pollsAtAdmission.get() >= 3,
+                   is(true));
+        assertThat(consumer.commitCount(), is(1));
+    }
+
+    @Test
+    void testUnavailableMappingFailureAdmissionKeepsMaintenancePolling() {
+        TrackingMockConsumer consumer = trackingConsumer();
+        scheduleRecords(consumer, record(0, null, new RecordHeaders()));
+        AtomicInteger admissionAttempts = new AtomicInteger();
+        AtomicInteger pollsAtAdmission = new AtomicInteger();
+        IncomingConnectorContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery() {
+                ConnectorDeliveryReservation delegate = super
+                        .tryReserveDelivery()
+                        .orElseThrow();
+                return Optional.of(new ForwardingReservation(delegate) {
+                    @Override
+                    public Optional<ConnectorDelivery> tryStart(MessageBatch<?> batch) {
+                        throw new AssertionError("A mapping failure must use failed admission");
+                    }
+
+                    @Override
+                    public Optional<ConnectorDelivery> tryStartFailed(MessageBatch<?> batch, RuntimeException failure) {
+                        if (admissionAttempts.incrementAndGet() < 3) {
+                            return Optional.empty();
+                        }
+                        pollsAtAdmission.set(consumer.pollCount());
+                        return Optional.of(new RuntimeDelivery(batch, () -> { }));
+                    }
+                });
+            }
+        };
+        IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
+        consumer.afterCommit(connector::close);
+
+        connector.createIncomingConnector(config()).run(context);
+
+        assertThat(admissionAttempts.get(), is(3));
+        assertThat("the owner must maintenance-poll after every unavailable failed-admission attempt",
                    pollsAtAdmission.get() >= 3,
                    is(true));
         assertThat(consumer.commitCount(), is(1));
@@ -2754,8 +2800,18 @@ class KafkaIncomingConnectorTest {
         }
 
         @Override
+        public ConnectorDelivery startFailed(MessageBatch<?> batch, RuntimeException failure) {
+            return delegate.startFailed(batch, failure);
+        }
+
+        @Override
         public Optional<ConnectorDelivery> tryStart(MessageBatch<?> batch) {
             return delegate.tryStart(batch);
+        }
+
+        @Override
+        public Optional<ConnectorDelivery> tryStartFailed(MessageBatch<?> batch, RuntimeException failure) {
+            return delegate.tryStartFailed(batch, failure);
         }
 
         @Override
