@@ -19,6 +19,7 @@ package io.helidon.extensions.messaging.connectors.kafka;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 import io.helidon.builder.api.Prototype;
@@ -219,6 +220,13 @@ final class KafkaConnectorConfigSupport {
         }
     }
 
+    private static void requireNonNullEntries(String name, Map<?, ?> values) {
+        values.forEach((key, value) -> {
+            Objects.requireNonNull(key, name + " key");
+            Objects.requireNonNull(value, name + " value");
+        });
+    }
+
     private static void bound(Map<String, Object> properties,
                               String name,
                               int runtimeLimit,
@@ -242,6 +250,7 @@ final class KafkaConnectorConfigSupport {
     static final class BuilderDecorator implements Prototype.BuilderDecorator<KafkaConnectorConfig.BuilderBase<?, ?>> {
         @Override
         public void decorate(KafkaConnectorConfig.BuilderBase<?, ?> target) {
+            requireNonNullEntries("properties", target.properties());
             requirePollTimeout(target.pollTimeout());
             requirePositive(SEND_TIMEOUT_PROPERTY, target.sendTimeout());
             requireNanosecondRange(SEND_TIMEOUT_PROPERTY, target.sendTimeout());

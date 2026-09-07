@@ -19,6 +19,7 @@ package io.helidon.extensions.messaging.connectors.pulsar;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
@@ -202,6 +203,13 @@ final class PulsarConnectorConfigSupport {
         }
     }
 
+    private static void requireNonNullEntries(String name, Map<?, ?> values) {
+        values.forEach((key, value) -> {
+            Objects.requireNonNull(key, name + " key");
+            Objects.requireNonNull(value, name + " value");
+        });
+    }
+
     /**
      * Validates Pulsar connector configuration.
      */
@@ -212,6 +220,9 @@ final class PulsarConnectorConfigSupport {
             requireNonBlank(TOPIC_PROPERTY, target.topic());
             requireNonBlank(SCHEMA_PROVIDER_PROPERTY, target.schemaProvider());
             requireNonBlank(SUBSCRIPTION_NAME_PROPERTY, target.subscriptionName());
+            requireNonNullEntries(CLIENT_PROPERTIES_PROPERTY, target.clientProperties());
+            requireNonNullEntries(CONSUMER_PROPERTIES_PROPERTY, target.consumerProperties());
+            requireNonNullEntries(PRODUCER_PROPERTIES_PROPERTY, target.producerProperties());
             if (target.receiverQueueSize() < 1) {
                 throw new IllegalArgumentException(RECEIVER_QUEUE_SIZE_PROPERTY + " must be greater than zero");
             }

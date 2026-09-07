@@ -18,6 +18,7 @@ package io.helidon.extensions.messaging.connectors.jms;
 
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -246,6 +247,19 @@ class JmsConnectorConfigTest {
 
         assertThat(builder.toString().contains(credential), is(false));
         assertThat(builder.build().toString().contains(credential), is(false));
+    }
+
+    @Test
+    void testJndiEnvironmentRejectsNullEntries() {
+        Map<String, String> nullKey = new HashMap<>();
+        nullKey.put(null, "value");
+        Map<String, String> nullValue = new HashMap<>();
+        nullValue.put("key", null);
+
+        assertThrows(NullPointerException.class,
+                     () -> incomingBuilder().jndiEnvironment(nullKey).build());
+        assertThrows(NullPointerException.class,
+                     () -> incomingBuilder().addJndiEnvironment(nullValue).build());
     }
 
     @Test

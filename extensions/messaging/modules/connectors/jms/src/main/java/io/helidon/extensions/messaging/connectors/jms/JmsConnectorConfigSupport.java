@@ -18,6 +18,7 @@ package io.helidon.extensions.messaging.connectors.jms;
 
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -150,6 +151,13 @@ final class JmsConnectorConfigSupport {
         });
     }
 
+    private static void requireNonNullEntries(String name, Map<?, ?> values) {
+        values.forEach((key, value) -> {
+            Objects.requireNonNull(key, name + " key");
+            Objects.requireNonNull(value, name + " value");
+        });
+    }
+
     /**
      * Validates JMS connector configuration.
      */
@@ -166,6 +174,7 @@ final class JmsConnectorConfigSupport {
             requireNonBlank(CLIENT_ID_PROPERTY, target.clientId());
             requireNonBlank(MESSAGE_SELECTOR_PROPERTY, target.messageSelector());
             requireNonBlank(SUBSCRIPTION_NAME_PROPERTY, target.subscriptionName());
+            requireNonNullEntries(JNDI_ENVIRONMENT_PROPERTY, target.jndiEnvironment());
 
             if (target.connectionFactory().isPresent() && target.jndiConnectionFactory().isPresent()) {
                 throw new IllegalArgumentException(CONNECTION_FACTORY_PROPERTY + " and "
