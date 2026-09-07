@@ -32,7 +32,6 @@ import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.BatchAtomicity;
 import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.OutgoingConnector;
 
@@ -186,11 +185,6 @@ final class PulsarOutgoingConnector {
                 lifecycleLock.unlock();
             }
             throw propagate(failure);
-        }
-
-        @Override
-        public BatchAtomicity batchAtomicity() {
-            return BatchAtomicity.PER_MESSAGE;
         }
 
         @Override

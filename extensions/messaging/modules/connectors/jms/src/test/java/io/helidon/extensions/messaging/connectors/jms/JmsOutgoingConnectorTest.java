@@ -32,7 +32,6 @@ import io.helidon.messaging.BatchItemStatus;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.BatchAtomicity;
 import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.OutgoingConnector;
 
@@ -227,7 +226,6 @@ class JmsOutgoingConnectorTest {
         BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
                                                        () -> connector.sendBatch(batch));
 
-        assertThat(connector.batchAtomicity(), is(BatchAtomicity.ATOMIC));
         assertStatuses(failure, BatchItemStatus.FAILED, BatchItemStatus.FAILED, BatchItemStatus.FAILED);
         verify(client.session).rollback();
         verify(client.session, never()).commit();
