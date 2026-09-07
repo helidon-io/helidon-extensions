@@ -108,7 +108,7 @@ messaging:
 Provider names are exact and case-sensitive. `schema-provider` overrides `schema`; missing or duplicate providers fail
 when the binding is created, before a Pulsar client is allocated. The connector invokes `schema()` once per binding, so
 the returned schema must be safe for that binding. Imperative applications can pass providers to
-`new PulsarConnectorProvider(provider1, provider2)`.
+`PulsarConnectorProvider.create(provider1, provider2)`.
 
 Configure a compatible schema for every producer and consumer of a topic. The connector validates built-in payload
 types without numeric widening or string coercion. It defensively snapshots mutable built-in values (`byte[]`,

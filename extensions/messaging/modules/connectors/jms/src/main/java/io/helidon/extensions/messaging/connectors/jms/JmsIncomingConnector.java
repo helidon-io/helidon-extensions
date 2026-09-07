@@ -36,13 +36,13 @@ import io.helidon.faulttolerance.RetryConfig;
 import io.helidon.faulttolerance.RetryException;
 import io.helidon.faulttolerance.RetryOutcome;
 import io.helidon.faulttolerance.SupplierHelper;
+import io.helidon.messaging.ConnectorDelivery;
+import io.helidon.messaging.ConnectorDeliveryReservation;
+import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
-import io.helidon.messaging.spi.ConnectorDelivery;
-import io.helidon.messaging.spi.ConnectorDeliveryReservation;
 import io.helidon.messaging.spi.IncomingConnector;
-import io.helidon.messaging.spi.IncomingConnectorContext;
 
 import jakarta.jms.Connection;
 import jakarta.jms.Destination;
@@ -483,8 +483,11 @@ final class JmsIncomingConnector {
                 }
                 return delivery;
             } finally {
-                deliveryStateChanged.signalAll();
-                deliveryLock.unlock();
+                try {
+                    deliveryStateChanged.signalAll();
+                } finally {
+                    deliveryLock.unlock();
+                }
             }
         }
 

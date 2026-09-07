@@ -31,12 +31,12 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.OutgoingConnector;
 
 import org.apache.pulsar.client.api.MessageId;

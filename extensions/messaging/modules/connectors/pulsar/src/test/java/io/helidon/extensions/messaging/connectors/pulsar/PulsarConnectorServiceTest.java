@@ -18,7 +18,7 @@ package io.helidon.extensions.messaging.connectors.pulsar;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.spi.ConnectorProvider;
 import io.helidon.messaging.spi.IncomingConnectorProvider;
 import io.helidon.messaging.spi.OutgoingConnectorProvider;

@@ -42,15 +42,15 @@ import io.helidon.faulttolerance.SupplierHelper;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.BatchItemStatus;
+import io.helidon.messaging.ConnectorDelivery;
+import io.helidon.messaging.ConnectorDeliveryReservation;
+import io.helidon.messaging.ConnectorDirection;
+import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
-import io.helidon.messaging.spi.ConnectorDelivery;
-import io.helidon.messaging.spi.ConnectorDeliveryReservation;
-import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.IncomingConnector;
-import io.helidon.messaging.spi.IncomingConnectorContext;
 
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -728,8 +728,11 @@ final class KafkaIncomingConnector {
                     cancel = closed.get() || pendingPoll.stale();
                 }
             } finally {
-                deliveryStateChanged.signalAll();
-                deliveryLock.unlock();
+                try {
+                    deliveryStateChanged.signalAll();
+                } finally {
+                    deliveryLock.unlock();
+                }
             }
             if (cancel) {
                 cancelAndRelease(active);
@@ -814,10 +817,10 @@ final class KafkaIncomingConnector {
             if (closed.get()) {
                 return false;
             }
-            commitLock.lock();
             Thread commitOwner = Thread.currentThread();
-            commitInitiationOwner.set(commitOwner);
+            commitLock.lock();
             try {
+                commitInitiationOwner.set(commitOwner);
                 if (closed.get()) {
                     return false;
                 }
@@ -834,8 +837,11 @@ final class KafkaIncomingConnector {
                     completed.set(true);
                 }
             } finally {
-                commitInitiationOwner.compareAndSet(commitOwner, null);
-                commitLock.unlock();
+                try {
+                    commitInitiationOwner.compareAndSet(commitOwner, null);
+                } finally {
+                    commitLock.unlock();
+                }
             }
             while (!completed.get()) {
                 if (closed.get()) {
@@ -1261,7 +1267,10 @@ final class KafkaIncomingConnector {
             for (PartitionInfo partition : partitions) {
                 topicPartitions.add(new TopicPartition(partition.topic(), partition.partition()));
             }
-            consumer.committed(topicPartitions, commitTimeout);
+            if (consumer.committed(topicPartitions, commitTimeout) == null) {
+                throw new MessagingException("Kafka broker returned no committed-offset response for topic "
+                                                     + config.topic());
+            }
         }
 
         private void closeConsumer(Consumer<Object, Object> consumer, Duration timeout) {

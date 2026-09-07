@@ -37,16 +37,16 @@ import java.util.function.Function;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.BatchItemStatus;
+import io.helidon.messaging.ConnectorDelivery;
+import io.helidon.messaging.ConnectorDeliveryReservation;
+import io.helidon.messaging.ConnectorDirection;
+import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
-import io.helidon.messaging.spi.ConnectorDelivery;
-import io.helidon.messaging.spi.ConnectorDeliveryReservation;
-import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.IncomingConnector;
-import io.helidon.messaging.spi.IncomingConnectorContext;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -112,7 +112,7 @@ class KafkaIncomingConnectorTest {
 
     @Test
     void testConnectorType() {
-        KafkaConnectorProvider provider = new KafkaConnectorProvider();
+        KafkaConnectorProvider provider = KafkaConnectorProvider.create();
 
         assertThat(provider.connectorType(), is("helidon-kafka"));
     }

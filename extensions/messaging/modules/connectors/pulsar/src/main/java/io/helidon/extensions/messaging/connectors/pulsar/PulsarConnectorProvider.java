@@ -23,7 +23,7 @@ import java.util.function.Supplier;
 
 import io.helidon.common.Api;
 import io.helidon.config.Config;
-import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.spi.IncomingConnector;
 import io.helidon.messaging.spi.IncomingConnectorProvider;
 import io.helidon.messaging.spi.OutgoingConnector;
@@ -56,32 +56,10 @@ public final class PulsarConnectorProvider
     private final PulsarIncomingConnector incomingFactory;
     private final PulsarOutgoingConnector outgoingFactory;
 
-    /**
-     * Create an imperative connector provider using only built-in schemas.
-     */
-    public PulsarConnectorProvider() {
-        this(List::of);
-    }
-
-    /**
-     * Create an imperative connector provider with custom named schemas.
-     *
-     * @param schemaProviders custom schema providers
-     */
-    public PulsarConnectorProvider(PulsarSchemaProvider... schemaProviders) {
-        this(fixedProviders(schemaProviders));
-    }
 
     @Service.Inject
     PulsarConnectorProvider(Supplier<List<PulsarSchemaProvider>> schemaProviders) {
         this(schemaProviders, new PulsarIncomingConnector(), new PulsarOutgoingConnector());
-    }
-
-    PulsarConnectorProvider(PulsarIncomingConnector.ClientFactory incomingClientFactory,
-                            PulsarOutgoingConnector.ClientFactory outgoingClientFactory) {
-        this(List::of,
-             new PulsarIncomingConnector(incomingClientFactory),
-             new PulsarOutgoingConnector(outgoingClientFactory));
     }
 
     private PulsarConnectorProvider(Supplier<List<PulsarSchemaProvider>> schemaProviders,
@@ -92,6 +70,15 @@ public final class PulsarConnectorProvider
         this.outgoingFactory = Objects.requireNonNull(outgoingFactory);
     }
 
+    /**
+     * Create an imperative connector provider using the provided named schemas.
+     *
+     * @param schemaProviders custom schema providers (may be empty)
+     * @return a new connector provider
+     */
+    public static PulsarConnectorProvider create(PulsarSchemaProvider... schemaProviders) {
+        return new PulsarConnectorProvider(fixedProviders(schemaProviders));
+    }
     @Override
     public String connectorType() {
         return CONNECTOR_TYPE;

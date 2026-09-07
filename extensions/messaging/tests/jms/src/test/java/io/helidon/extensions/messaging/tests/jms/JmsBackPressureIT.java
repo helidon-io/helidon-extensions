@@ -27,11 +27,11 @@ import java.util.function.BooleanSupplier;
 import io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfig;
 import io.helidon.extensions.messaging.connectors.jms.JmsConnectorProvider;
 import io.helidon.extensions.messaging.connectors.jms.JmsMessage;
+import io.helidon.messaging.ConnectorDeliveryReservation;
+import io.helidon.messaging.ConnectorDirection;
+import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessagingRuntime;
-import io.helidon.messaging.spi.ConnectorDeliveryReservation;
-import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.IncomingConnector;
-import io.helidon.messaging.spi.IncomingConnectorContext;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 
@@ -108,7 +108,7 @@ class JmsBackPressureIT {
             try (ActiveMQConnectionFactory connectorFactory = new ActiveMQConnectionFactory(broker.connectionUrl())) {
                 connectorFactory.setConsumerWindowSize(1024 * 1024);
                 JmsTestClient.sendText(broker.connectionFactory(), queue, false, "waiting", ignored -> { });
-                IncomingConnector connector = new JmsConnectorProvider(connectorFactory)
+                IncomingConnector connector = JmsConnectorProvider.create(connectorFactory)
                         .createIncomingConnector(JmsConnectorConfig.builder()
                                                          .direction(ConnectorDirection.INCOMING)
                                                          .channelName("activation-gate")

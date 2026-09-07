@@ -16,7 +16,7 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
-import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.spi.ConnectorProvider;
 import io.helidon.messaging.spi.IncomingConnector;
 import io.helidon.messaging.spi.IncomingConnectorProvider;

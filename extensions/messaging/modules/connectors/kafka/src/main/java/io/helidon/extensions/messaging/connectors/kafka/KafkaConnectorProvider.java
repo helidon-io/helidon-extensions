@@ -20,7 +20,7 @@ import java.util.Objects;
 
 import io.helidon.common.Api;
 import io.helidon.config.Config;
-import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.spi.IncomingConnector;
 import io.helidon.messaging.spi.IncomingConnectorProvider;
 import io.helidon.messaging.spi.OutgoingConnector;
@@ -74,23 +74,24 @@ public final class KafkaConnectorProvider
     private final KafkaIncomingConnector incomingFactory;
     private final KafkaOutgoingConnector outgoingFactory;
 
-    /**
-     * Create the Kafka connector provider.
-     */
     @Service.Inject
-    public KafkaConnectorProvider() {
+    KafkaConnectorProvider() {
         this(new KafkaIncomingConnector(), new KafkaOutgoingConnector());
-    }
-
-    KafkaConnectorProvider(KafkaIncomingConnector.ConsumerFactory consumerFactory,
-                           KafkaOutgoingConnector.ProducerFactory producerFactory) {
-        this(new KafkaIncomingConnector(consumerFactory), new KafkaOutgoingConnector(producerFactory));
     }
 
     private KafkaConnectorProvider(KafkaIncomingConnector incomingFactory,
                                    KafkaOutgoingConnector outgoingFactory) {
         this.incomingFactory = incomingFactory;
         this.outgoingFactory = outgoingFactory;
+    }
+
+    /**
+     * Create the Kafka connector provider.
+     *
+     * @return a new Kafka connector provider
+     */
+    public static KafkaConnectorProvider create() {
+        return new KafkaConnectorProvider();
     }
 
     @Override

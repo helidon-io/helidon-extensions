@@ -136,7 +136,7 @@ class KafkaConnectorIT {
     void testDirectKafkaSinkPublishesPayloadMessageAndBatch() throws Exception {
         String topic = uniqueName("sink");
         createTopic(topic);
-        KafkaConnectorProvider provider = new KafkaConnectorProvider();
+        KafkaConnectorProvider provider = KafkaConnectorProvider.create();
         OutgoingConnector connector = provider.createOutgoingConnector(outgoingConnectorConfig(topic));
 
         try {
@@ -208,7 +208,7 @@ class KafkaConnectorIT {
     void testImperativeChannelPublishesPayloadMessageAndBatch() throws Exception {
         String topic = uniqueName("channel");
         createTopic(topic);
-        KafkaConnectorProvider provider = new KafkaConnectorProvider();
+        KafkaConnectorProvider provider = KafkaConnectorProvider.create();
         OutgoingConnector connector = provider.createOutgoingConnector(outgoingConnectorConfig(topic));
         MessagingGraph.Assembler builder = MessagingGraph.assembler();
         MessagingChannel<String> channel = builder.channel("kafka-output", String.class);

@@ -23,9 +23,8 @@ import java.util.Optional;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.ConnectorConfig;
-import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.service.registry.ServiceRegistry;
 
 import jakarta.jms.ConnectionFactory;
@@ -47,8 +46,8 @@ class JmsConnectorConfigTest {
     void testDefaultsAndNestedConfiguration() {
         JmsConnectorConfig config = JmsConnectorConfig.create(Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("direction", "INCOMING"),
-                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "orders"),
-                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, JmsConnectorProvider.CONNECTOR_TYPE),
+                Map.entry("channel-name", "orders"),
+                Map.entry("connector", JmsConnectorProvider.CONNECTOR_TYPE),
                 Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
                 Map.entry(JmsConnectorConfig.DESTINATION_TYPE_PROPERTY, "QUEUE"),
                 Map.entry(JmsConnectorConfig.RECONNECT_INITIAL_DELAY_PROPERTY, "PT1S"),
@@ -147,8 +146,8 @@ class JmsConnectorConfigTest {
     void testConfiguredPasswordIsMovedToDefensiveStorage() {
         Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("direction", "INCOMING"),
-                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "orders"),
-                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, JmsConnectorProvider.CONNECTOR_TYPE),
+                Map.entry("channel-name", "orders"),
+                Map.entry("connector", JmsConnectorProvider.CONNECTOR_TYPE),
                 Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
                 Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
                 Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
@@ -168,8 +167,8 @@ class JmsConnectorConfigTest {
     void testProgrammaticPasswordChangesClearConfiguredStaging() {
         Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("direction", "INCOMING"),
-                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "orders"),
-                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, JmsConnectorProvider.CONNECTOR_TYPE),
+                Map.entry("channel-name", "orders"),
+                Map.entry("connector", JmsConnectorProvider.CONNECTOR_TYPE),
                 Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
                 Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
                 Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
@@ -193,8 +192,8 @@ class JmsConnectorConfigTest {
     void testConfiguredPasswordIsNotAliasedWhenCopyingBuilders() {
         Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("direction", "INCOMING"),
-                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "orders"),
-                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, JmsConnectorProvider.CONNECTOR_TYPE),
+                Map.entry("channel-name", "orders"),
+                Map.entry("connector", JmsConnectorProvider.CONNECTOR_TYPE),
                 Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
                 Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
                 Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
@@ -223,8 +222,8 @@ class JmsConnectorConfigTest {
     void testPrototypeCopyOverridesStaleConfiguredPassword() {
         Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("direction", "INCOMING"),
-                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, "orders"),
-                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, JmsConnectorProvider.CONNECTOR_TYPE),
+                Map.entry("channel-name", "orders"),
+                Map.entry("connector", JmsConnectorProvider.CONNECTOR_TYPE),
                 Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
                 Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
                 Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "stale-secret"))));
@@ -252,7 +251,7 @@ class JmsConnectorConfigTest {
     @Test
     void testProviderAcceptsImperativeConnectionFactory() {
         ConnectionFactory connectionFactory = mock(ConnectionFactory.class);
-        JmsConnectorProvider provider = new JmsConnectorProvider(connectionFactory);
+        JmsConnectorProvider provider = JmsConnectorProvider.create(connectionFactory);
 
         assertThat(provider.connectorType(), is("helidon-jms"));
         assertThat(provider.createIncomingConnector(incomingBuilder().build()) != null, is(true));
@@ -265,7 +264,7 @@ class JmsConnectorConfigTest {
     @Test
     void testImperativeProviderRejectsNullFactoryEagerly() {
         assertThrows(NullPointerException.class,
-                     () -> new JmsConnectorProvider((ConnectionFactory) null));
+                     () -> JmsConnectorProvider.create((ConnectionFactory) null));
     }
 
     @Test

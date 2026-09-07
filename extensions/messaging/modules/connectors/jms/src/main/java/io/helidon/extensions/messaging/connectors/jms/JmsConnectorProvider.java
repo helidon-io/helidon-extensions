@@ -20,7 +20,7 @@ import java.util.Objects;
 
 import io.helidon.common.Api;
 import io.helidon.config.Config;
-import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.spi.IncomingConnector;
 import io.helidon.messaging.spi.IncomingConnectorProvider;
 import io.helidon.messaging.spi.OutgoingConnector;
@@ -49,17 +49,18 @@ public final class JmsConnectorProvider
         this(new JmsResourceResolver(registry));
     }
 
+    JmsConnectorProvider(JmsConnectionFactoryResolver connectionFactoryResolver) {
+        this.connectionFactoryResolver = Objects.requireNonNull(connectionFactoryResolver);
+    }
+
     /**
      * Create an imperative provider using one connection factory for every binding.
      *
      * @param connectionFactory JMS connection factory
+     * @return a new connector provider
      */
-    public JmsConnectorProvider(ConnectionFactory connectionFactory) {
-        this(fixedResolver(connectionFactory));
-    }
-
-    JmsConnectorProvider(JmsConnectionFactoryResolver connectionFactoryResolver) {
-        this.connectionFactoryResolver = Objects.requireNonNull(connectionFactoryResolver);
+    public static JmsConnectorProvider create(ConnectionFactory connectionFactory) {
+        return new JmsConnectorProvider(fixedResolver(connectionFactory));
     }
 
     @Override

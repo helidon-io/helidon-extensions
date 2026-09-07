@@ -21,8 +21,7 @@ import java.util.Map;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
-import io.helidon.messaging.spi.ConnectorConfig;
-import io.helidon.messaging.spi.ConnectorDirection;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.spi.IncomingConnector;
 import io.helidon.messaging.spi.OutgoingConnector;
 
@@ -56,8 +55,8 @@ class KafkaConnectorConfigTest {
     void testCreateFromConfigReadsNestedKafkaProperties() {
         KafkaConnectorConfig config = KafkaConnectorConfig.create(Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("direction", "OUTGOING"),
-                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, CHANNEL),
-                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, KafkaConnectorProvider.CONNECTOR_TYPE),
+                Map.entry("channel-name", CHANNEL),
+                Map.entry("connector", KafkaConnectorProvider.CONNECTOR_TYPE),
                 Map.entry(KafkaConnectorConfig.BOOTSTRAP_SERVERS_PROPERTY, "broker-a:9092,broker-b:9092"),
                 Map.entry(KafkaConnectorConfig.TOPIC_PROPERTY, TOPIC),
                 Map.entry("properties.compression.type", "zstd"),
@@ -200,7 +199,7 @@ class KafkaConnectorConfigTest {
 
     @Test
     void testConnectorFactoriesRejectMismatchedDirection() {
-        KafkaConnectorProvider provider = new KafkaConnectorProvider();
+        KafkaConnectorProvider provider = KafkaConnectorProvider.create();
         KafkaConnectorConfig outgoing = builder()
                 .bootstrapServers("broker:9092")
                 .topic(TOPIC)
@@ -217,7 +216,7 @@ class KafkaConnectorConfigTest {
 
     @Test
     void testProviderFactoriesParseRawConfiguration() {
-        KafkaConnectorProvider provider = new KafkaConnectorProvider();
+        KafkaConnectorProvider provider = KafkaConnectorProvider.create();
         IncomingConnector incoming = provider.createIncomingConnector(rawConfig(ConnectorDirection.INCOMING));
         OutgoingConnector outgoing = provider.createOutgoingConnector(rawConfig(ConnectorDirection.OUTGOING));
 
@@ -301,8 +300,8 @@ class KafkaConnectorConfigTest {
     private static Config rawConfig(ConnectorDirection direction) {
         return Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("direction", direction.name()),
-                Map.entry(ConnectorConfig.CHANNEL_NAME_ATTRIBUTE, CHANNEL),
-                Map.entry(ConnectorConfig.CONNECTOR_ATTRIBUTE, KafkaConnectorProvider.CONNECTOR_TYPE),
+                Map.entry("channel-name", CHANNEL),
+                Map.entry("connector", KafkaConnectorProvider.CONNECTOR_TYPE),
                 Map.entry(KafkaConnectorConfig.BOOTSTRAP_SERVERS_PROPERTY, "broker:9092"),
                 Map.entry(KafkaConnectorConfig.TOPIC_PROPERTY, TOPIC))));
     }

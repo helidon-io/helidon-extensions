@@ -29,9 +29,9 @@ import io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfig;
 import io.helidon.extensions.messaging.connectors.jms.JmsConnectorProvider;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
-import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.OutgoingConnector;
 
 import jakarta.jms.Connection;
@@ -105,7 +105,7 @@ class JmsTransactionsIT {
     }
 
     private static OutgoingConnector connector(ConnectionFactory connectionFactory, String destination) {
-        return new JmsConnectorProvider(connectionFactory)
+        return JmsConnectorProvider.create(connectionFactory)
                 .createOutgoingConnector(JmsConnectorConfig.builder()
                                                  .direction(ConnectorDirection.OUTGOING)
                                                  .channelName(destination)

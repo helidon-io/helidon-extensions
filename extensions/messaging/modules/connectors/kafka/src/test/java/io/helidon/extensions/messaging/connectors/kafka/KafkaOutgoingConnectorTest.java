@@ -38,6 +38,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
+import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
@@ -45,7 +46,6 @@ import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessageMetadata;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.ConnectorDirection;
 import io.helidon.messaging.spi.OutgoingConnector;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -76,7 +76,7 @@ class KafkaOutgoingConnectorTest {
 
     @Test
     void testConnectorType() {
-        KafkaConnectorProvider provider = new KafkaConnectorProvider();
+        KafkaConnectorProvider provider = KafkaConnectorProvider.create();
 
         assertThat(provider.connectorType(), is("helidon-kafka"));
     }
