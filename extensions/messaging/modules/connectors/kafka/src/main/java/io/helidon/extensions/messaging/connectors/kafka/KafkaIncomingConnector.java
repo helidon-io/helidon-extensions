@@ -146,10 +146,10 @@ final class KafkaIncomingConnector {
         }
     }
 
-    private static Retry createCommitRetry(Duration delay) {
+    private static Retry createCommitRetry(String channelName, Duration delay) {
         Duration retryDelay = delay.compareTo(MAX_COMMIT_RETRY_DELAY) > 0 ? MAX_COMMIT_RETRY_DELAY : delay;
         RetryConfig retryConfig = RetryConfig.builder()
-                .name("messaging-kafka-offset-commit")
+                .name("messaging-kafka-offset-commit-" + channelName)
                 .calls(Integer.MAX_VALUE)
                 .delay(retryDelay)
                 .delayFactor(1)
@@ -401,7 +401,7 @@ final class KafkaIncomingConnector {
             Duration commitRetryBackoff = durationProperty(config,
                                                            ConsumerConfig.RETRY_BACKOFF_MS_CONFIG,
                                                            DEFAULT_COMMIT_RETRY_BACKOFF);
-            this.commitRetry = createCommitRetry(commitRetryBackoff);
+            this.commitRetry = createCommitRetry(config.channelName(), commitRetryBackoff);
         }
 
         @Override

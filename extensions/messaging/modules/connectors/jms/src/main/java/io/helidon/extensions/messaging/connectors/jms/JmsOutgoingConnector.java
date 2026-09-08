@@ -369,7 +369,7 @@ final class JmsOutgoingConnector {
 
         private static Retry createReconnectRetry(JmsConnectorConfig config) {
             RetryConfig retryConfig = RetryConfig.builder()
-                    .name("messaging-jms-outgoing-reconnect")
+                    .name("messaging-jms-outgoing-reconnect-" + config.channelName())
                     .calls(Integer.MAX_VALUE)
                     .delay(config.reconnectInitialDelay())
                     .delayFactor(2)
