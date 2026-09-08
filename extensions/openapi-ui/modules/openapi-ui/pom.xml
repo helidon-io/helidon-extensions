@@ -143,6 +143,24 @@
                 </dependencies>
             </plugin>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-install-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>install-openapi-ui-bom</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>install-file</goal>
+                        </goals>
+                        <configuration>
+                            <file>${project.basedir}/../../bom/pom.xml</file>
+                            <pomFile>${project.basedir}/../../bom/pom.xml</pomFile>
+                            <localRepositoryPath>${project.build.directory}/it-repo</localRepositoryPath>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <!--
                 The following tests a bug fix, without which an added line to the project's module-info.java file triggers a
                 compiler error.
@@ -169,9 +187,6 @@
                         <goal>clean</goal>
                         <goal>install</goal>
                     </goals>
-                    <extraArtifacts>
-                        <extraArtifact>io.helidon.extensions.openapi-ui:helidon-extensions-openapi-ui-bom:${project.version}:pom</extraArtifact>
-                    </extraArtifacts>
                     <streamLogs>true</streamLogs>
                 </configuration>
                 <executions>
