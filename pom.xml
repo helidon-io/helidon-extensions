@@ -94,7 +94,7 @@
         <version.plugin.exec>3.1.0</version.plugin.exec>
         <version.plugin.failsafe>3.5.5</version.plugin.failsafe>
         <version.plugin.helidon-build-tools>4.0.6</version.plugin.helidon-build-tools>
-        <version.plugin.invoker>3.9.1</version.plugin.invoker>
+        <version.plugin.invoker>3.10.1</version.plugin.invoker>
         <version.plugin.jar>3.3.0</version.plugin.jar>
         <version.plugin.javadoc>3.6.2</version.plugin.javadoc>
         <version.plugin.license>1.16</version.plugin.license>
@@ -625,6 +625,31 @@
                         </executions>
                     </plugin>
                 </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>invoker-split-repository</id>
+            <activation>
+                <property>
+                    <name>aether.enhancedLocalRepository.split</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <build>
+                <pluginManagement>
+                    <plugins>
+                        <plugin>
+                            <groupId>org.apache.maven.plugins</groupId>
+                            <artifactId>maven-invoker-plugin</artifactId>
+                            <configuration>
+                                <properties>
+                                    <aether.enhancedLocalRepository.split>true</aether.enhancedLocalRepository.split>
+                                    <aether.enhancedLocalRepository.localPrefix>${aether.enhancedLocalRepository.localPrefix}</aether.enhancedLocalRepository.localPrefix>
+                                </properties>
+                            </configuration>
+                        </plugin>
+                    </plugins>
+                </pluginManagement>
             </build>
         </profile>
         <profile>
