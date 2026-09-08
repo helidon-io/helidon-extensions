@@ -149,6 +149,31 @@
                 -->
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-invoker-plugin</artifactId>
+                <configuration>
+                    <addTestClassPath>true</addTestClassPath>
+                    <settingsFile>src/it/settings.xml</settingsFile>
+                    <mergeUserSettings>true</mergeUserSettings>
+                    <localRepositoryPath>${project.build.directory}/it-repo</localRepositoryPath>
+                    <!--suppress MavenModelInspection -->
+                    <ignoreFailures>${maven.test.failure.ignore}</ignoreFailures>
+                    <showErrors>true</showErrors>
+                    <!--suppress UnresolvedMavenProperty, MavenModelInspection -->
+                    <skipInvocation>${skipTests}</skipInvocation>
+                    <!--suppress UnresolvedMavenProperty, MavenModelInspection -->
+                    <skipInstallation>${skipTests}</skipInstallation>
+                    <pomIncludes>
+                        <pomInclude>projects/*/pom.xml</pomInclude>
+                    </pomIncludes>
+                    <cloneProjectsTo>${project.build.directory}/it</cloneProjectsTo>
+                    <goals>
+                        <goal>clean</goal>
+                        <goal>install</goal>
+                    </goals>
+                    <extraArtifacts>
+                        <extraArtifact>io.helidon.extensions.openapi-ui:helidon-extensions-openapi-ui-bom:${project.version}:pom</extraArtifact>
+                    </extraArtifacts>
+                    <streamLogs>true</streamLogs>
+                </configuration>
                 <executions>
                     <execution>
                         <goals>
