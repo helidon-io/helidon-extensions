@@ -76,7 +76,7 @@ class KafkaMessageTest {
         assertThat(message.key().orElseThrow(), is("key"));
         assertThat(message.entity(), is("payload"));
         assertThat(message.headerValue("trace").orElseThrow(),
-                   is(MessageHeaderValue.binary("abc".getBytes(StandardCharsets.UTF_8))));
+                   is(MessageHeaderValue.BinaryValue.create("abc".getBytes(StandardCharsets.UTF_8))));
         assertThat(message.kafkaHeaders().get(1).value().orElseThrow()[0], is((byte) 1));
         assertThat(message.topic().isEmpty(), is(true));
         assertThat(message.partition().isEmpty(), is(true));
@@ -98,13 +98,13 @@ class KafkaMessageTest {
                 .build();
 
         assertThat(message.headers().entries(), is(List.of(
-                MessageHeader.create("trace", MessageHeaderValue.binary("first".getBytes(StandardCharsets.UTF_8))),
-                MessageHeader.create("trace", MessageHeaderValue.nullValue()),
-                MessageHeader.create("trace", MessageHeaderValue.binary("last".getBytes(StandardCharsets.UTF_8))),
-                MessageHeader.create("trace", MessageHeaderValue.nullValue()),
-                MessageHeader.create("only-null", MessageHeaderValue.nullValue()))));
-        assertThat(message.headerValue("trace").orElseThrow(), is(MessageHeaderValue.nullValue()));
-        assertThat(message.headerValue("only-null").orElseThrow(), is(MessageHeaderValue.nullValue()));
+                MessageHeader.create("trace", MessageHeaderValue.BinaryValue.create("first".getBytes(StandardCharsets.UTF_8))),
+                MessageHeader.create("trace", MessageHeaderValue.NullValue.create()),
+                MessageHeader.create("trace", MessageHeaderValue.BinaryValue.create("last".getBytes(StandardCharsets.UTF_8))),
+                MessageHeader.create("trace", MessageHeaderValue.NullValue.create()),
+                MessageHeader.create("only-null", MessageHeaderValue.NullValue.create()))));
+        assertThat(message.headerValue("trace").orElseThrow(), is(MessageHeaderValue.NullValue.create()));
+        assertThat(message.headerValue("only-null").orElseThrow(), is(MessageHeaderValue.NullValue.create()));
         assertThat(message.kafkaHeaders().stream().map(KafkaMessage.Header::name).toList(),
                    is(List.of("trace", "trace", "trace", "trace", "only-null")));
         assertThat(message.kafkaHeaders().get(1).value().isEmpty(), is(true));

@@ -450,11 +450,11 @@ class KafkaIncomingConnectorTest {
         assertThat(events, is(List.of("dispatch", "commit")));
         assertThat(context.messages().stream().map(Message::entity).toList(), is(List.of("first", "second")));
         assertThat(context.messages().get(0).headerValue("null-header").orElseThrow(),
-                   is(MessageHeaderValue.nullValue()));
+                   is(MessageHeaderValue.NullValue.create()));
         assertThat(context.messages().get(0).headerValue("trace-id").orElseThrow(),
-                   is(MessageHeaderValue.binary("Příliš žluťoučký".getBytes(StandardCharsets.UTF_8))));
+                   is(MessageHeaderValue.BinaryValue.create("Příliš žluťoučký".getBytes(StandardCharsets.UTF_8))));
         assertThat(context.messages().get(1).headerValue("source").orElseThrow(),
-                   is(MessageHeaderValue.binary("kafka".getBytes(StandardCharsets.UTF_8))));
+                   is(MessageHeaderValue.BinaryValue.create("kafka".getBytes(StandardCharsets.UTF_8))));
         assertThat(context.messages().get(0), instanceOf(KafkaMessage.class));
         KafkaMessage<?, ?> kafkaMessage = (KafkaMessage<?, ?>) context.messages().get(0);
         assertThat(kafkaMessage.key().orElseThrow(), is("audit-key"));

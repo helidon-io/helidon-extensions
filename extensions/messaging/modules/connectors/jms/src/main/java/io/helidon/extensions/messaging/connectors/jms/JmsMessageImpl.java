@@ -397,19 +397,19 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
 
     private static MessageHeaderValue portableHeaderValue(Object value) {
         if (value instanceof Boolean booleanValue) {
-            return MessageHeaderValue.booleanValue(booleanValue);
+            return MessageHeaderValue.BooleanValue.create(booleanValue);
         }
         if (value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long) {
-            return MessageHeaderValue.integer(((Number) value).longValue());
+            return MessageHeaderValue.IntegerValue.create(((Number) value).longValue());
         }
         if (value instanceof Float floatValue) {
-            return MessageHeaderValue.floatingPoint(floatValue);
+            return MessageHeaderValue.Float32Value.create(floatValue);
         }
         if (value instanceof Double doubleValue) {
-            return MessageHeaderValue.floatingPoint(doubleValue);
+            return MessageHeaderValue.Float64Value.create(doubleValue);
         }
         if (value instanceof String stringValue) {
-            return MessageHeaderValue.text(stringValue);
+            return MessageHeaderValue.TextValue.create(stringValue);
         }
         throw new IllegalArgumentException("Unsupported JMS property type: " + value.getClass().getName());
     }

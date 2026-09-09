@@ -130,10 +130,10 @@ class JmsConnectorIT {
                                                        "attempt", 7,
                                                        "JMSXGroupID", "order-group",
                                                        "JMSXGroupSeq", 3)));
-        assertThat(received.headerValue("region"), is(Optional.of(MessageHeaderValue.text("EU"))));
-        assertThat(received.headerValue("attempt"), is(Optional.of(MessageHeaderValue.integer(7))));
-        assertThat(received.headerValue("JMSXGroupID"), is(Optional.of(MessageHeaderValue.text("order-group"))));
-        assertThat(received.headerValue("JMSXGroupSeq"), is(Optional.of(MessageHeaderValue.integer(3))));
+        assertThat(received.headerValue("region"), is(Optional.of(MessageHeaderValue.TextValue.create("EU"))));
+        assertThat(received.headerValue("attempt"), is(Optional.of(MessageHeaderValue.IntegerValue.create(7))));
+        assertThat(received.headerValue("JMSXGroupID"), is(Optional.of(MessageHeaderValue.TextValue.create("order-group"))));
+        assertThat(received.headerValue("JMSXGroupSeq"), is(Optional.of(MessageHeaderValue.IntegerValue.create(3))));
     }
 
     @Test
@@ -171,14 +171,14 @@ class JmsConnectorIT {
                 "float_value", 5.5F,
                 "double_value", 6.5D,
                 "string_value", "seven")));
-        assertThat(received.headerValue("boolean_value"), is(Optional.of(MessageHeaderValue.booleanValue(true))));
-        assertThat(received.headerValue("byte_value"), is(Optional.of(MessageHeaderValue.integer(1))));
-        assertThat(received.headerValue("short_value"), is(Optional.of(MessageHeaderValue.integer(2))));
-        assertThat(received.headerValue("integer_value"), is(Optional.of(MessageHeaderValue.integer(3))));
-        assertThat(received.headerValue("long_value"), is(Optional.of(MessageHeaderValue.integer(4))));
-        assertThat(received.headerValue("float_value"), is(Optional.of(MessageHeaderValue.floatingPoint(5.5F))));
-        assertThat(received.headerValue("double_value"), is(Optional.of(MessageHeaderValue.floatingPoint(6.5D))));
-        assertThat(received.headerValue("string_value"), is(Optional.of(MessageHeaderValue.text("seven"))));
+        assertThat(received.headerValue("boolean_value"), is(Optional.of(MessageHeaderValue.BooleanValue.create(true))));
+        assertThat(received.headerValue("byte_value"), is(Optional.of(MessageHeaderValue.IntegerValue.create(1))));
+        assertThat(received.headerValue("short_value"), is(Optional.of(MessageHeaderValue.IntegerValue.create(2))));
+        assertThat(received.headerValue("integer_value"), is(Optional.of(MessageHeaderValue.IntegerValue.create(3))));
+        assertThat(received.headerValue("long_value"), is(Optional.of(MessageHeaderValue.IntegerValue.create(4))));
+        assertThat(received.headerValue("float_value"), is(Optional.of(MessageHeaderValue.Float32Value.create(5.5F))));
+        assertThat(received.headerValue("double_value"), is(Optional.of(MessageHeaderValue.Float64Value.create(6.5D))));
+        assertThat(received.headerValue("string_value"), is(Optional.of(MessageHeaderValue.TextValue.create("seven"))));
     }
 
     @Test
