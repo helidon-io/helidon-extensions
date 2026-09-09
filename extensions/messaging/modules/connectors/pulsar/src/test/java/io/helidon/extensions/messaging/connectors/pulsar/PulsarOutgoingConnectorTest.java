@@ -123,7 +123,7 @@ class PulsarOutgoingConnectorTest {
         BatchDeliveryException typedFailure = assertThrows(
                 BatchDeliveryException.class,
                 () -> connector.sendBatch(MessageBatch.create(Message.builder("typed")
-                                                                       .header("priority", MessageHeaderValue.integer(7))
+                                                                       .header("priority", MessageHeaderValue.IntegerValue.create(7))
                                                                        .build())));
         assertThat(typedFailure.getCause().getMessage(), containsString("only text message headers"));
 
@@ -247,7 +247,7 @@ class PulsarOutgoingConnectorTest {
         assertThat(deadLetter.localMetadata()
                            .value(DeadLetterMessage.FAILURE_MESSAGE_METADATA)
                            .orElseThrow(),
-                   is(MessageHeaderValue.text("Pulsar message payload is unavailable")));
+                   is(MessageHeaderValue.TextValue.create("Pulsar message payload is unavailable")));
 
         connector.start();
         connector.sendBatch(MessageBatch.create(deadLetter));

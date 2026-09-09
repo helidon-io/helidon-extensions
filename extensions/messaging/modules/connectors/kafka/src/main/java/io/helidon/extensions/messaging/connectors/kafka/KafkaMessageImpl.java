@@ -197,8 +197,8 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
         for (KafkaMessage.Header header : headers) {
             Optional<byte[]> value = header.value();
             result.add(header.name(), value.isPresent()
-                    ? MessageHeaderValue.binary(value.orElseThrow())
-                    : MessageHeaderValue.nullValue());
+                    ? MessageHeaderValue.BinaryValue.create(value.orElseThrow())
+                    : MessageHeaderValue.NullValue.create());
         }
         return result.build();
     }

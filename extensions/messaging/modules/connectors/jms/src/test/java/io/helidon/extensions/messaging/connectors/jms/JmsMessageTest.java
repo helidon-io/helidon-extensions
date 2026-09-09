@@ -112,7 +112,7 @@ class JmsMessageTest {
         assertThat(message.jmsProperties(), is(Map.of("attempt", 2)));
         assertThat(message.headers(),
                    is(MessageHeaders.builder()
-                              .add("attempt", MessageHeaderValue.integer(2))
+                              .add("attempt", MessageHeaderValue.IntegerValue.create(2))
                               .build()));
     }
 
@@ -157,7 +157,7 @@ class JmsMessageTest {
         assertThat(deadLetter.localMetadata()
                            .value(DeadLetterMessage.FAILURE_MESSAGE_METADATA)
                            .orElseThrow(),
-                   is(MessageHeaderValue.text("failed")));
+                   is(MessageHeaderValue.TextValue.create("failed")));
 
         JmsMessageMapper.toJmsMessage(session, deadLetter, false);
 
@@ -270,7 +270,7 @@ class JmsMessageTest {
         JmsMessageMapper.toJmsMessage(session,
                                       io.helidon.messaging.Message.builder("portable")
                                               .header("JMSXGroupID", "orders")
-                                              .header("JMSXGroupSeq", MessageHeaderValue.integer(8))
+                                              .header("JMSXGroupSeq", MessageHeaderValue.IntegerValue.create(8))
                                               .build(),
                                       false);
 
@@ -295,10 +295,10 @@ class JmsMessageTest {
                                       io.helidon.messaging.Message.builder("portable")
                                               .header("text_value", "text")
                                               .localMetadata(LOCAL_SECRET_METADATA, "must-not-leak")
-                                              .header("boolean_value", MessageHeaderValue.booleanValue(true))
-                                              .header("integer_value", MessageHeaderValue.integer(7))
-                                              .header("float_value", MessageHeaderValue.floatingPoint(8.5F))
-                                              .header("double_value", MessageHeaderValue.floatingPoint(9.5D))
+                                              .header("boolean_value", MessageHeaderValue.BooleanValue.create(true))
+                                              .header("integer_value", MessageHeaderValue.IntegerValue.create(7))
+                                              .header("float_value", MessageHeaderValue.Float32Value.create(8.5F))
+                                              .header("double_value", MessageHeaderValue.Float64Value.create(9.5D))
                                               .build(),
                                       false);
 
@@ -331,7 +331,7 @@ class JmsMessageTest {
                      () -> JmsMessageMapper.toJmsMessage(
                              session,
                              io.helidon.messaging.Message.builder("binary")
-                                     .header("binary", MessageHeaderValue.binary(new byte[] {1}))
+                                     .header("binary", MessageHeaderValue.BinaryValue.create(new byte[] {1}))
                                      .build(),
                              false));
     }
@@ -568,10 +568,10 @@ class JmsMessageTest {
                                                        "JMSXGroupSeq", 11)));
         assertThat(message.headers(),
                    is(MessageHeaders.builder()
-                              .add("attempt", MessageHeaderValue.integer(2))
+                              .add("attempt", MessageHeaderValue.IntegerValue.create(2))
                               .add("region", "EU")
                               .add("JMSXGroupID", "orders")
-                              .add("JMSXGroupSeq", MessageHeaderValue.integer(11))
+                              .add("JMSXGroupSeq", MessageHeaderValue.IntegerValue.create(11))
                               .build()));
         assertThat(message.messageId(), is(Optional.of("ID:42")));
         assertThat(message.correlationId(), is(Optional.of("order-42")));

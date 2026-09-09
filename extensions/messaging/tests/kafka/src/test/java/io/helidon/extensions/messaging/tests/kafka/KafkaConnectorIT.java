@@ -210,7 +210,7 @@ class KafkaConnectorIT {
         createTopic(topic);
         KafkaConnectorProvider provider = KafkaConnectorProvider.create();
         OutgoingConnector connector = provider.createOutgoingConnector(outgoingConnectorConfig(topic));
-        MessagingGraph.Assembler builder = MessagingGraph.assembler();
+        MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<String> channel = builder.channel("kafka-output", String.class);
         builder.outgoingConnector(channel, connector);
 
@@ -648,7 +648,7 @@ class KafkaConnectorIT {
             assertThat(second.timestamp().orElseThrow(), is(secondTimestamp));
             assertThat(first.timestampType().isPresent(), is(true));
             assertThat(first.headerValue("duplicate").orElseThrow(), is(binaryHeaderValue("second")));
-            assertThat(first.headerValue("null-value").orElseThrow(), is(MessageHeaderValue.nullValue()));
+            assertThat(first.headerValue("null-value").orElseThrow(), is(MessageHeaderValue.NullValue.create()));
 
             List<KafkaMessage.Header> headers = first.kafkaHeaders();
             assertThat(headers.stream().map(KafkaMessage.Header::name).toList(),
@@ -1226,7 +1226,7 @@ class KafkaConnectorIT {
     }
 
     private static MessageHeaderValue binaryHeaderValue(String value) {
-        return MessageHeaderValue.binary(value.getBytes(StandardCharsets.UTF_8));
+        return MessageHeaderValue.BinaryValue.create(value.getBytes(StandardCharsets.UTF_8));
     }
 
     private static void sendRecords(List<ProducerRecord<String, String>> records) throws Exception {
