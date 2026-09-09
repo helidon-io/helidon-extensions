@@ -32,6 +32,7 @@ import io.helidon.messaging.spi.MessagingConnectorProviderConfig;
  */
 @Api.Preview
 @Prototype.Blueprint(decorator = PulsarConnectorConfigSupport.BuilderDecorator.class)
+@Prototype.Sealed
 @Prototype.Configured(value = PulsarConnectorProvider.CONNECTOR_TYPE, root = false)
 @Prototype.Provides(MessagingConnectorProvider.class)
 @Prototype.CustomMethods(PulsarConnectorConfigSupport.class)

@@ -20,7 +20,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -54,7 +53,6 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -504,15 +502,14 @@ class JmsOutgoingChannelTest {
                 .thenThrow(new AssertionError("connector observed a mutated password"));
         doThrow(new JMSException("temporarily unavailable")).when(first.connection).start();
         char[] mutablePassword = "secret".toCharArray();
-        JmsRuntimeConfig baseConfig = JmsRuntimeConfig.builder()
+        JmsRuntimeConfig config = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .username("orders-user")
-                .password("ignored")
+                .password(mutablePassword)
                 .build();
-        JmsRuntimeConfig config = mock(JmsRuntimeConfig.class, delegatesTo(baseConfig));
-        when(config.password()).thenReturn(Optional.of(mutablePassword));
         OutgoingChannel connector = JmsOutgoingChannel.create(config, ignored -> factory);
         Arrays.fill(mutablePassword, 'x');
+        Arrays.fill(config.password().orElseThrow(), 'x');
 
         connector.start();
 

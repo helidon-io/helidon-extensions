@@ -29,6 +29,7 @@ import io.helidon.common.Api;
  */
 @Api.Preview
 @Prototype.Blueprint(decorator = PulsarConnectorConfigSupport.OutgoingBuilderDecorator.class)
+@Prototype.Sealed
 @Prototype.Configured
 interface PulsarOutgoingConfigBlueprint {
     /**

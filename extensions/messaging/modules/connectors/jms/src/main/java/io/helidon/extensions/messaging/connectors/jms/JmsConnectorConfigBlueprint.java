@@ -31,6 +31,7 @@ import io.helidon.messaging.spi.MessagingConnectorProviderConfig;
  */
 @Api.Preview
 @Prototype.Blueprint(decorator = JmsConnectorConfigSupport.BuilderDecorator.class)
+@Prototype.Sealed
 @Prototype.CustomMethods(JmsConnectorConfigSupport.class)
 @Prototype.Configured(value = JmsConnectorProvider.CONNECTOR_TYPE, root = false)
 @Prototype.Provides(MessagingConnectorProvider.class)

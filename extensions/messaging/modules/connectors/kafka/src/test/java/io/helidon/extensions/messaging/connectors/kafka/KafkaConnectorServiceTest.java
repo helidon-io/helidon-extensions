@@ -87,7 +87,7 @@ class KafkaConnectorServiceTest {
             List<MessagingConnector> connectors = MessagingConfig.builder()
                     .serviceRegistry(manager.registry())
                     .config(config)
-                    .build()
+                    .buildPrototype()
                     .connector();
             assertThat(connectors.size(), is(1));
             assertThat(connectors.getFirst(), instanceOf(KafkaConnector.class));
