@@ -16,12 +16,12 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import io.helidon.messaging.ConnectorDirection;
+import java.util.function.Supplier;
 
 import org.apache.pulsar.client.api.Schema;
 import org.junit.jupiter.api.Test;
@@ -39,9 +39,9 @@ class PulsarSchemaResolverTest {
     @Test
     void builtInSchemaDoesNotLoadCustomProviders() {
         AtomicBoolean loaded = new AtomicBoolean();
-        PulsarSchemaResolver.ResolvedSchema resolved = PulsarSchemaResolver.resolve(
-                config(ConnectorDirection.OUTGOING, null),
-                ConnectorDirection.OUTGOING,
+        PulsarSchemaResolver.ResolvedSchema resolved = resolve(
+                config(null),
+                false,
                 () -> {
                     loaded.set(true);
                     throw new AssertionError("schema providers must stay lazy for built-ins");
@@ -51,20 +51,20 @@ class PulsarSchemaResolverTest {
         assertThat(resolved.schema(), sameInstance(Schema.STRING));
         assertThat(resolved.builtIn(), is(PulsarSchemaType.STRING));
         assertThat(resolved.name(), is("STRING"));
-        assertThat(resolved.direction(), is(ConnectorDirection.OUTGOING));
+        assertThat(resolved.incoming(), is(false));
     }
 
     @Test
     void selectedProviderOverridesBuiltInAndIsExactAndCaseSensitive() {
         TestProvider provider = new TestProvider("order-json", Schema.INT32);
-        PulsarConnectorConfig config = PulsarConnectorConfig.builder(
-                        config(ConnectorDirection.OUTGOING, "order-json"))
+        PulsarOutgoingConfig config = PulsarOutgoingConfig.builder(
+                        config("order-json"))
                 .schema(PulsarSchemaType.BYTES)
                 .build();
 
-        PulsarSchemaResolver.ResolvedSchema resolved = PulsarSchemaResolver.resolve(
+        PulsarSchemaResolver.ResolvedSchema resolved = resolve(
                 config,
-                ConnectorDirection.OUTGOING,
+                false,
                 () -> List.of(provider));
 
         assertThat(resolved.schema(), sameInstance(Schema.INT32));
@@ -74,9 +74,9 @@ class PulsarSchemaResolverTest {
 
         IllegalArgumentException failure = assertThrows(
                 IllegalArgumentException.class,
-                () -> PulsarSchemaResolver.resolve(config(ConnectorDirection.OUTGOING, "ORDER-JSON"),
-                                                   ConnectorDirection.OUTGOING,
-                                                   () -> List.of(provider)));
+                () -> resolve(config("ORDER-JSON"),
+                              false,
+                              () -> List.of(provider)));
         assertThat(failure.getMessage(), containsString("No Pulsar schema provider named 'ORDER-JSON'"));
         assertThat(failure.getMessage(), containsString(CHANNEL));
     }
@@ -89,13 +89,13 @@ class PulsarSchemaResolverTest {
             return Schema.INT64;
         });
 
-        PulsarSchemaResolver.ResolvedSchema incoming = PulsarSchemaResolver.resolve(
-                config(ConnectorDirection.INCOMING, "shared"),
-                ConnectorDirection.INCOMING,
+        PulsarSchemaResolver.ResolvedSchema incoming = resolve(
+                config("shared"),
+                true,
                 () -> List.of(provider));
-        PulsarSchemaResolver.ResolvedSchema outgoing = PulsarSchemaResolver.resolve(
-                config(ConnectorDirection.OUTGOING, "shared"),
-                ConnectorDirection.OUTGOING,
+        PulsarSchemaResolver.ResolvedSchema outgoing = resolve(
+                config("shared"),
+                false,
                 () -> List.of(provider));
 
         assertThat(incoming.schema(), sameInstance(Schema.INT64));
@@ -129,9 +129,9 @@ class PulsarSchemaResolverTest {
     void explicitProviderRejectsInvalidRegistryResults() {
         IllegalArgumentException nullList = assertThrows(
                 IllegalArgumentException.class,
-                () -> PulsarSchemaResolver.resolve(config(ConnectorDirection.OUTGOING, "custom"),
-                                                   ConnectorDirection.OUTGOING,
-                                                   () -> null));
+                () -> resolve(config("custom"),
+                              false,
+                              () -> null));
         assertThat(nullList.getMessage(), containsString("lookup returned null"));
         assertThat(nullList.getMessage(), containsString(CHANNEL));
 
@@ -169,58 +169,73 @@ class PulsarSchemaResolverTest {
     }
 
     @Test
-    void providerChecksDirectionBeforeResolvingSchema() {
-        AtomicInteger supplierCalls = new AtomicInteger();
-        AtomicInteger schemaCalls = new AtomicInteger();
-        PulsarConnectorProvider provider = new PulsarConnectorProvider(() -> {
-            supplierCalls.incrementAndGet();
-            return List.of(provider("custom", () -> {
-                schemaCalls.incrementAndGet();
-                return Schema.STRING;
-            }));
-        });
-        PulsarConnectorConfig outgoing = config(ConnectorDirection.OUTGOING, "custom");
-
-        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
-                                                         () -> provider.createIncomingConnector(outgoing));
-
-        assertThat(failure.getMessage(), containsString("expected INCOMING"));
-        assertThat(supplierCalls.get(), is(0));
-        assertThat(schemaCalls.get(), is(0));
-    }
-
-    @Test
-    void publicVarargsConstructorSnapshotsProviders() {
+    void connectorBuilderSnapshotsProviders() {
         AtomicInteger invocations = new AtomicInteger();
         PulsarSchemaProvider custom = provider("custom", () -> {
             invocations.incrementAndGet();
             return Schema.STRING;
         });
-        PulsarSchemaProvider[] providers = {custom};
-        PulsarConnectorProvider connectorProvider = PulsarConnectorProvider.create(providers);
-        providers[0] = new TestProvider("replacement", Schema.BYTES);
+        List<PulsarSchemaProvider> providers = new ArrayList<>(List.of(custom));
+        PulsarConnector connector = PulsarConnector.builder()
+                .name("pulsar")
+                .serviceUrl("pulsar://127.0.0.1:6650")
+                .schemaProviders(providers)
+                .build();
+        providers.set(0, new TestProvider("replacement", Schema.BYTES));
 
-        connectorProvider.createOutgoingConnector(config(ConnectorDirection.OUTGOING, "custom"));
+        connector.outgoing(config("custom"));
 
         assertThat(invocations.get(), is(1));
         assertThrows(NullPointerException.class,
-                     () -> PulsarConnectorProvider.create((PulsarSchemaProvider[]) null));
-        assertThrows(NullPointerException.class,
-                     () -> PulsarConnectorProvider.create(new PulsarSchemaProvider[] {null}));
+                     () -> PulsarConnector.builder().addSchemaProvider(null));
+    }
+
+    @Test
+    void channelSchemaProviderOverridesCommonProvider() {
+        AtomicInteger commonCalls = new AtomicInteger();
+        AtomicInteger channelCalls = new AtomicInteger();
+        PulsarConnector connector = PulsarConnector.builder()
+                .name("pulsar")
+                .serviceUrl("pulsar://127.0.0.1:6650")
+                .schemaProvider("common")
+                .addSchemaProvider(provider("common", () -> {
+                    commonCalls.incrementAndGet();
+                    return Schema.STRING;
+                }))
+                .addSchemaProvider(provider("channel", () -> {
+                    channelCalls.incrementAndGet();
+                    return Schema.INT32;
+                }))
+                .build();
+
+        connector.outgoing(config(null));
+        connector.outgoing(config("channel"));
+        connector.incoming(PulsarIncomingConfig.builder()
+                                   .channelName(CHANNEL)
+                                   .topic("persistent://public/default/orders")
+                                   .build());
+
+        assertThat(commonCalls.get(), is(2));
+        assertThat(channelCalls.get(), is(1));
+    }
+
+    private static PulsarSchemaResolver.ResolvedSchema resolve(PulsarOutgoingConfig config,
+                                                              boolean incoming,
+                                                              Supplier<List<PulsarSchemaProvider>> providers) {
+        return PulsarSchemaResolver.resolve(config.channelName(),
+                                            config.schema().orElse(PulsarSchemaType.STRING),
+                                            config.schemaProvider(),
+                                            incoming,
+                                            providers);
     }
 
     private static PulsarSchemaResolver.ResolvedSchema resolve(String name, List<PulsarSchemaProvider> providers) {
-        return PulsarSchemaResolver.resolve(config(ConnectorDirection.OUTGOING, name),
-                                            ConnectorDirection.OUTGOING,
-                                            () -> providers);
+        return resolve(config(name), false, () -> providers);
     }
 
-    private static PulsarConnectorConfig config(ConnectorDirection direction, String schemaProvider) {
-        PulsarConnectorConfig.Builder builder = PulsarConnectorConfig.builder()
-                .direction(direction)
+    private static PulsarOutgoingConfig config(String schemaProvider) {
+        PulsarOutgoingConfig.Builder builder = PulsarOutgoingConfig.builder()
                 .channelName(CHANNEL)
-                .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
-                .serviceUrl("pulsar://127.0.0.1:6650")
                 .topic("persistent://public/default/orders");
         if (schemaProvider != null) {
             builder.schemaProvider(schemaProvider);

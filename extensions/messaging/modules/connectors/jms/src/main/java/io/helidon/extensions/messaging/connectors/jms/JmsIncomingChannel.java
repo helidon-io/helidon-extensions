@@ -42,7 +42,7 @@ import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
-import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingChannel;
 
 import jakarta.jms.Connection;
 import jakarta.jms.Destination;
@@ -55,11 +55,11 @@ import jakarta.jms.Topic;
 /**
  * Incoming JMS connector support.
  */
-final class JmsIncomingConnector {
-    private JmsIncomingConnector() {
+final class JmsIncomingChannel {
+    private JmsIncomingChannel() {
     }
 
-    static IncomingConnector create(JmsConnectorConfig config,
+    static IncomingChannel create(JmsRuntimeConfig config,
                                     JmsConnectionFactoryResolver connectionFactoryResolver) {
         return new Connector(Objects.requireNonNull(config), Objects.requireNonNull(connectionFactoryResolver));
     }
@@ -78,11 +78,11 @@ final class JmsIncomingConnector {
         STOP
     }
 
-    private static final class Connector implements IncomingConnector {
+    private static final class Connector implements IncomingChannel {
         private static final Duration MAX_ADMISSION_RETRY_DELAY = Duration.ofMillis(100);
         private static final Duration RECONNECT_OVERALL_TIMEOUT = Duration.ofNanos(Long.MAX_VALUE);
 
-        private final JmsConnectorConfig config;
+        private final JmsRuntimeConfig config;
         private final JmsConnectionSupport connectionSupport;
         private final Retry reconnectRetry;
         private final AtomicBoolean closed = new AtomicBoolean();
@@ -103,7 +103,7 @@ final class JmsIncomingConnector {
         private volatile IncomingConnectorContext context;
         private boolean deliveryStarting;
 
-        private Connector(JmsConnectorConfig config,
+        private Connector(JmsRuntimeConfig config,
                           JmsConnectionFactoryResolver connectionFactoryResolver) {
             this.connectionSupport = new JmsConnectionSupport(config, connectionFactoryResolver);
             this.config = connectionSupport.runtimeConfig();
@@ -323,7 +323,7 @@ final class JmsIncomingConnector {
             return primary;
         }
 
-        private static Retry createReconnectRetry(JmsConnectorConfig config) {
+        private static Retry createReconnectRetry(JmsRuntimeConfig config) {
             RetryConfig retryConfig = RetryConfig.builder()
                     .name("messaging-jms-incoming-reconnect-" + config.channelName())
                     .calls(Integer.MAX_VALUE)

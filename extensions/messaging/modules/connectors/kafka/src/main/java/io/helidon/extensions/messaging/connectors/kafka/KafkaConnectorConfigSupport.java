@@ -156,9 +156,9 @@ final class KafkaConnectorConfigSupport {
     @Prototype.Constant
     static final String DEFAULT_CLOSE_TIMEOUT = "PT10S";
 
-    private static final Set<String> CONNECTOR_PROPERTIES = Set.of("connector",
+    private static final Set<String> CONNECTOR_PROPERTIES = Set.of("name",
+                                                                   "connector",
                                                                    "channel-name",
-                                                                   "direction",
                                                                    TOPIC_PROPERTY,
                                                                    POLL_TIMEOUT_PROPERTY,
                                                                    SEND_TIMEOUT_PROPERTY,
@@ -167,23 +167,23 @@ final class KafkaConnectorConfigSupport {
     private KafkaConnectorConfigSupport() {
     }
 
-    static Map<String, Object> producerProperties(KafkaConnectorConfig config) {
-        Map<String, Object> properties = kafkaProperties(config);
+    static Map<String, Object> producerProperties(OutgoingSettings config) {
+        Map<String, Object> properties = kafkaProperties(config.properties());
         properties.put(BOOTSTRAP_SERVERS_PROPERTY, config.bootstrapServers());
         properties.put(KEY_SERIALIZER_PROPERTY, config.keySerializer());
         properties.put(VALUE_SERIALIZER_PROPERTY, config.valueSerializer());
         return Map.copyOf(properties);
     }
 
-    static Map<String, Object> consumerProperties(KafkaConnectorConfig config) {
+    static Map<String, Object> consumerProperties(IncomingSettings config) {
         return consumerProperties(config, Integer.MAX_VALUE);
     }
 
-    static Map<String, Object> consumerProperties(KafkaConnectorConfig config,
-                                                  int maxDeliveryMessages) {
-        Map<String, Object> properties = kafkaProperties(config);
+    static Map<String, Object> consumerProperties(IncomingSettings config,
+                                                 int maxDeliveryMessages) {
+        Map<String, Object> properties = kafkaProperties(config.properties());
         properties.put(BOOTSTRAP_SERVERS_PROPERTY, config.bootstrapServers());
-        properties.put(GROUP_ID_PROPERTY, config.groupId().orElse(config.channelName()));
+        properties.put(GROUP_ID_PROPERTY, config.groupId());
         properties.put(KEY_DESERIALIZER_PROPERTY, config.keyDeserializer());
         properties.put(VALUE_DESERIALIZER_PROPERTY, config.valueDeserializer());
         properties.put(AUTO_OFFSET_RESET_PROPERTY, config.autoOffsetReset());
@@ -193,6 +193,41 @@ final class KafkaConnectorConfigSupport {
               maxDeliveryMessages,
               ConsumerConfig.DEFAULT_MAX_POLL_RECORDS);
         return Map.copyOf(properties);
+    }
+
+    static IncomingSettings incoming(KafkaConnectorConfig common, KafkaIncomingConfig channel) {
+        return new IncomingSettings(channel.channelName(),
+                                    channel.topic().or(common::topic)
+                                            .orElseThrow(() -> missingTopic(channel.channelName())),
+                                    channel.bootstrapServers().orElse(common.bootstrapServers()),
+                                    channel.groupId().or(common::groupId).orElse(channel.channelName()),
+                                    channel.keyDeserializer().orElse(common.keyDeserializer()),
+                                    channel.valueDeserializer().orElse(common.valueDeserializer()),
+                                    channel.autoOffsetReset().orElse(common.autoOffsetReset()),
+                                    channel.pollTimeout().orElse(common.pollTimeout()),
+                                    channel.closeTimeout().orElse(common.closeTimeout()),
+                                    properties(common.properties(), channel.properties()));
+    }
+
+    static OutgoingSettings outgoing(KafkaConnectorConfig common, KafkaOutgoingConfig channel) {
+        return new OutgoingSettings(channel.topic().or(common::topic)
+                                            .orElseThrow(() -> missingTopic(channel.channelName())),
+                                   channel.bootstrapServers().orElse(common.bootstrapServers()),
+                                   channel.keySerializer().orElse(common.keySerializer()),
+                                   channel.valueSerializer().orElse(common.valueSerializer()),
+                                   channel.sendTimeout().orElse(common.sendTimeout()),
+                                   channel.closeTimeout().orElse(common.closeTimeout()),
+                                   properties(common.properties(), channel.properties()));
+    }
+
+    private static Map<String, String> properties(Map<String, String> common, Map<String, String> channel) {
+        Map<String, String> properties = new LinkedHashMap<>(common);
+        properties.putAll(channel);
+        return Map.copyOf(properties);
+    }
+
+    private static IllegalArgumentException missingTopic(String channelName) {
+        return new IllegalArgumentException("Kafka topic is required for channel " + channelName);
     }
 
     private static void requirePositive(String name, Duration value) {
@@ -220,6 +255,18 @@ final class KafkaConnectorConfigSupport {
         }
     }
 
+    private static void requireCloseTimeout(Duration value) {
+        if (value.isNegative()) {
+            throw new IllegalArgumentException(CLOSE_TIMEOUT_PROPERTY + " must not be negative");
+        }
+        requireNanosecondRange(CLOSE_TIMEOUT_PROPERTY, value);
+    }
+
+    private static void requireSendTimeout(Duration value) {
+        requirePositive(SEND_TIMEOUT_PROPERTY, value);
+        requireNanosecondRange(SEND_TIMEOUT_PROPERTY, value);
+    }
+
     private static void requireNonNullEntries(String name, Map<?, ?> values) {
         values.forEach((key, value) -> {
             Objects.requireNonNull(key, name + " key");
@@ -238,8 +285,8 @@ final class KafkaConnectorConfigSupport {
         }
     }
 
-    private static Map<String, Object> kafkaProperties(KafkaConnectorConfig config) {
-        Map<String, Object> properties = new LinkedHashMap<>(config.properties());
+    private static Map<String, Object> kafkaProperties(Map<String, String> configured) {
+        Map<String, Object> properties = new LinkedHashMap<>(configured);
         properties.keySet().removeAll(CONNECTOR_PROPERTIES);
         return properties;
     }
@@ -252,12 +299,49 @@ final class KafkaConnectorConfigSupport {
         public void decorate(KafkaConnectorConfig.BuilderBase<?, ?> target) {
             requireNonNullEntries("properties", target.properties());
             requirePollTimeout(target.pollTimeout());
-            requirePositive(SEND_TIMEOUT_PROPERTY, target.sendTimeout());
-            requireNanosecondRange(SEND_TIMEOUT_PROPERTY, target.sendTimeout());
-            if (target.closeTimeout().isNegative()) {
-                throw new IllegalArgumentException(CLOSE_TIMEOUT_PROPERTY + " must not be negative");
-            }
-            requireNanosecondRange(CLOSE_TIMEOUT_PROPERTY, target.closeTimeout());
+            requireSendTimeout(target.sendTimeout());
+            requireCloseTimeout(target.closeTimeout());
         }
+    }
+
+    static final class IncomingBuilderDecorator
+            implements Prototype.BuilderDecorator<KafkaIncomingConfig.BuilderBase<?, ?>> {
+        @Override
+        public void decorate(KafkaIncomingConfig.BuilderBase<?, ?> target) {
+            requireNonNullEntries("properties", target.properties());
+            target.pollTimeout().ifPresent(KafkaConnectorConfigSupport::requirePollTimeout);
+            target.closeTimeout().ifPresent(KafkaConnectorConfigSupport::requireCloseTimeout);
+        }
+    }
+
+    static final class OutgoingBuilderDecorator
+            implements Prototype.BuilderDecorator<KafkaOutgoingConfig.BuilderBase<?, ?>> {
+        @Override
+        public void decorate(KafkaOutgoingConfig.BuilderBase<?, ?> target) {
+            requireNonNullEntries("properties", target.properties());
+            target.sendTimeout().ifPresent(KafkaConnectorConfigSupport::requireSendTimeout);
+            target.closeTimeout().ifPresent(KafkaConnectorConfigSupport::requireCloseTimeout);
+        }
+    }
+
+    record IncomingSettings(String channelName,
+                            String topic,
+                            String bootstrapServers,
+                            String groupId,
+                            String keyDeserializer,
+                            String valueDeserializer,
+                            String autoOffsetReset,
+                            Duration pollTimeout,
+                            Duration closeTimeout,
+                            Map<String, String> properties) {
+    }
+
+    record OutgoingSettings(String topic,
+                            String bootstrapServers,
+                            String keySerializer,
+                            String valueSerializer,
+                            Duration sendTimeout,
+                            Duration closeTimeout,
+                            Map<String, String> properties) {
     }
 }

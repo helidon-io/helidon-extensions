@@ -40,4 +40,7 @@ module io.helidon.extensions.messaging.connectors.jms {
     requires static io.helidon.config.metadata;
 
     exports io.helidon.extensions.messaging.connectors.jms;
+
+    provides io.helidon.messaging.spi.MessagingConnectorProvider
+            with io.helidon.extensions.messaging.connectors.jms.JmsConnectorProvider;
 }

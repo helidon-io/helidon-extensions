@@ -72,33 +72,30 @@ class JmsJndiIT {
     private static String config(String destination, String connectionUrl) {
         return """
                 messaging:
-                  incoming:
-                    %s:
-                      connector: helidon-jms
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                       jndi:
                         connection-factory: cf
-                        destination: orders
                         environment:
                           java.naming.factory.initial: org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory
                           connectionFactory.cf: "%s"
                           queue.orders: "%s"
+                  incoming:
+                    %s:
+                      connector: test-jms
+                      jndi:
+                        destination: orders
                       receive-timeout: PT0.05S
                   outgoing:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       jndi:
-                        connection-factory: cf
                         destination: orders
-                        environment:
-                          java.naming.factory.initial: org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory
-                          connectionFactory.cf: "%s"
-                          queue.orders: "%s"
-                """.formatted(JmsMessagingTypes.TEXT_INCOMING_CHANNEL,
-                               connectionUrl,
+                """.formatted(connectionUrl,
                                destination,
-                               JmsMessagingTypes.TEXT_OUTGOING_CHANNEL,
-                               connectionUrl,
-                               destination);
+                               JmsMessagingTypes.TEXT_INCOMING_CHANNEL,
+                               JmsMessagingTypes.TEXT_OUTGOING_CHANNEL);
     }
 
     private static final class RejectingConnectionFactory implements ConnectionFactory {

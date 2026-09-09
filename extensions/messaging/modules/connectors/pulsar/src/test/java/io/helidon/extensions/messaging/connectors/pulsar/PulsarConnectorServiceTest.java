@@ -16,12 +16,14 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.spi.ConnectorProvider;
-import io.helidon.messaging.spi.IncomingConnectorProvider;
-import io.helidon.messaging.spi.OutgoingConnectorProvider;
+import io.helidon.config.Config;
+import io.helidon.config.ConfigSources;
+import io.helidon.messaging.MessagingConfig;
+import io.helidon.messaging.spi.MessagingConnector;
+import io.helidon.messaging.spi.MessagingConnectorProvider;
 import io.helidon.service.registry.Service;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
@@ -54,15 +56,23 @@ class PulsarConnectorServiceTest {
         ServiceRegistryManager manager = ServiceRegistryManager.create();
         try {
             ServiceRegistry registry = manager.registry();
-            ConnectorProvider provider = registry.all(ConnectorProvider.class)
+            MessagingConnectorProvider provider = registry.all(MessagingConnectorProvider.class)
                     .stream()
                     .filter(PulsarConnectorProvider.class::isInstance)
                     .findFirst()
                     .orElseThrow();
 
-            assertThat(provider.connectorType(), is(PulsarConnectorProvider.CONNECTOR_TYPE));
-            assertThat(provider instanceof IncomingConnectorProvider, is(true));
-            assertThat(provider instanceof OutgoingConnectorProvider, is(true));
+            assertThat(provider.configKey(), is(PulsarConnectorProvider.CONNECTOR_TYPE));
+            MessagingConfig config = MessagingConfig.builder()
+                    .serviceRegistry(registry)
+                    .config(Config.just(ConfigSources.create(Map.of(
+                            "connector.orders-broker.type", PulsarConnectorProvider.CONNECTOR_TYPE,
+                            "connector.orders-broker.service-url", "pulsar://127.0.0.1:6650"))))
+                    .build();
+            MessagingConnector connector = config.connector().getFirst();
+            assertThat(connector.name(), is("orders-broker"));
+            assertThat(connector.type(), is(PulsarConnectorProvider.CONNECTOR_TYPE));
+            assertThat(connector instanceof PulsarConnector, is(true));
         } finally {
             manager.shutdown();
         }
@@ -74,14 +84,12 @@ class PulsarConnectorServiceTest {
         ServiceRegistryManager manager = ServiceRegistryManager.create();
         try {
             PulsarConnectorProvider provider = manager.registry().get(PulsarConnectorProvider.class);
-            provider.createOutgoingConnector(PulsarConnectorConfig.builder()
-                                                       .direction(ConnectorDirection.OUTGOING)
-                                                       .channelName("registry-schema")
-                                                       .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
-                                                       .serviceUrl("pulsar://127.0.0.1:6650")
-                                                       .topic("persistent://public/default/registry-schema")
-                                                       .schemaProvider("registry-int32")
-                                                       .build());
+            MessagingConnector connector = provider.create(Config.just(ConfigSources.create(Map.of(
+                    "service-url", "pulsar://127.0.0.1:6650"))), "pulsar");
+            connector.outgoing(Config.just(ConfigSources.create(Map.of(
+                    "channel-name", "registry-schema",
+                    "topic", "persistent://public/default/registry-schema",
+                    "schema-provider", "registry-int32")))).orElseThrow();
 
             assertThat(SCHEMA_INVOCATIONS.get(), is(1));
         } finally {

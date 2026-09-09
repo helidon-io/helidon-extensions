@@ -22,9 +22,8 @@ import java.util.Map;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.spi.IncomingConnector;
-import io.helidon.messaging.spi.OutgoingConnector;
+import io.helidon.messaging.spi.IncomingChannel;
+import io.helidon.messaging.spi.OutgoingChannel;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.junit.jupiter.api.Test;
@@ -41,30 +40,25 @@ class KafkaConnectorConfigTest {
     private static final String TOPIC = "audit-events";
 
     @Test
-    void testBootstrapServersAndTopicAreRequired() {
-        assertThrows(RuntimeException.class,
-                     () -> builder()
-                             .topic(TOPIC)
-                             .build());
-        assertThrows(RuntimeException.class,
-                     () -> builder()
-                             .bootstrapServers("localhost:9092")
-                             .build());
+    void testConnectorBootstrapServersAndChannelTopicAreRequired() {
+        assertThrows(RuntimeException.class, () -> builder().buildPrototype());
+        KafkaConnector kafka = configuredBuilder().build();
+        assertThrows(IllegalArgumentException.class,
+                     () -> kafka.incoming(KafkaIncomingConfig.builder().channelName(CHANNEL).build()));
+        assertThrows(IllegalArgumentException.class,
+                     () -> kafka.outgoing(KafkaOutgoingConfig.builder().channelName(CHANNEL).build()));
     }
 
     @Test
     void testCreateFromConfigReadsNestedKafkaProperties() {
         KafkaConnectorConfig config = KafkaConnectorConfig.create(Config.just(ConfigSources.create(Map.ofEntries(
-                Map.entry("direction", "OUTGOING"),
-                Map.entry("channel-name", CHANNEL),
-                Map.entry("connector", KafkaConnectorProvider.CONNECTOR_TYPE),
+                Map.entry("name", "test-kafka"),
                 Map.entry(KafkaConnectorConfig.BOOTSTRAP_SERVERS_PROPERTY, "broker-a:9092,broker-b:9092"),
-                Map.entry(KafkaConnectorConfig.TOPIC_PROPERTY, TOPIC),
                 Map.entry("properties.compression.type", "zstd"),
                 Map.entry("properties.client.rack", "rack-a")))));
 
+        assertThat(config.name(), is("test-kafka"));
         assertThat(config.bootstrapServers(), is("broker-a:9092,broker-b:9092"));
-        assertThat(config.topic(), is(TOPIC));
         assertThat(config.properties(), is(Map.of("compression.type", "zstd",
                                                   "client.rack", "rack-a")));
     }
@@ -76,7 +70,6 @@ class KafkaConnectorConfigTest {
                 + "username=\"client\" password=\"" + password + "\";";
         KafkaConnectorConfig.Builder builder = builder()
                 .bootstrapServers("broker:9092")
-                .topic(TOPIC)
                 .properties(Map.of("sasl.jaas.config", jaasConfig,
                                    "ssl.keystore.password", password,
                                    "sasl.mechanism", "PLAIN"));
@@ -85,7 +78,7 @@ class KafkaConnectorConfigTest {
         assertThat(builderDescription, containsString("properties=****"));
         assertThat(builderDescription, not(containsString("sasl.jaas.config")));
         assertThat(builderDescription, not(containsString(password)));
-        KafkaConnectorConfig config = builder.build();
+        KafkaConnectorConfig config = builder.buildPrototype();
         String configDescription = config.toString();
         assertThat(configDescription, containsString("properties=****"));
         assertThat(configDescription, not(containsString("sasl.mechanism")));
@@ -102,9 +95,9 @@ class KafkaConnectorConfigTest {
         nullValue.put("key", null);
 
         assertThrows(NullPointerException.class,
-                     () -> configuredBuilder().properties(nullKey).build());
+                     () -> configuredBuilder().properties(nullKey).buildPrototype());
         assertThrows(NullPointerException.class,
-                     () -> configuredBuilder().addProperties(nullValue).build());
+                     () -> configuredBuilder().addProperties(nullValue).buildPrototype());
     }
 
     @Test
@@ -112,15 +105,15 @@ class KafkaConnectorConfigTest {
         IllegalArgumentException zero = assertThrows(IllegalArgumentException.class,
                                                       () -> configuredBuilder()
                                                               .pollTimeout(Duration.ZERO)
-                                                              .build());
+                                                              .buildPrototype());
         IllegalArgumentException negative = assertThrows(IllegalArgumentException.class,
                                                           () -> configuredBuilder()
                                                                   .pollTimeout(Duration.ofNanos(-1))
-                                                                  .build());
+                                                                  .buildPrototype());
         IllegalArgumentException subMillisecond = assertThrows(IllegalArgumentException.class,
                                                                 () -> configuredBuilder()
                                                                         .pollTimeout(Duration.ofNanos(999_999))
-                                                                        .build());
+                                                                        .buildPrototype());
 
         assertThat(zero.getMessage(), is("poll.timeout must be greater than zero"));
         assertThat(negative.getMessage(), is("poll.timeout must be greater than zero"));
@@ -132,11 +125,11 @@ class KafkaConnectorConfigTest {
         IllegalArgumentException zero = assertThrows(IllegalArgumentException.class,
                                                       () -> configuredBuilder()
                                                               .sendTimeout(Duration.ZERO)
-                                                              .build());
+                                                              .buildPrototype());
         IllegalArgumentException negative = assertThrows(IllegalArgumentException.class,
                                                           () -> configuredBuilder()
                                                                   .sendTimeout(Duration.ofNanos(-1))
-                                                                  .build());
+                                                                  .buildPrototype());
 
         assertThat(zero.getMessage(), is("send.timeout must be greater than zero"));
         assertThat(negative.getMessage(), is("send.timeout must be greater than zero"));
@@ -150,15 +143,15 @@ class KafkaConnectorConfigTest {
         IllegalArgumentException poll = assertThrows(IllegalArgumentException.class,
                                                       () -> configuredBuilder()
                                                               .pollTimeout(millisecondOverflow)
-                                                              .build());
+                                                              .buildPrototype());
         IllegalArgumentException send = assertThrows(IllegalArgumentException.class,
                                                       () -> configuredBuilder()
                                                               .sendTimeout(nanosecondOverflow)
-                                                              .build());
+                                                              .buildPrototype());
         IllegalArgumentException close = assertThrows(IllegalArgumentException.class,
                                                        () -> configuredBuilder()
                                                                .closeTimeout(nanosecondOverflow)
-                                                               .build());
+                                                               .buildPrototype());
 
         assertThat(poll.getMessage(), is("poll.timeout must be representable in milliseconds"));
         assertThat(send.getMessage(), is("send.timeout must be representable in nanoseconds"));
@@ -175,12 +168,12 @@ class KafkaConnectorConfigTest {
         Duration maximumNanoseconds = Duration.ofNanos(Long.MAX_VALUE);
         KafkaConnectorConfig minimumPoll = configuredBuilder()
                 .pollTimeout(minimumPollTimeout)
-                .build();
+                .buildPrototype();
         KafkaConnectorConfig config = configuredBuilder()
                 .pollTimeout(maximumMilliseconds)
                 .sendTimeout(maximumNanoseconds)
                 .closeTimeout(maximumNanoseconds)
-                .build();
+                .buildPrototype();
 
         assertThat(minimumPoll.pollTimeout(), is(minimumPollTimeout));
         assertThat(config.pollTimeout(), is(maximumMilliseconds));
@@ -193,9 +186,8 @@ class KafkaConnectorConfigTest {
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
                                                          () -> builder()
                                                                  .bootstrapServers("broker:9092")
-                                                                 .topic(TOPIC)
                                                                  .closeTimeout(Duration.ofNanos(-1))
-                                                                 .build());
+                                                                 .buildPrototype());
 
         assertThat(failure.getMessage(), is("close.timeout must not be negative"));
     }
@@ -204,54 +196,39 @@ class KafkaConnectorConfigTest {
     void testZeroCloseTimeoutIsAccepted() {
         KafkaConnectorConfig config = builder()
                 .bootstrapServers("broker:9092")
-                .topic(TOPIC)
                 .closeTimeout(Duration.ZERO)
-                .build();
+                .buildPrototype();
 
         assertThat(config.closeTimeout(), is(Duration.ZERO));
     }
 
     @Test
-    void testConnectorFactoriesRejectMismatchedDirection() {
-        KafkaConnectorProvider provider = KafkaConnectorProvider.create();
-        KafkaConnectorConfig outgoing = builder()
-                .bootstrapServers("broker:9092")
-                .topic(TOPIC)
-                .build();
-        KafkaConnectorConfig incoming = builder()
-                .direction(ConnectorDirection.INCOMING)
-                .bootstrapServers("broker:9092")
-                .topic(TOPIC)
-                .build();
-
-        assertThrows(IllegalArgumentException.class, () -> provider.createIncomingConnector(outgoing));
-        assertThrows(IllegalArgumentException.class, () -> provider.createOutgoingConnector(incoming));
-    }
-
-    @Test
-    void testProviderFactoriesParseRawConfiguration() {
-        KafkaConnectorProvider provider = KafkaConnectorProvider.create();
-        IncomingConnector incoming = provider.createIncomingConnector(rawConfig(ConnectorDirection.INCOMING));
-        OutgoingConnector outgoing = provider.createOutgoingConnector(rawConfig(ConnectorDirection.OUTGOING));
-
-        incoming.close();
-        outgoing.close();
+    void testConfiguredConnectorCreatesBothChannelDirections() {
+        KafkaConnectorProvider provider = new KafkaConnectorProvider();
+        KafkaConnector connector = (KafkaConnector) provider.create(
+                Config.just(ConfigSources.create(Map.of("bootstrap.servers", "broker:9092"))), "test-kafka");
+        Config channelConfig = Config.just(ConfigSources.create(Map.of("channel-name", CHANNEL, "topic", TOPIC)));
+        try (IncomingChannel incoming = connector.incoming(channelConfig).orElseThrow();
+                OutgoingChannel outgoing = connector.outgoing(channelConfig).orElseThrow()) {
+            assertThat(connector.name(), is("test-kafka"));
+            assertThat(connector.type(), is(KafkaConnectorProvider.CONNECTOR_TYPE));
+        }
     }
 
     @Test
     void testTypedProducerPropertiesOverrideAdditionalProperties() {
         KafkaConnectorConfig config = builder()
                 .bootstrapServers("broker:9092")
-                .topic(TOPIC)
                 .keySerializer("example.TypedKeySerializer")
                 .valueSerializer("example.TypedValueSerializer")
                 .properties(Map.of(KafkaConnectorConfig.BOOTSTRAP_SERVERS_PROPERTY, "ignored:9092",
                                    KafkaConnectorConfig.KEY_SERIALIZER_PROPERTY, "example.IgnoredKeySerializer",
                                    KafkaConnectorConfig.VALUE_SERIALIZER_PROPERTY, "example.IgnoredValueSerializer",
                                    "compression.type", "zstd"))
-                .build();
+                .buildPrototype();
 
-        Map<String, Object> properties = KafkaConnectorConfigSupport.producerProperties(config);
+        Map<String, Object> properties = KafkaConnectorConfigSupport.producerProperties(
+                KafkaConnectorConfigSupport.outgoing(config, outgoingConfig()));
 
         assertThat(properties.get(KafkaConnectorConfig.BOOTSTRAP_SERVERS_PROPERTY), is("broker:9092"));
         assertThat(properties.get(KafkaConnectorConfig.KEY_SERIALIZER_PROPERTY), is("example.TypedKeySerializer"));
@@ -262,17 +239,16 @@ class KafkaConnectorConfigTest {
     @Test
     void testConsumerUsesChannelAsGroupAndDisablesAutoCommit() {
         KafkaConnectorConfig config = builder()
-                .direction(ConnectorDirection.INCOMING)
                 .bootstrapServers("broker:9092")
-                .topic(TOPIC)
                 .autoOffsetReset("earliest")
                 .properties(Map.of(KafkaConnectorConfig.GROUP_ID_PROPERTY, "ignored-group",
                                    KafkaConnectorConfig.AUTO_OFFSET_RESET_PROPERTY, "none",
                                    KafkaConnectorConfig.ENABLE_AUTO_COMMIT_PROPERTY, "true",
                                    "fetch.min.bytes", "128"))
-                .build();
+                .buildPrototype();
 
-        Map<String, Object> properties = KafkaConnectorConfigSupport.consumerProperties(config);
+        Map<String, Object> properties = KafkaConnectorConfigSupport.consumerProperties(
+                KafkaConnectorConfigSupport.incoming(config, incomingConfig()));
 
         assertThat(properties.get(KafkaConnectorConfig.GROUP_ID_PROPERTY), is(CHANNEL));
         assertThat(properties.get(KafkaConnectorConfig.AUTO_OFFSET_RESET_PROPERTY), is("earliest"));
@@ -283,40 +259,94 @@ class KafkaConnectorConfigTest {
     @Test
     void testConsumerRecordAcquisitionIsCappedByRuntimeMessageLimit() {
         KafkaConnectorConfig config = builder()
-                .direction(ConnectorDirection.INCOMING)
                 .bootstrapServers("broker:9092")
-                .topic(TOPIC)
                 .properties(Map.of(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "500",
                                    ConsumerConfig.FETCH_MAX_BYTES_CONFIG, "52428800",
                                    ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, "1048576"))
-                .build();
+                .buildPrototype();
 
-        Map<String, Object> properties = KafkaConnectorConfigSupport.consumerProperties(config, 7);
+        Map<String, Object> properties = KafkaConnectorConfigSupport.consumerProperties(
+                KafkaConnectorConfigSupport.incoming(config, incomingConfig()), 7);
 
         assertThat(properties.get(ConsumerConfig.MAX_POLL_RECORDS_CONFIG), is(7));
         assertThat(properties.get(ConsumerConfig.FETCH_MAX_BYTES_CONFIG), is("52428800"));
         assertThat(properties.get(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG), is("1048576"));
     }
 
-    private static KafkaConnectorConfig.Builder builder() {
-        return KafkaConnectorConfig.builder()
-                .direction(ConnectorDirection.OUTGOING)
+    @Test
+    void testChannelOverridesAndSharedDefaultsAreCombined() {
+        KafkaConnectorConfig common = configuredBuilder()
+                .topic("shared-topic")
+                .groupId("shared-group")
+                .keyDeserializer("shared.KeyDeserializer")
+                .valueSerializer("shared.ValueSerializer")
+                .pollTimeout(Duration.ofSeconds(2))
+                .sendTimeout(Duration.ofSeconds(3))
+                .properties(Map.of("client.rack", "shared-rack", "security.protocol", "SSL"))
+                .buildPrototype();
+        KafkaIncomingConfig incoming = KafkaIncomingConfig.builder()
                 .channelName(CHANNEL)
-                .connector(KafkaConnectorProvider.CONNECTOR_TYPE);
+                .topic(TOPIC)
+                .groupId("inventory")
+                .keyDeserializer("channel.KeyDeserializer")
+                .properties(Map.of("client.rack", "channel-rack"))
+                .build();
+        KafkaOutgoingConfig outgoing = KafkaOutgoingConfig.builder()
+                .channelName("audit-copy")
+                .topic("audit-copy")
+                .valueSerializer("channel.ValueSerializer")
+                .sendTimeout(Duration.ofSeconds(1))
+                .build();
+
+        var incomingSettings = KafkaConnectorConfigSupport.incoming(common, incoming);
+        var outgoingSettings = KafkaConnectorConfigSupport.outgoing(common, outgoing);
+        var defaultIncoming = KafkaConnectorConfigSupport.incoming(common,
+                KafkaIncomingConfig.builder().channelName(CHANNEL).build());
+        var defaultOutgoing = KafkaConnectorConfigSupport.outgoing(common,
+                KafkaOutgoingConfig.builder().channelName(CHANNEL).build());
+        assertThat(incomingSettings.bootstrapServers(), is("broker:9092"));
+        assertThat(incomingSettings.topic(), is(TOPIC));
+        assertThat(defaultIncoming.topic(), is("shared-topic"));
+        assertThat(defaultOutgoing.topic(), is("shared-topic"));
+        assertThat(incomingSettings.keyDeserializer(), is("channel.KeyDeserializer"));
+        assertThat(incomingSettings.pollTimeout(), is(Duration.ofSeconds(2)));
+        assertThat(incomingSettings.groupId(), is("inventory"));
+        assertThat(KafkaConnectorConfigSupport.incoming(common, incomingConfig()).groupId(), is("shared-group"));
+        assertThat(incomingSettings.properties(),
+                   is(Map.of("client.rack", "channel-rack", "security.protocol", "SSL")));
+        assertThat(outgoingSettings.valueSerializer(), is("channel.ValueSerializer"));
+        assertThat(outgoingSettings.sendTimeout(), is(Duration.ofSeconds(1)));
+        assertThat(outgoingSettings.properties(), is(common.properties()));
+        assertThat(common.properties().get("client.rack"), is("shared-rack"));
+    }
+
+    @Test
+    void testChannelTimeoutOverridesAreValidated() {
+        assertThrows(IllegalArgumentException.class,
+                     () -> KafkaIncomingConfig.builder().channelName(CHANNEL).topic(TOPIC)
+                             .pollTimeout(Duration.ofNanos(1)).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> KafkaOutgoingConfig.builder().channelName(CHANNEL).topic(TOPIC)
+                             .sendTimeout(Duration.ZERO).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> KafkaIncomingConfig.builder().channelName(CHANNEL).topic(TOPIC)
+                             .closeTimeout(Duration.ofNanos(-1)).build());
+    }
+
+    private static KafkaConnectorConfig.Builder builder() {
+        return KafkaConnectorConfig.builder().name("test-kafka");
     }
 
     private static KafkaConnectorConfig.Builder configuredBuilder() {
         return builder()
-                .bootstrapServers("broker:9092")
-                .topic(TOPIC);
+                .bootstrapServers("broker:9092");
     }
 
-    private static Config rawConfig(ConnectorDirection direction) {
-        return Config.just(ConfigSources.create(Map.ofEntries(
-                Map.entry("direction", direction.name()),
-                Map.entry("channel-name", CHANNEL),
-                Map.entry("connector", KafkaConnectorProvider.CONNECTOR_TYPE),
-                Map.entry(KafkaConnectorConfig.BOOTSTRAP_SERVERS_PROPERTY, "broker:9092"),
-                Map.entry(KafkaConnectorConfig.TOPIC_PROPERTY, TOPIC))));
+    private static KafkaIncomingConfig incomingConfig() {
+        return KafkaIncomingConfig.builder().channelName(CHANNEL).topic(TOPIC).build();
+    }
+
+    private static KafkaOutgoingConfig outgoingConfig() {
+        return KafkaOutgoingConfig.builder().channelName(CHANNEL).topic(TOPIC).build();
     }
 }

@@ -26,9 +26,9 @@ import java.util.function.Supplier;
 import io.helidon.builder.api.Prototype;
 
 /**
- * Support methods and constants for {@link JmsConnectorConfig}.
+ * Support methods and constants for {@link JmsChannelConfig}.
  */
-final class JmsConnectorConfigSupport {
+final class JmsChannelConfigSupport {
     @Prototype.Constant
     static final String CONNECTION_FACTORY_PROPERTY = "connection-factory";
     @Prototype.Constant
@@ -83,7 +83,7 @@ final class JmsConnectorConfigSupport {
     @Prototype.Constant
     static final int DEFAULT_MAX_BODY_BYTES = 1_048_576;
 
-    private JmsConnectorConfigSupport() {
+    private JmsChannelConfigSupport() {
     }
 
     /**
@@ -93,7 +93,7 @@ final class JmsConnectorConfigSupport {
      * @param password password characters
      */
     @Prototype.BuilderMethod
-    static void password(JmsConnectorConfig.BuilderBase<?, ?> target, char[] password) {
+    static void password(JmsChannelConfig.BuilderBase<?, ?> target, char[] password) {
         PasswordSupplier passwordSource = new PasswordSupplier(Objects.requireNonNull(password));
         clearConfiguredPassword(target);
         target.passwordSource(passwordSource);
@@ -106,7 +106,7 @@ final class JmsConnectorConfigSupport {
      * @param password password
      */
     @Prototype.BuilderMethod
-    static void password(JmsConnectorConfig.BuilderBase<?, ?> target, String password) {
+    static void password(JmsChannelConfig.BuilderBase<?, ?> target, String password) {
         char[] passwordChars = Objects.requireNonNull(password).toCharArray();
         try {
             password(target, passwordChars);
@@ -121,12 +121,12 @@ final class JmsConnectorConfigSupport {
      * @param target builder to update
      */
     @Prototype.BuilderMethod
-    static void clearPassword(JmsConnectorConfig.BuilderBase<?, ?> target) {
+    static void clearPassword(JmsChannelConfig.BuilderBase<?, ?> target) {
         clearConfiguredPassword(target);
         target.passwordSource(PasswordSupplier.empty());
     }
 
-    private static void clearConfiguredPassword(JmsConnectorConfig.BuilderBase<?, ?> target) {
+    private static void clearConfiguredPassword(JmsChannelConfig.BuilderBase<?, ?> target) {
         target.clearConfiguredPassword();
     }
 
@@ -160,9 +160,9 @@ final class JmsConnectorConfigSupport {
     /**
      * Validates JMS connector configuration.
      */
-    static final class BuilderDecorator implements Prototype.BuilderDecorator<JmsConnectorConfig.BuilderBase<?, ?>> {
+    static final class BuilderDecorator implements Prototype.BuilderDecorator<JmsChannelConfig.BuilderBase<?, ?>> {
         @Override
-        public void decorate(JmsConnectorConfig.BuilderBase<?, ?> target) {
+        public void decorate(JmsChannelConfig.BuilderBase<?, ?> target) {
             clearConfiguredPassword(target);
             target.passwordSource(new PasswordSupplier(target.passwordSource().get()));
             requireNonBlank(CONNECTION_FACTORY_PROPERTY, target.connectionFactoryName());
@@ -203,9 +203,9 @@ final class JmsConnectorConfigSupport {
      * Copies a password read from configuration into defensive storage.
      */
     static final class ConfiguredPasswordDecorator
-            implements Prototype.OptionDecorator<JmsConnectorConfig.BuilderBase<?, ?>, Optional<String>> {
+            implements Prototype.OptionDecorator<JmsChannelConfig.BuilderBase<?, ?>, Optional<String>> {
         @Override
-        public void decorate(JmsConnectorConfig.BuilderBase<?, ?> target, Optional<String> configuredPassword) {
+        public void decorate(JmsChannelConfig.BuilderBase<?, ?> target, Optional<String> configuredPassword) {
             configuredPassword.ifPresent(it -> {
                 char[] password = it.toCharArray();
                 try {

@@ -23,9 +23,7 @@ import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.Outgoin
 import io.helidon.messaging.ConsumerRegistration;
 import io.helidon.messaging.EmitterRegistration;
 import io.helidon.messaging.MessagingRuntime;
-import io.helidon.messaging.spi.ConnectorProvider;
-import io.helidon.messaging.spi.IncomingConnectorProvider;
-import io.helidon.messaging.spi.OutgoingConnectorProvider;
+import io.helidon.messaging.spi.MessagingConnectorProvider;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 
@@ -34,7 +32,6 @@ import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 class PulsarScenarioRegistryTest {
@@ -44,10 +41,9 @@ class PulsarScenarioRegistryTest {
         try {
             ServiceRegistry registry = manager.registry();
 
-            ConnectorProvider provider = registry.get(ConnectorProvider.class);
+            MessagingConnectorProvider provider = registry.get(MessagingConnectorProvider.class);
             assertThat(provider, instanceOf(PulsarConnectorProvider.class));
-            assertThat(registry.get(IncomingConnectorProvider.class), sameInstance(provider));
-            assertThat(registry.get(OutgoingConnectorProvider.class), sameInstance(provider));
+            assertThat(provider.configKey(), is(PulsarConnectorProvider.CONNECTOR_TYPE));
         } finally {
             manager.shutdown();
         }

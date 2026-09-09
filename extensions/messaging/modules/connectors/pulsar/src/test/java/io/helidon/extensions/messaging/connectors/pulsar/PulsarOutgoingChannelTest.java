@@ -31,13 +31,12 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.OutgoingConnector;
+import io.helidon.messaging.spi.OutgoingChannel;
 
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.Producer;
@@ -55,7 +54,7 @@ import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-class PulsarOutgoingConnectorTest {
+class PulsarOutgoingChannelTest {
     private static final String LOCAL_SECRET_METADATA = "application.local.secret";
     private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
     private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
@@ -63,8 +62,8 @@ class PulsarOutgoingConnectorTest {
     @Test
     void sendsPayloadMetadataAndCompleteBatchBeforeReturning() {
         FakeTransport transport = new FakeTransport();
-        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
-                .createOutgoingConnector(config(PulsarSchemaType.STRING));
+        OutgoingChannel connector = new PulsarOutgoingChannel(ignored -> transport.client())
+                .createOutgoingChannel(commonConfig(), config(PulsarSchemaType.STRING));
 
         connector.start();
         connector.sendBatch(MessageBatch.create(List.of(
@@ -95,8 +94,8 @@ class PulsarOutgoingConnectorTest {
     @Test
     void reportsSuccessfulPrefixSchemaFailureAndUntouchedSuffix() {
         FakeTransport transport = new FakeTransport();
-        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
-                .createOutgoingConnector(config(PulsarSchemaType.STRING));
+        OutgoingChannel connector = new PulsarOutgoingChannel(ignored -> transport.client())
+                .createOutgoingChannel(commonConfig(), config(PulsarSchemaType.STRING));
         connector.start();
         MessageBatch<Object> batch = MessageBatch.create(List.of(Message.create("first"),
                                                                   Message.create(42),
@@ -116,8 +115,8 @@ class PulsarOutgoingConnectorTest {
     @Test
     void rejectsTypedAndDuplicateHeadersThatPulsarPropertiesCannotRepresent() {
         FakeTransport transport = new FakeTransport();
-        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
-                .createOutgoingConnector(config(PulsarSchemaType.STRING));
+        OutgoingChannel connector = new PulsarOutgoingChannel(ignored -> transport.client())
+                .createOutgoingChannel(commonConfig(), config(PulsarSchemaType.STRING));
         connector.start();
 
         BatchDeliveryException typedFailure = assertThrows(
@@ -141,8 +140,8 @@ class PulsarOutgoingConnectorTest {
     @Test
     void passesResolvedBuiltInSchemaAndTypedPayloadToPulsar() {
         FakeTransport transport = new FakeTransport();
-        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
-                .createOutgoingConnector(config(PulsarSchemaType.INT32));
+        OutgoingChannel connector = new PulsarOutgoingChannel(ignored -> transport.client())
+                .createOutgoingChannel(commonConfig(), config(PulsarSchemaType.INT32));
 
         connector.start();
         connector.sendBatch(MessageBatch.create(Message.create(42)));
@@ -156,15 +155,17 @@ class PulsarOutgoingConnectorTest {
     void passesResolvedCustomSchemaAndPayloadMetadataToPulsar() {
         FakeTransport transport = new FakeTransport();
         Schema<CustomPayload> customSchema = Schema.JSON(CustomPayload.class);
-        PulsarConnectorConfig config = configBuilder(PulsarSchemaType.STRING)
+        PulsarOutgoingConfig config = configBuilder(PulsarSchemaType.STRING)
                 .schemaProvider("custom-json")
                 .build();
         PulsarSchemaResolver.ResolvedSchema resolved = PulsarSchemaResolver.resolve(
-                config,
-                ConnectorDirection.OUTGOING,
+                config.channelName(),
+                config.schema().orElseThrow(),
+                config.schemaProvider(),
+                false,
                 () -> List.of(schemaProvider("custom-json", customSchema)));
-        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
-                .createOutgoingConnector(config, resolved);
+        OutgoingChannel connector = new PulsarOutgoingChannel(ignored -> transport.client())
+                .createOutgoingChannel(commonConfig(), config, resolved);
         CustomPayload payload = new CustomPayload("order", 7);
 
         connector.start();
@@ -185,8 +186,8 @@ class PulsarOutgoingConnectorTest {
     @Test
     void selectsAutoProduceSchemaAndSnapshotsBytes() {
         FakeTransport transport = new FakeTransport();
-        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
-                .createOutgoingConnector(config(PulsarSchemaType.AUTO));
+        OutgoingChannel connector = new PulsarOutgoingChannel(ignored -> transport.client())
+                .createOutgoingChannel(commonConfig(), config(PulsarSchemaType.AUTO));
         byte[] payload = {1, 2, 3};
 
         connector.start();
@@ -203,8 +204,8 @@ class PulsarOutgoingConnectorTest {
     @Test
     void byteBufferMappingPreservesSourceCursorAndSnapshotsEncodedRange() {
         FakeTransport transport = new FakeTransport();
-        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
-                .createOutgoingConnector(config(PulsarSchemaType.BYTEBUFFER));
+        OutgoingChannel connector = new PulsarOutgoingChannel(ignored -> transport.client())
+                .createOutgoingChannel(commonConfig(), config(PulsarSchemaType.BYTEBUFFER));
         ByteBuffer payload = ByteBuffer.wrap(new byte[] {0, 1, 2, 3, 4, 5});
         payload.position(2);
         payload.limit(5);
@@ -227,8 +228,8 @@ class PulsarOutgoingConnectorTest {
     @Test
     void sendsUnavailablePulsarDeadLetterAsNativeNullWithOriginalMetadata() {
         FakeTransport transport = new FakeTransport();
-        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
-                .createOutgoingConnector(config(PulsarSchemaType.STRING));
+        OutgoingChannel connector = new PulsarOutgoingChannel(ignored -> transport.client())
+                .createOutgoingChannel(commonConfig(), config(PulsarSchemaType.STRING));
         PulsarMessage<Object> original = PulsarMessageMapper.metadataOnly(
                 PulsarTestSupport.nativeMessage("oversized",
                                                 9,
@@ -269,8 +270,8 @@ class PulsarOutgoingConnectorTest {
     @Test
     void zeroCloseTimeoutAcceptsCompletedProducerAndClientCloses() {
         FakeTransport transport = new FakeTransport();
-        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
-                .createOutgoingConnector(configBuilder(PulsarSchemaType.STRING)
+        OutgoingChannel connector = new PulsarOutgoingChannel(ignored -> transport.client())
+                .createOutgoingChannel(commonConfig(), configBuilder(PulsarSchemaType.STRING)
                                                  .closeTimeout(Duration.ZERO)
                                                  .build());
 
@@ -285,8 +286,8 @@ class PulsarOutgoingConnectorTest {
     void zeroCloseTimeoutRejectsIncompleteClientCloseAndForcesShutdown() {
         FakeTransport transport = new FakeTransport();
         transport.clientCloseFuture = new CompletableFuture<>();
-        OutgoingConnector connector = new PulsarOutgoingConnector(ignored -> transport.client())
-                .createOutgoingConnector(configBuilder(PulsarSchemaType.STRING)
+        OutgoingChannel connector = new PulsarOutgoingChannel(ignored -> transport.client())
+                .createOutgoingChannel(commonConfig(), configBuilder(PulsarSchemaType.STRING)
                                                  .closeTimeout(Duration.ZERO)
                                                  .build());
 
@@ -298,16 +299,20 @@ class PulsarOutgoingConnectorTest {
         assertThat(transport.closed.get(), is(true));
     }
 
-    private static PulsarConnectorConfig config(PulsarSchemaType schema) {
+    private static PulsarConnectorConfig commonConfig() {
+        return PulsarConnectorConfig.builder()
+                .name("pulsar")
+                .serviceUrl("pulsar://localhost:6650")
+                .buildPrototype();
+    }
+
+    private static PulsarOutgoingConfig config(PulsarSchemaType schema) {
         return configBuilder(schema).build();
     }
 
-    private static PulsarConnectorConfig.Builder configBuilder(PulsarSchemaType schema) {
-        return PulsarConnectorConfig.builder()
-                .direction(ConnectorDirection.OUTGOING)
+    private static PulsarOutgoingConfig.Builder configBuilder(PulsarSchemaType schema) {
+        return PulsarOutgoingConfig.builder()
                 .channelName("out")
-                .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
-                .serviceUrl("pulsar://localhost:6650")
                 .topic("persistent://public/default/out")
                 .schema(schema);
     }

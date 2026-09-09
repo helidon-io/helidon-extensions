@@ -29,11 +29,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.OutgoingConnector;
+import io.helidon.messaging.spi.OutgoingChannel;
 
 import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;
@@ -68,7 +67,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class JmsOutgoingConnectorTest {
+class JmsOutgoingChannelTest {
     private static final String CHANNEL = "audit";
 
     @Test
@@ -81,7 +80,7 @@ class JmsOutgoingConnectorTest {
             }
             return null;
         }).when(client.producer).send(any(jakarta.jms.Message.class));
-        OutgoingConnector connector = start(config(false), ignored -> client.factory);
+        OutgoingChannel connector = start(config(false), ignored -> client.factory);
         MessageBatch<String> batch = batch("first", "second", "third");
 
         BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
@@ -101,7 +100,7 @@ class JmsOutgoingConnectorTest {
         JmsClient second = client();
         when(first.session.createTextMessage("bad")).thenThrow(new JMSException("cannot encode"));
         AtomicInteger resolutions = new AtomicInteger();
-        OutgoingConnector connector = start(config(false), ignored -> {
+        OutgoingChannel connector = start(config(false), ignored -> {
             return resolutions.getAndIncrement() == 0 ? first.factory : second.factory;
         });
         MessageBatch<String> batch = batch("good", "bad", "untouched");
@@ -130,7 +129,7 @@ class JmsOutgoingConnectorTest {
                 .when(failedMessage)
                 .setStringProperty("region", "EU");
         AtomicInteger resolutions = new AtomicInteger();
-        OutgoingConnector connector = start(config(false), ignored -> resolutions.getAndIncrement() == 0
+        OutgoingChannel connector = start(config(false), ignored -> resolutions.getAndIncrement() == 0
                 ? first.factory
                 : second.factory);
 
@@ -155,7 +154,7 @@ class JmsOutgoingConnectorTest {
                 .when(first.producer)
                 .send(any(jakarta.jms.Message.class));
         AtomicInteger resolutions = new AtomicInteger();
-        OutgoingConnector connector = start(config(false), ignored -> resolutions.getAndIncrement() == 0
+        OutgoingChannel connector = start(config(false), ignored -> resolutions.getAndIncrement() == 0
                 ? first.factory
                 : second.factory);
 
@@ -192,7 +191,7 @@ class JmsOutgoingConnectorTest {
             return null;
         }).when(first.connection).close();
         AtomicInteger resolutions = new AtomicInteger();
-        OutgoingConnector connector = start(config(false, Duration.ofMillis(50)), ignored ->
+        OutgoingChannel connector = start(config(false, Duration.ofMillis(50)), ignored ->
                 resolutions.getAndIncrement() == 0 ? first.factory : second.factory);
         assertThrows(BatchDeliveryException.class, () -> connector.send("ambiguous"));
         AtomicReference<Throwable> sendFailure = new AtomicReference<>();
@@ -220,7 +219,7 @@ class JmsOutgoingConnectorTest {
             }
             return null;
         }).when(client.producer).send(any(jakarta.jms.Message.class));
-        OutgoingConnector connector = start(config(true), ignored -> client.factory);
+        OutgoingChannel connector = start(config(true), ignored -> client.factory);
         MessageBatch<String> batch = batch("first", "second", "third");
 
         BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
@@ -236,7 +235,7 @@ class JmsOutgoingConnectorTest {
     void transactedCommitFailureRemainsIndeterminateAfterRollback() throws Exception {
         JmsClient client = client();
         doThrow(new JMSException("commit reply lost")).when(client.session).commit();
-        OutgoingConnector connector = start(config(true), ignored -> client.factory);
+        OutgoingChannel connector = start(config(true), ignored -> client.factory);
         MessageBatch<String> batch = batch("first", "second");
 
         BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
@@ -255,7 +254,7 @@ class JmsOutgoingConnectorTest {
         TransactionRolledBackException commitFailure = new TransactionRolledBackException("transaction rejected");
         doThrow(commitFailure).when(first.session).commit();
         AtomicInteger resolutions = new AtomicInteger();
-        OutgoingConnector connector = start(config(true), ignored -> resolutions.getAndIncrement() == 0
+        OutgoingChannel connector = start(config(true), ignored -> resolutions.getAndIncrement() == 0
                 ? first.factory
                 : second.factory);
 
@@ -278,7 +277,7 @@ class JmsOutgoingConnectorTest {
         TransactionRolledBackRuntimeException commitFailure =
                 new TransactionRolledBackRuntimeException("transaction rejected");
         doThrow(commitFailure).when(client.session).commit();
-        OutgoingConnector connector = start(config(true), ignored -> client.factory);
+        OutgoingChannel connector = start(config(true), ignored -> client.factory);
 
         BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
                                                        () -> connector.sendBatch(batch("first", "second")));
@@ -296,7 +295,7 @@ class JmsOutgoingConnectorTest {
         JMSRuntimeException rollbackFailure = new JMSRuntimeException("rollback failed");
         doThrow(commitFailure).when(client.session).commit();
         doThrow(rollbackFailure).when(client.session).rollback();
-        OutgoingConnector connector = start(config(true), ignored -> client.factory);
+        OutgoingChannel connector = start(config(true), ignored -> client.factory);
 
         BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
                                                        () -> connector.sendBatch(batch("first", "second")));
@@ -312,7 +311,7 @@ class JmsOutgoingConnectorTest {
         JMSRuntimeException sharedFailure = new JMSRuntimeException("send and rollback failed");
         doThrow(sharedFailure).when(client.producer).send(any(jakarta.jms.Message.class));
         doThrow(sharedFailure).when(client.session).rollback();
-        OutgoingConnector connector = start(config(true), ignored -> client.factory);
+        OutgoingChannel connector = start(config(true), ignored -> client.factory);
 
         BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
                                                        () -> connector.sendBatch(batch("first", "second")));
@@ -330,7 +329,7 @@ class JmsOutgoingConnectorTest {
         JMSRuntimeException sharedFailure = new JMSRuntimeException("commit and rollback failed");
         doThrow(sharedFailure).when(client.session).commit();
         doThrow(sharedFailure).when(client.session).rollback();
-        OutgoingConnector connector = start(config(true), ignored -> client.factory);
+        OutgoingChannel connector = start(config(true), ignored -> client.factory);
 
         BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
                                                        () -> connector.sendBatch(batch("first", "second")));
@@ -347,11 +346,11 @@ class JmsOutgoingConnectorTest {
     void reconnectsDuringStartAndConfiguresClientIdBeforeTheListenerAndStart() throws Exception {
         JmsClient client = client();
         AtomicInteger resolutions = new AtomicInteger();
-        JmsConnectorConfig config = JmsConnectorConfig.builder()
+        JmsRuntimeConfig config = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .clientId("audit-client")
                 .build();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config, ignored -> {
+        OutgoingChannel connector = JmsOutgoingChannel.create(config, ignored -> {
             if (resolutions.getAndIncrement() == 0) {
                 throw new MessagingException("temporarily unavailable");
             }
@@ -389,7 +388,7 @@ class JmsOutgoingConnectorTest {
             return null;
         }).when(first.connection).close();
         AtomicInteger resolutions = new AtomicInteger();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored ->
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored ->
                 resolutions.getAndIncrement() == 0 ? first.factory : second.factory);
 
         connector.start();
@@ -417,7 +416,7 @@ class JmsOutgoingConnectorTest {
         JMSException cleanupFailure = new JMSException("producer cleanup failed");
         doThrow(cleanupFailure).when(first.producer).close();
         AtomicInteger resolutions = new AtomicInteger();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored ->
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored ->
                 resolutions.getAndIncrement() == 0 ? first.factory : second.factory);
 
         MessagingException startupFailure = assertThrows(MessagingException.class, connector::start);
@@ -443,7 +442,7 @@ class JmsOutgoingConnectorTest {
             return null;
         }).when(first.connection).start();
         AtomicInteger resolutions = new AtomicInteger();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored ->
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored ->
                 resolutions.getAndIncrement() == 0 ? first.factory : second.factory);
 
         connector.start();
@@ -462,7 +461,7 @@ class JmsOutgoingConnectorTest {
         doThrow(new JMSException("temporarily unavailable")).when(first.connection).start();
         doThrow(cleanupFailure).when(first.connection).close();
         AtomicInteger resolutions = new AtomicInteger();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored ->
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored ->
                 resolutions.getAndIncrement() == 0 ? first.factory : second.factory);
 
         MessagingException startupFailure = assertThrows(MessagingException.class, connector::start);
@@ -481,7 +480,7 @@ class JmsOutgoingConnectorTest {
                 "Cannot close JNDI context",
                 new IllegalStateException("context leaked"));
         AtomicInteger resolutions = new AtomicInteger();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored -> {
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored -> {
             resolutions.incrementAndGet();
             throw cleanupFailure;
         });
@@ -505,14 +504,14 @@ class JmsOutgoingConnectorTest {
                 .thenThrow(new AssertionError("connector observed a mutated password"));
         doThrow(new JMSException("temporarily unavailable")).when(first.connection).start();
         char[] mutablePassword = "secret".toCharArray();
-        JmsConnectorConfig baseConfig = JmsConnectorConfig.builder()
+        JmsRuntimeConfig baseConfig = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .username("orders-user")
                 .password("ignored")
                 .build();
-        JmsConnectorConfig config = mock(JmsConnectorConfig.class, delegatesTo(baseConfig));
+        JmsRuntimeConfig config = mock(JmsRuntimeConfig.class, delegatesTo(baseConfig));
         when(config.password()).thenReturn(Optional.of(mutablePassword));
-        OutgoingConnector connector = JmsOutgoingConnector.create(config, ignored -> factory);
+        OutgoingChannel connector = JmsOutgoingChannel.create(config, ignored -> factory);
         Arrays.fill(mutablePassword, 'x');
 
         connector.start();
@@ -524,7 +523,7 @@ class JmsOutgoingConnectorTest {
     @Test
     void forceCloseInterruptsReconnectAndPreventsSend() throws Exception {
         CountDownLatch attempted = new CountDownLatch(1);
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored -> {
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored -> {
             attempted.countDown();
             throw new MessagingException("offline");
         });
@@ -572,7 +571,7 @@ class JmsOutgoingConnectorTest {
             connectionClosed.countDown();
             return null;
         }).when(client.connection).close();
-        OutgoingConnector connector = start(config(false), ignored -> client.factory);
+        OutgoingChannel connector = start(config(false), ignored -> client.factory);
         AtomicReference<Throwable> sendFailure = new AtomicReference<>();
         Thread sender = Thread.ofVirtual().start(() -> capture(
                 () -> connector.sendBatch(batch("first", "untouched")), sendFailure));
@@ -617,7 +616,7 @@ class JmsOutgoingConnectorTest {
             }
             return null;
         }).when(client.producer).send(any(jakarta.jms.Message.class));
-        OutgoingConnector connector = start(config(true), ignored -> client.factory);
+        OutgoingChannel connector = start(config(true), ignored -> client.factory);
         AtomicReference<Throwable> sendFailure = new AtomicReference<>();
         Thread sender = Thread.ofVirtual().start(() -> capture(
                 () -> connector.sendBatch(batch("first", "untouched")), sendFailure));
@@ -664,7 +663,7 @@ class JmsOutgoingConnectorTest {
             }
             return null;
         }).when(client.session).commit();
-        OutgoingConnector connector = start(config(true), ignored -> client.factory);
+        OutgoingChannel connector = start(config(true), ignored -> client.factory);
         AtomicReference<Throwable> sendFailure = new AtomicReference<>();
         Thread sender = Thread.ofVirtual().start(() -> capture(
                 () -> connector.sendBatch(batch("first", "second")), sendFailure));
@@ -711,7 +710,7 @@ class JmsOutgoingConnectorTest {
             lateConnectionClosed.countDown();
             return null;
         }).when(lateConnection).close();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored -> factory);
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored -> factory);
         AtomicReference<Throwable> startupFailure = new AtomicReference<>();
         Thread starter = Thread.ofVirtual().start(() -> capture(connector::start, startupFailure));
         assertThat(creatingConnection.await(1, TimeUnit.SECONDS), is(true));
@@ -741,7 +740,7 @@ class JmsOutgoingConnectorTest {
             return lateConnection;
         });
         doThrow(cleanupFailure).when(lateConnection).close();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored -> factory);
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored -> factory);
         AtomicReference<Throwable> startupFailure = new AtomicReference<>();
         Thread starter = Thread.ofVirtual().start(() -> capture(connector::start, startupFailure));
         assertThat(creatingConnection.await(1, TimeUnit.SECONDS), is(true));
@@ -772,7 +771,7 @@ class JmsOutgoingConnectorTest {
             lateConnectionClosed.countDown();
             return null;
         }).when(lateConnection).close();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false, Duration.ofMillis(50)),
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false, Duration.ofMillis(50)),
                                                                    ignored -> factory);
         AtomicReference<Throwable> startupFailure = new AtomicReference<>();
         Thread starter = Thread.ofVirtual().start(() -> capture(connector::start, startupFailure));
@@ -808,7 +807,7 @@ class JmsOutgoingConnectorTest {
             connectionClosed.countDown();
             return null;
         }).when(client.connection).close();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored -> client.factory);
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored -> client.factory);
         AtomicReference<Throwable> startupFailure = new AtomicReference<>();
         Thread starter = Thread.ofVirtual().start(() -> capture(connector::start, startupFailure));
         assertThat(starting.await(1, TimeUnit.SECONDS), is(true));
@@ -843,7 +842,7 @@ class JmsOutgoingConnectorTest {
             sessionClosed.countDown();
             return null;
         }).when(client.session).close();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored -> client.factory);
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored -> client.factory);
         AtomicReference<Throwable> startupFailure = new AtomicReference<>();
         Thread starter = Thread.ofVirtual().start(() -> capture(connector::start, startupFailure));
         assertThat(creatingSession.await(1, TimeUnit.SECONDS), is(true));
@@ -880,7 +879,7 @@ class JmsOutgoingConnectorTest {
             producerClosed.countDown();
             return null;
         }).when(client.producer).close();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored -> client.factory);
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored -> client.factory);
         AtomicReference<Throwable> startupFailure = new AtomicReference<>();
         Thread starter = Thread.ofVirtual().start(() -> capture(connector::start, startupFailure));
         assertThat(creatingProducer.await(1, TimeUnit.SECONDS), is(true));
@@ -915,7 +914,7 @@ class JmsOutgoingConnectorTest {
             return null;
         }).when(client.connection).close();
         doThrow(cleanupFailure).when(client.producer).close();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored -> client.factory);
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored -> client.factory);
         AtomicReference<Throwable> startupFailure = new AtomicReference<>();
         Thread starter = Thread.ofVirtual().start(() -> capture(connector::start, startupFailure));
         assertThat(creatingProducer.await(1, TimeUnit.SECONDS), is(true));
@@ -953,7 +952,7 @@ class JmsOutgoingConnectorTest {
             connectionClosed.countDown();
             return null;
         }).when(client.connection).close();
-        OutgoingConnector connector = JmsOutgoingConnector.create(config(false), ignored -> client.factory);
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored -> client.factory);
         AtomicReference<Throwable> startupFailure = new AtomicReference<>();
         Thread starter = Thread.ofVirtual().start(() -> capture(connector::start, startupFailure));
         assertThat(creatingProducer.await(1, TimeUnit.SECONDS), is(true));
@@ -973,7 +972,7 @@ class JmsOutgoingConnectorTest {
     @Test
     void closeIsIdempotentAndClosesTheOwnedConnection() throws Exception {
         JmsClient client = client();
-        OutgoingConnector connector = start(config(false), ignored -> client.factory);
+        OutgoingChannel connector = start(config(false), ignored -> client.factory);
 
         connector.close();
         connector.close();
@@ -986,7 +985,7 @@ class JmsOutgoingConnectorTest {
     @Timeout(5)
     void hugeCloseTimeoutIsSaturated() throws Exception {
         JmsClient client = client();
-        OutgoingConnector connector = start(config(false, Duration.ofSeconds(Long.MAX_VALUE)),
+        OutgoingChannel connector = start(config(false, Duration.ofSeconds(Long.MAX_VALUE)),
                                              ignored -> client.factory);
 
         connector.close();
@@ -1003,7 +1002,7 @@ class JmsOutgoingConnectorTest {
         doThrow(connectionFailure).when(client.connection).close();
         doThrow(producerFailure).when(client.producer).close();
         doThrow(sessionFailure).when(client.session).close();
-        OutgoingConnector connector = start(config(false), ignored -> client.factory);
+        OutgoingChannel connector = start(config(false), ignored -> client.factory);
 
         MessagingException first = assertThrows(MessagingException.class, connector::close);
         MessagingException second = assertThrows(MessagingException.class, connector::close);
@@ -1024,7 +1023,7 @@ class JmsOutgoingConnectorTest {
         doThrow(sharedFailure).when(client.connection).close();
         doThrow(sharedFailure).when(client.producer).close();
         doThrow(sessionFailure).when(client.session).close();
-        OutgoingConnector connector = start(config(false), ignored -> client.factory);
+        OutgoingChannel connector = start(config(false), ignored -> client.factory);
 
         MessagingException failure = assertThrows(MessagingException.class, connector::close);
 
@@ -1052,7 +1051,7 @@ class JmsOutgoingConnectorTest {
             }
             return null;
         }).when(client.connection).close();
-        OutgoingConnector connector = null;
+        OutgoingChannel connector = null;
         try {
             connector = start(config(false, Duration.ofMillis(50)), ignored -> client.factory);
 
@@ -1090,15 +1089,13 @@ class JmsOutgoingConnectorTest {
         return new JmsClient(factory, connection, session, producer, messages);
     }
 
-    private static JmsConnectorConfig config(boolean transacted) {
+    private static JmsRuntimeConfig config(boolean transacted) {
         return config(transacted, Duration.ofSeconds(1));
     }
 
-    private static JmsConnectorConfig config(boolean transacted, Duration closeTimeout) {
-        return JmsConnectorConfig.builder()
-                .direction(ConnectorDirection.OUTGOING)
+    private static JmsRuntimeConfig config(boolean transacted, Duration closeTimeout) {
+        return JmsRuntimeConfig.builder()
                 .channelName(CHANNEL)
-                .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("events")
                 .transacted(transacted)
                 .closeTimeout(closeTimeout)
@@ -1108,8 +1105,8 @@ class JmsOutgoingConnectorTest {
                 .build();
     }
 
-    private static OutgoingConnector start(JmsConnectorConfig config, JmsConnectionFactoryResolver resolver) {
-        OutgoingConnector connector = JmsOutgoingConnector.create(config, resolver);
+    private static OutgoingChannel start(JmsRuntimeConfig config, JmsConnectionFactoryResolver resolver) {
+        OutgoingChannel connector = JmsOutgoingChannel.create(config, resolver);
         connector.start();
         return connector;
     }

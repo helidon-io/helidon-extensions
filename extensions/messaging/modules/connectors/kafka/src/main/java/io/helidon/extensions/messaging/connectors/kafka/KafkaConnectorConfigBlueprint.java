@@ -23,16 +23,18 @@ import java.util.Optional;
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
 import io.helidon.common.Api;
-import io.helidon.messaging.spi.ConnectorConfig;
+import io.helidon.messaging.spi.MessagingConnectorProvider;
+import io.helidon.messaging.spi.MessagingConnectorProviderConfig;
 
 /**
  * Kafka connector configuration.
  */
 @Api.Preview
 @Prototype.Blueprint(decorator = KafkaConnectorConfigSupport.BuilderDecorator.class)
-@Prototype.Configured
+@Prototype.Configured(value = KafkaConnectorProvider.CONNECTOR_TYPE, root = false)
+@Prototype.Provides(MessagingConnectorProvider.class)
 @Prototype.CustomMethods(KafkaConnectorConfigSupport.class)
-interface KafkaConnectorConfigBlueprint extends ConnectorConfig {
+interface KafkaConnectorConfigBlueprint extends MessagingConnectorProviderConfig, Prototype.Factory<KafkaConnector> {
     /**
      * Kafka bootstrap servers.
      *
@@ -43,18 +45,17 @@ interface KafkaConnectorConfigBlueprint extends ConnectorConfig {
     String bootstrapServers();
 
     /**
-     * Kafka topic.
+     * Default Kafka topic. Each channel must supply a topic when this is not configured.
      *
-     * @return Kafka topic
+     * @return default topic
      */
-    @Option.Required
     @Option.Configured(KafkaConnectorConfigSupport.TOPIC_PROPERTY)
-    String topic();
+    Optional<String> topic();
 
     /**
-     * Kafka consumer group identifier. The channel name is used when this is not configured.
+     * Default Kafka consumer group identifier. Each incoming channel uses its channel name when no group is configured.
      *
-     * @return configured consumer group identifier
+     * @return default consumer group identifier
      */
     @Option.Configured(KafkaConnectorConfigSupport.GROUP_ID_PROPERTY)
     Optional<String> groupId();

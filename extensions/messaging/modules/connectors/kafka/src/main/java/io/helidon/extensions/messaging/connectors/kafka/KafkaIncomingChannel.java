@@ -44,13 +44,12 @@ import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.BatchItemStatus;
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
-import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingChannel;
 
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -80,8 +79,8 @@ import org.apache.kafka.common.errors.WakeupException;
  * message count without committing it. Kafka fetch and record byte limits remain transport-specific client properties;
  * runtime admission does not bound transient Kafka-client or deserializer memory.
  */
-final class KafkaIncomingConnector {
-    private static final System.Logger LOGGER = System.getLogger(KafkaIncomingConnector.class.getName());
+final class KafkaIncomingChannel {
+    private static final System.Logger LOGGER = System.getLogger(KafkaIncomingChannel.class.getName());
     private static final Duration MAX_MAINTENANCE_POLL_TIMEOUT = Duration.ofMillis(100);
     private static final Duration DEFAULT_COMMIT_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration DEFAULT_COMMIT_RETRY_BACKOFF = Duration.ofMillis(100);
@@ -90,22 +89,17 @@ final class KafkaIncomingConnector {
 
     private final ConsumerFactory consumerFactory;
 
-    KafkaIncomingConnector() {
+    KafkaIncomingChannel() {
         this(KafkaConsumer::new);
     }
 
-    KafkaIncomingConnector(ConsumerFactory consumerFactory) {
+    KafkaIncomingChannel(ConsumerFactory consumerFactory) {
         this.consumerFactory = Objects.requireNonNull(consumerFactory);
     }
 
-    IncomingConnector createIncomingConnector(KafkaConnectorConfig config) {
+    IncomingChannel createIncomingChannel(KafkaConnectorConfigSupport.IncomingSettings config) {
         Objects.requireNonNull(config);
-        if (config.direction() != ConnectorDirection.INCOMING) {
-            throw new IllegalArgumentException("Kafka connector configuration for channel " + config.channelName()
-                                                       + " has direction " + config.direction()
-                                                       + ", expected " + ConnectorDirection.INCOMING);
-        }
-        return new IncomingKafkaConnector(config);
+        return new IncomingKafkaChannel(config);
     }
 
     private static boolean interruptedWait(Throwable failure) {
@@ -120,7 +114,7 @@ final class KafkaIncomingConnector {
         return false;
     }
 
-    private static Duration maintenancePollTimeout(KafkaConnectorConfig config) {
+    private static Duration maintenancePollTimeout(KafkaConnectorConfigSupport.IncomingSettings config) {
         String configured = config.properties().get(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG);
         if (configured == null) {
             return MAX_MAINTENANCE_POLL_TIMEOUT;
@@ -131,7 +125,7 @@ final class KafkaIncomingConnector {
         return Duration.ofMillis(timeoutMillis);
     }
 
-    private static Duration durationProperty(KafkaConnectorConfig config,
+    private static Duration durationProperty(KafkaConnectorConfigSupport.IncomingSettings config,
                                              String property,
                                              Duration defaultValue) {
         String configured = config.properties().get(property);
@@ -368,8 +362,8 @@ final class KafkaIncomingConnector {
         }
     }
 
-    private final class IncomingKafkaConnector implements IncomingConnector {
-        private final KafkaConnectorConfig config;
+    private final class IncomingKafkaChannel implements IncomingChannel {
+        private final KafkaConnectorConfigSupport.IncomingSettings config;
         private final AtomicBoolean closed = new AtomicBoolean();
         private final AtomicBoolean draining = new AtomicBoolean();
         private final AtomicBoolean runStarted = new AtomicBoolean();
@@ -392,7 +386,7 @@ final class KafkaIncomingConnector {
         private volatile IncomingConnectorContext context;
         private boolean deliveryStarting;
 
-        private IncomingKafkaConnector(KafkaConnectorConfig config) {
+        private IncomingKafkaChannel(KafkaConnectorConfigSupport.IncomingSettings config) {
             this.config = config;
             this.maintenancePollTimeout = maintenancePollTimeout(config);
             this.commitTimeout = durationProperty(config,

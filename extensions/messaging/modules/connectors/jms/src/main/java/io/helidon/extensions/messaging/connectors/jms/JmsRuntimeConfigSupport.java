@@ -26,9 +26,9 @@ import java.util.function.Supplier;
 import io.helidon.builder.api.Prototype;
 
 /**
- * Support methods and constants for {@link JmsConnectorConfig}.
+ * Support methods and constants for {@link JmsRuntimeConfig}.
  */
-final class JmsConnectorConfigSupport {
+final class JmsRuntimeConfigSupport {
     @Prototype.Constant
     static final String CONNECTION_FACTORY_PROPERTY = "connection-factory";
     @Prototype.Constant
@@ -83,7 +83,7 @@ final class JmsConnectorConfigSupport {
     @Prototype.Constant
     static final int DEFAULT_MAX_BODY_BYTES = 1_048_576;
 
-    private JmsConnectorConfigSupport() {
+    private JmsRuntimeConfigSupport() {
     }
 
     /**
@@ -93,7 +93,7 @@ final class JmsConnectorConfigSupport {
      * @param password password characters
      */
     @Prototype.BuilderMethod
-    static void password(JmsConnectorConfig.BuilderBase<?, ?> target, char[] password) {
+    static void password(JmsRuntimeConfig.BuilderBase<?, ?> target, char[] password) {
         PasswordSupplier passwordSource = new PasswordSupplier(Objects.requireNonNull(password));
         clearConfiguredPassword(target);
         target.passwordSource(passwordSource);
@@ -106,7 +106,7 @@ final class JmsConnectorConfigSupport {
      * @param password password
      */
     @Prototype.BuilderMethod
-    static void password(JmsConnectorConfig.BuilderBase<?, ?> target, String password) {
+    static void password(JmsRuntimeConfig.BuilderBase<?, ?> target, String password) {
         char[] passwordChars = Objects.requireNonNull(password).toCharArray();
         try {
             password(target, passwordChars);
@@ -121,12 +121,12 @@ final class JmsConnectorConfigSupport {
      * @param target builder to update
      */
     @Prototype.BuilderMethod
-    static void clearPassword(JmsConnectorConfig.BuilderBase<?, ?> target) {
+    static void clearPassword(JmsRuntimeConfig.BuilderBase<?, ?> target) {
         clearConfiguredPassword(target);
         target.passwordSource(PasswordSupplier.empty());
     }
 
-    private static void clearConfiguredPassword(JmsConnectorConfig.BuilderBase<?, ?> target) {
+    private static void clearConfiguredPassword(JmsRuntimeConfig.BuilderBase<?, ?> target) {
         target.clearConfiguredPassword();
     }
 
@@ -160,42 +160,68 @@ final class JmsConnectorConfigSupport {
     /**
      * Validates JMS connector configuration.
      */
-    static final class BuilderDecorator implements Prototype.BuilderDecorator<JmsConnectorConfig.BuilderBase<?, ?>> {
+    static final class BuilderDecorator implements Prototype.BuilderDecorator<JmsRuntimeConfig.BuilderBase<?, ?>> {
         @Override
-        public void decorate(JmsConnectorConfig.BuilderBase<?, ?> target) {
+        public void decorate(JmsRuntimeConfig.BuilderBase<?, ?> target) {
             clearConfiguredPassword(target);
             target.passwordSource(new PasswordSupplier(target.passwordSource().get()));
-            requireNonBlank(CONNECTION_FACTORY_PROPERTY, target.connectionFactoryName());
+            requireNonBlank(CONNECTION_FACTORY_PROPERTY, target.connectionFactory());
             requireNonBlank(JNDI_CONNECTION_FACTORY_PROPERTY, target.jndiConnectionFactory());
             requireNonBlank(JNDI_DESTINATION_PROPERTY, target.jndiDestination());
             requireNonBlank(DESTINATION_PROPERTY, target.destination());
             requireNonBlank(USERNAME_PROPERTY, target.username());
             requireNonBlank(CLIENT_ID_PROPERTY, target.clientId());
+            requireNonBlank(MESSAGE_SELECTOR_PROPERTY, target.messageSelector());
+            requireNonBlank(SUBSCRIPTION_NAME_PROPERTY, target.subscriptionName());
             requireNonNullEntries(JNDI_ENVIRONMENT_PROPERTY, target.jndiEnvironment());
 
-            int factoryRoutes = (target.connectionFactory().isPresent() ? 1 : 0)
-                    + (target.connectionFactoryName().isPresent() ? 1 : 0)
-                    + (target.jndiConnectionFactory().isPresent() ? 1 : 0);
-            if (factoryRoutes > 1) {
-                throw new IllegalArgumentException("JMS connection factory, registry name, and JNDI name are mutually exclusive");
+            if (target.connectionFactory().isPresent() && target.jndiConnectionFactory().isPresent()) {
+                throw new IllegalArgumentException(CONNECTION_FACTORY_PROPERTY + " and "
+                                                           + JNDI_CONNECTION_FACTORY_PROPERTY
+                                                           + " are mutually exclusive");
+            }
+            if (target.destination().isEmpty() && target.jndiDestination().isEmpty()) {
+                throw new IllegalArgumentException("Either " + DESTINATION_PROPERTY + " or "
+                                                           + JNDI_DESTINATION_PROPERTY + " must be configured");
             }
             if (target.destination().isPresent() && target.jndiDestination().isPresent()) {
                 throw new IllegalArgumentException(DESTINATION_PROPERTY + " and " + JNDI_DESTINATION_PROPERTY
                                                            + " are mutually exclusive");
             }
-            target.closeTimeout().ifPresent(it -> requirePositive(CLOSE_TIMEOUT_PROPERTY, it));
-            target.reconnectInitialDelay().ifPresent(it -> requireRetryDelay(RECONNECT_INITIAL_DELAY_PROPERTY, it));
-            target.reconnectMaxDelay().ifPresent(it -> requireRetryDelay(RECONNECT_MAX_DELAY_PROPERTY, it));
-            if (target.reconnectInitialDelay().isPresent() && target.reconnectMaxDelay().isPresent()
-                    && target.reconnectMaxDelay().orElseThrow().compareTo(target.reconnectInitialDelay().orElseThrow()) < 0) {
+            if (target.username().isPresent() != target.passwordSource().get().isPresent()) {
+                throw new IllegalArgumentException(USERNAME_PROPERTY + " and " + PASSWORD_PROPERTY
+                                                           + " must be configured together");
+            }
+            if (target.durable()) {
+                if (target.destinationType() != JmsDestinationType.TOPIC) {
+                    throw new IllegalArgumentException(DURABLE_PROPERTY + " requires destination-type TOPIC");
+                }
+                if (target.subscriptionName().isEmpty()) {
+                    throw new IllegalArgumentException(DURABLE_PROPERTY + " requires " + SUBSCRIPTION_NAME_PROPERTY);
+                }
+            } else if (target.subscriptionName().isPresent()) {
+                throw new IllegalArgumentException(SUBSCRIPTION_NAME_PROPERTY + " requires " + DURABLE_PROPERTY);
+            }
+            if (target.noLocal() && target.destinationType() != JmsDestinationType.TOPIC) {
+                throw new IllegalArgumentException(NO_LOCAL_PROPERTY + " requires destination-type TOPIC");
+            }
+            if (target.maxBodyBytes() < 1) {
+                throw new IllegalArgumentException(MAX_BODY_BYTES_PROPERTY + " must be greater than zero");
+            }
+
+            requirePositive(RECEIVE_TIMEOUT_PROPERTY, target.receiveTimeout());
+            requirePositive(CLOSE_TIMEOUT_PROPERTY, target.closeTimeout());
+            requireRetryDelay(RECONNECT_INITIAL_DELAY_PROPERTY, target.reconnectInitialDelay());
+            requireRetryDelay(RECONNECT_MAX_DELAY_PROPERTY, target.reconnectMaxDelay());
+            if (target.reconnectMaxDelay().compareTo(target.reconnectInitialDelay()) < 0) {
                 throw new IllegalArgumentException(RECONNECT_MAX_DELAY_PROPERTY + " must not be less than "
                                                            + RECONNECT_INITIAL_DELAY_PROPERTY);
             }
-            target.reconnectJitter().ifPresent(it -> {
-                if (!Double.isFinite(it) || it < 0 || it >= 1) {
-                    throw new IllegalArgumentException(RECONNECT_JITTER_PROPERTY + " must be in the range [0, 1)");
-                }
-            });
+            if (!Double.isFinite(target.reconnectJitter())
+                    || target.reconnectJitter() < 0
+                    || target.reconnectJitter() >= 1) {
+                throw new IllegalArgumentException(RECONNECT_JITTER_PROPERTY + " must be in the range [0, 1)");
+            }
         }
     }
 
@@ -203,9 +229,9 @@ final class JmsConnectorConfigSupport {
      * Copies a password read from configuration into defensive storage.
      */
     static final class ConfiguredPasswordDecorator
-            implements Prototype.OptionDecorator<JmsConnectorConfig.BuilderBase<?, ?>, Optional<String>> {
+            implements Prototype.OptionDecorator<JmsRuntimeConfig.BuilderBase<?, ?>, Optional<String>> {
         @Override
-        public void decorate(JmsConnectorConfig.BuilderBase<?, ?> target, Optional<String> configuredPassword) {
+        public void decorate(JmsRuntimeConfig.BuilderBase<?, ?> target, Optional<String> configuredPassword) {
             configuredPassword.ifPresent(it -> {
                 char[] password = it.toCharArray();
                 try {

@@ -24,14 +24,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
-import io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfig;
-import io.helidon.extensions.messaging.connectors.jms.JmsConnectorProvider;
+import io.helidon.extensions.messaging.connectors.jms.JmsIncomingConfig;
+import io.helidon.extensions.messaging.connectors.jms.JmsConnector;
 import io.helidon.extensions.messaging.connectors.jms.JmsMessage;
 import io.helidon.messaging.ConnectorDeliveryReservation;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessagingRuntime;
-import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingChannel;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 
@@ -108,11 +107,9 @@ class JmsBackPressureIT {
             try (ActiveMQConnectionFactory connectorFactory = new ActiveMQConnectionFactory(broker.connectionUrl())) {
                 connectorFactory.setConsumerWindowSize(1024 * 1024);
                 JmsTestClient.sendText(broker.connectionFactory(), queue, false, "waiting", ignored -> { });
-                IncomingConnector connector = JmsConnectorProvider.create(connectorFactory)
-                        .createIncomingConnector(JmsConnectorConfig.builder()
-                                                         .direction(ConnectorDirection.INCOMING)
+                IncomingChannel connector = JmsConnector.builder().name("test-jms").connectionFactory(connectorFactory).build()
+                        .incoming(JmsIncomingConfig.builder()
                                                          .channelName("activation-gate")
-                                                         .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                                                          .destination(queue)
                                                          .closeTimeout(Duration.ofSeconds(5))
                                                          .build());
@@ -156,9 +153,12 @@ class JmsBackPressureIT {
     private static String incomingConfig(String destination) {
         return """
                 messaging:
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                   incoming:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       receive-timeout: PT0.05S
                 """.formatted(JmsMessagingTypes.BACK_PRESSURE_INCOMING_CHANNEL, destination);

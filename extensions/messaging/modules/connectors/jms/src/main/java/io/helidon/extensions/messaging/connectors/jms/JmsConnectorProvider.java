@@ -20,97 +20,48 @@ import java.util.Objects;
 
 import io.helidon.common.Api;
 import io.helidon.config.Config;
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.spi.IncomingConnector;
-import io.helidon.messaging.spi.IncomingConnectorProvider;
-import io.helidon.messaging.spi.OutgoingConnector;
-import io.helidon.messaging.spi.OutgoingConnectorProvider;
+import io.helidon.messaging.spi.MessagingConnector;
+import io.helidon.messaging.spi.MessagingConnectorProvider;
+import io.helidon.service.registry.GlobalServiceRegistry;
 import io.helidon.service.registry.Service;
 import io.helidon.service.registry.ServiceRegistry;
 
-import jakarta.jms.ConnectionFactory;
-
 /**
- * Stateless JMS connector provider.
+ * Provider of configured JMS connectors.
  */
 @Api.Preview
 @Service.Singleton
-public final class JmsConnectorProvider
-        implements IncomingConnectorProvider, OutgoingConnectorProvider {
+public final class JmsConnectorProvider implements MessagingConnectorProvider {
     /**
      * JMS connector type used in messaging configuration.
      */
     public static final String CONNECTOR_TYPE = "helidon-jms";
 
-    private final JmsConnectionFactoryResolver connectionFactoryResolver;
+    private final JmsConnectionFactoryResolver resolver;
+
+    /**
+     * Create a provider for service discovery.
+     */
+    public JmsConnectorProvider() {
+        this.resolver = config -> new JmsResourceResolver(GlobalServiceRegistry.registry()).resolve(config);
+    }
 
     @Service.Inject
     JmsConnectorProvider(ServiceRegistry registry) {
-        this(new JmsResourceResolver(registry));
-    }
-
-    JmsConnectorProvider(JmsConnectionFactoryResolver connectionFactoryResolver) {
-        this.connectionFactoryResolver = Objects.requireNonNull(connectionFactoryResolver);
-    }
-
-    /**
-     * Create an imperative provider using one connection factory for every binding.
-     *
-     * @param connectionFactory JMS connection factory
-     * @return a new connector provider
-     */
-    public static JmsConnectorProvider create(ConnectionFactory connectionFactory) {
-        return new JmsConnectorProvider(fixedResolver(connectionFactory));
+        this.resolver = new JmsResourceResolver(registry);
     }
 
     @Override
-    public String connectorType() {
+    public String configKey() {
         return CONNECTOR_TYPE;
     }
 
     @Override
-    public IncomingConnector createIncomingConnector(Config config) {
-        return createIncomingConnector(JmsConnectorConfig.create(Objects.requireNonNull(config)));
-    }
-
-    /**
-     * Create one unstarted incoming JMS connector from typed configuration.
-     *
-     * @param config typed JMS configuration
-     * @return incoming connector
-     */
-    public IncomingConnector createIncomingConnector(JmsConnectorConfig config) {
-        requireDirection(config, ConnectorDirection.INCOMING);
-        return JmsIncomingConnector.create(config, connectionFactoryResolver);
-    }
-
-    @Override
-    public OutgoingConnector createOutgoingConnector(Config config) {
-        return createOutgoingConnector(JmsConnectorConfig.create(Objects.requireNonNull(config)));
-    }
-
-    /**
-     * Create one unstarted outgoing JMS connector from typed configuration.
-     *
-     * @param config typed JMS configuration
-     * @return outgoing connector
-     */
-    public OutgoingConnector createOutgoingConnector(JmsConnectorConfig config) {
-        requireDirection(config, ConnectorDirection.OUTGOING);
-        return JmsOutgoingConnector.create(config, connectionFactoryResolver);
-    }
-
-    private static void requireDirection(JmsConnectorConfig config, ConnectorDirection expected) {
-        Objects.requireNonNull(config);
-        if (config.direction() != expected) {
-            throw new IllegalArgumentException("JMS connector configuration for channel " + config.channelName()
-                                                       + " has direction " + config.direction()
-                                                       + ", expected " + expected);
-        }
-    }
-
-    private static JmsConnectionFactoryResolver fixedResolver(ConnectionFactory connectionFactory) {
-        ConnectionFactory actual = Objects.requireNonNull(connectionFactory);
-        return config -> actual;
+    public MessagingConnector create(Config config, String name) {
+        return JmsConnector.create(JmsConnectorConfig.builder()
+                                           .config(Objects.requireNonNull(config))
+                                           .name(Objects.requireNonNull(name))
+                                           .buildPrototype(),
+                                   resolver);
     }
 }

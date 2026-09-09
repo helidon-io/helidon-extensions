@@ -39,14 +39,13 @@ import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.BatchItemStatus;
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
-import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingChannel;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -74,27 +73,34 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-class KafkaIncomingConnectorTest {
+class KafkaIncomingChannelTest {
     private static final String TOPIC = "audit-events";
     private static final TopicPartition TOPIC_PARTITION = new TopicPartition(TOPIC, 0);
     private static final TopicPartition SECOND_TOPIC_PARTITION = new TopicPartition(TOPIC, 1);
 
     @Test
     void testConnectorType() {
-        KafkaConnectorProvider provider = KafkaConnectorProvider.create();
-
-        assertThat(provider.connectorType(), is("helidon-kafka"));
+        KafkaConnector connector = KafkaConnector.builder()
+                .name("test-kafka")
+                .bootstrapServers("localhost:9092")
+                .build();
+        try (IncomingChannel channel = connector.incoming(KafkaIncomingConfig.builder()
+                .channelName("audit")
+                .topic(TOPIC)
+                .build())) {
+            assertThat(connector.type(), is("helidon-kafka"));
+        }
     }
 
     @Test
     void testConnectorCreationAndDrainBeforeRunAreResourceFree() {
         AtomicInteger consumerCreations = new AtomicInteger();
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> {
+        KafkaIncomingChannel connector = new KafkaIncomingChannel(ignored -> {
             consumerCreations.incrementAndGet();
             return trackingConsumer();
         });
 
-        IncomingConnector incoming = connector.createIncomingConnector(config());
+        IncomingChannel incoming = connector.createIncomingChannel(config());
 
         assertThat(consumerCreations.get(), is(0));
         incoming.drain();
@@ -108,7 +114,7 @@ class KafkaIncomingConnectorTest {
         CountDownLatch consumerCreationStarted = new CountDownLatch(1);
         CountDownLatch releaseConsumerCreation = new CountDownLatch(1);
         CountDownLatch consumerCreationInterrupted = new CountDownLatch(1);
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> {
+        KafkaIncomingChannel connector = new KafkaIncomingChannel(ignored -> {
             consumerCreationStarted.countDown();
             try {
                 releaseConsumerCreation.await();
@@ -119,7 +125,7 @@ class KafkaIncomingConnectorTest {
             }
             return trackingConsumer();
         });
-        IncomingConnector incoming = connector.createIncomingConnector(config());
+        IncomingChannel incoming = connector.createIncomingChannel(config());
         IncomingConnectorContext context = new RecordingContext(new ArrayList<>());
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
@@ -178,8 +184,8 @@ class KafkaIncomingConnectorTest {
                 }
             }
         };
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
-        IncomingConnector incoming = connector.createIncomingConnector(config());
+        KafkaIncomingChannel connector = new KafkaIncomingChannel(ignored -> consumer);
+        IncomingChannel incoming = connector.createIncomingChannel(config());
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
@@ -217,8 +223,8 @@ class KafkaIncomingConnectorTest {
             }
         };
         scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
-        IncomingConnector incoming = connector.createIncomingConnector(config());
+        KafkaIncomingChannel connector = new KafkaIncomingChannel(ignored -> consumer);
+        IncomingChannel incoming = connector.createIncomingChannel(config());
         IncomingConnectorContext context = new RecordingContext(new ArrayList<>());
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
@@ -265,8 +271,8 @@ class KafkaIncomingConnectorTest {
             }
         };
         scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
-        KafkaIncomingConnector connector = new KafkaIncomingConnector(ignored -> consumer);
-        IncomingConnector incoming = connector.createIncomingConnector(config());
+        KafkaIncomingChannel connector = new KafkaIncomingChannel(ignored -> consumer);
+        IncomingChannel incoming = connector.createIncomingChannel(config());
         IncomingConnectorContext context = new RecordingContext(new ArrayList<>());
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
@@ -317,7 +323,7 @@ class KafkaIncomingConnectorTest {
         consumer.afterCommit(() -> connectorRef.get().close());
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
         connectorRef.set(connector);
-        IncomingConnector source = connector.createIncomingConnector(config());
+        IncomingChannel source = connector.createIncomingChannel(config());
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
@@ -343,7 +349,7 @@ class KafkaIncomingConnectorTest {
         TrackingMockConsumer consumer = trackingConsumer();
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
         RunningGateContext context = new RunningGateContext(new ArrayList<>());
-        IncomingConnector source = connector.createIncomingConnector(config());
+        IncomingChannel source = connector.createIncomingChannel(config());
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
@@ -367,7 +373,7 @@ class KafkaIncomingConnectorTest {
         BlockingMockConsumer consumer = new BlockingMockConsumer();
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
         IncomingConnectorContext context = new RecordingContext(new ArrayList<>());
-        IncomingConnector source = connector.createIncomingConnector(
+        IncomingChannel source = connector.createIncomingChannel(
                 config(Map.of("max.poll.interval.ms", "60000")));
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
@@ -398,7 +404,7 @@ class KafkaIncomingConnectorTest {
         };
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
         IncomingConnectorContext context = new RecordingContext(new ArrayList<>());
-        IncomingConnector source = connector.createIncomingConnector(config());
+        IncomingChannel source = connector.createIncomingChannel(config());
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
@@ -445,7 +451,7 @@ class KafkaIncomingConnectorTest {
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
         connectorRef.set(connector);
 
-        connector.createIncomingConnector(config()).run(context);
+        connector.createIncomingChannel(config()).run(context);
 
         assertThat(events, is(List.of("dispatch", "commit")));
         assertThat(context.messages().stream().map(Message::entity).toList(), is(List.of("first", "second")));
@@ -515,7 +521,7 @@ class KafkaIncomingConnectorTest {
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(() -> connector.createIncomingConnector(config()).run(context));
+                .start(() -> connector.createIncomingChannel(config()).run(context));
 
         try {
             assertThat(deliveryStarted.await(5, TimeUnit.SECONDS), is(true));
@@ -567,7 +573,7 @@ class KafkaIncomingConnectorTest {
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(() -> connector.createIncomingConnector(config()).run(context));
+                .start(() -> connector.createIncomingChannel(config()).run(context));
 
         try {
             assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
@@ -633,7 +639,7 @@ class KafkaIncomingConnectorTest {
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(() -> connector.createIncomingConnector(config()).run(context));
+                .start(() -> connector.createIncomingChannel(config()).run(context));
 
         try {
             assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
@@ -709,7 +715,7 @@ class KafkaIncomingConnectorTest {
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
-                .start(() -> connector.createIncomingConnector(config(Duration.ofMillis(25))).run(context));
+                .start(() -> connector.createIncomingChannel(config(Duration.ofMillis(25))).run(context));
 
         try {
             assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
@@ -766,7 +772,7 @@ class KafkaIncomingConnectorTest {
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(() -> connector.createIncomingConnector(config()).run(context));
+                .start(() -> connector.createIncomingChannel(config()).run(context));
 
         try {
             assertThat(deliveryStarted.await(5, TimeUnit.SECONDS), is(true));
@@ -843,7 +849,7 @@ class KafkaIncomingConnectorTest {
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
         connectorRef.set(connector);
 
-        connector.createIncomingConnector(config()).run(context);
+        connector.createIncomingChannel(config()).run(context);
 
         MessageBatch<?> batch = failedBatch.get();
         assertThat(batch.size(), is(2));
@@ -888,7 +894,7 @@ class KafkaIncomingConnectorTest {
 
         BatchDeliveryException failure = assertThrows(
                 BatchDeliveryException.class,
-                () -> connector.createIncomingConnector(config()).run(context));
+                () -> connector.createIncomingChannel(config()).run(context));
 
         assertThat(failure.getCause(), sameInstance(itemFailure));
         assertThat(failure.batch().size(), is(5));
@@ -925,7 +931,7 @@ class KafkaIncomingConnectorTest {
 
         BatchDeliveryException failure = assertThrows(
                 BatchDeliveryException.class,
-                () -> connector.createIncomingConnector(config()).run(context));
+                () -> connector.createIncomingChannel(config()).run(context));
 
         assertThat(failure.getCause(), sameInstance(itemFailure));
         assertThat(failure.getSuppressed().length, is(1));
@@ -961,7 +967,7 @@ class KafkaIncomingConnectorTest {
 
         BatchDeliveryException failure = assertThrows(
                 BatchDeliveryException.class,
-                () -> connector.createIncomingConnector(config()).run(context));
+                () -> connector.createIncomingChannel(config()).run(context));
 
         assertThat(failure.getCause(), sameInstance(runtimeFailure));
         assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(6L));
@@ -984,7 +990,7 @@ class KafkaIncomingConnectorTest {
 
         BatchDeliveryException failure = assertThrows(
                 BatchDeliveryException.class,
-                () -> connector.createIncomingConnector(config()).run(context));
+                () -> connector.createIncomingChannel(config()).run(context));
 
         assertThat(failure.getCause(), sameInstance(processingFailure));
         assertThat(failure.outcome(0).status(), is(BatchItemStatus.INDETERMINATE));
@@ -1009,7 +1015,7 @@ class KafkaIncomingConnectorTest {
             }
         };
 
-        connector.createIncomingConnector(config()).run(context);
+        connector.createIncomingChannel(config()).run(context);
 
         assertThat("commit retry must not redeliver the settled handler batch", dispatches.get(), is(1));
         assertThat(consumer.commitInitiationCount(), is(2));
@@ -1046,7 +1052,7 @@ class KafkaIncomingConnectorTest {
 
         MessagingException actual = assertThrows(
                 MessagingException.class,
-                () -> connector.createIncomingConnector(config(Map.of(
+                () -> connector.createIncomingChannel(config(Map.of(
                                 ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "100",
                                 ConsumerConfig.RETRY_BACKOFF_MS_CONFIG, "10")))
                         .run(context));
@@ -1075,7 +1081,7 @@ class KafkaIncomingConnectorTest {
 
         MessagingException failure = assertThrows(
                 MessagingException.class,
-                () -> connector.createIncomingConnector(
+                () -> connector.createIncomingChannel(
                                 config(Map.of(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "25")))
                         .run(context));
 
@@ -1109,7 +1115,7 @@ class KafkaIncomingConnectorTest {
 
         MessagingException failure = assertThrows(
                 MessagingException.class,
-                () -> connector.createIncomingConnector(config()).run(context));
+                () -> connector.createIncomingChannel(config()).run(context));
 
         assertThat(failure.getCause(), sameInstance(commitFailure));
         assertThat(dispatches.get(), is(1));
@@ -1140,7 +1146,7 @@ class KafkaIncomingConnectorTest {
 
         AssertionError actual = assertThrows(
                 AssertionError.class,
-                () -> connector.createIncomingConnector(config()).run(context));
+                () -> connector.createIncomingChannel(config()).run(context));
 
         assertThat(actual, sameInstance(expected));
         assertThat(dispatches.get(), is(1));
@@ -1165,7 +1171,7 @@ class KafkaIncomingConnectorTest {
         scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
         AtomicInteger dispatches = new AtomicInteger();
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
-        IncomingConnector incoming = connector.createIncomingConnector(config());
+        IncomingChannel incoming = connector.createIncomingChannel(config());
         closeAction.set(connector::close);
         IncomingConnectorContext context = new RecordingContext(new ArrayList<>()) {
             @Override
@@ -1204,7 +1210,7 @@ class KafkaIncomingConnectorTest {
 
         MessagingException failure = assertThrows(
                 MessagingException.class,
-                () -> connector.createIncomingConnector(config()).run(context));
+                () -> connector.createIncomingChannel(config()).run(context));
 
         assertThat(failure.getCause(), sameInstance(processingFailure));
         assertThat(failure.getSuppressed().length, is(1));
@@ -1240,7 +1246,7 @@ class KafkaIncomingConnectorTest {
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
         consumer.afterCommit(connector::close);
 
-        connector.createIncomingConnector(config()).run(context);
+        connector.createIncomingChannel(config()).run(context);
 
         assertThat(admissionAttempts.get(), is(3));
         assertThat("the owner must maintenance-poll after every unavailable admission attempt",
@@ -1281,7 +1287,7 @@ class KafkaIncomingConnectorTest {
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
         consumer.afterCommit(connector::close);
 
-        connector.createIncomingConnector(config()).run(context);
+        connector.createIncomingChannel(config()).run(context);
 
         assertThat(admissionAttempts.get(), is(3));
         assertThat("the owner must maintenance-poll after every unavailable failed-admission attempt",
@@ -1317,7 +1323,7 @@ class KafkaIncomingConnectorTest {
 
         MessagingRejectedException failure = assertThrows(
                 MessagingRejectedException.class,
-                () -> connector.createIncomingConnector(config()).run(context));
+                () -> connector.createIncomingChannel(config()).run(context));
 
         assertThat(failure.reason(), is(MessagingRejectedException.Reason.TIMEOUT));
         assertThat(failure.channel(), is("audit"));
@@ -1342,7 +1348,7 @@ class KafkaIncomingConnectorTest {
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
-                .start(() -> connector.createIncomingConnector(config()).run(context));
+                .start(() -> connector.createIncomingChannel(config()).run(context));
 
         assertThat(reservationAttempted.await(5, TimeUnit.SECONDS), is(true));
         assertThat("a source without assignment must not poll or join before reserving capacity",
@@ -1374,7 +1380,7 @@ class KafkaIncomingConnectorTest {
 
         MessagingRejectedException failure = assertThrows(
                 MessagingRejectedException.class,
-                () -> connector.createIncomingConnector(config()).run(context));
+                () -> connector.createIncomingChannel(config()).run(context));
 
         assertThat(failure.reason(), is(MessagingRejectedException.Reason.TIMEOUT));
         assertThat(consumer.pollCount(), is(0));
@@ -1404,7 +1410,7 @@ class KafkaIncomingConnectorTest {
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
         connectorRef.set(connector);
 
-        connector.createIncomingConnector(config()).run(context);
+        connector.createIncomingChannel(config()).run(context);
 
         assertThat(reservationAttempts.get(), is(3));
         assertThat(reservationCloses.get(), is(1));
@@ -1434,7 +1440,7 @@ class KafkaIncomingConnectorTest {
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
         connectorRef.set(connector);
 
-        connector.createIncomingConnector(config()).run(context);
+        connector.createIncomingChannel(config()).run(context);
 
         assertThat(reservationAttempts.get(), is(2));
         assertThat(reservationCloses.get(), is(1));
@@ -1477,7 +1483,7 @@ class KafkaIncomingConnectorTest {
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
         connectorRef.set(connector);
 
-        connector.createIncomingConnector(config()).run(context);
+        connector.createIncomingChannel(config()).run(context);
 
         assertThat(reservationAttempts.get(), is(3));
         assertThat(consumer.pollCount(), is(2));
@@ -1550,7 +1556,7 @@ class KafkaIncomingConnectorTest {
             connector.close();
         });
 
-        connector.createIncomingConnector(config()).run(context);
+        connector.createIncomingChannel(config()).run(context);
 
         assertThat(trackedLease.get().isDone(), is(true));
         assertThat(reservedMessages.get(), is(2));
@@ -1579,7 +1585,7 @@ class KafkaIncomingConnectorTest {
 
         MessagingRejectedException messageFailure = assertThrows(
                 MessagingRejectedException.class,
-                () -> messageLimitedConnector.createIncomingConnector(config()).run(messageLimitedContext));
+                () -> messageLimitedConnector.createIncomingChannel(config()).run(messageLimitedContext));
 
         assertThat(messageFailure.reason(), is(MessagingRejectedException.Reason.OVERSIZED));
         assertThat(messageAcquisitionProperties.get().get(ConsumerConfig.MAX_POLL_RECORDS_CONFIG), is(1));
@@ -1610,7 +1616,7 @@ class KafkaIncomingConnectorTest {
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(() -> connector.createIncomingConnector(config()).run(context));
+                .start(() -> connector.createIncomingChannel(config()).run(context));
 
         assertThat(deliveryStarted.await(5, TimeUnit.SECONDS), is(true));
         connector.close();
@@ -1652,7 +1658,7 @@ class KafkaIncomingConnectorTest {
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
-                .start(() -> connector.createIncomingConnector(config()).run(context));
+                .start(() -> connector.createIncomingChannel(config()).run(context));
 
         try {
             assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
@@ -1755,7 +1761,7 @@ class KafkaIncomingConnectorTest {
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
-                .start(() -> connector.createIncomingConnector(config(Duration.ofSeconds(1))).run(context));
+                .start(() -> connector.createIncomingChannel(config(Duration.ofSeconds(1))).run(context));
 
         try {
             assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
@@ -1836,7 +1842,7 @@ class KafkaIncomingConnectorTest {
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
-                .start(() -> connector.createIncomingConnector(config()).run(context));
+                .start(() -> connector.createIncomingChannel(config()).run(context));
 
         assertThat(closeReturned.await(5, TimeUnit.SECONDS), is(true));
         sourceThread.join(TimeUnit.SECONDS.toMillis(5));
@@ -1853,7 +1859,7 @@ class KafkaIncomingConnectorTest {
         BlockingMockConsumer consumer = new BlockingMockConsumer();
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
         IncomingConnectorContext context = new RecordingContext(new ArrayList<>());
-        IncomingConnector source = connector.createIncomingConnector(config());
+        IncomingChannel source = connector.createIncomingChannel(config());
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread thread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> failure.set(throwable))
@@ -1877,7 +1883,7 @@ class KafkaIncomingConnectorTest {
             throw new IllegalStateException("consumer creation failed");
         });
         IncomingConnectorContext context = new RecordingContext(new ArrayList<>());
-        IncomingConnector source = connector.createIncomingConnector(config());
+        IncomingChannel source = connector.createIncomingChannel(config());
 
         assertThrows(MessagingException.class, () -> source.run(context));
         connector.close();
@@ -1923,7 +1929,7 @@ class KafkaIncomingConnectorTest {
         };
         IncomingConnectorHarness connector = new IncomingConnectorHarness(ignored -> consumer);
         IncomingConnectorContext context = new RecordingContext(new ArrayList<>());
-        IncomingConnector source = connector.createIncomingConnector(config(Duration.ofMillis(100)));
+        IncomingChannel source = connector.createIncomingChannel(config(Duration.ofMillis(100)));
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread sourceThread = Thread.ofVirtual()
                 .uncaughtExceptionHandler((ignored, throwable) -> sourceFailure.set(throwable))
@@ -1993,30 +1999,32 @@ class KafkaIncomingConnectorTest {
         return state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING;
     }
 
-    private static KafkaConnectorConfig config() {
+    private static KafkaConnectorConfigSupport.IncomingSettings config() {
         return config(Map.of());
     }
 
-    private static KafkaConnectorConfig config(Duration closeTimeout) {
+    private static KafkaConnectorConfigSupport.IncomingSettings config(Duration closeTimeout) {
         return config(closeTimeout, Map.of());
     }
 
-    private static KafkaConnectorConfig config(Map<String, String> properties) {
+    private static KafkaConnectorConfigSupport.IncomingSettings config(Map<String, String> properties) {
         return config(Duration.ofSeconds(1), properties);
     }
 
-    private static KafkaConnectorConfig config(Duration closeTimeout, Map<String, String> properties) {
-        return KafkaConnectorConfig.builder()
-                .direction(ConnectorDirection.INCOMING)
+    private static KafkaConnectorConfigSupport.IncomingSettings config(Duration closeTimeout, Map<String, String> properties) {
+        KafkaIncomingConfig channelConfig = KafkaIncomingConfig.builder()
                 .channelName("audit")
-                .connector(KafkaConnectorProvider.CONNECTOR_TYPE)
-                .bootstrapServers("localhost:9092")
                 .topic(TOPIC)
                 .groupId("audit-test")
                 .pollTimeout(Duration.ofMillis(10))
                 .closeTimeout(closeTimeout)
                 .properties(properties)
                 .build();
+        KafkaConnectorConfig connectorConfig = KafkaConnectorConfig.builder()
+                .name("test-kafka")
+                .bootstrapServers("localhost:9092")
+                .buildPrototype();
+        return KafkaConnectorConfigSupport.incoming(connectorConfig, channelConfig);
     }
 
     private static ConnectorDeliveryReservation unusedReservation(AtomicInteger closes) {
@@ -2821,15 +2829,15 @@ class KafkaIncomingConnectorTest {
     }
 
     private static final class IncomingConnectorHarness {
-        private final KafkaIncomingConnector connector;
-        private final AtomicReference<IncomingConnector> incoming = new AtomicReference<>();
+        private final KafkaIncomingChannel connector;
+        private final AtomicReference<IncomingChannel> incoming = new AtomicReference<>();
 
-        private IncomingConnectorHarness(KafkaIncomingConnector.ConsumerFactory consumerFactory) {
-            connector = new KafkaIncomingConnector(consumerFactory);
+        private IncomingConnectorHarness(KafkaIncomingChannel.ConsumerFactory consumerFactory) {
+            connector = new KafkaIncomingChannel(consumerFactory);
         }
 
-        private IncomingConnector createIncomingConnector(KafkaConnectorConfig config) {
-            IncomingConnector created = connector.createIncomingConnector(config);
+        private IncomingChannel createIncomingChannel(KafkaConnectorConfigSupport.IncomingSettings config) {
+            IncomingChannel created = connector.createIncomingChannel(config);
             if (!incoming.compareAndSet(null, created)) {
                 throw new IllegalStateException("Incoming connector harness supports one connector");
             }
@@ -2837,7 +2845,7 @@ class KafkaIncomingConnectorTest {
         }
 
         private void close() {
-            IncomingConnector current = incoming.get();
+            IncomingChannel current = incoming.get();
             if (current != null) {
                 current.close();
             }

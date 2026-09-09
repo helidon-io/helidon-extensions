@@ -39,7 +39,7 @@ final class JmsResourceResolver implements JmsConnectionFactoryResolver {
         this.registry = Objects.requireNonNull(registry);
     }
 
-    static Destination resolveDestination(Session session, JmsConnectorConfig config) throws JMSException {
+    static Destination resolveDestination(Session session, JmsRuntimeConfig config) throws JMSException {
         if (config.jndiDestination().isPresent()) {
             return validateDestinationType(lookup(config,
                                                   config.jndiDestination().orElseThrow(),
@@ -53,7 +53,7 @@ final class JmsResourceResolver implements JmsConnectionFactoryResolver {
         };
     }
 
-    static Destination validateDestinationType(Destination destination, JmsConnectorConfig config) {
+    static Destination validateDestinationType(Destination destination, JmsRuntimeConfig config) {
         boolean expectedType = switch (config.destinationType()) {
         case QUEUE -> destination instanceof Queue;
         case TOPIC -> destination instanceof Topic;
@@ -66,7 +66,7 @@ final class JmsResourceResolver implements JmsConnectionFactoryResolver {
     }
 
     @Override
-    public ConnectionFactory resolve(JmsConnectorConfig config) {
+    public ConnectionFactory resolve(JmsRuntimeConfig config) {
         if (config.jndiConnectionFactory().isPresent()) {
             return lookup(config, config.jndiConnectionFactory().orElseThrow(), ConnectionFactory.class);
         }
@@ -82,7 +82,7 @@ final class JmsResourceResolver implements JmsConnectionFactoryResolver {
                                                                   + config.channelName()));
     }
 
-    private static <T> T lookup(JmsConnectorConfig config, String name, Class<T> type) {
+    private static <T> T lookup(JmsRuntimeConfig config, String name, Class<T> type) {
         Hashtable<String, String> environment = new Hashtable<>(config.jndiEnvironment());
         InitialContext context = null;
         Throwable lookupFailure = null;
@@ -109,7 +109,7 @@ final class JmsResourceResolver implements JmsConnectionFactoryResolver {
     }
 
     private static void closeContext(InitialContext context,
-                                     JmsConnectorConfig config,
+                                     JmsRuntimeConfig config,
                                      String name,
                                      Throwable lookupFailure) {
         try {

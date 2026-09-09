@@ -22,7 +22,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import io.helidon.messaging.ConnectorDirection;
 
 import jakarta.jms.ConnectionFactory;
 import org.junit.jupiter.api.Test;
@@ -40,7 +39,7 @@ import static org.mockito.Mockito.verify;
 class JmsConnectionSupportTest {
     @Test
     void forceCloseRejectsNewConnectionsAndRetainsNoCredentialsInRuntimeConfig() {
-        JmsConnectorConfig source = config();
+        JmsRuntimeConfig source = config();
         AtomicBoolean resolved = new AtomicBoolean();
         JmsConnectionSupport support = new JmsConnectionSupport(
                 source,
@@ -102,11 +101,9 @@ class JmsConnectionSupportTest {
         verify(factory, never()).createConnection(anyString(), anyString());
     }
 
-    private static JmsConnectorConfig config() {
-        return JmsConnectorConfig.builder()
-                .direction(ConnectorDirection.OUTGOING)
+    private static JmsRuntimeConfig config() {
+        return JmsRuntimeConfig.builder()
                 .channelName("orders")
-                .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("orders")
                 .username("scott")
                 .password("tiger")

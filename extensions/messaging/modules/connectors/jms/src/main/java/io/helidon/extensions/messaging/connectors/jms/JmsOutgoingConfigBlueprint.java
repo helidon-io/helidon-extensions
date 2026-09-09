@@ -16,9 +16,23 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
-import jakarta.jms.ConnectionFactory;
+import io.helidon.builder.api.Option;
+import io.helidon.builder.api.Prototype;
+import io.helidon.common.Api;
 
-@FunctionalInterface
-interface JmsConnectionFactoryResolver {
-    ConnectionFactory resolve(JmsRuntimeConfig config);
+/**
+ * Outgoing JMS channel configuration. Absent options inherit the connector's defaults.
+ */
+@Api.Preview
+@Prototype.Blueprint
+@Prototype.Configured
+interface JmsOutgoingConfigBlueprint extends JmsChannelConfigBlueprint {
+    /**
+     * Logical messaging channel name.
+     *
+     * @return channel name
+     */
+    @Option.Configured
+    String channelName();
+
 }

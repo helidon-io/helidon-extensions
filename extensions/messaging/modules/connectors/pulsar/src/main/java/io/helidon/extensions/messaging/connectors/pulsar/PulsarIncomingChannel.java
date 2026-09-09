@@ -17,7 +17,6 @@
 package io.helidon.extensions.messaging.connectors.pulsar;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
@@ -32,62 +31,58 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
+import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorConfigSupport.IncomingSettings;
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
-import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingChannel;
 
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.PulsarClientException;
 
-final class PulsarIncomingConnector {
+final class PulsarIncomingChannel {
     private static final Duration RESERVATION_RETRY_DELAY = Duration.ofMillis(100);
 
     private final ClientFactory clientFactory;
 
-    PulsarIncomingConnector() {
-        this(PulsarConnectorConfigSupport::createClient);
+    PulsarIncomingChannel() {
+        this(config -> PulsarConnectorConfigSupport.createClient(config.serviceUrl(), config.clientProperties()));
     }
 
-    PulsarIncomingConnector(ClientFactory clientFactory) {
+    PulsarIncomingChannel(ClientFactory clientFactory) {
         this.clientFactory = Objects.requireNonNull(clientFactory);
     }
 
-    IncomingConnector createIncomingConnector(PulsarConnectorConfig config) {
-        validateDirection(config);
-        return createIncomingConnector(config,
-                                       PulsarSchemaResolver.resolve(config,
-                                                                    ConnectorDirection.INCOMING,
-                                                                    List::of));
+    IncomingChannel createIncomingChannel(PulsarConnectorConfig connectorConfig, PulsarIncomingConfig config) {
+        IncomingSettings settings = PulsarConnectorConfigSupport.incoming(Objects.requireNonNull(connectorConfig),
+                                                                           Objects.requireNonNull(config));
+        return new Connector(settings,
+                             PulsarSchemaResolver.resolve(settings.channelName(),
+                                                          settings.schema(),
+                                                          settings.schemaProvider(),
+                                                          true,
+                                                          connectorConfig::schemaProviders));
     }
 
-    IncomingConnector createIncomingConnector(PulsarConnectorConfig config,
-                                               PulsarSchemaResolver.ResolvedSchema schema) {
-        validateDirection(config);
-        return new Connector(config, Objects.requireNonNull(schema));
-    }
-
-    private static void validateDirection(PulsarConnectorConfig config) {
-        Objects.requireNonNull(config);
-        if (config.direction() != ConnectorDirection.INCOMING) {
-            throw new IllegalArgumentException("Pulsar connector configuration for channel " + config.channelName()
-                                                       + " has direction " + config.direction()
-                                                       + ", expected " + ConnectorDirection.INCOMING);
-        }
+    IncomingChannel createIncomingChannel(PulsarConnectorConfig connectorConfig,
+                                       PulsarIncomingConfig config,
+                                       PulsarSchemaResolver.ResolvedSchema schema) {
+        return new Connector(PulsarConnectorConfigSupport.incoming(Objects.requireNonNull(connectorConfig),
+                                                                      Objects.requireNonNull(config)),
+                             Objects.requireNonNull(schema));
     }
 
     @FunctionalInterface
     interface ClientFactory {
-        PulsarClient create(PulsarConnectorConfig config) throws PulsarClientException;
+        PulsarClient create(IncomingSettings config) throws PulsarClientException;
     }
 
-    private final class Connector implements IncomingConnector {
-        private final PulsarConnectorConfig config;
+    private final class Connector implements IncomingChannel {
+        private final IncomingSettings config;
         private final PulsarSchemaResolver.ResolvedSchema schema;
         private final AtomicBoolean draining = new AtomicBoolean();
         private final AtomicBoolean closeRequested = new AtomicBoolean();
@@ -109,7 +104,7 @@ final class PulsarIncomingConnector {
         private volatile IncomingConnectorContext context;
         private boolean deliveryStarting;
 
-        private Connector(PulsarConnectorConfig config, PulsarSchemaResolver.ResolvedSchema schema) {
+        private Connector(IncomingSettings config, PulsarSchemaResolver.ResolvedSchema schema) {
             this.config = config;
             this.schema = schema;
         }

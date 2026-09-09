@@ -40,7 +40,7 @@ import jakarta.jms.ConnectionFactory;
 import jakarta.jms.JMSException;
 
 final class JmsConnectionSupport {
-    private final JmsConnectorConfig config;
+    private final JmsRuntimeConfig config;
     private final JmsConnectionFactoryResolver resolver;
     private final String username;
     private final char[] password;
@@ -54,15 +54,15 @@ final class JmsConnectionSupport {
     private Throwable closeFailure;
     private boolean closeRequested;
 
-    JmsConnectionSupport(JmsConnectorConfig config, JmsConnectionFactoryResolver resolver) {
-        JmsConnectorConfig source = Objects.requireNonNull(config);
+    JmsConnectionSupport(JmsRuntimeConfig config, JmsConnectionFactoryResolver resolver) {
+        JmsRuntimeConfig source = Objects.requireNonNull(config);
         this.resolver = Objects.requireNonNull(resolver);
         this.username = source.username().orElse(null);
         this.password = source.password().map(char[]::clone).orElse(null);
         this.config = credentialFreeConfig(source);
     }
 
-    JmsConnectorConfig runtimeConfig() {
+    JmsRuntimeConfig runtimeConfig() {
         return config;
     }
 
@@ -188,8 +188,8 @@ final class JmsConnectionSupport {
         }
     }
 
-    private static JmsConnectorConfig credentialFreeConfig(JmsConnectorConfig config) {
-        return JmsConnectorConfig.builder()
+    private static JmsRuntimeConfig credentialFreeConfig(JmsRuntimeConfig config) {
+        return JmsRuntimeConfig.builder()
                 .from(config)
                 .clearUsername()
                 .clearPassword()

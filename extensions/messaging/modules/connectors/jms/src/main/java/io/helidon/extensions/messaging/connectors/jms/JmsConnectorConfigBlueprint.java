@@ -17,90 +17,33 @@
 package io.helidon.extensions.messaging.connectors.jms;
 
 import java.time.Duration;
-import java.util.Map;
 import java.util.Optional;
-import java.util.function.Supplier;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
 import io.helidon.common.Api;
-import io.helidon.messaging.spi.ConnectorConfig;
+import io.helidon.messaging.spi.MessagingConnectorProvider;
+import io.helidon.messaging.spi.MessagingConnectorProviderConfig;
 
 /**
- * JMS connector configuration.
+ * Configuration of a named JMS connector and defaults shared by its channels.
+ * Resource lookup and connection creation are deferred until a channel starts.
  */
 @Api.Preview
 @Prototype.Blueprint(decorator = JmsConnectorConfigSupport.BuilderDecorator.class)
-@Prototype.Configured
 @Prototype.CustomMethods(JmsConnectorConfigSupport.class)
-interface JmsConnectorConfigBlueprint extends ConnectorConfig {
-    /**
-     * Name of a Jakarta JMS {@code ConnectionFactory} in the Helidon Service Registry.
-     * When absent, the first registered factory is used unless JNDI is configured.
-     *
-     * @return named connection factory
-     */
-    @Option.Configured(JmsConnectorConfigSupport.CONNECTION_FACTORY_PROPERTY)
-    Optional<String> connectionFactory();
-
-    /**
-     * JNDI name of the JMS connection factory.
-     *
-     * @return JNDI connection factory name
-     */
-    @Option.Configured(JmsConnectorConfigSupport.JNDI_CONNECTION_FACTORY_PROPERTY)
-    Optional<String> jndiConnectionFactory();
-
-    /**
-     * JNDI name of the destination. When absent, {@link #destination()} is created through the JMS session.
-     *
-     * @return JNDI destination name
-     */
-    @Option.Configured(JmsConnectorConfigSupport.JNDI_DESTINATION_PROPERTY)
-    Optional<String> jndiDestination();
-
-    /**
-     * JNDI initial-context environment.
-     *
-     * @return JNDI environment
-     */
-    @Option.Configured(JmsConnectorConfigSupport.JNDI_ENVIRONMENT_PROPERTY)
-    @Option.Confidential
-    @Option.Singular("jndiEnvironmentProperty")
-    Map<String, String> jndiEnvironment();
-
-    /**
-     * JMS destination name used to create a queue or topic through the session.
-     *
-     * @return destination name
-     */
-    @Option.Configured(JmsConnectorConfigSupport.DESTINATION_PROPERTY)
-    Optional<String> destination();
-
-    /**
-     * JMS destination type.
-     *
-     * @return destination type
-     */
-    @Option.Configured(JmsConnectorConfigSupport.DESTINATION_TYPE_PROPERTY)
-    @Option.DefaultCode("JmsDestinationType.QUEUE")
-    JmsDestinationType destinationType();
-
-    /**
-     * JMS connection user name.
-     *
-     * @return connection user name
-     */
-    @Option.Configured(JmsConnectorConfigSupport.USERNAME_PROPERTY)
-    Optional<String> username();
-
+@Prototype.Configured(value = JmsConnectorProvider.CONNECTOR_TYPE, root = false)
+@Prototype.Provides(MessagingConnectorProvider.class)
+interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, JmsChannelOptions,
+                                             Prototype.Factory<JmsConnector> {
     /**
      * JMS connection password read from configuration. This value is moved to {@link #passwordSource()} and cleared from
      * the builder before the prototype is created.
      *
      * @return configured password
      */
-    @Option.Configured(JmsConnectorConfigSupport.PASSWORD_PROPERTY)
+    @Override
+    @Option.Configured(JmsRuntimeConfigSupport.PASSWORD_PROPERTY)
     @Option.Confidential
     @Option.Access("")
     @Option.Decorator(JmsConnectorConfigSupport.ConfiguredPasswordDecorator.class)
@@ -108,41 +51,11 @@ interface JmsConnectorConfigBlueprint extends ConnectorConfig {
     Optional<String> configuredPassword();
 
     /**
-     * Internal source of defensive password copies.
-     *
-     * @return configured password source
-     */
-    @Option.Confidential
-    @Option.Access("")
-    @Option.DefaultCode("java.util.Optional.empty()")
-    @Option.Redundant(equality = true, stringValue = false)
-    Supplier<Optional<char[]>> passwordSource();
-
-    /**
-     * JMS connection password. Each invocation returns a defensive copy. Implementations must avoid retaining a
-     * {@link String} representation beyond the {@code ConnectionFactory.createConnection} call.
-     *
-     * @return configured password characters
-     */
-    default Optional<char[]> password() {
-        return passwordSource().get().map(char[]::clone);
-    }
-
-    /**
-     * JMS connection client identifier assigned by the application. Omit this option when the connection factory
-     * supplies an administratively configured client identifier.
-     *
-     * @return client identifier
-     */
-    @Option.Configured(JmsConnectorConfigSupport.CLIENT_ID_PROPERTY)
-    Optional<String> clientId();
-
-    /**
      * Incoming JMS selector.
      *
      * @return selector
      */
-    @Option.Configured(JmsConnectorConfigSupport.MESSAGE_SELECTOR_PROPERTY)
+    @Option.Configured(JmsRuntimeConfigSupport.MESSAGE_SELECTOR_PROPERTY)
     Optional<String> messageSelector();
 
     /**
@@ -150,16 +63,16 @@ interface JmsConnectorConfigBlueprint extends ConnectorConfig {
      *
      * @return whether the subscription is durable
      */
-    @Option.Configured(JmsConnectorConfigSupport.DURABLE_PROPERTY)
+    @Option.Configured(JmsRuntimeConfigSupport.DURABLE_PROPERTY)
     @Option.DefaultBoolean(false)
-    boolean durable();
+    Optional<Boolean> durable();
 
     /**
      * Durable topic subscription name.
      *
      * @return subscription name
      */
-    @Option.Configured(JmsConnectorConfigSupport.SUBSCRIPTION_NAME_PROPERTY)
+    @Option.Configured(JmsRuntimeConfigSupport.SUBSCRIPTION_NAME_PROPERTY)
     Optional<String> subscriptionName();
 
     /**
@@ -167,28 +80,9 @@ interface JmsConnectorConfigBlueprint extends ConnectorConfig {
      *
      * @return whether the subscription is no-local
      */
-    @Option.Configured(JmsConnectorConfigSupport.NO_LOCAL_PROPERTY)
+    @Option.Configured(JmsRuntimeConfigSupport.NO_LOCAL_PROPERTY)
     @Option.DefaultBoolean(false)
-    boolean noLocal();
-
-    /**
-     * Whether the connector uses a local JMS transaction for settlement.
-     *
-     * @return whether the JMS session is transacted
-     */
-    @Option.Configured(JmsConnectorConfigSupport.TRANSACTED_PROPERTY)
-    @Option.DefaultBoolean(false)
-    boolean transacted();
-
-    /**
-     * Whether Java object messages may be serialized and deserialized.
-     * This is disabled by default because deserializing untrusted Java objects is unsafe.
-     *
-     * @return whether object messages are allowed
-     */
-    @Option.Configured(JmsConnectorConfigSupport.ALLOW_OBJECT_MESSAGES_PROPERTY)
-    @Option.DefaultBoolean(false)
-    boolean allowObjectMessages();
+    Optional<Boolean> noLocal();
 
     /**
      * Maximum number of bytes retained for one incoming JMS message body.
@@ -198,52 +92,87 @@ interface JmsConnectorConfigBlueprint extends ConnectorConfig {
      *
      * @return maximum incoming bytes-message body size
      */
-    @Option.Configured(JmsConnectorConfigSupport.MAX_BODY_BYTES_PROPERTY)
-    @Option.DefaultCode("JmsConnectorConfigSupport.DEFAULT_MAX_BODY_BYTES")
-    int maxBodyBytes();
+    @Option.Configured(JmsRuntimeConfigSupport.MAX_BODY_BYTES_PROPERTY)
+    @Option.DefaultCode("JmsRuntimeConfigSupport.DEFAULT_MAX_BODY_BYTES")
+    Optional<Integer> maxBodyBytes();
 
     /**
      * Maximum duration of one incoming synchronous receive call.
      *
      * @return receive timeout
      */
-    @Option.Configured(JmsConnectorConfigSupport.RECEIVE_TIMEOUT_PROPERTY)
-    @Option.Default(JmsConnectorConfigSupport.DEFAULT_RECEIVE_TIMEOUT)
-    Duration receiveTimeout();
+    @Option.Configured(JmsRuntimeConfigSupport.RECEIVE_TIMEOUT_PROPERTY)
+    @Option.Default(JmsRuntimeConfigSupport.DEFAULT_RECEIVE_TIMEOUT)
+    Optional<Duration> receiveTimeout();
+
+    /**
+     * JMS destination type.
+     *
+     * @return destination type
+     */
+    @Override
+    @Option.Configured(JmsRuntimeConfigSupport.DESTINATION_TYPE_PROPERTY)
+    @Option.DefaultCode("JmsDestinationType.QUEUE")
+    Optional<JmsDestinationType> destinationType();
+
+    /**
+     * Whether the connector uses a local JMS transaction for settlement.
+     *
+     * @return whether the JMS session is transacted
+     */
+    @Override
+    @Option.Configured(JmsRuntimeConfigSupport.TRANSACTED_PROPERTY)
+    @Option.DefaultBoolean(false)
+    Optional<Boolean> transacted();
+
+    /**
+     * Whether Java object messages may be serialized and deserialized.
+     * This is disabled by default because deserializing untrusted Java objects is unsafe.
+     *
+     * @return whether object messages are allowed
+     */
+    @Override
+    @Option.Configured(JmsRuntimeConfigSupport.ALLOW_OBJECT_MESSAGES_PROPERTY)
+    @Option.DefaultBoolean(false)
+    Optional<Boolean> allowObjectMessages();
 
     /**
      * Maximum duration for connector-owned graceful JMS resource cleanup.
      *
      * @return close timeout
      */
-    @Option.Configured(JmsConnectorConfigSupport.CLOSE_TIMEOUT_PROPERTY)
-    @Option.Default(JmsConnectorConfigSupport.DEFAULT_CLOSE_TIMEOUT)
-    Duration closeTimeout();
+    @Override
+    @Option.Configured(JmsRuntimeConfigSupport.CLOSE_TIMEOUT_PROPERTY)
+    @Option.Default(JmsRuntimeConfigSupport.DEFAULT_CLOSE_TIMEOUT)
+    Optional<Duration> closeTimeout();
 
     /**
      * Initial delay between reconnection attempts, which must be at least 1 millisecond.
      *
      * @return initial reconnect delay
      */
-    @Option.Configured(JmsConnectorConfigSupport.RECONNECT_INITIAL_DELAY_PROPERTY)
-    @Option.Default(JmsConnectorConfigSupport.DEFAULT_RECONNECT_INITIAL_DELAY)
-    Duration reconnectInitialDelay();
+    @Override
+    @Option.Configured(JmsRuntimeConfigSupport.RECONNECT_INITIAL_DELAY_PROPERTY)
+    @Option.Default(JmsRuntimeConfigSupport.DEFAULT_RECONNECT_INITIAL_DELAY)
+    Optional<Duration> reconnectInitialDelay();
 
     /**
      * Maximum delay between reconnection attempts, which must be at least 1 millisecond.
      *
      * @return maximum reconnect delay
      */
-    @Option.Configured(JmsConnectorConfigSupport.RECONNECT_MAX_DELAY_PROPERTY)
-    @Option.Default(JmsConnectorConfigSupport.DEFAULT_RECONNECT_MAX_DELAY)
-    Duration reconnectMaxDelay();
+    @Override
+    @Option.Configured(JmsRuntimeConfigSupport.RECONNECT_MAX_DELAY_PROPERTY)
+    @Option.Default(JmsRuntimeConfigSupport.DEFAULT_RECONNECT_MAX_DELAY)
+    Optional<Duration> reconnectMaxDelay();
 
     /**
      * Fractional random variation applied to a reconnect delay, in the range {@code [0, 1)}.
      *
      * @return reconnect jitter fraction
      */
-    @Option.Configured(JmsConnectorConfigSupport.RECONNECT_JITTER_PROPERTY)
+    @Override
+    @Option.Configured(JmsRuntimeConfigSupport.RECONNECT_JITTER_PROPERTY)
     @Option.DefaultDouble(0.2)
-    double reconnectJitter();
+    Optional<Double> reconnectJitter();
 }

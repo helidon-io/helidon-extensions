@@ -17,13 +17,16 @@ second Pulsar client dependency.
 
 ## Configuration
 
-Connector defaults can be shared under `messaging.connector.helidon-pulsar`. Channel settings override those
-defaults.
+Declare named connector instances under `messaging.connector`, then select an instance from each channel. The connector
+owns its shared client configuration and channel defaults. Channel options override the corresponding connector values;
+client, consumer, and producer property maps merge by key, with channel values taking precedence. This applies equally to
+typed builders and configuration nodes.
 
 ```yaml
 messaging:
   connector:
-    helidon-pulsar:
+    orders-broker:
+      type: helidon-pulsar
       service-url: pulsar://pulsar.example:6650
       schema: STRING
       receive-timeout: PT0.1S
@@ -34,19 +37,26 @@ messaging:
 
   incoming:
     orders:
-      connector: helidon-pulsar
+      connector: orders-broker
       topic: persistent://commerce/orders/order-events
       subscription-name: inventory-service
       subscription-type: EXCLUSIVE
       subscription-initial-position: LATEST
+      receive-timeout: PT0.1S
+      settlement-timeout: PT30S
+      negative-ack-redelivery-delay: PT1S
+      close-timeout: PT10S
 
   outgoing:
     order-results:
-      connector: helidon-pulsar
+      connector: orders-broker
       topic: persistent://commerce/orders/order-results
+      send-timeout: PT30S
+      close-timeout: PT10S
 ```
 
-`service-url` and `topic` are required. For an incoming binding, `subscription-name` defaults to the channel name.
+The connector requires `service-url`. A channel requires an effective `topic`, supplied either by the connector default
+or by its own configuration. Connector creation does not require a topic or channel name. For an incoming binding, `subscription-name` defaults to the channel name.
 Pulsar's durable subscription mode, `EXCLUSIVE` subscription type, and `LATEST` initial position are the defaults. The
 initial position applies only when the broker creates a new subscription; reconnecting an existing durable subscription
 continues at its stored cursor.
@@ -97,18 +107,21 @@ class OrderSchemaProvider implements PulsarSchemaProvider {
 
 ```yaml
 messaging:
+  connector:
+    orders-broker:
+      type: helidon-pulsar
+      service-url: pulsar://pulsar.example:6650
   outgoing:
     orders:
-      connector: helidon-pulsar
-      service-url: pulsar://pulsar.example:6650
+      connector: orders-broker
       topic: persistent://commerce/orders/order-events
       schema-provider: orders-json
 ```
 
 Provider names are exact and case-sensitive. `schema-provider` overrides `schema`; missing or duplicate providers fail
 when the binding is created, before a Pulsar client is allocated. The connector invokes `schema()` once per binding, so
-the returned schema must be safe for that binding. Imperative applications can pass providers to
-`PulsarConnectorProvider.create(provider1, provider2)`.
+the returned schema must be safe for that binding. Imperative applications can register schema objects through
+`PulsarConnector.builder().addSchemaProvider(provider)`.
 
 Configure a compatible schema for every producer and consumer of a topic. The connector validates built-in payload
 types without numeric widening or string coercion. It defensively snapshots mutable built-in values (`byte[]`,
@@ -118,6 +131,42 @@ Incoming buffering defaults to `receiver-queue-size: 1` per topic partition. Pul
 each partition, while the connector acquires only one message after reserving Helidon retained-delivery capacity.
 `max-message-bytes` defaults to 10 MiB and rejects an oversized encoded payload before runtime dispatch.
 `settlement-timeout` bounds how long the connector waits for broker acknowledgment after successful runtime processing.
+
+## Imperative channels
+
+Use a configured connector to create typed incoming and outgoing channels. Neither the connector provider nor a raw
+configuration tree is needed:
+
+```java
+PulsarConnector pulsar = PulsarConnector.builder()
+        .name("orders-broker")
+        .serviceUrl("pulsar://localhost:6650")
+        .schema(PulsarSchemaType.STRING)
+        .build();
+
+MessagingGraph.Builder builder = MessagingGraph.builder();
+MessagingChannel<String> incoming = builder.channel("orders", String.class);
+MessagingChannel<String> outgoing = builder.channel("order-results", String.class);
+
+builder.incomingChannel(incoming, pulsar.incoming(PulsarIncomingConfig.builder()
+                .channelName("orders")
+                .topic("persistent://commerce/orders/order-events")
+                .subscriptionName("inventory-service")
+                .build()))
+        .messageSink(incoming, message -> process(message.entity()));
+builder.outgoingChannel(outgoing, pulsar.outgoing(PulsarOutgoingConfig.builder()
+        .channelName("order-results")
+        .topic("persistent://commerce/orders/order-results")
+        .build()));
+
+MessagingGraph graph = builder.build();
+Emitter<String> emitter = graph.emitter(outgoing);
+graph.start();
+emitter.emit("processed");
+```
+
+The graph owns channel lifecycle; close it when the application stops. Each channel resolves its overrides against the connector's defaults and
+creates its own lifecycle-managed client resources.
 
 ## Native messages
 
