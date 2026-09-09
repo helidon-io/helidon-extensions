@@ -44,9 +44,9 @@
 
     <properties>
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
+        <version.java>26</version.java>
         <version.lib.artemis>2.55.0</version.lib.artemis>
         <version.lib.jakarta.jms-api>3.1.0</version.lib.jakarta.jms-api>
-        <version.lib.kafka>4.3.1</version.lib.kafka>
         <version.lib.pulsar>4.0.13</version.lib.pulsar>
     </properties>
 
@@ -63,11 +63,6 @@
                 <groupId>jakarta.jms</groupId>
                 <artifactId>jakarta.jms-api</artifactId>
                 <version>${version.lib.jakarta.jms-api}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.kafka</groupId>
-                <artifactId>kafka-clients</artifactId>
-                <version>${version.lib.kafka}</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.pulsar</groupId>

@@ -36,7 +36,7 @@ final class KafkaScenarioRegistry {
     private static final List<ServiceDescriptor<?>> DISCOVERED_DESCRIPTORS = ServiceDiscovery.create()
             .allMetadata()
             .stream()
-            .map(DescriptorHandler::descriptor)
+            .<ServiceDescriptor<?>>map(DescriptorHandler::descriptor)
             .toList();
 
     private KafkaScenarioRegistry() {

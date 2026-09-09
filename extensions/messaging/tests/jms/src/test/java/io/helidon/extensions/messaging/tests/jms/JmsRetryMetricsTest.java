@@ -21,13 +21,13 @@ import java.util.Map;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
-import io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfig;
-import io.helidon.extensions.messaging.connectors.jms.JmsConnectorProvider;
+import io.helidon.extensions.messaging.connectors.jms.JmsConnector;
+import io.helidon.extensions.messaging.connectors.jms.JmsIncomingConfig;
+import io.helidon.extensions.messaging.connectors.jms.JmsOutgoingConfig;
 import io.helidon.faulttolerance.FaultTolerance;
 import io.helidon.faulttolerance.Retry;
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.spi.IncomingConnector;
-import io.helidon.messaging.spi.OutgoingConnector;
+import io.helidon.messaging.spi.IncomingChannel;
+import io.helidon.messaging.spi.OutgoingChannel;
 import io.helidon.metrics.api.Meter;
 import io.helidon.metrics.api.MeterRegistry;
 import io.helidon.service.registry.Services;
@@ -60,15 +60,23 @@ class JmsRetryMetricsTest {
         removeRetryMetrics(meterRegistry, retryPrefix);
 
         try (ActiveMQConnectionFactory connectionFactory = new ActiveMQConnectionFactory("tcp://localhost:61616")) {
-            JmsConnectorProvider provider = JmsConnectorProvider.create(connectionFactory);
-            try (IncomingConnector incomingOrders = provider.createIncomingConnector(config("orders",
-                                                                                           ConnectorDirection.INCOMING));
-                    IncomingConnector incomingAudit = provider.createIncomingConnector(config("audit",
-                                                                                          ConnectorDirection.INCOMING));
-                    OutgoingConnector outgoingOrders = provider.createOutgoingConnector(config("orders",
-                                                                                           ConnectorDirection.OUTGOING));
-                    OutgoingConnector outgoingAudit = provider.createOutgoingConnector(config("audit",
-                                                                                          ConnectorDirection.OUTGOING))) {
+            JmsConnector connector = JmsConnector.builder()
+                    .name("test-jms")
+                    .connectionFactory(connectionFactory)
+                    .destination("events")
+                    .build();
+            try (IncomingChannel incomingOrders = connector.incoming(JmsIncomingConfig.builder()
+                                                                             .channelName("orders")
+                                                                             .build());
+                    IncomingChannel incomingAudit = connector.incoming(JmsIncomingConfig.builder()
+                                                                               .channelName("audit")
+                                                                               .build());
+                    OutgoingChannel outgoingOrders = connector.outgoing(JmsOutgoingConfig.builder()
+                                                                                .channelName("orders")
+                                                                                .build());
+                    OutgoingChannel outgoingAudit = connector.outgoing(JmsOutgoingConfig.builder()
+                                                                               .channelName("audit")
+                                                                               .build())) {
                 assertThat(retryMetricNames(meterRegistry, retryPrefix),
                            containsInAnyOrder("messaging-jms-incoming-reconnect-orders",
                                               "messaging-jms-incoming-reconnect-audit",
@@ -78,15 +86,6 @@ class JmsRetryMetricsTest {
         } finally {
             removeRetryMetrics(meterRegistry, retryPrefix);
         }
-    }
-
-    private static JmsConnectorConfig config(String channelName, ConnectorDirection direction) {
-        return JmsConnectorConfig.builder()
-                .direction(direction)
-                .channelName(channelName)
-                .connector(JmsConnectorProvider.CONNECTOR_TYPE)
-                .destination("events")
-                .build();
     }
 
     private static List<String> retryMetricNames(MeterRegistry meterRegistry, String retryPrefix) {

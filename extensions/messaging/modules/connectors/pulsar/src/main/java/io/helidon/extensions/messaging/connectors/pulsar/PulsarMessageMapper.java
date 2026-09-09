@@ -24,6 +24,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
+import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorConfigSupport.IncomingSettings;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageHeader;
@@ -60,7 +61,7 @@ final class PulsarMessageMapper {
     }
 
     static PulsarMessage<Object> fromPulsarMessage(org.apache.pulsar.client.api.Message<Object> message,
-                                                   PulsarConnectorConfig config,
+                                                   IncomingSettings config,
                                                    PulsarSchemaResolver.ResolvedSchema schema) {
         Objects.requireNonNull(message);
         int size = message.size();

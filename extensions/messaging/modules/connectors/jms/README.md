@@ -19,16 +19,29 @@ implementation.
 
 The connector resolves a connection factory in one of three ways.
 
-### Imperative provider
+### Imperative connector
 
-For an imperatively assembled messaging graph, construct the provider directly:
+For an imperatively assembled messaging graph, create one configured connector and typed channel configurations:
 
 ```java
 ConnectionFactory factory = createVendorConnectionFactory();
-JmsConnectorProvider provider = JmsConnectorProvider.create(factory);
+JmsConnector jms = JmsConnector.builder()
+        .name("orders-jms")
+        .connectionFactory(factory)
+        .build();
+
+IncomingChannel orders = jms.incoming(JmsIncomingConfig.builder()
+        .channelName("orders")
+        .destination("orders")
+        .build());
+OutgoingChannel results = jms.outgoing(JmsOutgoingConfig.builder()
+        .channelName("order-results")
+        .destination("order-results")
+        .build());
 ```
 
-Every binding created by this provider uses that factory.
+Each channel inherits the connector's factory and defaults. Register these channels with `MessagingGraph.Builder.incomingChannel`
+and `outgoingChannel`; the graph owns their startup and shutdown. Channel creation does not open a connection.
 
 ### Service Registry
 
@@ -47,7 +60,9 @@ ServiceRegistryManager.start(ApplicationBinding.create(), registryConfig);
 generated binding can pass the same configuration to their normal `ServiceRegistryManager.start` call.
 
 When several factories are needed, expose qualified instances through a
-`Service.ServicesFactory<ConnectionFactory>` and select one with `connection-factory` in channel configuration. A
+`Service.ServicesFactory<ConnectionFactory>` and select one with `connection-factory` in connector or channel configuration.
+The corresponding typed builder method is `connectionFactoryName(String)`; `connectionFactory(ConnectionFactory)` supplies an
+actual factory. A
 configured name must resolve exactly; it does not fall back to the default factory.
 
 ### JNDI
@@ -69,12 +84,15 @@ Do not combine `connection-factory` with `jndi.connection-factory`, or `destinat
 
 ## Configuration
 
-Connector defaults can be shared under `messaging.connector.helidon-jms`. Channel settings override them.
+Named connector instances live under `messaging.connector`. The instance name is the channel's `connector` reference;
+`type` identifies the provider. Connector defaults are captured when the configured connector is created. Only explicitly
+supplied channel options override them, including `false` boolean values.
 
 ```yaml
 messaging:
   connector:
-    helidon-jms:
+    orders-jms:
+      type: helidon-jms
       connection-factory: primary-jms
       reconnect:
         initial-delay: PT0.1S
@@ -86,19 +104,33 @@ messaging:
 
   incoming:
     orders:
-      connector: helidon-jms
+      connector: orders-jms
       destination: orders
       destination-type: QUEUE
       message-selector: "region = 'EU'"
 
   outgoing:
     order-results:
-      connector: helidon-jms
+      connector: orders-jms
       destination: order-results
       destination-type: QUEUE
 ```
 
-Connection credentials are optional but must be supplied together:
+The list form is also supported:
+
+```yaml
+messaging:
+  connector:
+    - name: orders-jms
+      type: helidon-jms
+      connection-factory: primary-jms
+```
+
+`JmsConnectorProvider` only creates a named configured connector. `JmsConnector` creates `IncomingChannel` and
+`OutgoingChannel` instances from channel configuration, or from `JmsIncomingConfig` and `JmsOutgoingConfig` for imperative use.
+Incoming subscription defaults apply only to incoming channels.
+
+Connection credentials are optional but must be supplied together after common defaults and channel overrides are applied:
 
 ```yaml
 username: app-user
@@ -120,9 +152,12 @@ identifier:
 
 ```yaml
 messaging:
+  connector:
+    orders-jms:
+      type: helidon-jms
   incoming:
     notifications:
-      connector: helidon-jms
+      connector: orders-jms
       destination: notifications
       destination-type: TOPIC
       durable: true
@@ -134,7 +169,8 @@ messaging:
 Omit `client-id` when the `ConnectionFactory` supplies an administratively configured client identifier. An explicitly
 configured `client-id` is set immediately after creating the connection and cannot override an administered identifier.
 
-`no-local` is valid only for topics. Subscription options are rejected for outgoing bindings.
+`no-local` is valid only for topics. Incoming subscription options belong to `JmsIncomingConfig` and are not exposed by
+`JmsOutgoingConfig`.
 
 ## Declarative usage
 

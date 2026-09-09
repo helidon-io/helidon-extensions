@@ -18,326 +18,149 @@ package io.helidon.extensions.messaging.connectors.jms;
 
 import java.time.Duration;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.MessagingException;
-import io.helidon.service.registry.ServiceRegistry;
+import io.helidon.messaging.spi.MessagingConnector;
+import io.helidon.messaging.spi.OutgoingChannel;
 
+import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;
+import jakarta.jms.MessageProducer;
 import jakarta.jms.Queue;
-import jakarta.jms.Topic;
+import jakarta.jms.Session;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.sameInstance;
+import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 
 class JmsConnectorConfigTest {
     @Test
-    void testDefaultsAndNestedConfiguration() {
-        JmsConnectorConfig config = JmsConnectorConfig.create(Config.just(ConfigSources.create(Map.ofEntries(
-                Map.entry("direction", "INCOMING"),
-                Map.entry("channel-name", "orders"),
-                Map.entry("connector", JmsConnectorProvider.CONNECTOR_TYPE),
-                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
-                Map.entry(JmsConnectorConfig.DESTINATION_TYPE_PROPERTY, "QUEUE"),
-                Map.entry(JmsConnectorConfig.RECONNECT_INITIAL_DELAY_PROPERTY, "PT1S"),
-                Map.entry(JmsConnectorConfig.RECONNECT_MAX_DELAY_PROPERTY, "PT10S"),
-                Map.entry("jndi.environment.java.naming.factory.initial", "example.Factory")))));
+    void testConnectorAndTypedChannelsDoNotResolveResourcesUntilStarted() {
+        ConnectionFactory factory = mock(ConnectionFactory.class);
+        JmsConnector connector = JmsConnector.builder()
+                .name("orders-jms")
+                .connectionFactory(factory)
+                .build();
 
-        assertThat(config.destination().orElseThrow(), is("orders"));
-        assertThat(config.destinationType(), is(JmsDestinationType.QUEUE));
-        assertThat(config.receiveTimeout(), is(Duration.ofMillis(100)));
-        assertThat(config.reconnectInitialDelay(), is(Duration.ofSeconds(1)));
-        assertThat(config.reconnectMaxDelay(), is(Duration.ofSeconds(10)));
-        assertThat(config.allowObjectMessages(), is(false));
-        assertThat(config.maxBodyBytes(), is(JmsConnectorConfig.DEFAULT_MAX_BODY_BYTES));
-        assertThat(config.jndiEnvironment(),
-                   is(Map.of("java.naming.factory.initial", "example.Factory")));
+        assertThat(connector.incoming(JmsIncomingConfig.builder()
+                                             .channelName("orders")
+                                             .destination("orders")
+                                             .build()), notNullValue());
+        assertThat(connector.outgoing(JmsOutgoingConfig.builder()
+                                             .channelName("audit")
+                                             .destination("audit")
+                                             .build()), notNullValue());
+        verifyZeroInteractions(factory);
     }
 
     @Test
-    void testCredentialsMustBePaired() {
-        assertThrows(IllegalArgumentException.class,
-                     () -> incomingBuilder().username("orders-user").build());
-        assertThrows(IllegalArgumentException.class,
-                     () -> incomingBuilder().password("secret".toCharArray()).build());
+    void testProviderCreatesNamedConnectorWithoutChannelConfiguration() {
+        MessagingConnector connector = new JmsConnectorProvider().create(
+                Config.just(ConfigSources.create(Map.of("transacted", "true",
+                                                       "reconnect.initial-delay", "PT1S",
+                                                       "reconnect.max-delay", "PT10S"))),
+                "orders-jms");
+
+        assertThat(connector.name(), is("orders-jms"));
+        assertThat(connector.type(), is(JmsConnectorProvider.CONNECTOR_TYPE));
+        JmsConnectorConfig prototype = ((JmsConnector) connector).prototype();
+        assertThat(prototype.transacted().orElseThrow(), is(true));
+        assertThat(prototype.reconnectInitialDelay().orElseThrow(), is(Duration.ofSeconds(1)));
+        assertThat(prototype.reconnectMaxDelay().orElseThrow(), is(Duration.ofSeconds(10)));
     }
 
     @Test
-    void testDurableSubscriptionRequirements() {
-        assertThrows(IllegalArgumentException.class,
-                     () -> incomingBuilder().durable(true).build());
-        assertThrows(IllegalArgumentException.class,
-                     () -> incomingBuilder()
-                             .destinationType(JmsDestinationType.TOPIC)
-                             .durable(true)
-                             .clientId("orders-client")
-                             .build());
+    void testOutgoingChannelInheritsCredentialsAndOverridesTransactionDefault() throws Exception {
+        ConnectionFactory factory = mock(ConnectionFactory.class);
+        Connection connection = mock(Connection.class);
+        Session session = mock(Session.class);
+        Queue queue = mock(Queue.class);
+        MessageProducer producer = mock(MessageProducer.class);
+        when(factory.createConnection("orders-user", "secret")).thenReturn(connection);
+        when(connection.createSession(false, Session.AUTO_ACKNOWLEDGE)).thenReturn(session);
+        when(session.createQueue("audit")).thenReturn(queue);
+        when(session.createProducer(queue)).thenReturn(producer);
 
-        JmsConnectorConfig config = incomingBuilder()
+        JmsConnector connector = JmsConnector.builder()
+                .name("orders-jms")
+                .connectionFactory(factory)
+                .username("orders-user")
+                .password("secret")
+                .transacted(true)
+                .destination("default-queue")
+                .build();
+        OutgoingChannel outgoing = connector.outgoing(JmsOutgoingConfig.builder()
+                                                             .channelName("audit")
+                                                             .destination("audit")
+                                                             .transacted(false)
+                                                             .build());
+        try {
+            outgoing.start();
+            verify(factory).createConnection("orders-user", "secret");
+            verify(connection).createSession(false, Session.AUTO_ACKNOWLEDGE);
+            verify(session).createQueue("audit");
+        } finally {
+            outgoing.close();
+        }
+    }
+
+    @Test
+    void testIncomingSubscriptionDefaultsAreValidatedWhenChannelIsCreated() {
+        JmsConnector connector = JmsConnector.builder()
+                .name("orders-jms")
                 .destinationType(JmsDestinationType.TOPIC)
                 .durable(true)
                 .subscriptionName("orders-subscription")
                 .build();
 
-        assertThat(config.durable(), is(true));
-        assertThat(config.clientId().isEmpty(), is(true));
+        assertThat(connector.incoming(JmsIncomingConfig.builder()
+                                             .channelName("orders")
+                                             .destination("orders")
+                                             .build()), notNullValue());
+        assertThrows(IllegalArgumentException.class,
+                     () -> connector.incoming(JmsIncomingConfig.builder()
+                                                      .channelName("orders")
+                                                      .destination("orders")
+                                                      .destinationType(JmsDestinationType.QUEUE)
+                                                      .build()));
     }
 
     @Test
-    void testResourceRoutesAreExclusive() {
-        assertThrows(IllegalArgumentException.class,
-                     () -> incomingBuilder()
-                             .connectionFactory("factory")
-                             .jndiConnectionFactory("jms/ConnectionFactory")
-                             .build());
-        assertThrows(IllegalArgumentException.class,
-                     () -> incomingBuilder()
-                             .jndiDestination("jms/orders")
-                             .build());
-    }
-
-    @Test
-    void testPasswordIsConfidential() {
-        JmsConnectorConfig config = incomingBuilder()
+    void testPasswordIsDefensivelyCopiedAndConfidentialInPublicBlueprints() {
+        char[] password = "secret".toCharArray();
+        JmsConnector connector = JmsConnector.builder()
+                .name("orders-jms")
                 .username("orders-user")
-                .password("secret".toCharArray())
+                .password(password)
                 .build();
-
-        assertThat(new String(config.password().orElseThrow()), is("secret"));
-        assertThat(config.toString().contains("secret"), is(false));
-    }
-
-    @Test
-    void testPasswordIsDefensivelyCopiedAcrossBuilderAndPrototypeBoundaries() {
-        char[] supplied = "secret".toCharArray();
-        JmsConnectorConfig.Builder builder = incomingBuilder()
-                .username("orders-user")
-                .password(supplied);
-        Arrays.fill(supplied, 'x');
-
-        char[] builderCopy = builder.passwordSource().get().orElseThrow();
-        assertThat(new String(builderCopy), is("secret"));
-        Arrays.fill(builderCopy, 'x');
-
-        JmsConnectorConfig config = builder.build();
-        char[] configCopy = config.password().orElseThrow();
-        assertThat(new String(configCopy), is("secret"));
-        Arrays.fill(configCopy, 'x');
-        char[] sourceCopy = config.passwordSource().get().orElseThrow();
-        Arrays.fill(sourceCopy, 'x');
-        assertThat(new String(config.password().orElseThrow()), is("secret"));
-
-        JmsConnectorConfig copied = JmsConnectorConfig.builder().from(config).build();
-        assertThat(new String(copied.password().orElseThrow()), is("secret"));
-    }
-
-    @Test
-    void testConfiguredPasswordIsMovedToDefensiveStorage() {
-        Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
-                Map.entry("direction", "INCOMING"),
-                Map.entry("channel-name", "orders"),
-                Map.entry("connector", JmsConnectorProvider.CONNECTOR_TYPE),
-                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
-                Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
-                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
-        JmsConnectorConfig.Builder builder = JmsConnectorConfig.builder().config(configSource);
-        assertThat(builder.configuredPassword().orElseThrow(), is("secret"));
-
-        JmsConnectorConfig config = builder.build();
-
-        assertThat(config.configuredPassword().isEmpty(), is(true));
-        char[] password = config.password().orElseThrow();
-        assertThat(new String(password), is("secret"));
         Arrays.fill(password, 'x');
-        assertThat(new String(config.password().orElseThrow()), is("secret"));
-    }
 
-    @Test
-    void testProgrammaticPasswordChangesClearConfiguredStaging() {
-        Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
-                Map.entry("direction", "INCOMING"),
-                Map.entry("channel-name", "orders"),
-                Map.entry("connector", JmsConnectorProvider.CONNECTOR_TYPE),
-                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
-                Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
-                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
-        JmsConnectorConfig.Builder replacing = JmsConnectorConfig.builder().config(configSource);
-        assertThat(replacing.configuredPassword().orElseThrow(), is("secret"));
+        assertThat(new String(connector.prototype().password().orElseThrow()), is("secret"));
+        char[] returned = connector.prototype().password().orElseThrow();
+        Arrays.fill(returned, 'x');
+        assertThat(new String(connector.prototype().password().orElseThrow()), is("secret"));
+        assertThat(connector.prototype().toString().contains("secret"), is(false));
 
-        JmsConnectorConfig replaced = replacing.password("replacement").build();
-
-        assertThat(replacing.configuredPassword().isEmpty(), is(true));
-        assertThat(new String(replaced.password().orElseThrow()), is("replacement"));
-
-        JmsConnectorConfig.Builder clearing = JmsConnectorConfig.builder().config(configSource);
-        assertThat(clearing.configuredPassword().orElseThrow(), is("secret"));
-        clearing.clearPassword();
-
-        assertThat(clearing.configuredPassword().isEmpty(), is(true));
-        assertThat(clearing.passwordSource().get().isEmpty(), is(true));
-    }
-
-    @Test
-    void testConfiguredPasswordIsNotAliasedWhenCopyingBuilders() {
-        Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
-                Map.entry("direction", "INCOMING"),
-                Map.entry("channel-name", "orders"),
-                Map.entry("connector", JmsConnectorProvider.CONNECTOR_TYPE),
-                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
-                Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
-                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
-        JmsConnectorConfig.Builder source = JmsConnectorConfig.builder().config(configSource);
-        JmsConnectorConfig.Builder copy = JmsConnectorConfig.builder().from(source);
-
-        JmsConnectorConfig copiedConfig = copy.build();
-        assertThat(source.configuredPassword().orElseThrow(), is("secret"));
-        JmsConnectorConfig sourceConfig = source.build();
-
-        assertThat(new String(copiedConfig.password().orElseThrow()), is("secret"));
-        assertThat(new String(sourceConfig.password().orElseThrow()), is("secret"));
-
-        JmsConnectorConfig.Builder reverseSource = JmsConnectorConfig.builder().config(configSource);
-        JmsConnectorConfig.Builder reverseCopy = JmsConnectorConfig.builder().from(reverseSource);
-
-        JmsConnectorConfig reverseSourceConfig = reverseSource.build();
-        assertThat(reverseCopy.configuredPassword().orElseThrow(), is("secret"));
-        JmsConnectorConfig reverseCopiedConfig = reverseCopy.build();
-
-        assertThat(new String(reverseSourceConfig.password().orElseThrow()), is("secret"));
-        assertThat(new String(reverseCopiedConfig.password().orElseThrow()), is("secret"));
-    }
-
-    @Test
-    void testPrototypeCopyOverridesStaleConfiguredPassword() {
-        Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
-                Map.entry("direction", "INCOMING"),
-                Map.entry("channel-name", "orders"),
-                Map.entry("connector", JmsConnectorProvider.CONNECTOR_TYPE),
-                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
-                Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
-                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "stale-secret"))));
-        JmsConnectorConfig prototype = incomingBuilder()
-                .username("orders-user")
-                .password("prototype-secret")
-                .build();
-        JmsConnectorConfig.Builder target = JmsConnectorConfig.builder().config(configSource);
-
-        JmsConnectorConfig copied = target.from(prototype).build();
-
-        assertThat(new String(copied.password().orElseThrow()), is("prototype-secret"));
-    }
-
-    @Test
-    void testJndiEnvironmentIsConfidential() {
-        String credential = "jndi-secret";
-        JmsConnectorConfig.Builder builder = incomingBuilder()
-                .putJndiEnvironmentProperty("java.naming.security.credentials", credential);
-
-        assertThat(builder.toString().contains(credential), is(false));
-        assertThat(builder.build().toString().contains(credential), is(false));
-    }
-
-    @Test
-    void testJndiEnvironmentRejectsNullEntries() {
-        Map<String, String> nullKey = new HashMap<>();
-        nullKey.put(null, "value");
-        Map<String, String> nullValue = new HashMap<>();
-        nullValue.put("key", null);
-
-        assertThrows(NullPointerException.class,
-                     () -> incomingBuilder().jndiEnvironment(nullKey).build());
-        assertThrows(NullPointerException.class,
-                     () -> incomingBuilder().addJndiEnvironment(nullValue).build());
-    }
-
-    @Test
-    void testProviderAcceptsImperativeConnectionFactory() {
-        ConnectionFactory connectionFactory = mock(ConnectionFactory.class);
-        JmsConnectorProvider provider = JmsConnectorProvider.create(connectionFactory);
-
-        assertThat(provider.connectorType(), is("helidon-jms"));
-        assertThat(provider.createIncomingConnector(incomingBuilder().build()) != null, is(true));
-        assertThat(provider.createOutgoingConnector(incomingBuilder()
-                                                            .direction(ConnectorDirection.OUTGOING)
-                                                            .build()) != null,
-                   is(true));
-    }
-
-    @Test
-    void testImperativeProviderRejectsNullFactoryEagerly() {
-        assertThrows(NullPointerException.class,
-                     () -> JmsConnectorProvider.create((ConnectionFactory) null));
-    }
-
-    @Test
-    void testNamedConnectionFactoryDoesNotFallBackToDefault() {
-        ServiceRegistry registry = mock(ServiceRegistry.class);
-        when(registry.firstNamed(ConnectionFactory.class, "missing")).thenReturn(Optional.empty());
-        when(registry.first(ConnectionFactory.class)).thenReturn(Optional.of(mock(ConnectionFactory.class)));
-
-        JmsConnectorConfig config = incomingBuilder().connectionFactory("missing").build();
-
-        assertThrows(MessagingException.class, () -> new JmsResourceResolver(registry).resolve(config));
-        verify(registry).firstNamed(ConnectionFactory.class, "missing");
-        verify(registry, never()).first(ConnectionFactory.class);
-    }
-
-    @Test
-    void testJndiDestinationTypeIsValidated() {
-        Queue queue = mock(Queue.class);
-        Topic topic = mock(Topic.class);
-        JmsConnectorConfig queueConfig = incomingBuilder().build();
-        JmsConnectorConfig topicConfig = incomingBuilder().destinationType(JmsDestinationType.TOPIC).build();
-
-        assertThat(JmsResourceResolver.validateDestinationType(queue, queueConfig), sameInstance(queue));
-        assertThat(JmsResourceResolver.validateDestinationType(topic, topicConfig), sameInstance(topic));
-        assertThrows(MessagingException.class,
-                     () -> JmsResourceResolver.validateDestinationType(topic, queueConfig));
-        assertThrows(MessagingException.class,
-                     () -> JmsResourceResolver.validateDestinationType(queue, topicConfig));
-    }
-
-    @Test
-    void testReconnectRangeValidation() {
-        assertThrows(IllegalArgumentException.class,
-                     () -> incomingBuilder().reconnectInitialDelay(Duration.ofNanos(999_999)).build());
-        assertThrows(IllegalArgumentException.class,
-                     () -> incomingBuilder().reconnectMaxDelay(Duration.ofNanos(999_999)).build());
-        assertThrows(IllegalArgumentException.class,
-                     () -> incomingBuilder()
-                             .reconnectInitialDelay(Duration.ofSeconds(2))
-                             .reconnectMaxDelay(Duration.ofSeconds(1))
-                             .build());
-        assertThrows(IllegalArgumentException.class,
-                     () -> incomingBuilder().reconnectJitter(1).build());
-        assertThrows(IllegalArgumentException.class,
-                     () -> incomingBuilder().reconnectJitter(Double.NaN).build());
-    }
-
-    @Test
-    void testMaximumBodyBytesValidation() {
-        assertThat(incomingBuilder().maxBodyBytes(2048).build().maxBodyBytes(), is(2048));
-        assertThrows(IllegalArgumentException.class, () -> incomingBuilder().maxBodyBytes(0).build());
-        assertThrows(IllegalArgumentException.class, () -> incomingBuilder().maxBodyBytes(-1).build());
-    }
-
-    private static JmsConnectorConfig.Builder incomingBuilder() {
-        return JmsConnectorConfig.builder()
-                .direction(ConnectorDirection.INCOMING)
+        JmsIncomingConfig channel = JmsIncomingConfig.builder()
                 .channelName("orders")
-                .connector(JmsConnectorProvider.CONNECTOR_TYPE)
-                .destination("orders");
+                .username("orders-user")
+                .password("channel-secret")
+                .build();
+        assertThat(new String(channel.password().orElseThrow()), is("channel-secret"));
+        assertThat(channel.toString().contains("channel-secret"), is(false));
+    }
+
+    @Test
+    void testNullFactoryIsRejectedAtBuilderBoundary() {
+        assertThrows(NullPointerException.class,
+                     () -> JmsConnector.builder().connectionFactory((ConnectionFactory) null));
     }
 }

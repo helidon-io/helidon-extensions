@@ -32,7 +32,7 @@ import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.OutgoingConnector;
+import io.helidon.messaging.spi.OutgoingChannel;
 
 import jakarta.jms.Connection;
 import jakarta.jms.Destination;
@@ -46,19 +46,19 @@ import jakarta.jms.TransactionRolledBackRuntimeException;
 /**
  * Outgoing JMS connector support.
  */
-final class JmsOutgoingConnector {
-    private JmsOutgoingConnector() {
+final class JmsOutgoingChannel {
+    private JmsOutgoingChannel() {
     }
 
-    static OutgoingConnector create(JmsConnectorConfig config,
+    static OutgoingChannel create(JmsRuntimeConfig config,
                                     JmsConnectionFactoryResolver connectionFactoryResolver) {
         return new Connector(Objects.requireNonNull(config), Objects.requireNonNull(connectionFactoryResolver));
     }
 
-    private static final class Connector implements OutgoingConnector {
+    private static final class Connector implements OutgoingChannel {
         private static final Duration RECONNECT_OVERALL_TIMEOUT = Duration.ofNanos(Long.MAX_VALUE);
 
-        private final JmsConnectorConfig config;
+        private final JmsRuntimeConfig config;
         private final JmsConnectionSupport connectionSupport;
         private final Retry reconnectRetry;
         private final ReentrantLock operationLock = new ReentrantLock();
@@ -69,7 +69,7 @@ final class JmsOutgoingConnector {
         private Thread operationThread;
         private boolean closeRequested;
 
-        private Connector(JmsConnectorConfig config,
+        private Connector(JmsRuntimeConfig config,
                           JmsConnectionFactoryResolver connectionFactoryResolver) {
             this.connectionSupport = new JmsConnectionSupport(config, connectionFactoryResolver);
             this.config = connectionSupport.runtimeConfig();
@@ -367,7 +367,7 @@ final class JmsOutgoingConnector {
             return previous;
         }
 
-        private static Retry createReconnectRetry(JmsConnectorConfig config) {
+        private static Retry createReconnectRetry(JmsRuntimeConfig config) {
             RetryConfig retryConfig = RetryConfig.builder()
                     .name("messaging-jms-outgoing-reconnect-" + config.channelName())
                     .calls(Integer.MAX_VALUE)

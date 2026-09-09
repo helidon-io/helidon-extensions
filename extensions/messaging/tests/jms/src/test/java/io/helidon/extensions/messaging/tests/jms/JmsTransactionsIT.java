@@ -25,14 +25,13 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfig;
-import io.helidon.extensions.messaging.connectors.jms.JmsConnectorProvider;
+import io.helidon.extensions.messaging.connectors.jms.JmsOutgoingConfig;
+import io.helidon.extensions.messaging.connectors.jms.JmsConnector;
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
-import io.helidon.messaging.spi.OutgoingConnector;
+import io.helidon.messaging.spi.OutgoingChannel;
 
 import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;
@@ -65,7 +64,7 @@ class JmsTransactionsIT {
         try (ArtemisBroker broker = ArtemisBroker.create(brokerDataDirectory)) {
             broker.start();
 
-            OutgoingConnector committed = connector(broker.connectionFactory(), committedQueue);
+            OutgoingChannel committed = connector(broker.connectionFactory(), committedQueue);
             try {
                 committed.start();
                 committed.sendBatch(batch("committed-first", "committed-second"));
@@ -81,7 +80,7 @@ class JmsTransactionsIT {
             assertThat(second.getText(), is("committed-second"));
 
             AtomicInteger rollbacks = new AtomicInteger();
-            OutgoingConnector rolledBack = connector(failSecondSend(broker.connectionFactory(), rollbacks),
+            OutgoingChannel rolledBack = connector(failSecondSend(broker.connectionFactory(), rollbacks),
                                                       rolledBackQueue);
             try {
                 rolledBack.start();
@@ -104,12 +103,10 @@ class JmsTransactionsIT {
         }
     }
 
-    private static OutgoingConnector connector(ConnectionFactory connectionFactory, String destination) {
-        return JmsConnectorProvider.create(connectionFactory)
-                .createOutgoingConnector(JmsConnectorConfig.builder()
-                                                 .direction(ConnectorDirection.OUTGOING)
+    private static OutgoingChannel connector(ConnectionFactory connectionFactory, String destination) {
+        return JmsConnector.builder().name("test-jms").connectionFactory(connectionFactory).build()
+                .outgoing(JmsOutgoingConfig.builder()
                                                  .channelName(destination)
-                                                 .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                                                  .destination(destination)
                                                  .transacted(true)
                                                  .closeTimeout(Duration.ofSeconds(5))

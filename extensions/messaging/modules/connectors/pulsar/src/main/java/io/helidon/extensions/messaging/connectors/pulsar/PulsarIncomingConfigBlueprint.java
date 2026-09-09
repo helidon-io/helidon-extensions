@@ -17,36 +17,49 @@
 package io.helidon.extensions.messaging.connectors.pulsar;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
 import io.helidon.common.Api;
-import io.helidon.messaging.spi.MessagingConnectorProvider;
-import io.helidon.messaging.spi.MessagingConnectorProviderConfig;
 
 /**
- * Shared Apache Pulsar connector configuration.
+ * Apache Pulsar incoming channel overrides. Omitted options inherit the connector defaults.
  */
 @Api.Preview
-@Prototype.Blueprint(decorator = PulsarConnectorConfigSupport.BuilderDecorator.class)
-@Prototype.Configured(value = PulsarConnectorProvider.CONNECTOR_TYPE, root = false)
-@Prototype.Provides(MessagingConnectorProvider.class)
-@Prototype.CustomMethods(PulsarConnectorConfigSupport.class)
-interface PulsarConnectorConfigBlueprint extends MessagingConnectorProviderConfig, Prototype.Factory<PulsarConnector> {
+@Prototype.Blueprint(decorator = PulsarConnectorConfigSupport.IncomingBuilderDecorator.class)
+@Prototype.Configured
+interface PulsarIncomingConfigBlueprint {
     /**
-     * Pulsar broker service URL.
+     * Name of the logical messaging channel.
+     *
+     * @return channel name
+     */
+    @Option.Required
+    @Option.Configured
+    String channelName();
+
+    /**
+     * Pulsar broker service URL override. Defaults to the connector service URL.
      *
      * @return service URL
      */
-    @Option.Required
     @Option.Configured(PulsarConnectorConfigSupport.SERVICE_URL_PROPERTY)
-    String serviceUrl();
+    Optional<String> serviceUrl();
 
     /**
-     * Default Pulsar topic. Each channel must supply a topic when this is absent.
+     * Additional Pulsar client properties. Values are confidential because authentication material may be present.
+     *
+     * @return client properties
+     */
+    @Option.Configured(PulsarConnectorConfigSupport.CLIENT_PROPERTIES_PROPERTY)
+    @Option.Confidential
+    @Option.Singular("clientProperty")
+    Map<String, String> clientProperties();
+
+    /**
+     * Pulsar topic.
      *
      * @return topic
      */
@@ -54,17 +67,16 @@ interface PulsarConnectorConfigBlueprint extends MessagingConnectorProviderConfi
     Optional<String> topic();
 
     /**
-     * Built-in payload schema.
+     * Built-in payload schema override. Defaults to the connector schema.
      *
      * @return payload schema
      */
     @Option.Configured(PulsarConnectorConfigSupport.SCHEMA_PROPERTY)
-    @Option.DefaultCode("PulsarSchemaType.STRING")
-    PulsarSchemaType schema();
+    Optional<PulsarSchemaType> schema();
 
     /**
      * Name of a custom {@link PulsarSchemaProvider} in the Helidon Service Registry. When present, the provider schema
-     * overrides {@link #schema()}.
+     * overrides the built-in schema. Defaults to the connector's provider name.
      *
      * @return custom schema provider name
      */
@@ -85,8 +97,7 @@ interface PulsarConnectorConfigBlueprint extends MessagingConnectorProviderConfi
      * @return subscription type
      */
     @Option.Configured(PulsarConnectorConfigSupport.SUBSCRIPTION_TYPE_PROPERTY)
-    @Option.DefaultCode("PulsarSubscriptionType.EXCLUSIVE")
-    PulsarSubscriptionType subscriptionType();
+    Optional<PulsarSubscriptionType> subscriptionType();
 
     /**
      * Initial position used only when the incoming subscription is created.
@@ -94,8 +105,7 @@ interface PulsarConnectorConfigBlueprint extends MessagingConnectorProviderConfi
      * @return initial subscription position
      */
     @Option.Configured(PulsarConnectorConfigSupport.SUBSCRIPTION_INITIAL_POSITION_PROPERTY)
-    @Option.DefaultCode("PulsarSubscriptionInitialPosition.LATEST")
-    PulsarSubscriptionInitialPosition subscriptionInitialPosition();
+    Optional<PulsarSubscriptionInitialPosition> subscriptionInitialPosition();
 
     /**
      * Whether the client acknowledges individual indexes within producer-side Pulsar batches. This requires the broker
@@ -104,8 +114,7 @@ interface PulsarConnectorConfigBlueprint extends MessagingConnectorProviderConfi
      * @return whether batch-index acknowledgement is enabled
      */
     @Option.Configured(PulsarConnectorConfigSupport.BATCH_INDEX_ACKNOWLEDGMENT_ENABLED_PROPERTY)
-    @Option.DefaultBoolean(false)
-    boolean batchIndexAcknowledgmentEnabled();
+    Optional<Boolean> batchIndexAcknowledgmentEnabled();
 
     /**
      * Maximum Pulsar client receive queue size per topic partition. The runtime delivery limit further bounds each
@@ -115,8 +124,7 @@ interface PulsarConnectorConfigBlueprint extends MessagingConnectorProviderConfi
      * @return receive queue size
      */
     @Option.Configured(PulsarConnectorConfigSupport.RECEIVER_QUEUE_SIZE_PROPERTY)
-    @Option.DefaultInt(1)
-    int receiverQueueSize();
+    Optional<Integer> receiverQueueSize();
 
     /**
      * Maximum incoming payload size copied into one Helidon message.
@@ -124,8 +132,7 @@ interface PulsarConnectorConfigBlueprint extends MessagingConnectorProviderConfi
      * @return maximum payload bytes
      */
     @Option.Configured(PulsarConnectorConfigSupport.MAX_MESSAGE_BYTES_PROPERTY)
-    @Option.DefaultCode("PulsarConnectorConfigSupport.DEFAULT_MAX_MESSAGE_BYTES")
-    int maxMessageBytes();
+    Optional<Integer> maxMessageBytes();
 
     /**
      * Maximum duration of one incoming receive call.
@@ -133,8 +140,7 @@ interface PulsarConnectorConfigBlueprint extends MessagingConnectorProviderConfi
      * @return receive timeout
      */
     @Option.Configured(PulsarConnectorConfigSupport.RECEIVE_TIMEOUT_PROPERTY)
-    @Option.Default(PulsarConnectorConfigSupport.DEFAULT_RECEIVE_TIMEOUT)
-    Duration receiveTimeout();
+    Optional<Duration> receiveTimeout();
 
     /**
      * Pulsar redelivery delay after a negatively acknowledged delivery.
@@ -142,17 +148,7 @@ interface PulsarConnectorConfigBlueprint extends MessagingConnectorProviderConfi
      * @return negative acknowledgement redelivery delay
      */
     @Option.Configured(PulsarConnectorConfigSupport.NEGATIVE_ACK_REDELIVERY_DELAY_PROPERTY)
-    @Option.Default(PulsarConnectorConfigSupport.DEFAULT_NEGATIVE_ACK_REDELIVERY_DELAY)
-    Duration negativeAckRedeliveryDelay();
-
-    /**
-     * Maximum duration to await an outgoing broker persistence result.
-     *
-     * @return send timeout
-     */
-    @Option.Configured(PulsarConnectorConfigSupport.SEND_TIMEOUT_PROPERTY)
-    @Option.Default(PulsarConnectorConfigSupport.DEFAULT_SEND_TIMEOUT)
-    Duration sendTimeout();
+    Optional<Duration> negativeAckRedeliveryDelay();
 
     /**
      * Maximum duration to await a broker-confirmed incoming acknowledgement.
@@ -160,8 +156,7 @@ interface PulsarConnectorConfigBlueprint extends MessagingConnectorProviderConfi
      * @return settlement timeout
      */
     @Option.Configured(PulsarConnectorConfigSupport.SETTLEMENT_TIMEOUT_PROPERTY)
-    @Option.Default(PulsarConnectorConfigSupport.DEFAULT_SETTLEMENT_TIMEOUT)
-    Duration settlementTimeout();
+    Optional<Duration> settlementTimeout();
 
     /**
      * Maximum duration for graceful connector shutdown.
@@ -169,18 +164,7 @@ interface PulsarConnectorConfigBlueprint extends MessagingConnectorProviderConfi
      * @return close timeout
      */
     @Option.Configured(PulsarConnectorConfigSupport.CLOSE_TIMEOUT_PROPERTY)
-    @Option.Default(PulsarConnectorConfigSupport.DEFAULT_CLOSE_TIMEOUT)
-    Duration closeTimeout();
-
-    /**
-     * Additional Pulsar client properties. Values are confidential because authentication material may be present.
-     *
-     * @return client properties
-     */
-    @Option.Configured(PulsarConnectorConfigSupport.CLIENT_PROPERTIES_PROPERTY)
-    @Option.Confidential
-    @Option.Singular("clientProperty")
-    Map<String, String> clientProperties();
+    Optional<Duration> closeTimeout();
 
     /**
      * Additional Pulsar consumer properties. Connector lifecycle and settlement invariants override conflicting keys.
@@ -192,21 +176,4 @@ interface PulsarConnectorConfigBlueprint extends MessagingConnectorProviderConfi
     @Option.Singular("consumerProperty")
     Map<String, String> consumerProperties();
 
-    /**
-     * Additional Pulsar producer properties. Typed connector options override conflicting keys.
-     *
-     * @return producer properties
-     */
-    @Option.Configured(PulsarConnectorConfigSupport.PRODUCER_PROPERTIES_PROPERTY)
-    @Option.Confidential
-    @Option.Singular("producerProperty")
-    Map<String, String> producerProperties();
-    /**
-     * Custom schema providers available to channels created by this connector.
-     * Configured connectors receive these providers from the service registry.
-     *
-     * @return custom schema providers
-     */
-    @Option.Singular
-    List<PulsarSchemaProvider> schemaProviders();
 }

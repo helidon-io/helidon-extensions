@@ -116,15 +116,15 @@ final class PulsarConnectorConfigSupport {
     private PulsarConnectorConfigSupport() {
     }
 
-    static PulsarClient createClient(PulsarConnectorConfig config) throws PulsarClientException {
+    static PulsarClient createClient(String serviceUrl, Map<String, String> clientProperties) throws PulsarClientException {
         return PulsarClient.builder()
-                .loadConf(objectProperties(config.clientProperties()))
-                .serviceUrl(config.serviceUrl())
+                .loadConf(objectProperties(clientProperties))
+                .serviceUrl(serviceUrl)
                 .build();
     }
 
     static Consumer<Object> createConsumer(PulsarClient client,
-                                           PulsarConnectorConfig config,
+                                           IncomingSettings config,
                                            PulsarSchemaResolver.ResolvedSchema schema,
                                            int maxDeliveryMessages) throws PulsarClientException {
         int queueSize = Math.min(config.receiverQueueSize(), maxDeliveryMessages);
@@ -147,7 +147,7 @@ final class PulsarConnectorConfigSupport {
     }
 
     static ProducerBuilder<Object> producerBuilder(PulsarClient client,
-                                                   PulsarConnectorConfig config,
+                                                   OutgoingSettings config,
                                                    PulsarSchemaResolver.ResolvedSchema schema) {
         return client.newProducer(schema.schema())
                 .loadConf(objectProperties(config.producerProperties()))
@@ -155,8 +155,44 @@ final class PulsarConnectorConfigSupport {
                 .sendTimeout(durationMillisInt(config.sendTimeout(), SEND_TIMEOUT_PROPERTY), TimeUnit.MILLISECONDS);
     }
 
-    static int receiveTimeoutMillis(PulsarConnectorConfig config) {
+    static int receiveTimeoutMillis(IncomingSettings config) {
         return durationMillisInt(config.receiveTimeout(), RECEIVE_TIMEOUT_PROPERTY);
+    }
+
+    static IncomingSettings incoming(PulsarConnectorConfig common, PulsarIncomingConfig channel) {
+        return new IncomingSettings(channel.channelName(),
+                                    channel.serviceUrl().orElse(common.serviceUrl()),
+                                    properties(common.clientProperties(), channel.clientProperties()),
+                                    channel.topic().or(common::topic)
+                                            .orElseThrow(() -> new IllegalArgumentException(
+                                                    "Pulsar topic is required for channel " + channel.channelName())),
+                                    channel.schema().orElse(common.schema()),
+                                    channel.schemaProvider().or(common::schemaProvider),
+                                    channel.subscriptionName().or(common::subscriptionName),
+                                    channel.subscriptionType().orElse(common.subscriptionType()),
+                                    channel.subscriptionInitialPosition().orElse(common.subscriptionInitialPosition()),
+                                    channel.batchIndexAcknowledgmentEnabled().orElse(common.batchIndexAcknowledgmentEnabled()),
+                                    channel.receiverQueueSize().orElse(common.receiverQueueSize()),
+                                    channel.maxMessageBytes().orElse(common.maxMessageBytes()),
+                                    channel.receiveTimeout().orElse(common.receiveTimeout()),
+                                    channel.negativeAckRedeliveryDelay().orElse(common.negativeAckRedeliveryDelay()),
+                                    channel.settlementTimeout().orElse(common.settlementTimeout()),
+                                    channel.closeTimeout().orElse(common.closeTimeout()),
+                                    properties(common.consumerProperties(), channel.consumerProperties()));
+    }
+
+    static OutgoingSettings outgoing(PulsarConnectorConfig common, PulsarOutgoingConfig channel) {
+        return new OutgoingSettings(channel.channelName(),
+                                    channel.serviceUrl().orElse(common.serviceUrl()),
+                                    properties(common.clientProperties(), channel.clientProperties()),
+                                    channel.topic().or(common::topic)
+                                            .orElseThrow(() -> new IllegalArgumentException(
+                                                    "Pulsar topic is required for channel " + channel.channelName())),
+                                    channel.schema().orElse(common.schema()),
+                                    channel.schemaProvider().or(common::schemaProvider),
+                                    channel.sendTimeout().orElse(common.sendTimeout()),
+                                    channel.closeTimeout().orElse(common.closeTimeout()),
+                                    properties(common.producerProperties(), channel.producerProperties()));
     }
 
     static long durationMillis(Duration duration) {
@@ -168,6 +204,28 @@ final class PulsarConnectorConfigSupport {
         }
         long fraction = (duration.getNano() + 999_999L) / 1_000_000L;
         return Long.MAX_VALUE - seconds < fraction ? Long.MAX_VALUE : Math.max(0, seconds + fraction);
+    }
+
+    private static Map<String, String> properties(Map<String, String> common, Map<String, String> channel) {
+        Map<String, String> properties = new LinkedHashMap<>(common);
+        properties.putAll(channel);
+        return Map.copyOf(properties);
+    }
+
+    private static void requirePositive(String name, int value) {
+        if (value < 1) {
+            throw new IllegalArgumentException(name + " must be greater than zero");
+        }
+    }
+
+    private static void requireReceiveTimeout(Duration timeout) {
+        requirePositive(RECEIVE_TIMEOUT_PROPERTY, timeout);
+        durationMillisInt(timeout, RECEIVE_TIMEOUT_PROPERTY);
+    }
+
+    private static void requireSendTimeout(Duration timeout) {
+        requirePositive(SEND_TIMEOUT_PROPERTY, timeout);
+        durationMillisInt(timeout, SEND_TIMEOUT_PROPERTY);
     }
 
     private static int durationMillisInt(Duration duration, String property) {
@@ -203,6 +261,17 @@ final class PulsarConnectorConfigSupport {
         }
     }
 
+    private static void requireNonNegative(String name, Duration value) {
+        if (value.isNegative()) {
+            throw new IllegalArgumentException(name + " must not be negative");
+        }
+        try {
+            value.toNanos();
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(name + " must be representable in nanoseconds", e);
+        }
+    }
+
     private static void requireNonNullEntries(String name, Map<?, ?> values) {
         values.forEach((key, value) -> {
             Objects.requireNonNull(key, name + " key");
@@ -211,11 +280,12 @@ final class PulsarConnectorConfigSupport {
     }
 
     /**
-     * Validates Pulsar connector configuration.
+     * Validates shared Pulsar connector configuration.
      */
     static final class BuilderDecorator implements Prototype.BuilderDecorator<PulsarConnectorConfig.BuilderBase<?, ?>> {
         @Override
         public void decorate(PulsarConnectorConfig.BuilderBase<?, ?> target) {
+            requireNonBlank("name", target.name());
             requireNonBlank(SERVICE_URL_PROPERTY, target.serviceUrl());
             requireNonBlank(TOPIC_PROPERTY, target.topic());
             requireNonBlank(SCHEMA_PROVIDER_PROPERTY, target.schemaProvider());
@@ -223,34 +293,83 @@ final class PulsarConnectorConfigSupport {
             requireNonNullEntries(CLIENT_PROPERTIES_PROPERTY, target.clientProperties());
             requireNonNullEntries(CONSUMER_PROPERTIES_PROPERTY, target.consumerProperties());
             requireNonNullEntries(PRODUCER_PROPERTIES_PROPERTY, target.producerProperties());
-            if (target.receiverQueueSize() < 1) {
-                throw new IllegalArgumentException(RECEIVER_QUEUE_SIZE_PROPERTY + " must be greater than zero");
-            }
-            if (target.maxMessageBytes() < 1) {
-                throw new IllegalArgumentException(MAX_MESSAGE_BYTES_PROPERTY + " must be greater than zero");
-            }
-            requirePositive(RECEIVE_TIMEOUT_PROPERTY, target.receiveTimeout());
-            requirePositive(SEND_TIMEOUT_PROPERTY, target.sendTimeout());
+            requirePositive(RECEIVER_QUEUE_SIZE_PROPERTY, target.receiverQueueSize());
+            requirePositive(MAX_MESSAGE_BYTES_PROPERTY, target.maxMessageBytes());
+            requireReceiveTimeout(target.receiveTimeout());
+            requireSendTimeout(target.sendTimeout());
             requirePositive(SETTLEMENT_TIMEOUT_PROPERTY, target.settlementTimeout());
-            durationMillisInt(target.receiveTimeout(), RECEIVE_TIMEOUT_PROPERTY);
-            durationMillisInt(target.sendTimeout(), SEND_TIMEOUT_PROPERTY);
-            if (target.negativeAckRedeliveryDelay().isNegative()) {
-                throw new IllegalArgumentException(NEGATIVE_ACK_REDELIVERY_DELAY_PROPERTY + " must not be negative");
-            }
-            try {
-                target.negativeAckRedeliveryDelay().toNanos();
-            } catch (ArithmeticException e) {
-                throw new IllegalArgumentException(NEGATIVE_ACK_REDELIVERY_DELAY_PROPERTY
-                                                           + " must be representable in nanoseconds", e);
-            }
-            if (target.closeTimeout().isNegative()) {
-                throw new IllegalArgumentException(CLOSE_TIMEOUT_PROPERTY + " must not be negative");
-            }
-            try {
-                target.closeTimeout().toNanos();
-            } catch (ArithmeticException e) {
-                throw new IllegalArgumentException(CLOSE_TIMEOUT_PROPERTY + " must be representable in nanoseconds", e);
-            }
+            requireNonNegative(NEGATIVE_ACK_REDELIVERY_DELAY_PROPERTY, target.negativeAckRedeliveryDelay());
+            requireNonNegative(CLOSE_TIMEOUT_PROPERTY, target.closeTimeout());
         }
+    }
+
+    /**
+     * Validates incoming channel overrides.
+     */
+    static final class IncomingBuilderDecorator implements Prototype.BuilderDecorator<PulsarIncomingConfig.BuilderBase<?, ?>> {
+        @Override
+        public void decorate(PulsarIncomingConfig.BuilderBase<?, ?> target) {
+            requireNonBlank("channel-name", target.channelName());
+            requireNonBlank(SERVICE_URL_PROPERTY, target.serviceUrl());
+            requireNonBlank(TOPIC_PROPERTY, target.topic());
+            requireNonBlank(SCHEMA_PROVIDER_PROPERTY, target.schemaProvider());
+            requireNonBlank(SUBSCRIPTION_NAME_PROPERTY, target.subscriptionName());
+            requireNonNullEntries(CLIENT_PROPERTIES_PROPERTY, target.clientProperties());
+            requireNonNullEntries(CONSUMER_PROPERTIES_PROPERTY, target.consumerProperties());
+            target.receiverQueueSize().ifPresent(value -> requirePositive(RECEIVER_QUEUE_SIZE_PROPERTY, value));
+            target.maxMessageBytes().ifPresent(value -> requirePositive(MAX_MESSAGE_BYTES_PROPERTY, value));
+            target.receiveTimeout().ifPresent(PulsarConnectorConfigSupport::requireReceiveTimeout);
+            target.settlementTimeout().ifPresent(value -> requirePositive(SETTLEMENT_TIMEOUT_PROPERTY, value));
+            target.negativeAckRedeliveryDelay()
+                    .ifPresent(value -> requireNonNegative(NEGATIVE_ACK_REDELIVERY_DELAY_PROPERTY, value));
+            target.closeTimeout().ifPresent(value -> requireNonNegative(CLOSE_TIMEOUT_PROPERTY, value));
+        }
+    }
+
+    /**
+     * Validates outgoing channel overrides.
+     */
+    static final class OutgoingBuilderDecorator implements Prototype.BuilderDecorator<PulsarOutgoingConfig.BuilderBase<?, ?>> {
+        @Override
+        public void decorate(PulsarOutgoingConfig.BuilderBase<?, ?> target) {
+            requireNonBlank("channel-name", target.channelName());
+            requireNonBlank(SERVICE_URL_PROPERTY, target.serviceUrl());
+            requireNonBlank(TOPIC_PROPERTY, target.topic());
+            requireNonBlank(SCHEMA_PROVIDER_PROPERTY, target.schemaProvider());
+            requireNonNullEntries(CLIENT_PROPERTIES_PROPERTY, target.clientProperties());
+            requireNonNullEntries(PRODUCER_PROPERTIES_PROPERTY, target.producerProperties());
+            target.sendTimeout().ifPresent(PulsarConnectorConfigSupport::requireSendTimeout);
+            target.closeTimeout().ifPresent(value -> requireNonNegative(CLOSE_TIMEOUT_PROPERTY, value));
+        }
+    }
+
+    record IncomingSettings(String channelName,
+                            String serviceUrl,
+                            Map<String, String> clientProperties,
+                            String topic,
+                            PulsarSchemaType schema,
+                            Optional<String> schemaProvider,
+                            Optional<String> subscriptionName,
+                            PulsarSubscriptionType subscriptionType,
+                            PulsarSubscriptionInitialPosition subscriptionInitialPosition,
+                            boolean batchIndexAcknowledgmentEnabled,
+                            int receiverQueueSize,
+                            int maxMessageBytes,
+                            Duration receiveTimeout,
+                            Duration negativeAckRedeliveryDelay,
+                            Duration settlementTimeout,
+                            Duration closeTimeout,
+                            Map<String, String> consumerProperties) {
+    }
+
+    record OutgoingSettings(String channelName,
+                            String serviceUrl,
+                            Map<String, String> clientProperties,
+                            String topic,
+                            PulsarSchemaType schema,
+                            Optional<String> schemaProvider,
+                            Duration sendTimeout,
+                            Duration closeTimeout,
+                            Map<String, String> producerProperties) {
     }
 }

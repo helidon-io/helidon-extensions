@@ -20,20 +20,17 @@ import java.util.Objects;
 
 import io.helidon.common.Api;
 import io.helidon.config.Config;
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.spi.IncomingConnector;
-import io.helidon.messaging.spi.IncomingConnectorProvider;
-import io.helidon.messaging.spi.OutgoingConnector;
-import io.helidon.messaging.spi.OutgoingConnectorProvider;
+import io.helidon.messaging.spi.MessagingConnector;
+import io.helidon.messaging.spi.MessagingConnectorProvider;
 import io.helidon.service.registry.Service;
 
 /**
- * Stateless Kafka connector provider.
+ * Provider of configured Kafka connectors.
  */
 @Api.Preview
 @Service.Singleton
 public final class KafkaConnectorProvider
-        implements IncomingConnectorProvider, OutgoingConnectorProvider {
+        implements MessagingConnectorProvider {
     /**
      * Kafka connector type used in messaging configuration.
      */
@@ -71,72 +68,22 @@ public final class KafkaConnectorProvider
      */
     public static final String DLQ_ORIGINAL_LEADER_EPOCH_HEADER = "dlq-orig-leader-epoch";
 
-    private final KafkaIncomingConnector incomingFactory;
-    private final KafkaOutgoingConnector outgoingFactory;
-
-    @Service.Inject
-    KafkaConnectorProvider() {
-        this(new KafkaIncomingConnector(), new KafkaOutgoingConnector());
-    }
-
-    private KafkaConnectorProvider(KafkaIncomingConnector incomingFactory,
-                                   KafkaOutgoingConnector outgoingFactory) {
-        this.incomingFactory = incomingFactory;
-        this.outgoingFactory = outgoingFactory;
-    }
-
     /**
-     * Create the Kafka connector provider.
-     *
-     * @return a new Kafka connector provider
+     * Create a provider for service discovery.
      */
-    public static KafkaConnectorProvider create() {
-        return new KafkaConnectorProvider();
+    public KafkaConnectorProvider() {
     }
 
     @Override
-    public String connectorType() {
+    public String configKey() {
         return CONNECTOR_TYPE;
     }
 
     @Override
-    public IncomingConnector createIncomingConnector(Config config) {
-        return createIncomingConnector(KafkaConnectorConfig.create(Objects.requireNonNull(config)));
-    }
-
-    /**
-     * Create one unstarted incoming Kafka connector from typed configuration.
-     *
-     * @param config typed Kafka configuration
-     * @return incoming connector
-     */
-    public IncomingConnector createIncomingConnector(KafkaConnectorConfig config) {
-        requireDirection(config, ConnectorDirection.INCOMING);
-        return incomingFactory.createIncomingConnector(config);
-    }
-
-    @Override
-    public OutgoingConnector createOutgoingConnector(Config config) {
-        return createOutgoingConnector(KafkaConnectorConfig.create(Objects.requireNonNull(config)));
-    }
-
-    /**
-     * Create one unstarted outgoing Kafka connector from typed configuration.
-     *
-     * @param config typed Kafka configuration
-     * @return outgoing connector
-     */
-    public OutgoingConnector createOutgoingConnector(KafkaConnectorConfig config) {
-        requireDirection(config, ConnectorDirection.OUTGOING);
-        return outgoingFactory.createOutgoingConnector(config);
-    }
-
-    private static void requireDirection(KafkaConnectorConfig config, ConnectorDirection expected) {
-        Objects.requireNonNull(config);
-        if (config.direction() != expected) {
-            throw new IllegalArgumentException("Kafka connector configuration for channel " + config.channelName()
-                                                       + " has direction " + config.direction()
-                                                       + ", expected " + expected);
-        }
+    public MessagingConnector create(Config config, String name) {
+        return KafkaConnector.builder()
+                .config(Objects.requireNonNull(config))
+                .name(Objects.requireNonNull(name))
+                .build();
     }
 }

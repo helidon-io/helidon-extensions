@@ -12,17 +12,19 @@ settlement and Kafka consumer-group maintenance.
 </dependency>
 ```
 
-The connector provider is discovered through the Helidon Service Registry. For an imperatively assembled messaging graph,
-create the same stateless provider with `KafkaConnectorProvider.create()`.
+The connector provider is discovered through the Helidon Service Registry or Java service loading. It creates a configured
+`KafkaConnector`, which creates incoming and outgoing channel connections.
 
 ## Configuration
 
-Connector defaults can be shared under `messaging.connector.helidon-kafka`. Channel settings override them.
+Each named connector captures its common Kafka configuration. Channels refer to the connector name and may override client
+defaults. The connector provider type is `helidon-kafka`.
 
 ```yaml
 messaging:
   connector:
-    helidon-kafka:
+    orders-kafka:
+      type: helidon-kafka
       bootstrap.servers: broker-a:9092,broker-b:9092
       key.serializer: org.apache.kafka.common.serialization.StringSerializer
       value.serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -36,19 +38,21 @@ messaging:
 
   incoming:
     orders:
-      connector: helidon-kafka
+      connector: orders-kafka
       topic: orders
       group.id: inventory-service
       auto.offset.reset: earliest
 
   outgoing:
     order-results:
-      connector: helidon-kafka
+      connector: orders-kafka
       topic: order-results
 ```
 
-`bootstrap.servers` and `topic` are required. An incoming channel uses its channel name as `group.id` when the group is
-not configured. The default serializers and deserializers handle String keys and values, and `auto.offset.reset` defaults
+`bootstrap.servers` is required on the connector. Each channel must have a `topic`, either configured on the channel or
+inherited from the connector default. An incoming channel uses its channel name as `group.id` when neither the connector
+nor the channel configures a group. The default serializers and deserializers handle String keys and values, and
+`auto.offset.reset` defaults
 to `latest`.
 
 Additional Kafka client settings go under `properties`. Typed connector options take precedence over entries with the
@@ -58,6 +62,37 @@ bound transient client or deserializer allocation.
 
 The generated builder and configuration descriptions redact the complete `properties` map because it may contain
 credentials. Kafka client logging is controlled separately by Kafka and the application's logging configuration.
+
+## Imperative usage
+
+Create the connector once and configure each channel with its typed blueprint:
+
+```java
+KafkaConnector kafka = KafkaConnector.builder()
+        .name("orders-kafka")
+        .bootstrapServers("localhost:9092")
+        .build();
+MessagingGraph.Builder builder = MessagingGraph.builder();
+MessagingChannel<String> orders = builder.channel("orders", String.class);
+MessagingChannel<String> results = builder.channel("order-results", String.class);
+
+builder.incomingChannel(orders, kafka.incoming(KafkaIncomingConfig.builder()
+        .channelName("orders")
+        .topic("orders")
+        .groupId("inventory-service")
+        .autoOffsetReset("earliest")
+        .build()));
+builder.messageSink(orders, message -> System.out.println(message.entity()));
+builder.outgoingChannel(results, kafka.outgoing(KafkaOutgoingConfig.builder()
+        .channelName("order-results")
+        .topic("order-results")
+        .build()));
+
+MessagingGraph graph = builder.build();
+graph.start();
+graph.emitter(results).emit("accepted");
+graph.close();
+```
 
 ## Declarative usage
 

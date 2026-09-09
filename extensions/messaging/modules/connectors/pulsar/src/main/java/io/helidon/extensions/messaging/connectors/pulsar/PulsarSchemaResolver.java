@@ -20,9 +20,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Supplier;
-
-import io.helidon.messaging.ConnectorDirection;
 
 import org.apache.pulsar.client.api.Schema;
 
@@ -30,38 +29,40 @@ final class PulsarSchemaResolver {
     private PulsarSchemaResolver() {
     }
 
-    static ResolvedSchema resolve(PulsarConnectorConfig config,
-                                  ConnectorDirection direction,
+    static ResolvedSchema resolve(String channelName,
+                                  PulsarSchemaType type,
+                                  Optional<String> schemaProvider,
+                                  boolean incoming,
                                   Supplier<List<PulsarSchemaProvider>> providers) {
-        Objects.requireNonNull(config);
-        Objects.requireNonNull(direction);
+        Objects.requireNonNull(channelName);
+        Objects.requireNonNull(type);
+        Objects.requireNonNull(schemaProvider);
         Objects.requireNonNull(providers);
-        if (config.schemaProvider().isEmpty()) {
-            PulsarSchemaType type = config.schema();
-            return new ResolvedSchema(type.schema(direction), type, type.name(), direction);
+        if (schemaProvider.isEmpty()) {
+            return new ResolvedSchema(type.schema(incoming), type, type.name(), incoming);
         }
 
-        String selectedName = config.schemaProvider().orElseThrow();
+        String selectedName = schemaProvider.orElseThrow();
         if (selectedName.isBlank()) {
             throw new IllegalArgumentException("Pulsar schema-provider must not be blank for channel "
-                                                       + config.channelName());
+                                                       + channelName);
         }
         List<PulsarSchemaProvider> available;
         try {
             available = providers.get();
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("Cannot load Pulsar schema providers while resolving '" + selectedName
-                                                       + "' for channel " + config.channelName(), e);
+                                                       + "' for channel " + channelName, e);
         }
         if (available == null) {
             throw new IllegalArgumentException("Pulsar schema provider lookup returned null while resolving '"
-                                                       + selectedName + "' for channel " + config.channelName());
+                                                       + selectedName + "' for channel " + channelName);
         }
         List<PulsarSchemaProvider> matches = new ArrayList<>();
         for (PulsarSchemaProvider provider : available) {
             if (provider == null) {
                 throw new IllegalArgumentException("Pulsar schema provider lookup contains null while resolving '"
-                                                           + selectedName + "' for channel " + config.channelName());
+                                                           + selectedName + "' for channel " + channelName);
             }
             String providerName;
             try {
@@ -69,12 +70,12 @@ final class PulsarSchemaResolver {
             } catch (RuntimeException e) {
                 throw new IllegalArgumentException("Cannot read the name of Pulsar schema provider "
                                                            + provider.getClass().getName() + " while resolving '"
-                                                           + selectedName + "' for channel " + config.channelName(), e);
+                                                           + selectedName + "' for channel " + channelName, e);
             }
             if (providerName == null || providerName.isBlank()) {
                 throw new IllegalArgumentException("Pulsar schema provider " + provider.getClass().getName()
                                                            + " returned a null or blank name while resolving '"
-                                                           + selectedName + "' for channel " + config.channelName());
+                                                           + selectedName + "' for channel " + channelName);
             }
             if (providerName.equals(selectedName)) {
                 matches.add(provider);
@@ -82,7 +83,7 @@ final class PulsarSchemaResolver {
         }
         if (matches.isEmpty()) {
             throw new IllegalArgumentException("No Pulsar schema provider named '" + selectedName
-                                                       + "' is registered for channel " + config.channelName());
+                                                       + "' is registered for channel " + channelName);
         }
         if (matches.size() > 1) {
             String providerTypes = matches.stream()
@@ -92,7 +93,7 @@ final class PulsarSchemaResolver {
                     .reduce((first, second) -> first + ", " + second)
                     .orElseThrow();
             throw new IllegalArgumentException("Multiple Pulsar schema providers are named '" + selectedName
-                                                       + "' for channel " + config.channelName() + ": " + providerTypes);
+                                                       + "' for channel " + channelName + ": " + providerTypes);
         }
         PulsarSchemaProvider provider = matches.getFirst();
         Schema<?> schema;
@@ -101,14 +102,14 @@ final class PulsarSchemaResolver {
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("Pulsar schema provider '" + selectedName + "' ("
                                                        + provider.getClass().getName() + ") failed for channel "
-                                                       + config.channelName(), e);
+                                                       + channelName, e);
         }
         if (schema == null) {
             throw new IllegalArgumentException("Pulsar schema provider '" + selectedName + "' ("
                                                        + provider.getClass().getName() + ") returned null for channel "
-                                                       + config.channelName());
+                                                       + channelName);
         }
-        return new ResolvedSchema(schema(schema), null, selectedName, direction);
+        return new ResolvedSchema(schema(schema), null, selectedName, incoming);
     }
 
     @SuppressWarnings("unchecked")
@@ -119,17 +120,16 @@ final class PulsarSchemaResolver {
     record ResolvedSchema(Schema<Object> schema,
                           PulsarSchemaType builtIn,
                           String name,
-                          ConnectorDirection direction) {
+                          boolean incoming) {
         ResolvedSchema {
             Objects.requireNonNull(schema);
             Objects.requireNonNull(name);
-            Objects.requireNonNull(direction);
         }
 
         Object snapshot(Object value) {
             return builtIn == null
                     ? PulsarMessageImpl.snapshotEntity(value)
-                    : builtIn.snapshot(value, direction);
+                    : builtIn.snapshot(value, incoming);
         }
     }
 }

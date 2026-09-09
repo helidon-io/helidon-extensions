@@ -40,4 +40,7 @@ module io.helidon.extensions.messaging.connectors.kafka {
     requires static io.helidon.config.metadata;
 
     exports io.helidon.extensions.messaging.connectors.kafka;
+
+    provides io.helidon.messaging.spi.MessagingConnectorProvider
+            with io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider;
 }

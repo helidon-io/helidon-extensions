@@ -28,33 +28,35 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
-import io.helidon.config.Config;
-import io.helidon.config.ConfigSources;
-import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorConfig;
+import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnector;
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorProvider;
+import io.helidon.extensions.messaging.connectors.pulsar.PulsarIncomingConfig;
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarMessage;
+import io.helidon.extensions.messaging.connectors.pulsar.PulsarOutgoingConfig;
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarSchemaType;
+import io.helidon.extensions.messaging.connectors.pulsar.PulsarSubscriptionInitialPosition;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.AutoIncomingReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.AutoOutgoingSender;
-import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.FailedMappingReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.FailOnceReceiver;
+import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.FailedMappingReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.IncomingReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonOutgoingSender;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonSchemaProvider;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.OutgoingSender;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
+import io.helidon.messaging.MessagingChannel;
+import io.helidon.messaging.MessagingGraph;
 import io.helidon.messaging.MessagingRuntime;
-import io.helidon.messaging.spi.OutgoingConnector;
+import io.helidon.messaging.spi.OutgoingChannel;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 
@@ -89,6 +91,39 @@ class PulsarConnectorIT {
     private static final PulsarContainer PULSAR = new PulsarContainer(PULSAR_IMAGE)
             .withEnv("PULSAR_PREFIX_acknowledgmentAtBatchIndexLevelEnabled", "true")
             .withStartupTimeout(Duration.ofMinutes(2));
+
+    @Test
+    @Timeout(90)
+    void testImperativeGraphUsesConfiguredConnectorAndTypedChannels() throws Exception {
+        String topic = uniqueName("imperative");
+        PulsarConnector pulsar = PulsarConnector.builder()
+                .name("imperative-broker")
+                .serviceUrl(PULSAR.getPulsarBrokerUrl())
+                .topic(topic)
+                .subscriptionName(uniqueName("imperative-reader"))
+                .subscriptionInitialPosition(PulsarSubscriptionInitialPosition.EARLIEST)
+                .schemaProvider(PulsarMessagingTypes.JSON_SCHEMA_PROVIDER)
+                .addSchemaProvider(new JsonSchemaProvider())
+                .build();
+        MessagingGraph.Builder builder = MessagingGraph.builder();
+        MessagingChannel<PulsarTestPayload> incoming = builder.channel("imperative-in", PulsarTestPayload.class);
+        MessagingChannel<PulsarTestPayload> outgoing = builder.channel("imperative-out", PulsarTestPayload.class);
+        LinkedBlockingQueue<PulsarTestPayload> received = new LinkedBlockingQueue<>();
+        builder.incomingChannel(incoming, pulsar.incoming(PulsarIncomingConfig.builder()
+                .channelName(incoming.name())
+                .build()))
+                .messageSink(incoming, message -> received.add(message.entity()));
+        builder.outgoingChannel(outgoing, pulsar.outgoing(PulsarOutgoingConfig.builder()
+                .channelName(outgoing.name())
+                .build()));
+
+        PulsarTestPayload payload = new PulsarTestPayload("imperative-order", 3);
+        try (MessagingGraph graph = builder.build()) {
+            graph.start();
+            graph.emitter(outgoing).emit(Message.create(payload));
+            assertThat(received.poll(WAIT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS), is(payload));
+        }
+    }
 
     @Test
     @Timeout(90)
@@ -169,11 +204,14 @@ class PulsarConnectorIT {
                                                           uniqueName("auto-reader"))) {
                 ServiceRegistryManager autoManager = PulsarScenarioRegistry.create("""
                         messaging:
+                          connector:
+                            test-pulsar:
+                              type: helidon-pulsar
+                              service-url: "%2$s"
                           outgoing:
-                            %s:
-                              connector: helidon-pulsar
-                              service-url: "%s"
-                              topic: "%s"
+                            %1$s:
+                              connector: test-pulsar
+                              topic: "%3$s"
                               schema: AUTO
                         """.formatted(PulsarMessagingTypes.AUTO_OUTGOING_CHANNEL,
                                        PULSAR.getPulsarBrokerUrl(),
@@ -242,15 +280,17 @@ class PulsarConnectorIT {
 
     private static <T> void roundTrip(PulsarClient client, SchemaRoundTrip<T> schemaCase) throws Exception {
         String topic = uniqueName("schema-" + schemaCase.type());
-        Config config = Config.just(ConfigSources.create(Map.ofEntries(
-                Map.entry("direction", ConnectorDirection.OUTGOING.name()),
-                Map.entry("channel-name", uniqueName("schema-out")),
-                Map.entry("connector", PulsarConnectorProvider.CONNECTOR_TYPE),
-                Map.entry(PulsarConnectorConfig.SERVICE_URL_PROPERTY, PULSAR.getPulsarBrokerUrl()),
-                Map.entry(PulsarConnectorConfig.TOPIC_PROPERTY, topic),
-                Map.entry(PulsarConnectorConfig.SCHEMA_PROPERTY, schemaCase.type().name()))));
+        PulsarConnector pulsar = PulsarConnector.builder()
+                .name("schema-broker")
+                .serviceUrl(PULSAR.getPulsarBrokerUrl())
+                .schema(schemaCase.type())
+                .build();
+        PulsarOutgoingConfig channel = PulsarOutgoingConfig.builder()
+                .channelName(uniqueName("schema-out"))
+                .topic(topic)
+                .build();
 
-        try (OutgoingConnector connector = PulsarConnectorProvider.create().createOutgoingConnector(config)) {
+        try (OutgoingChannel connector = pulsar.outgoing(channel)) {
             connector.start();
             try (Consumer<T> consumer = consumer(client,
                                                  schemaCase.schema(),
@@ -269,13 +309,16 @@ class PulsarConnectorIT {
         String subscription = uniqueName("auto-incoming-reader");
         String yaml = """
                 messaging:
+                  connector:
+                    test-pulsar:
+                      type: helidon-pulsar
+                      service-url: "%2$s"
                   incoming:
-                    %s:
-                      connector: helidon-pulsar
-                      service-url: "%s"
-                      topic: "%s"
+                    %1$s:
+                      connector: test-pulsar
+                      topic: "%3$s"
                       schema: AUTO
-                      subscription-name: "%s"
+                      subscription-name: "%4$s"
                       subscription-initial-position: EARLIEST
                 """.formatted(PulsarMessagingTypes.AUTO_INCOMING_CHANNEL,
                                PULSAR.getPulsarBrokerUrl(),
@@ -313,12 +356,15 @@ class PulsarConnectorIT {
                                                                 uniqueName("json-reader"))) {
             ServiceRegistryManager manager = PulsarScenarioRegistry.create("""
                     messaging:
+                      connector:
+                        test-pulsar:
+                          type: helidon-pulsar
+                          service-url: "%2$s"
                       outgoing:
-                        %s:
-                          connector: helidon-pulsar
-                          service-url: "%s"
-                          topic: "%s"
-                          schema-provider: %s
+                        %1$s:
+                          connector: test-pulsar
+                          topic: "%3$s"
+                          schema-provider: %4$s
                     """.formatted(PulsarMessagingTypes.JSON_OUTGOING_CHANNEL,
                                    PULSAR.getPulsarBrokerUrl(),
                                    topic,
@@ -498,11 +544,14 @@ class PulsarConnectorIT {
     private static ServiceRegistryManager outgoingRegistryManager(String topic) {
         return PulsarScenarioRegistry.create("""
                 messaging:
+                  connector:
+                    test-pulsar:
+                      type: helidon-pulsar
+                      service-url: "%2$s"
                   outgoing:
-                    %s:
-                      connector: helidon-pulsar
-                      service-url: "%s"
-                      topic: "%s"
+                    %1$s:
+                      connector: test-pulsar
+                      topic: "%3$s"
                       schema: STRING
                 """.formatted(PulsarMessagingTypes.OUTGOING_CHANNEL,
                                PULSAR.getPulsarBrokerUrl(),
@@ -517,13 +566,16 @@ class PulsarConnectorIT {
         if (failOnExhausted) {
             return """
                     messaging:
+                      connector:
+                        test-pulsar:
+                          type: helidon-pulsar
+                          service-url: "%2$s"
                       incoming:
-                        %s:
-                          connector: helidon-pulsar
-                          service-url: "%s"
-                          topic: "%s"
+                        %1$s:
+                          connector: test-pulsar
+                          topic: "%3$s"
                           schema: STRING
-                          subscription-name: "%s"
+                          subscription-name: "%4$s"
                           subscription-initial-position: EARLIEST
                           batch-index-acknowledgment-enabled: true
                           receive-timeout: PT0.1S
@@ -540,13 +592,16 @@ class PulsarConnectorIT {
         }
         return """
                 messaging:
+                  connector:
+                    test-pulsar:
+                      type: helidon-pulsar
+                      service-url: "%2$s"
                   incoming:
-                    %s:
-                      connector: helidon-pulsar
-                      service-url: "%s"
-                      topic: "%s"
+                    %1$s:
+                      connector: test-pulsar
+                      topic: "%3$s"
                       schema: STRING
-                      subscription-name: "%s"
+                      subscription-name: "%4$s"
                       subscription-initial-position: EARLIEST
                       receive-timeout: PT0.1S
                 """.formatted(channel,
@@ -560,14 +615,17 @@ class PulsarConnectorIT {
                                             String sourceSubscription) {
         return """
                 messaging:
+                  connector:
+                    test-pulsar:
+                      type: helidon-pulsar
+                      service-url: "%2$s"
                   incoming:
-                    %s:
-                      connector: helidon-pulsar
-                      service-url: "%s"
-                      topic: "%s"
+                    %1$s:
+                      connector: test-pulsar
+                      topic: "%3$s"
                       schema: STRING
                       max-message-bytes: 1
-                      subscription-name: "%s"
+                      subscription-name: "%4$s"
                       subscription-initial-position: EARLIEST
                       receive-timeout: PT0.1S
                       failure:
@@ -575,12 +633,11 @@ class PulsarConnectorIT {
                           calls: 1
                         on-exhausted: DEAD_LETTER
                         dead-letter:
-                          channel: %s
+                          channel: %5$s
                   outgoing:
-                    %s:
-                      connector: helidon-pulsar
-                      service-url: "%s"
-                      topic: "%s"
+                    %6$s:
+                      connector: test-pulsar
+                      topic: "%8$s"
                       schema: STRING
                 """.formatted(PulsarMessagingTypes.FAILED_MAPPING_INCOMING_CHANNEL,
                                PULSAR.getPulsarBrokerUrl(),

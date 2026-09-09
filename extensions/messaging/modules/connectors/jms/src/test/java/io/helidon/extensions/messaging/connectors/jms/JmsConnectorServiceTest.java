@@ -16,12 +16,8 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.spi.ConnectorProvider;
-import io.helidon.messaging.spi.IncomingConnector;
-import io.helidon.messaging.spi.IncomingConnectorProvider;
-import io.helidon.messaging.spi.OutgoingConnector;
-import io.helidon.messaging.spi.OutgoingConnectorProvider;
+import io.helidon.config.Config;
+import io.helidon.messaging.spi.MessagingConnectorProvider;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryConfig;
 import io.helidon.service.registry.ServiceRegistryManager;
@@ -38,28 +34,23 @@ import static org.mockito.Mockito.mock;
 
 class JmsConnectorServiceTest {
     @Test
-    void testConnectorsAreDiscoveredByServiceRegistry() {
+    void testConfiguredProviderIsDiscoveredByServiceRegistry() {
         ServiceRegistryManager registryManager = ServiceRegistryManager.create();
         try {
             ServiceRegistry registry = registryManager.registry();
-
-            ConnectorProvider provider = registry.get(ConnectorProvider.class);
+            MessagingConnectorProvider provider = registry.get(MessagingConnectorProvider.class);
 
             assertThat(provider, instanceOf(JmsConnectorProvider.class));
-            assertThat(provider, instanceOf(IncomingConnectorProvider.class));
-            assertThat(provider, instanceOf(OutgoingConnectorProvider.class));
-            assertThat(registry.get(IncomingConnectorProvider.class), sameInstance(provider));
-            assertThat(registry.get(OutgoingConnectorProvider.class), sameInstance(provider));
-            assertThat(provider instanceof AutoCloseable, is(false));
+            assertThat(provider.configKey(), is(JmsConnectorProvider.CONNECTOR_TYPE));
 
-            JmsConnectorProvider jmsProvider = (JmsConnectorProvider) provider;
-            IncomingConnector firstIncoming = jmsProvider.createIncomingConnector(config(ConnectorDirection.INCOMING));
-            IncomingConnector secondIncoming = jmsProvider.createIncomingConnector(config(ConnectorDirection.INCOMING));
-            OutgoingConnector firstOutgoing = jmsProvider.createOutgoingConnector(config(ConnectorDirection.OUTGOING));
-            OutgoingConnector secondOutgoing = jmsProvider.createOutgoingConnector(config(ConnectorDirection.OUTGOING));
+            JmsConnector connector = (JmsConnector) provider.create(Config.empty(), "orders-jms");
+            assertThat(connector.name(), is("orders-jms"));
+            assertThat(connector.type(), is(JmsConnectorProvider.CONNECTOR_TYPE));
 
-            assertThat(firstIncoming, not(sameInstance(secondIncoming)));
-            assertThat(firstOutgoing, not(sameInstance(secondOutgoing)));
+            var incoming = JmsIncomingConfig.builder().channelName("orders").destination("orders").build();
+            var outgoing = JmsOutgoingConfig.builder().channelName("audit").destination("audit").build();
+            assertThat(connector.incoming(incoming), not(sameInstance(connector.incoming(incoming))));
+            assertThat(connector.outgoing(outgoing), not(sameInstance(connector.outgoing(outgoing))));
         } finally {
             registryManager.shutdown();
         }
@@ -73,20 +64,14 @@ class JmsConnectorServiceTest {
                 .build();
         ServiceRegistryManager registryManager = ServiceRegistryManager.create(registryConfig);
         try {
-            JmsConnectorConfig config = config(ConnectorDirection.INCOMING);
+            JmsRuntimeConfig config = JmsRuntimeConfig.builder()
+                    .channelName("orders")
+                    .destination("orders")
+                    .build();
 
             assertThat(new JmsResourceResolver(registryManager.registry()).resolve(config), sameInstance(factory));
         } finally {
             registryManager.shutdown();
         }
-    }
-
-    private static JmsConnectorConfig config(ConnectorDirection direction) {
-        return JmsConnectorConfig.builder()
-                .direction(direction)
-                .channelName("orders")
-                .connector(JmsConnectorProvider.CONNECTOR_TYPE)
-                .destination("orders")
-                .build();
     }
 }

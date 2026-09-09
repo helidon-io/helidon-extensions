@@ -34,7 +34,6 @@ import java.util.function.BooleanSupplier;
 
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemOutcome;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
@@ -42,7 +41,7 @@ import io.helidon.messaging.MessageHeader;
 import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.OutgoingConnector;
+import io.helidon.messaging.spi.OutgoingChannel;
 
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
@@ -69,7 +68,7 @@ import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorPro
  * {@code acks=1}, or all in-sync replica acknowledgements for {@code acks=all}. It
  * does not imply that a consumer has processed the message.
  */
-final class KafkaOutgoingConnector {
+final class KafkaOutgoingChannel {
     private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
     private static final String LEGACY_FAILURE_MESSAGE_HEADER = "helidon_messaging_dead_letter_failure_message";
     private static final Set<String> DLQ_RESERVED_HEADERS = Set.of(DeadLetterMessage.SOURCE_CHANNEL_HEADER,
@@ -85,26 +84,21 @@ final class KafkaOutgoingConnector {
 
     private final ProducerFactory producerFactory;
 
-    KafkaOutgoingConnector() {
+    KafkaOutgoingChannel() {
         this(KafkaProducer::new);
     }
 
-    KafkaOutgoingConnector(ProducerFactory producerFactory) {
+    KafkaOutgoingChannel(ProducerFactory producerFactory) {
         this.producerFactory = Objects.requireNonNull(producerFactory);
     }
 
-    OutgoingConnector createOutgoingConnector(KafkaConnectorConfig config) {
+    OutgoingChannel createOutgoingChannel(KafkaConnectorConfigSupport.OutgoingSettings config) {
         Objects.requireNonNull(config);
-        if (config.direction() != ConnectorDirection.OUTGOING) {
-            throw new IllegalArgumentException("Kafka connector configuration for channel " + config.channelName()
-                                                       + " has direction " + config.direction()
-                                                       + ", expected " + ConnectorDirection.OUTGOING);
-        }
-        return new KafkaConnector(config.topic(),
-                                  config.sendTimeout(),
-                                  config.closeTimeout(),
-                                  KafkaConnectorConfigSupport.producerProperties(config),
-                                  producerFactory);
+        return new OutgoingKafkaChannel(config.topic(),
+                                        config.sendTimeout(),
+                                        config.closeTimeout(),
+                                        KafkaConnectorConfigSupport.producerProperties(config),
+                                        producerFactory);
     }
 
     @FunctionalInterface
@@ -112,7 +106,7 @@ final class KafkaOutgoingConnector {
         Producer<Object, Object> create(Map<String, Object> properties);
     }
 
-    private static final class KafkaConnector implements OutgoingConnector {
+    private static final class OutgoingKafkaChannel implements OutgoingChannel {
         private final String topic;
         private final Duration sendTimeout;
         private final Duration closeTimeout;
@@ -128,11 +122,11 @@ final class KafkaOutgoingConnector {
         private boolean closeRequested;
         private boolean closing;
 
-        private KafkaConnector(String topic,
-                               Duration sendTimeout,
-                               Duration closeTimeout,
-                               Map<String, Object> producerProperties,
-                               ProducerFactory producerFactory) {
+        private OutgoingKafkaChannel(String topic,
+                                     Duration sendTimeout,
+                                     Duration closeTimeout,
+                                     Map<String, Object> producerProperties,
+                                     ProducerFactory producerFactory) {
             this.topic = topic;
             this.sendTimeout = sendTimeout;
             this.closeTimeout = closeTimeout;

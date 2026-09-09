@@ -38,7 +38,6 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import io.helidon.messaging.BatchDeliveryException;
 import io.helidon.messaging.BatchItemStatus;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
@@ -46,7 +45,7 @@ import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessageMetadata;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.OutgoingConnector;
+import io.helidon.messaging.spi.OutgoingChannel;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.MockProducer;
@@ -68,7 +67,7 @@ import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-class KafkaOutgoingConnectorTest {
+class KafkaOutgoingChannelTest {
     private static final String TOPIC = "audit-events";
     private static final String LOCAL_SECRET_METADATA = "application.local.secret";
     private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";
@@ -76,15 +75,22 @@ class KafkaOutgoingConnectorTest {
 
     @Test
     void testConnectorType() {
-        KafkaConnectorProvider provider = KafkaConnectorProvider.create();
-
-        assertThat(provider.connectorType(), is("helidon-kafka"));
+        KafkaConnector connector = KafkaConnector.builder()
+                .name("test-kafka")
+                .bootstrapServers("localhost:9092")
+                .build();
+        try (OutgoingChannel channel = connector.outgoing(KafkaOutgoingConfig.builder()
+                .channelName("audit")
+                .topic(TOPIC)
+                .build())) {
+            assertThat(connector.type(), is("helidon-kafka"));
+        }
     }
 
     @Test
     void testSendsPayloadTopicAndPortableHeaders() {
         MockProducer<Object, Object> producer = mockProducer(true);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
 
         start(connector, config())
                 .send(Message.builder("audit event")
@@ -111,8 +117,8 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testRejectsUnsupportedPortableHeaderValue() {
         MockProducer<Object, Object> producer = mockProducer(true);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = start(connector, config());
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = start(connector, config());
         Message<String> message = Message.builder("audit event")
                 .header("attempt", MessageHeaderValue.IntegerValue.create(1))
                 .build();
@@ -127,7 +133,7 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testSendsKafkaMessageKeyAndOrderedNativeHeaders() {
         MockProducer<Object, Object> producer = mockProducer(true);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
         byte[] binaryHeader = new byte[] {0x00, (byte) 0xFF};
         KafkaMessage<String, String> message = KafkaMessage.<String, String>builder("audit event")
                 .key("audit-key")
@@ -160,7 +166,7 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testResendsIncomingKafkaMessageToConfiguredTopicWithoutSourcePlacement() {
         MockProducer<Object, Object> producer = mockProducer(true);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
         ConsumerRecord<String, String> sourceRecord = new ConsumerRecord<>("source-topic",
                                                                             7,
                                                                             42,
@@ -188,7 +194,7 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testDeadLettersKafkaTombstoneAsNullValueWithNativeMetadata() {
         MockProducer<Object, Object> producer = mockProducer(true);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
         ConsumerRecord<Object, Object> tombstone = new ConsumerRecord<>("source-topic",
                                                                          2,
                                                                          7L,
@@ -215,7 +221,7 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testDeadLetterDoesNotMapPortableFailureDiagnostics() {
         MockProducer<Object, Object> producer = mockProducer(true);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
         DeadLetterMessage<String> deadLetter = DeadLetterMessage.create(
                 Message.builder("audit event")
                         .header(LEGACY_FAILURE_TYPE_HEADER, "forged-type")
@@ -247,7 +253,7 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testSendsDeadLetterKafkaMessageWithNativeMetadata() {
         MockProducer<Object, Object> producer = mockProducer(true);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
         ConsumerRecord<String, String> sourceRecord = new ConsumerRecord<>(
                 "source-topic",
                 7,
@@ -321,7 +327,7 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testDeadLetterKafkaMessageWithoutSourceMetadataRemovesForgedReservedHeaders() {
         MockProducer<Object, Object> producer = mockProducer(true);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
         KafkaMessage<String, String> original = KafkaMessage.<String, String>builder("audit event")
                 .key("source-key")
                 .addHeader(KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER, "forged")
@@ -351,7 +357,7 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testCustomDeadLetterWrapperMergesPortableHeadersAndCanonicalizesMetadata() {
         MockProducer<Object, Object> producer = mockProducer(true);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
         ConsumerRecord<String, String> sourceRecord = new ConsumerRecord<>(
                 "source-topic",
                 7,
@@ -412,7 +418,7 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testBatchEnqueuesAllRecordsBeforeWaiting() throws Exception {
         MockProducer<Object, Object> producer = mockProducer(false);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
         CompletableFuture<Void> sending = CompletableFuture.runAsync(() -> start(connector, config())
                 .sendBatch(MessageBatch.create(List.of(Message.create("first"), Message.create("second")))));
 
@@ -429,8 +435,8 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testBatchIsPerMessageAndReportsEveryEnqueuedOutcome() throws Exception {
         MockProducer<Object, Object> producer = mockProducer(false);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = start(connector, config());
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = start(connector, config());
         MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
                                                                  Message.create("second"),
                                                                  Message.create("third")));
@@ -462,8 +468,8 @@ class KafkaOutgoingConnectorTest {
         MockProducer<Object, Object> producer = mockProducer(true);
         IllegalStateException enqueueFailure = new IllegalStateException("enqueue failed");
         producer.sendException = enqueueFailure;
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = start(connector, config());
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = start(connector, config());
         MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
                                                                  Message.create("second")));
 
@@ -482,11 +488,11 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testBatchLifecycleFailureMarksEveryMessageNotAttempted() {
         AtomicBoolean producerCreated = new AtomicBoolean();
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> {
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> {
             producerCreated.set(true);
             return mockProducer(true);
         });
-        OutgoingConnector outgoing = connector.createOutgoingConnector(config());
+        OutgoingChannel outgoing = connector.createOutgoingChannel(config());
         MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
                                                                  Message.create("second")));
 
@@ -504,8 +510,8 @@ class KafkaOutgoingConnectorTest {
     void testSynchronousBatchEnqueueFailureStillInspectsPreviouslyEnqueuedRecords() {
         IllegalStateException enqueueFailure = new IllegalStateException("second enqueue failed");
         MockProducer<Object, Object> producer = new FailsSecondEnqueueProducer(enqueueFailure);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = start(connector, config());
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = start(connector, config());
         MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
                                                                  Message.create("second"),
                                                                  Message.create("third")));
@@ -527,8 +533,8 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testBatchDeadlineReportsEveryUnfinishedSendAsIndeterminate() {
         MockProducer<Object, Object> producer = mockProducer(false);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = start(connector, config(Duration.ofNanos(1)));
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = start(connector, config(Duration.ofNanos(1)));
         MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
                                                                  Message.create("second")));
 
@@ -547,8 +553,8 @@ class KafkaOutgoingConnectorTest {
     void testBatchWaitsUpToConfiguredTimeoutForEachProducerFuture() {
         Duration timeout = Duration.ofMillis(37);
         TimeoutRecordingProducer producer = new TimeoutRecordingProducer();
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = start(connector, config(timeout));
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = start(connector, config(timeout));
         MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
                                                                  Message.create("second")));
 
@@ -564,8 +570,8 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testBatchInterruptionInspectsAlreadyCompletedLaterFuturesAndRestoresInterrupt() throws InterruptedException {
         ControlledFutureProducer producer = new ControlledFutureProducer();
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = start(connector, config(Duration.ofSeconds(5)));
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = start(connector, config(Duration.ofSeconds(5)));
         MessageBatch<String> batch = MessageBatch.create(List.of(Message.create("first"),
                                                                  Message.create("second"),
                                                                  Message.create("third")));
@@ -602,7 +608,7 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testProducerFailureIsWrapped() throws Exception {
         MockProducer<Object, Object> producer = mockProducer(false);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
         RuntimeException failure = new IllegalStateException("send failed");
         CompletableFuture<Void> sending = CompletableFuture.runAsync(() -> start(connector, config())
                 .send(Message.create("audit event")));
@@ -620,8 +626,8 @@ class KafkaOutgoingConnectorTest {
         MockProducer<Object, Object> producer = mockProducer(true);
         RuntimeException failure = new IllegalStateException("enqueue failed");
         producer.sendException = failure;
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = start(connector, config());
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = start(connector, config());
 
         BatchDeliveryException exception = assertThrows(
                 BatchDeliveryException.class,
@@ -636,8 +642,8 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testProducerSendTimeoutIsWrapped() {
         MockProducer<Object, Object> producer = mockProducer(false);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = start(connector, config(Duration.ofNanos(1)));
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = start(connector, config(Duration.ofNanos(1)));
 
         MessagingException exception = assertThrows(
                 MessagingException.class,
@@ -651,7 +657,7 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testProducerSendInterruptionPreservesInterruptStatus() throws InterruptedException {
         MockProducer<Object, Object> producer = mockProducer(false);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
         var sink = start(connector, config(Duration.ofSeconds(5)));
         AtomicReference<Throwable> failure = new AtomicReference<>();
         AtomicBoolean interrupted = new AtomicBoolean();
@@ -678,13 +684,13 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testConnectorCreationIsResourceFreeAndConnectorsOwnTheirProducers() {
         List<MockProducer<Object, Object>> created = new ArrayList<>();
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> {
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> {
             MockProducer<Object, Object> producer = mockProducer(true);
             created.add(producer);
             return producer;
         });
-        OutgoingConnector first = connector.createOutgoingConnector(config());
-        OutgoingConnector second = connector.createOutgoingConnector(config());
+        OutgoingChannel first = connector.createOutgoingChannel(config());
+        OutgoingChannel second = connector.createOutgoingChannel(config());
 
         assertThat(created, is(List.of()));
 
@@ -704,13 +710,13 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testGraphClosesOnlyOwnedSinkAndLeavesSiblingUsable() {
         List<MockProducer<Object, Object>> created = new ArrayList<>();
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> {
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> {
             MockProducer<Object, Object> producer = mockProducer(true);
             created.add(producer);
             return producer;
         });
-        OutgoingConnector first = start(connector, config());
-        OutgoingConnector second = start(connector, config());
+        OutgoingChannel first = start(connector, config());
+        OutgoingChannel second = start(connector, config());
 
         first.close();
         first.close();
@@ -728,8 +734,8 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testForcedSinkCloseDoesNotUseGracefulTimeout() {
         CloseTrackingProducer producer = new CloseTrackingProducer();
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector sink = start(connector, config());
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel sink = start(connector, config());
 
         sink.forceClose();
         sink.close();
@@ -740,8 +746,8 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testStartIsRejectedWhileCloseIsInProgress() throws InterruptedException {
         BlockingCloseProducer producer = new BlockingCloseProducer();
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = start(connector, config());
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = start(connector, config());
         AtomicReference<Throwable> closeFailure = new AtomicReference<>();
         Thread closer = Thread.ofVirtual().start(() -> captureFailure(outgoing::close, closeFailure));
 
@@ -763,8 +769,8 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testForceCloseReturnsPromptlyWhileGracefulCloseIsBlocked() throws InterruptedException {
         BlockingCloseProducer producer = new BlockingCloseProducer();
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = start(connector, config());
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = start(connector, config());
         AtomicReference<Throwable> closeFailure = new AtomicReference<>();
         Thread closer = Thread.ofVirtual().start(() -> captureFailure(outgoing::close, closeFailure));
         assertThat(producer.awaitClose(), is(true));
@@ -791,8 +797,8 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testSinkRetainsProducerOwnershipAfterCloseFailure() {
         RetryingCloseProducer producer = new RetryingCloseProducer();
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector sink = start(connector, config());
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel sink = start(connector, config());
 
         assertThrows(IllegalStateException.class, sink::close);
 
@@ -810,8 +816,8 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testForceCloseUnblocksReadinessProbeAndPreventsReadyTransition() throws InterruptedException {
         BlockingReadinessProducer producer = new BlockingReadinessProducer();
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = connector.createOutgoingConnector(config());
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = connector.createOutgoingChannel(config());
         AtomicReference<Throwable> startupFailure = new AtomicReference<>();
         Thread starter = Thread.ofVirtual().start(() -> captureFailure(outgoing::start, startupFailure));
 
@@ -834,8 +840,8 @@ class KafkaOutgoingConnectorTest {
         MockProducer<Object, Object> producer = mockProducer(true);
         IllegalStateException readinessFailure = new IllegalStateException("metadata failed");
         producer.partitionsForException = readinessFailure;
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = connector.createOutgoingConnector(config());
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = connector.createOutgoingChannel(config());
 
         MessagingException failure = assertThrows(MessagingException.class, outgoing::start);
 
@@ -847,10 +853,10 @@ class KafkaOutgoingConnectorTest {
     @Test
     void testStartupErrorsFinalizeLifecycleAndFailedCleanupCanBeRetried() {
         AssertionError factoryError = new AssertionError("factory failed");
-        KafkaOutgoingConnector failingFactory = new KafkaOutgoingConnector(ignored -> {
+        KafkaOutgoingChannel failingFactory = new KafkaOutgoingChannel(ignored -> {
             throw factoryError;
         });
-        OutgoingConnector factoryConnector = failingFactory.createOutgoingConnector(config());
+        OutgoingChannel factoryConnector = failingFactory.createOutgoingChannel(config());
 
         assertThat(assertThrows(AssertionError.class, factoryConnector::start), sameInstance(factoryError));
         factoryConnector.close();
@@ -859,8 +865,8 @@ class KafkaOutgoingConnectorTest {
         AssertionError cleanupError = new AssertionError("cleanup failed");
         ErrorOnReadinessAndFirstCloseProducer producer = new ErrorOnReadinessAndFirstCloseProducer(readinessError,
                                                                                                    cleanupError);
-        KafkaOutgoingConnector connector = new KafkaOutgoingConnector(ignored -> producer);
-        OutgoingConnector outgoing = connector.createOutgoingConnector(config());
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
+        OutgoingChannel outgoing = connector.createOutgoingChannel(config());
 
         assertThat(assertThrows(AssertionError.class, outgoing::start), sameInstance(cleanupError));
         assertThat(cleanupError.getSuppressed()[0], sameInstance(readinessError));
@@ -873,24 +879,26 @@ class KafkaOutgoingConnectorTest {
         assertThat(producer.closed(), is(true));
     }
 
-    private static KafkaConnectorConfig config() {
+    private static KafkaConnectorConfigSupport.OutgoingSettings config() {
         return config(Duration.ofSeconds(2));
     }
 
-    private static KafkaConnectorConfig config(Duration sendTimeout) {
-        return KafkaConnectorConfig.builder()
-                .direction(ConnectorDirection.OUTGOING)
+    private static KafkaConnectorConfigSupport.OutgoingSettings config(Duration sendTimeout) {
+        KafkaOutgoingConfig channelConfig = KafkaOutgoingConfig.builder()
                 .channelName("audit")
-                .connector(KafkaConnectorProvider.CONNECTOR_TYPE)
-                .bootstrapServers("localhost:9092")
                 .topic(TOPIC)
                 .sendTimeout(sendTimeout)
                 .closeTimeout(Duration.ofSeconds(1))
                 .build();
+        KafkaConnectorConfig connectorConfig = KafkaConnectorConfig.builder()
+                .name("test-kafka")
+                .bootstrapServers("localhost:9092")
+                .buildPrototype();
+        return KafkaConnectorConfigSupport.outgoing(connectorConfig, channelConfig);
     }
 
-    private static OutgoingConnector start(KafkaOutgoingConnector connector, KafkaConnectorConfig config) {
-        OutgoingConnector outgoing = connector.createOutgoingConnector(config);
+    private static OutgoingChannel start(KafkaOutgoingChannel connector, KafkaConnectorConfigSupport.OutgoingSettings config) {
+        OutgoingChannel outgoing = connector.createOutgoingChannel(config);
         outgoing.start();
         return outgoing;
     }

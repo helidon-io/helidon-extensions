@@ -29,12 +29,11 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.MessagingRejectedException;
-import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingChannel;
 
 import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;
@@ -69,7 +68,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class JmsIncomingConnectorTest {
+class JmsIncomingChannelTest {
     private static final String CHANNEL = "orders";
 
     @Test
@@ -83,7 +82,7 @@ class JmsIncomingConnectorTest {
         TestDelivery delivery = new TestDelivery(deliveryStarted, releaseDelivery, null);
         TestReservation reservation = new TestReservation(events, delivery);
         TestContext context = new TestContext(events, reservation);
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> client.factory);
         when(client.consumer.receive(anyLong())).thenAnswer(invocation -> {
             events.add("receive");
             return nativeMessage;
@@ -118,8 +117,8 @@ class JmsIncomingConnectorTest {
         TestDelivery delivery = TestDelivery.completed();
         TestReservation reservation = new TestReservation(new ArrayList<>(), delivery);
         TestContext context = new TestContext(new ArrayList<>(), reservation);
-        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
-        IncomingConnector connector = JmsIncomingConnector.create(config(true), ignored -> client.factory);
+        AtomicReference<IncomingChannel> connectorReference = new AtomicReference<>();
+        IncomingChannel connector = JmsIncomingChannel.create(config(true), ignored -> client.factory);
         connectorReference.set(connector);
         when(client.consumer.receive(anyLong())).thenReturn(nativeMessage);
         doAnswer(invocation -> {
@@ -146,7 +145,7 @@ class JmsIncomingConnectorTest {
         when(session.createTopic("events")).thenReturn(topic);
         when(session.createDurableConsumer(topic, "orders-subscription", "region = 'EU'", true))
                 .thenReturn(consumer);
-        JmsConnectorConfig topicConfig = JmsConnectorConfig.builder()
+        JmsRuntimeConfig topicConfig = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .destinationType(JmsDestinationType.TOPIC)
                 .clientId("orders-client")
@@ -155,7 +154,7 @@ class JmsIncomingConnectorTest {
                 .messageSelector("region = 'EU'")
                 .noLocal(true)
                 .build();
-        IncomingConnector connector = JmsIncomingConnector.create(topicConfig, ignored -> factory);
+        IncomingChannel connector = JmsIncomingChannel.create(topicConfig, ignored -> factory);
         TestContext context = new TestContext(new ArrayList<>()) {
             @Override
             public boolean awaitRunning() {
@@ -182,13 +181,13 @@ class JmsIncomingConnectorTest {
         when(connection.createSession(false, Session.CLIENT_ACKNOWLEDGE)).thenReturn(session);
         when(session.createTopic("events")).thenReturn(topic);
         when(session.createDurableConsumer(topic, "orders-subscription", null, false)).thenReturn(consumer);
-        JmsConnectorConfig topicConfig = JmsConnectorConfig.builder()
+        JmsRuntimeConfig topicConfig = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .destinationType(JmsDestinationType.TOPIC)
                 .durable(true)
                 .subscriptionName("orders-subscription")
                 .build();
-        IncomingConnector connector = JmsIncomingConnector.create(topicConfig, ignored -> factory);
+        IncomingChannel connector = JmsIncomingChannel.create(topicConfig, ignored -> factory);
         TestContext context = new TestContext(new ArrayList<>()) {
             @Override
             public boolean awaitRunning() {
@@ -208,12 +207,12 @@ class JmsIncomingConnectorTest {
     void naturalRunCompletionUsesConfiguredCredentialsAndClosesConnection() throws Exception {
         JmsClient client = client();
         when(client.factory.createConnection("scott", "tiger")).thenReturn(client.connection);
-        JmsConnectorConfig credentialConfig = JmsConnectorConfig.builder()
+        JmsRuntimeConfig credentialConfig = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .username("scott")
                 .password("tiger")
                 .build();
-        IncomingConnector connector = JmsIncomingConnector.create(credentialConfig, ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(credentialConfig, ignored -> client.factory);
 
         connector.run(new TestContext(new ArrayList<>()) {
             @Override
@@ -234,13 +233,13 @@ class JmsIncomingConnectorTest {
         CountDownLatch awaitingRunning = new CountDownLatch(1);
         CountDownLatch allowRunning = new CountDownLatch(1);
         CountDownLatch receiving = new CountDownLatch(1);
-        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
+        AtomicReference<IncomingChannel> connectorReference = new AtomicReference<>();
         when(client.consumer.receive(anyLong())).thenAnswer(invocation -> {
             receiving.countDown();
             connectorReference.get().drain();
             return null;
         });
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> client.factory);
         connectorReference.set(connector);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
@@ -286,13 +285,13 @@ class JmsIncomingConnectorTest {
         doThrow(new JMSException("start failed")).when(first.connection).start();
         TextMessage delivered = textMessage("after-start-retry");
         when(second.consumer.receive(anyLong())).thenReturn(delivered);
-        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
+        AtomicReference<IncomingChannel> connectorReference = new AtomicReference<>();
         doAnswer(invocation -> {
             connectorReference.get().drain();
             return null;
         }).when(delivered).acknowledge();
         AtomicInteger activationWaits = new AtomicInteger();
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> factory);
         connectorReference.set(connector);
 
         connector.run(new TestContext(new ArrayList<>(),
@@ -323,16 +322,16 @@ class JmsIncomingConnectorTest {
                 .thenReturn(client.connection);
         TextMessage delivered = textMessage("after-retry");
         when(client.consumer.receive(anyLong())).thenReturn(delivered);
-        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
+        AtomicReference<IncomingChannel> connectorReference = new AtomicReference<>();
         doAnswer(invocation -> {
             connectorReference.get().drain();
             return null;
         }).when(delivered).acknowledge();
-        JmsConnectorConfig connectorConfig = JmsConnectorConfig.builder()
+        JmsRuntimeConfig connectorConfig = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .reconnectJitter(Double.MIN_VALUE)
                 .build();
-        IncomingConnector connector = JmsIncomingConnector.create(connectorConfig, ignored -> factory);
+        IncomingChannel connector = JmsIncomingChannel.create(connectorConfig, ignored -> factory);
         connectorReference.set(connector);
 
         connector.run(new TestContext(new ArrayList<>(),
@@ -346,10 +345,8 @@ class JmsIncomingConnectorTest {
     @Timeout(5)
     void effectivelyInfiniteReconnectDelayWithDefaultAndZeroJitterRemainsCloseable() throws Exception {
         Duration hugeDelay = Duration.ofNanos(Long.MAX_VALUE / 2);
-        JmsConnectorConfig defaultJitter = JmsConnectorConfig.builder()
-                .direction(ConnectorDirection.INCOMING)
+        JmsRuntimeConfig defaultJitter = JmsRuntimeConfig.builder()
                 .channelName(CHANNEL)
-                .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("events")
                 .reconnectInitialDelay(hugeDelay)
                 .reconnectMaxDelay(hugeDelay)
@@ -357,7 +354,7 @@ class JmsIncomingConnectorTest {
         assertThat(defaultJitter.reconnectJitter(), is(0.2));
 
         assertReconnectWaitIsCloseable(defaultJitter);
-        assertReconnectWaitIsCloseable(JmsConnectorConfig.builder()
+        assertReconnectWaitIsCloseable(JmsRuntimeConfig.builder()
                                                .from(defaultJitter)
                                                .reconnectJitter(0)
                                                .build());
@@ -377,13 +374,13 @@ class JmsIncomingConnectorTest {
         when(factory.createConnection()).thenReturn(first.connection, second.connection);
         TextMessage delivered = textMessage("after-activation-reconnect");
         when(second.consumer.receive(anyLong())).thenReturn(delivered);
-        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
+        AtomicReference<IncomingChannel> connectorReference = new AtomicReference<>();
         doAnswer(invocation -> {
             connectorReference.get().drain();
             return null;
         }).when(delivered).acknowledge();
         AtomicInteger activationWaits = new AtomicInteger();
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> factory);
         connectorReference.set(connector);
 
         connector.run(new TestContext(new ArrayList<>(),
@@ -418,7 +415,7 @@ class JmsIncomingConnectorTest {
         TestReservation reservation = new TestReservation(
                 new ArrayList<>(),
                 new TestDelivery(policyStarted, releasePolicy, null));
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> {
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> {
             resolutions.incrementAndGet();
             return client.factory;
         });
@@ -465,7 +462,7 @@ class JmsIncomingConnectorTest {
         when(nativeMessage.getPropertyNames()).thenThrow(providerFailure);
         when(client.consumer.receive(anyLong())).thenReturn(nativeMessage);
         TestReservation reservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> client.factory);
         doAnswer(invocation -> {
             connector.drain();
             return null;
@@ -494,7 +491,7 @@ class JmsIncomingConnectorTest {
         AtomicInteger resolutions = new AtomicInteger();
         MessagingException terminalFailure = new MessagingException("Failure policy exhausted");
         TestReservation reservation = new TestReservation(new ArrayList<>(), TestDelivery.failed(terminalFailure));
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> {
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> {
             resolutions.incrementAndGet();
             return client.factory;
         });
@@ -531,14 +528,14 @@ class JmsIncomingConnectorTest {
         when(second.consumer.receive(anyLong())).thenReturn(delivered);
         ConnectionFactory factory = mock(ConnectionFactory.class);
         when(factory.createConnection()).thenReturn(first.connection, second.connection);
-        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
+        AtomicReference<IncomingChannel> connectorReference = new AtomicReference<>();
         doAnswer(invocation -> {
             connectorReference.get().drain();
             return null;
         }).when(delivered).acknowledge();
         TestReservation firstReservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
         TestReservation secondReservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> factory);
         connectorReference.set(connector);
 
         connector.run(new TestContext(new ArrayList<>(), firstReservation, secondReservation));
@@ -559,7 +556,7 @@ class JmsIncomingConnectorTest {
                 CHANNEL,
                 MessagingRejectedException.Reason.SHUTDOWN,
                 "runtime rejected admission");
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> client.factory);
         TestContext context = new TestContext(new ArrayList<>()) {
             @Override
             public Optional<ConnectorDeliveryReservation> tryReserveDelivery() {
@@ -584,17 +581,17 @@ class JmsIncomingConnectorTest {
         when(first.consumer.receive(anyLong())).thenThrow(new JMSException("broker offline"));
         TextMessage delivered = textMessage("after-reconnect");
         when(second.consumer.receive(anyLong())).thenReturn(delivered);
-        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
+        AtomicReference<IncomingChannel> connectorReference = new AtomicReference<>();
         doAnswer(invocation -> {
             connectorReference.get().drain();
             return null;
         }).when(delivered).acknowledge();
-        JmsConnectorConfig config = JmsConnectorConfig.builder()
+        JmsRuntimeConfig config = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .username("orders-user")
                 .password("secret".toCharArray())
                 .build();
-        IncomingConnector connector = JmsIncomingConnector.create(config, ignored -> factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config, ignored -> factory);
         connectorReference.set(connector);
         TestReservation firstReservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
         TestReservation secondReservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
@@ -641,12 +638,12 @@ class JmsIncomingConnectorTest {
         when(factory.createConnection()).thenReturn(first.connection, second.connection);
         TextMessage delivered = textMessage("after-reconnect");
         when(second.consumer.receive(anyLong())).thenReturn(delivered);
-        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
+        AtomicReference<IncomingChannel> connectorReference = new AtomicReference<>();
         doAnswer(invocation -> {
             connectorReference.get().drain();
             return null;
         }).when(delivered).acknowledge();
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> factory);
         connectorReference.set(connector);
 
         connector.run(new TestContext(new ArrayList<>(),
@@ -669,7 +666,7 @@ class JmsIncomingConnectorTest {
         JMSException cleanupFailure = new JMSException("stale cleanup failed");
         doThrow(cleanupFailure).when(first.connection).close();
         AtomicInteger resolutions = new AtomicInteger();
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> {
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> {
             resolutions.incrementAndGet();
             return factory;
         });
@@ -707,7 +704,7 @@ class JmsIncomingConnectorTest {
             connectionClosed.countDown();
             return null;
         }).when(client.connection).close();
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> client.factory);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
                 () -> connector.run(new TestContext(new ArrayList<>(),
@@ -739,7 +736,7 @@ class JmsIncomingConnectorTest {
             connectionCloseAttempted.countDown();
             throw cleanupFailure;
         }).when(client.connection).close();
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> client.factory);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
                 () -> connector.run(new TestContext(new ArrayList<>(),
@@ -773,7 +770,7 @@ class JmsIncomingConnectorTest {
             lateConnectionClosed.countDown();
             return null;
         }).when(lateConnection).close();
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> factory);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
                 () -> connector.run(new TestContext(new ArrayList<>())),
@@ -805,7 +802,7 @@ class JmsIncomingConnectorTest {
             return lateConnection;
         });
         doThrow(cleanupFailure).when(lateConnection).close();
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> factory);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
                 () -> connector.run(new TestContext(new ArrayList<>())),
@@ -843,7 +840,7 @@ class JmsIncomingConnectorTest {
             return null;
         }).when(client.connection).close();
         TestDelivery delivery = new TestDelivery(deliveryStarted, new CountDownLatch(1), null);
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> client.factory);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
                 () -> connector.run(new TestContext(
@@ -885,7 +882,7 @@ class JmsIncomingConnectorTest {
             awaitIgnoringInterruption(releaseSessionClose);
             return null;
         }).when(client.session).close();
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> client.factory);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
                 () -> connector.run(new TestContext(new ArrayList<>())),
@@ -930,7 +927,7 @@ class JmsIncomingConnectorTest {
             connectionClosed.countDown();
             return null;
         }).when(client.connection).close();
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> client.factory);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
                 () -> connector.run(new TestContext(new ArrayList<>())),
@@ -961,11 +958,11 @@ class JmsIncomingConnectorTest {
             return null;
         });
         TestReservation reservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
-        JmsConnectorConfig connectorConfig = JmsConnectorConfig.builder()
+        JmsRuntimeConfig connectorConfig = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .receiveTimeout(receiveTimeout)
                 .build();
-        IncomingConnector connector = JmsIncomingConnector.create(connectorConfig, ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(connectorConfig, ignored -> client.factory);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
                 () -> connector.run(new TestContext(new ArrayList<>(), reservation)),
@@ -1000,7 +997,7 @@ class JmsIncomingConnectorTest {
             }
             return null;
         }).when(client.connection).close();
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> client.factory);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
                 () -> connector.run(new TestContext(new ArrayList<>()) {
@@ -1051,11 +1048,11 @@ class JmsIncomingConnectorTest {
             awaitIgnoringInterruption(releaseConnectionClose);
             return null;
         }).when(client.connection).close();
-        JmsConnectorConfig connectorConfig = JmsConnectorConfig.builder()
+        JmsRuntimeConfig connectorConfig = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .closeTimeout(Duration.ofMillis(50))
                 .build();
-        IncomingConnector connector = JmsIncomingConnector.create(connectorConfig, ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(connectorConfig, ignored -> client.factory);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
                 () -> connector.run(new TestContext(new ArrayList<>()) {
@@ -1096,11 +1093,11 @@ class JmsIncomingConnectorTest {
     void hugeCloseTimeoutIsSaturatedBeforeRequestingClose() throws Exception {
         JmsClient client = client();
         CountDownLatch awaitingRunning = new CountDownLatch(1);
-        JmsConnectorConfig connectorConfig = JmsConnectorConfig.builder()
+        JmsRuntimeConfig connectorConfig = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .closeTimeout(Duration.ofSeconds(Long.MAX_VALUE))
                 .build();
-        IncomingConnector connector = JmsIncomingConnector.create(connectorConfig, ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(connectorConfig, ignored -> client.factory);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
                 () -> connector.run(new TestContext(new ArrayList<>()) {
@@ -1137,7 +1134,7 @@ class JmsIncomingConnectorTest {
         JmsClient client = client();
         TextMessage nativeMessage = textMessage("race");
         when(client.consumer.receive(anyLong())).thenReturn(nativeMessage);
-        AtomicReference<IncomingConnector> connectorReference = new AtomicReference<>();
+        AtomicReference<IncomingChannel> connectorReference = new AtomicReference<>();
         AtomicReference<Thread> closerReference = new AtomicReference<>();
         CountDownLatch closeReturned = new CountDownLatch(1);
         AtomicReference<Throwable> closeFailure = new AtomicReference<>();
@@ -1164,7 +1161,7 @@ class JmsIncomingConnectorTest {
                 return delivery;
             }
         };
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> client.factory);
         connectorReference.set(connector);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         Thread source = Thread.ofVirtual().start(() -> capture(
@@ -1188,7 +1185,7 @@ class JmsIncomingConnectorTest {
         doThrow(connectionFailure).when(client.connection).close();
         doThrow(consumerFailure).when(client.consumer).close();
         doThrow(sessionFailure).when(client.session).close();
-        IncomingConnector connector = JmsIncomingConnector.create(config(false), ignored -> client.factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), ignored -> client.factory);
         TestContext context = new TestContext(new ArrayList<>()) {
             @Override
             public boolean awaitRunning() {
@@ -1226,11 +1223,9 @@ class JmsIncomingConnectorTest {
         return message;
     }
 
-    private static JmsConnectorConfig config(boolean transacted) {
-        return JmsConnectorConfig.builder()
-                .direction(ConnectorDirection.INCOMING)
+    private static JmsRuntimeConfig config(boolean transacted) {
+        return JmsRuntimeConfig.builder()
                 .channelName(CHANNEL)
-                .connector(JmsConnectorProvider.CONNECTOR_TYPE)
                 .destination("events")
                 .transacted(transacted)
                 .receiveTimeout(Duration.ofMillis(10))
@@ -1241,14 +1236,14 @@ class JmsIncomingConnectorTest {
                 .build();
     }
 
-    private static void assertReconnectWaitIsCloseable(JmsConnectorConfig config) throws Exception {
+    private static void assertReconnectWaitIsCloseable(JmsRuntimeConfig config) throws Exception {
         ConnectionFactory factory = mock(ConnectionFactory.class);
         CountDownLatch connectionAttempted = new CountDownLatch(1);
         when(factory.createConnection()).thenAnswer(invocation -> {
             connectionAttempted.countDown();
             throw new JMSException("broker unavailable");
         });
-        IncomingConnector connector = JmsIncomingConnector.create(config, ignored -> factory);
+        IncomingChannel connector = JmsIncomingChannel.create(config, ignored -> factory);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
         AtomicBoolean sourceInterrupted = new AtomicBoolean();
         Thread source = Thread.ofVirtual().start(() -> {

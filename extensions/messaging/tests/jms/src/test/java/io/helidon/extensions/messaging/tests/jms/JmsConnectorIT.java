@@ -507,16 +507,19 @@ class JmsConnectorIT {
     private static String textQueueConfig(String queue) {
         return """
                 messaging:
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                   incoming:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: QUEUE
                       receive-timeout: PT0.05S
                       close-timeout: PT2S
                   outgoing:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: QUEUE
                       close-timeout: PT2S
@@ -529,16 +532,19 @@ class JmsConnectorIT {
     private static String bytesQueueConfig(String queue) {
         return """
                 messaging:
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                   incoming:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: QUEUE
                       receive-timeout: PT0.05S
                       close-timeout: PT2S
                   outgoing:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: QUEUE
                       close-timeout: PT2S
@@ -551,9 +557,12 @@ class JmsConnectorIT {
     private static String selectorTopicConfig(String topic) {
         return """
                 messaging:
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                   incoming:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: TOPIC
                       message-selector: "region IN ('EU', 'CZ')"
@@ -565,16 +574,19 @@ class JmsConnectorIT {
     private static String forwardingConfig(String incomingQueue, String outgoingQueue) {
         return """
                 messaging:
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                   incoming:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: QUEUE
                       receive-timeout: PT0.05S
                       close-timeout: PT2S
                   outgoing:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: QUEUE
                       close-timeout: PT2S
@@ -587,9 +599,12 @@ class JmsConnectorIT {
     private static String deadLetterConfig(String incomingQueue, String deadLetterQueue, int maxAttempts) {
         return """
                 messaging:
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                   incoming:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: QUEUE
                       receive-timeout: PT0.05S
@@ -603,7 +618,7 @@ class JmsConnectorIT {
                           channel: %s
                   outgoing:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: QUEUE
                       close-timeout: PT2S
@@ -618,9 +633,12 @@ class JmsConnectorIT {
     private static String dropConfig(String queue) {
         return """
                 messaging:
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                   incoming:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: QUEUE
                       receive-timeout: PT0.05S
@@ -636,9 +654,12 @@ class JmsConnectorIT {
     private static String failingRedeliveryConfig(String queue) {
         return """
                 messaging:
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                   incoming:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: QUEUE
                       receive-timeout: PT0.05S
@@ -654,9 +675,12 @@ class JmsConnectorIT {
     private static String failingTransactedRedeliveryConfig(String queue) {
         return """
                 messaging:
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                   incoming:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: QUEUE
                       transacted: true
@@ -673,9 +697,12 @@ class JmsConnectorIT {
     private static String textIncomingConfig(String queue) {
         return """
                 messaging:
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                   incoming:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: QUEUE
                       receive-timeout: PT0.05S
@@ -686,9 +713,12 @@ class JmsConnectorIT {
     private static String transactedTextIncomingConfig(String queue) {
         return """
                 messaging:
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                   incoming:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: QUEUE
                       transacted: true

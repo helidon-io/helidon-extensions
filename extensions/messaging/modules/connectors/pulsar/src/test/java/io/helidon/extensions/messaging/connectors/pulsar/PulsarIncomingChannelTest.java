@@ -30,11 +30,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.IncomingConnectorContext;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
-import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingChannel;
 
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.ConsumerBuilder;
@@ -55,15 +54,15 @@ import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-class PulsarIncomingConnectorTest {
+class PulsarIncomingChannelTest {
     private static final Duration WAIT = Duration.ofSeconds(5);
 
     @Test
     void reservesBeforeReceiveAndAcknowledgesOnlyAfterRuntimeCompletion() throws Exception {
         TestContext context = new TestContext(false, true);
         FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage("payload", 7), context.reserved);
-        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
-                .createIncomingConnector(config(1024));
+        IncomingChannel connector = new PulsarIncomingChannel(ignored -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
         AtomicReference<Throwable> runFailure = new AtomicReference<>();
         Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
 
@@ -102,8 +101,8 @@ class PulsarIncomingConnectorTest {
                                                                                return new byte[9];
                                                                            }),
                                            context.reserved);
-        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
-                .createIncomingConnector(config(1));
+        IncomingChannel connector = new PulsarIncomingChannel(ignored -> source.client())
+                .createIncomingChannel(commonConfig(), config(1));
         AtomicReference<Throwable> runFailure = new AtomicReference<>();
         Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
 
@@ -137,8 +136,8 @@ class PulsarIncomingConnectorTest {
                                                                                return null;
                                                                            }),
                                            context.reserved);
-        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
-                .createIncomingConnector(config(1024));
+        IncomingChannel connector = new PulsarIncomingChannel(ignored -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
         AtomicReference<Throwable> runFailure = new AtomicReference<>();
         Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
 
@@ -174,8 +173,8 @@ class PulsarIncomingConnectorTest {
                                                                                        "Raw data must not be read");
                                                                            }),
                                            context.reserved);
-        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
-                .createIncomingConnector(config(1024));
+        IncomingChannel connector = new PulsarIncomingChannel(ignored -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
         AtomicReference<Throwable> runFailure = new AtomicReference<>();
         Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
 
@@ -200,8 +199,8 @@ class PulsarIncomingConnectorTest {
     void failedRuntimeDeliveryIsNegativelyAcknowledged() throws Exception {
         TestContext context = new TestContext(true);
         FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage("poison", 6), context.reserved);
-        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
-                .createIncomingConnector(config(1024));
+        IncomingChannel connector = new PulsarIncomingChannel(ignored -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
         AtomicReference<Throwable> runFailure = new AtomicReference<>();
         Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
 
@@ -219,8 +218,8 @@ class PulsarIncomingConnectorTest {
     void forceCloseInterruptsActiveDeliveryWithoutSettlingTransport() throws Exception {
         TestContext context = new TestContext(false, true);
         FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage("payload", 7), context.reserved);
-        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
-                .createIncomingConnector(config(1024));
+        IncomingChannel connector = new PulsarIncomingChannel(ignored -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
         AtomicReference<Throwable> runFailure = new AtomicReference<>();
         Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
 
@@ -240,8 +239,8 @@ class PulsarIncomingConnectorTest {
         TestContext receiveContext = new TestContext(false);
         FakeSource blockedSource = new FakeSource(null, receiveContext.reserved);
         blockedSource.blockReceive.set(true);
-        IncomingConnector blockedConnector = new PulsarIncomingConnector(ignored -> blockedSource.client())
-                .createIncomingConnector(config(1024));
+        IncomingChannel blockedConnector = new PulsarIncomingChannel(ignored -> blockedSource.client())
+                .createIncomingChannel(commonConfig(), config(1024));
         AtomicReference<Throwable> blockedFailure = new AtomicReference<>();
         Thread blockedOwner = Thread.ofVirtual().start(() -> run(blockedConnector, receiveContext, blockedFailure));
         assertThat(blockedSource.receiveEntered.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
@@ -254,8 +253,8 @@ class PulsarIncomingConnectorTest {
 
         BlockingGateContext gateContext = new BlockingGateContext();
         FakeSource gatedSource = new FakeSource(null, gateContext.reserved);
-        IncomingConnector gatedConnector = new PulsarIncomingConnector(ignored -> gatedSource.client())
-                .createIncomingConnector(config(1024));
+        IncomingChannel gatedConnector = new PulsarIncomingChannel(ignored -> gatedSource.client())
+                .createIncomingChannel(commonConfig(), config(1024));
         AtomicReference<Throwable> gatedFailure = new AtomicReference<>();
         Thread gatedOwner = Thread.ofVirtual().start(() -> run(gatedConnector, gateContext, gatedFailure));
         assertThat(gateContext.entered.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
@@ -272,8 +271,8 @@ class PulsarIncomingConnectorTest {
     void zeroCloseTimeoutAcceptsCompletedConsumerAndClientCloses() throws Exception {
         TestContext context = new TestContext(false);
         FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage("payload", 7), context.reserved);
-        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
-                .createIncomingConnector(configBuilder(PulsarSchemaType.STRING, 1024)
+        IncomingChannel connector = new PulsarIncomingChannel(ignored -> source.client())
+                .createIncomingChannel(commonConfig(), configBuilder(PulsarSchemaType.STRING, 1024)
                                                  .closeTimeout(Duration.ZERO)
                                                  .build());
         AtomicReference<Throwable> runFailure = new AtomicReference<>();
@@ -293,8 +292,8 @@ class PulsarIncomingConnectorTest {
     void passesResolvedBuiltInSchemaAndTypedPayloadFromPulsar() throws Exception {
         TestContext context = new TestContext(false);
         FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage(42, Integer.BYTES), context.reserved);
-        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
-                .createIncomingConnector(config(PulsarSchemaType.INT32, 1024));
+        IncomingChannel connector = new PulsarIncomingChannel(ignored -> source.client())
+                .createIncomingChannel(commonConfig(), config(PulsarSchemaType.INT32, 1024));
         AtomicReference<Throwable> runFailure = new AtomicReference<>();
         Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
 
@@ -321,8 +320,8 @@ class PulsarIncomingConnectorTest {
                                                         });
         TestContext context = new TestContext(false);
         FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage(payload, Integer.BYTES), context.reserved);
-        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
-                .createIncomingConnector(config(PulsarSchemaType.AUTO, 1024));
+        IncomingChannel connector = new PulsarIncomingChannel(ignored -> source.client())
+                .createIncomingChannel(commonConfig(), config(PulsarSchemaType.AUTO, 1024));
         AtomicReference<Throwable> runFailure = new AtomicReference<>();
         Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
 
@@ -343,18 +342,20 @@ class PulsarIncomingConnectorTest {
     @Test
     void passesResolvedCustomKeyValueSchemaAndPayloadFromPulsar() throws Exception {
         Schema<KeyValue<String, Integer>> customSchema = Schema.KeyValue(Schema.STRING, Schema.INT32);
-        PulsarConnectorConfig config = configBuilder(PulsarSchemaType.STRING, 1024)
+        PulsarIncomingConfig config = configBuilder(PulsarSchemaType.STRING, 1024)
                 .schemaProvider("custom-key-value")
                 .build();
         PulsarSchemaResolver.ResolvedSchema resolved = PulsarSchemaResolver.resolve(
-                config,
-                ConnectorDirection.INCOMING,
+                config.channelName(),
+                config.schema().orElseThrow(),
+                config.schemaProvider(),
+                true,
                 () -> List.of(schemaProvider("custom-key-value", customSchema)));
         KeyValue<String, Integer> payload = new KeyValue<>("order", 7);
         TestContext context = new TestContext(false);
         FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage(payload, 16), context.reserved);
-        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
-                .createIncomingConnector(config, resolved);
+        IncomingChannel connector = new PulsarIncomingChannel(ignored -> source.client())
+                .createIncomingChannel(commonConfig(), config, resolved);
         AtomicReference<Throwable> runFailure = new AtomicReference<>();
         Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
 
@@ -377,8 +378,8 @@ class PulsarIncomingConnectorTest {
         payload.limit(5);
         TestContext context = new TestContext(false);
         FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage(payload, 5), context.reserved);
-        IncomingConnector connector = new PulsarIncomingConnector(ignored -> source.client())
-                .createIncomingConnector(config(PulsarSchemaType.BYTEBUFFER, 1024));
+        IncomingChannel connector = new PulsarIncomingChannel(ignored -> source.client())
+                .createIncomingChannel(commonConfig(), config(PulsarSchemaType.BYTEBUFFER, 1024));
         AtomicReference<Throwable> runFailure = new AtomicReference<>();
         Thread owner = Thread.ofVirtual().start(() -> run(connector, context, runFailure));
 
@@ -400,7 +401,7 @@ class PulsarIncomingConnectorTest {
         assertThat(runFailure.get(), nullValue());
     }
 
-    private static void run(IncomingConnector connector,
+    private static void run(IncomingChannel connector,
                             IncomingConnectorContext context,
                             AtomicReference<Throwable> failure) {
         try {
@@ -416,20 +417,24 @@ class PulsarIncomingConnectorTest {
         return (PulsarMessage<?>) batch.get(0);
     }
 
-    private static PulsarConnectorConfig config(int maxMessageBytes) {
+    private static PulsarConnectorConfig commonConfig() {
+        return PulsarConnectorConfig.builder()
+                .name("pulsar")
+                .serviceUrl("pulsar://localhost:6650")
+                .buildPrototype();
+    }
+
+    private static PulsarIncomingConfig config(int maxMessageBytes) {
         return config(PulsarSchemaType.STRING, maxMessageBytes);
     }
 
-    private static PulsarConnectorConfig config(PulsarSchemaType schema, int maxMessageBytes) {
+    private static PulsarIncomingConfig config(PulsarSchemaType schema, int maxMessageBytes) {
         return configBuilder(schema, maxMessageBytes).build();
     }
 
-    private static PulsarConnectorConfig.Builder configBuilder(PulsarSchemaType schema, int maxMessageBytes) {
-        return PulsarConnectorConfig.builder()
-                .direction(ConnectorDirection.INCOMING)
+    private static PulsarIncomingConfig.Builder configBuilder(PulsarSchemaType schema, int maxMessageBytes) {
+        return PulsarIncomingConfig.builder()
                 .channelName("in")
-                .connector(PulsarConnectorProvider.CONNECTOR_TYPE)
-                .serviceUrl("pulsar://localhost:6650")
                 .topic("persistent://public/default/in")
                 .schema(schema)
                 .maxMessageBytes(maxMessageBytes);

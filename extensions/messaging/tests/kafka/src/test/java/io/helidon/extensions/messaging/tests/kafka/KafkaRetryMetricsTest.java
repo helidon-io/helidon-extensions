@@ -21,12 +21,11 @@ import java.util.Map;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
-import io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorConfig;
-import io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider;
+import io.helidon.extensions.messaging.connectors.kafka.KafkaConnector;
+import io.helidon.extensions.messaging.connectors.kafka.KafkaIncomingConfig;
 import io.helidon.faulttolerance.FaultTolerance;
 import io.helidon.faulttolerance.Retry;
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.spi.IncomingConnector;
+import io.helidon.messaging.spi.IncomingChannel;
 import io.helidon.metrics.api.Meter;
 import io.helidon.metrics.api.MeterRegistry;
 import io.helidon.service.registry.Services;
@@ -56,10 +55,10 @@ class KafkaRetryMetricsTest {
     void separatesCommitRetryMetricsByChannel() {
         String retryPrefix = "messaging-kafka-offset-commit-";
         removeRetryMetrics(meterRegistry, retryPrefix);
-        KafkaConnectorProvider provider = KafkaConnectorProvider.create();
+        KafkaConnector kafka = KafkaConnector.builder().name("test-kafka").bootstrapServers("localhost:9092").build();
 
-        try (IncomingConnector orders = provider.createIncomingConnector(config("orders"));
-                IncomingConnector audit = provider.createIncomingConnector(config("audit"))) {
+        try (IncomingChannel orders = kafka.incoming(config("orders"));
+                IncomingChannel audit = kafka.incoming(config("audit"))) {
             assertThat(retryMetricNames(meterRegistry, retryPrefix),
                        containsInAnyOrder(retryPrefix + "orders", retryPrefix + "audit"));
         } finally {
@@ -67,12 +66,9 @@ class KafkaRetryMetricsTest {
         }
     }
 
-    private static KafkaConnectorConfig config(String channelName) {
-        return KafkaConnectorConfig.builder()
-                .direction(ConnectorDirection.INCOMING)
+    private static KafkaIncomingConfig config(String channelName) {
+        return KafkaIncomingConfig.builder()
                 .channelName(channelName)
-                .connector(KafkaConnectorProvider.CONNECTOR_TYPE)
-                .bootstrapServers("localhost:9092")
                 .topic("events")
                 .build();
     }

@@ -24,10 +24,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Date;
-import java.util.Objects;
 
 import io.helidon.common.Api;
-import io.helidon.messaging.ConnectorDirection;
 import io.helidon.messaging.MessagingException;
 
 import org.apache.pulsar.client.api.Schema;
@@ -79,10 +77,9 @@ public enum PulsarSchemaType {
     LOCAL_DATE_TIME;
 
     @SuppressWarnings("unchecked")
-    Schema<Object> schema(ConnectorDirection direction) {
-        Objects.requireNonNull(direction);
+    Schema<Object> schema(boolean incoming) {
         Schema<?> schema = switch (this) {
-        case AUTO -> direction == ConnectorDirection.INCOMING
+        case AUTO -> incoming
                 ? Schema.AUTO_CONSUME()
                 : Schema.AUTO_PRODUCE_BYTES();
         case STRING -> Schema.STRING;
@@ -106,24 +103,25 @@ public enum PulsarSchemaType {
         return (Schema<Object>) schema;
     }
 
-    Object snapshot(Object value, ConnectorDirection direction) {
-        Objects.requireNonNull(direction);
+    Object snapshot(Object value, boolean incoming) {
         if (value == null) {
             return null;
         }
-        Class<?> payloadType = payloadType(direction);
+        Class<?> payloadType = payloadType(incoming);
         if (!payloadType.isInstance(value)) {
             throw new MessagingException("Pulsar " + this + " schema"
-                                                 + (this == AUTO ? " for " + direction + " channels" : "")
+                                                 + (this == AUTO
+                                                         ? " for " + (incoming ? "incoming" : "outgoing") + " channels"
+                                                         : "")
                                                  + " requires a " + payloadType.getTypeName() + " payload, not "
                                                  + value.getClass().getName());
         }
         return PulsarMessageImpl.snapshotEntity(value);
     }
 
-    private Class<?> payloadType(ConnectorDirection direction) {
+    private Class<?> payloadType(boolean incoming) {
         return switch (this) {
-        case AUTO -> direction == ConnectorDirection.INCOMING ? GenericRecord.class : byte[].class;
+        case AUTO -> incoming ? GenericRecord.class : byte[].class;
         case STRING -> String.class;
         case BYTES -> byte[].class;
         case BYTEBUFFER -> ByteBuffer.class;

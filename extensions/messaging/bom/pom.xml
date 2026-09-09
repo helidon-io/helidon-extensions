@@ -37,10 +37,16 @@
 
     <properties>
         <messaging.extension.version>27.0.0-SNAPSHOT</messaging.extension.version>
+        <version.lib.kafka>4.3.1</version.lib.kafka>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.apache.kafka</groupId>
+                <artifactId>kafka-clients</artifactId>
+                <version>${version.lib.kafka}</version>
+            </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.messaging.connectors</groupId>
                 <artifactId>helidon-extensions-messaging-connectors-kafka</artifactId>

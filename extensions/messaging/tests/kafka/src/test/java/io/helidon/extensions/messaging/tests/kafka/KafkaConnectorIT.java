@@ -35,8 +35,8 @@ import java.util.concurrent.TimeoutException;
 
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
-import io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorConfig;
-import io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider;
+import io.helidon.extensions.messaging.connectors.kafka.KafkaConnector;
+import io.helidon.extensions.messaging.connectors.kafka.KafkaOutgoingConfig;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaMessage;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.AlwaysFailIncomingReceiver;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.AlwaysFailIncomingReceiver.FailedBatch;
@@ -68,7 +68,7 @@ import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessagingChannel;
 import io.helidon.messaging.MessagingGraph;
 import io.helidon.messaging.MessagingRuntime;
-import io.helidon.messaging.spi.OutgoingConnector;
+import io.helidon.messaging.spi.OutgoingChannel;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryException;
 import io.helidon.service.registry.ServiceRegistryManager;
@@ -136,8 +136,11 @@ class KafkaConnectorIT {
     void testDirectKafkaSinkPublishesPayloadMessageAndBatch() throws Exception {
         String topic = uniqueName("sink");
         createTopic(topic);
-        KafkaConnectorProvider provider = KafkaConnectorProvider.create();
-        OutgoingConnector connector = provider.createOutgoingConnector(outgoingConnectorConfig(topic));
+        KafkaConnector kafka = KafkaConnector.builder()
+                .name("test-kafka")
+                .bootstrapServers(KAFKA.getBootstrapServers())
+                .build();
+        OutgoingChannel connector = kafka.outgoing(outgoingChannelConfig(topic));
 
         try {
             connector.start();
@@ -208,11 +211,14 @@ class KafkaConnectorIT {
     void testImperativeChannelPublishesPayloadMessageAndBatch() throws Exception {
         String topic = uniqueName("channel");
         createTopic(topic);
-        KafkaConnectorProvider provider = KafkaConnectorProvider.create();
-        OutgoingConnector connector = provider.createOutgoingConnector(outgoingConnectorConfig(topic));
+        KafkaConnector kafka = KafkaConnector.builder()
+                .name("test-kafka")
+                .bootstrapServers(KAFKA.getBootstrapServers())
+                .build();
+        OutgoingChannel connector = kafka.outgoing(outgoingChannelConfig(topic));
         MessagingGraph.Builder builder = MessagingGraph.builder();
         MessagingChannel<String> channel = builder.channel("kafka-output", String.class);
-        builder.outgoingConnector(channel, connector);
+        builder.outgoingChannel(channel, connector);
 
         try (MessagingGraph graph = builder.build()) {
             graph.start();
@@ -830,29 +836,26 @@ class KafkaConnectorIT {
         }
     }
 
-    private static KafkaConnectorConfig outgoingConnectorConfig(String topic) {
-        String yaml = """
-                direction: OUTGOING
-                channel-name: %s
-                connector: helidon-kafka
-                bootstrap.servers: "%s"
-                topic: "%s"
-                """.formatted(KafkaMessagingTypes.OUTGOING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
-                               topic);
-        return KafkaConnectorConfig.create(Config.just(yaml, MediaTypes.APPLICATION_YAML));
+    private static KafkaOutgoingConfig outgoingChannelConfig(String topic) {
+        return KafkaOutgoingConfig.builder()
+                .channelName(KafkaMessagingTypes.OUTGOING_CHANNEL)
+                .topic(topic)
+                .build();
     }
 
     private static ServiceRegistryManager outgoingRegistryManager(String topic) {
         return registryManager("""
                 messaging:
+                  connector:
+                    test-kafka:
+                      type: helidon-kafka
+                      bootstrap.servers: "%s"
                   outgoing:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
-                """.formatted(KafkaMessagingTypes.OUTGOING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
+                """.formatted(KAFKA.getBootstrapServers(),
+                               KafkaMessagingTypes.OUTGOING_CHANNEL,
                                topic),
                                OutgoingSender.class);
     }
@@ -862,10 +865,13 @@ class KafkaConnectorIT {
                                                                     String group) {
         return registryManager("""
                 messaging:
+                  connector:
+                    test-kafka:
+                      type: helidon-kafka
+                      bootstrap.servers: "%s"
                   incoming:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       group.id: "%s"
                       auto.offset.reset: earliest
@@ -877,16 +883,14 @@ class KafkaConnectorIT {
                         max.poll.records: "1"
                   outgoing:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       value.serializer: "%s"
-                """.formatted(KafkaMessagingTypes.FORWARDING_INCOMING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
+                """.formatted(KAFKA.getBootstrapServers(),
+                               KafkaMessagingTypes.FORWARDING_INCOMING_CHANNEL,
                                incomingTopic,
                                group,
                                KafkaMessagingTypes.FORWARDING_OUTGOING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
                                outgoingTopic,
                                BlockingStringSerializer.class.getName()),
                                ForwardingReceiver.class);
@@ -897,10 +901,13 @@ class KafkaConnectorIT {
                                                                            String group) {
         return registryManager("""
                 messaging:
+                  connector:
+                    test-kafka:
+                      type: helidon-kafka
+                      bootstrap.servers: "%s"
                   incoming:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       group.id: "%s"
                       auto.offset.reset: earliest
@@ -914,16 +921,14 @@ class KafkaConnectorIT {
                         max.poll.records: "1"
                   outgoing:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       value.serializer: "%s"
-                """.formatted(KafkaMessagingTypes.FAILING_FORWARDING_INCOMING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
+                """.formatted(KAFKA.getBootstrapServers(),
+                               KafkaMessagingTypes.FAILING_FORWARDING_INCOMING_CHANNEL,
                                incomingTopic,
                                group,
                                KafkaMessagingTypes.FAILING_FORWARDING_OUTGOING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
                                outgoingTopic,
                                FailingStringSerializer.class.getName()),
                                FailingForwardingReceiver.class);
@@ -932,10 +937,13 @@ class KafkaConnectorIT {
     private static ServiceRegistryManager restartRegistryManager(String topic, String group) {
         return registryManager("""
                 messaging:
+                  connector:
+                    test-kafka:
+                      type: helidon-kafka
+                      bootstrap.servers: "%s"
                   incoming:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       group.id: "%s"
                       auto.offset.reset: earliest
@@ -947,8 +955,8 @@ class KafkaConnectorIT {
                         on-exhausted: FAIL
                       properties:
                         max.poll.records: "1"
-                """.formatted(KafkaMessagingTypes.RESTART_INCOMING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
+                """.formatted(KAFKA.getBootstrapServers(),
+                               KafkaMessagingTypes.RESTART_INCOMING_CHANNEL,
                                topic,
                                group),
                                RestartReceiver.class);
@@ -957,10 +965,13 @@ class KafkaConnectorIT {
     private static ServiceRegistryManager dropRegistryManager(String topic, String group) {
         return registryManager("""
                 messaging:
+                  connector:
+                    test-kafka:
+                      type: helidon-kafka
+                      bootstrap.servers: "%s"
                   incoming:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       group.id: "%s"
                       auto.offset.reset: earliest
@@ -972,8 +983,8 @@ class KafkaConnectorIT {
                         on-exhausted: DROP
                       properties:
                         max.poll.records: "2"
-                """.formatted(KafkaMessagingTypes.DROP_INCOMING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
+                """.formatted(KAFKA.getBootstrapServers(),
+                               KafkaMessagingTypes.DROP_INCOMING_CHANNEL,
                                topic,
                                group),
                                DropReceiver.class);
@@ -982,10 +993,13 @@ class KafkaConnectorIT {
     private static ServiceRegistryManager partitionRetryRegistryManager(String topic, String group) {
         return registryManager("""
                 messaging:
+                  connector:
+                    test-kafka:
+                      type: helidon-kafka
+                      bootstrap.servers: "%s"
                   incoming:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       group.id: "%s"
                       auto.offset.reset: earliest
@@ -995,8 +1009,8 @@ class KafkaConnectorIT {
                           delay: PT0.05S
                       properties:
                         max.poll.records: "4"
-                """.formatted(KafkaMessagingTypes.PARTITION_RETRY_INCOMING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
+                """.formatted(KAFKA.getBootstrapServers(),
+                               KafkaMessagingTypes.PARTITION_RETRY_INCOMING_CHANNEL,
                                topic,
                                group),
                                PartitionRetryReceiver.class);
@@ -1005,10 +1019,13 @@ class KafkaConnectorIT {
     private static ServiceRegistryManager numericRegistryManager(String topic, String group) {
         return registryManager("""
                 messaging:
+                  connector:
+                    test-kafka:
+                      type: helidon-kafka
+                      bootstrap.servers: "%s"
                   incoming:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       group.id: "%s"
                       key.deserializer: "%s"
@@ -1019,19 +1036,17 @@ class KafkaConnectorIT {
                         max.poll.records: "1"
                   outgoing:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       key.serializer: "%s"
                       value.serializer: "%s"
-                """.formatted(KafkaMessagingTypes.NUMERIC_INCOMING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
+                """.formatted(KAFKA.getBootstrapServers(),
+                               KafkaMessagingTypes.NUMERIC_INCOMING_CHANNEL,
                                topic,
                                group,
                                LongDeserializer.class.getName(),
                                IntegerDeserializer.class.getName(),
                                KafkaMessagingTypes.NUMERIC_OUTGOING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
                                topic,
                                LongSerializer.class.getName(),
                                IntegerSerializer.class.getName()),
@@ -1042,18 +1057,21 @@ class KafkaConnectorIT {
     private static ServiceRegistryManager incomingRegistryManager(String topic, String group) {
         return registryManager("""
                 messaging:
+                  connector:
+                    test-kafka:
+                      type: helidon-kafka
+                      bootstrap.servers: "%s"
                   incoming:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       group.id: "%s"
                       auto.offset.reset: earliest
                       poll.timeout: PT0.1S
                       properties:
                         max.poll.records: "2"
-                """.formatted(KafkaMessagingTypes.INCOMING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
+                """.formatted(KAFKA.getBootstrapServers(),
+                               KafkaMessagingTypes.INCOMING_CHANNEL,
                                topic,
                                group),
                                IncomingReceiver.class,
@@ -1066,18 +1084,21 @@ class KafkaConnectorIT {
     private static ServiceRegistryManager metadataRegistryManager(String topic, String group) {
         return registryManager("""
                 messaging:
+                  connector:
+                    test-kafka:
+                      type: helidon-kafka
+                      bootstrap.servers: "%s"
                   incoming:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       group.id: "%s"
                       auto.offset.reset: earliest
                       poll.timeout: PT0.1S
                       properties:
                         max.poll.records: "2"
-                """.formatted(KafkaMessagingTypes.METADATA_INCOMING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
+                """.formatted(KAFKA.getBootstrapServers(),
+                               KafkaMessagingTypes.METADATA_INCOMING_CHANNEL,
                                topic,
                                group),
                                KafkaMetadataReceiver.class,
@@ -1088,10 +1109,13 @@ class KafkaConnectorIT {
     private static ServiceRegistryManager redeliveryRegistryManager(String topic, String group) {
         return registryManager("""
                 messaging:
+                  connector:
+                    test-kafka:
+                      type: helidon-kafka
+                      bootstrap.servers: "%s"
                   incoming:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       group.id: "%s"
                       auto.offset.reset: earliest
@@ -1101,8 +1125,8 @@ class KafkaConnectorIT {
                           delay: PT0.05S
                       properties:
                         max.poll.records: "1"
-                """.formatted(KafkaMessagingTypes.REDELIVERY_INCOMING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
+                """.formatted(KAFKA.getBootstrapServers(),
+                               KafkaMessagingTypes.REDELIVERY_INCOMING_CHANNEL,
                                topic,
                                group),
                                FailOnceIncomingReceiver.class);
@@ -1114,10 +1138,13 @@ class KafkaConnectorIT {
                                                                    Duration maxPollInterval) {
         return registryManager("""
                 messaging:
+                  connector:
+                    test-kafka:
+                      type: helidon-kafka
+                      bootstrap.servers: "%s"
                   incoming:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       group.id: "%s"
                       auto.offset.reset: earliest
@@ -1128,8 +1155,8 @@ class KafkaConnectorIT {
                       properties:
                         max.poll.records: "1"
                         max.poll.interval.ms: "%d"
-                """.formatted(KafkaMessagingTypes.REDELIVERY_INCOMING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
+                """.formatted(KAFKA.getBootstrapServers(),
+                               KafkaMessagingTypes.REDELIVERY_INCOMING_CHANNEL,
                                topic,
                                group,
                                retryDelay,
@@ -1142,10 +1169,13 @@ class KafkaConnectorIT {
                                                                     String group) {
         return registryManager("""
                 messaging:
+                  connector:
+                    test-kafka:
+                      type: helidon-kafka
+                      bootstrap.servers: "%s"
                   incoming:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
                       group.id: "%s"
                       auto.offset.reset: earliest
@@ -1161,16 +1191,14 @@ class KafkaConnectorIT {
                         max.poll.records: "2"
                   outgoing:
                     %s:
-                      connector: helidon-kafka
-                      bootstrap.servers: "%s"
+                      connector: test-kafka
                       topic: "%s"
-                """.formatted(KafkaMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
+                """.formatted(KAFKA.getBootstrapServers(),
+                               KafkaMessagingTypes.DEAD_LETTER_INCOMING_CHANNEL,
                                topic,
                                group,
                                KafkaMessagingTypes.DEAD_LETTER_OUTGOING_CHANNEL,
                                KafkaMessagingTypes.DEAD_LETTER_OUTGOING_CHANNEL,
-                               KAFKA.getBootstrapServers(),
                                deadLetterTopic),
                                AlwaysFailIncomingReceiver.class);
     }

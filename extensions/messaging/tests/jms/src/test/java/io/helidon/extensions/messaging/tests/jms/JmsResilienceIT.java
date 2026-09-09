@@ -145,9 +145,12 @@ class JmsResilienceIT {
                                                             String outgoingDestination) {
         return JmsScenarioRegistry.create("""
                 messaging:
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                   incoming:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       receive-timeout: PT0.05S
                       close-timeout: PT5S
@@ -157,7 +160,7 @@ class JmsResilienceIT {
                         jitter: 0
                   outgoing:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       close-timeout: PT5S
                       reconnect:
@@ -178,9 +181,12 @@ class JmsResilienceIT {
                                                           String subscriptionName) {
         return JmsScenarioRegistry.create("""
                 messaging:
+                  connector:
+                    test-jms:
+                      type: helidon-jms
                   incoming:
                     %s:
-                      connector: helidon-jms
+                      connector: test-jms
                       destination: "%s"
                       destination-type: TOPIC
                       durable: true

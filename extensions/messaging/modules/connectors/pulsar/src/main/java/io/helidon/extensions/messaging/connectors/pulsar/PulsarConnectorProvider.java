@@ -16,27 +16,22 @@
 
 package io.helidon.extensions.messaging.connectors.pulsar;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
 
 import io.helidon.common.Api;
 import io.helidon.config.Config;
-import io.helidon.messaging.ConnectorDirection;
-import io.helidon.messaging.spi.IncomingConnector;
-import io.helidon.messaging.spi.IncomingConnectorProvider;
-import io.helidon.messaging.spi.OutgoingConnector;
-import io.helidon.messaging.spi.OutgoingConnectorProvider;
+import io.helidon.messaging.spi.MessagingConnector;
+import io.helidon.messaging.spi.MessagingConnectorProvider;
 import io.helidon.service.registry.Service;
 
 /**
- * Stateless Apache Pulsar connector provider.
+ * Provider of configured Apache Pulsar connectors.
  */
 @Api.Preview
 @Service.Singleton
-public final class PulsarConnectorProvider
-        implements IncomingConnectorProvider, OutgoingConnectorProvider {
+public final class PulsarConnectorProvider implements MessagingConnectorProvider {
     /** Connector type used in messaging configuration. */
     public static final String CONNECTOR_TYPE = "helidon-pulsar";
     /** Dead-letter property containing the original Pulsar topic. */
@@ -53,87 +48,23 @@ public final class PulsarConnectorProvider
     public static final String DLQ_ORIGINAL_REDELIVERY_COUNT_HEADER = "dlq-orig-redelivery-count";
 
     private final Supplier<List<PulsarSchemaProvider>> schemaProviders;
-    private final PulsarIncomingConnector incomingFactory;
-    private final PulsarOutgoingConnector outgoingFactory;
 
     @Service.Inject
     PulsarConnectorProvider(Supplier<List<PulsarSchemaProvider>> schemaProviders) {
-        this(schemaProviders, new PulsarIncomingConnector(), new PulsarOutgoingConnector());
-    }
-
-    private PulsarConnectorProvider(Supplier<List<PulsarSchemaProvider>> schemaProviders,
-                                    PulsarIncomingConnector incomingFactory,
-                                    PulsarOutgoingConnector outgoingFactory) {
         this.schemaProviders = Objects.requireNonNull(schemaProviders);
-        this.incomingFactory = Objects.requireNonNull(incomingFactory);
-        this.outgoingFactory = Objects.requireNonNull(outgoingFactory);
-    }
-
-    /**
-     * Create an imperative connector provider using the provided named schemas.
-     *
-     * @param schemaProviders custom schema providers (may be empty)
-     * @return a new connector provider
-     */
-    public static PulsarConnectorProvider create(PulsarSchemaProvider... schemaProviders) {
-        return new PulsarConnectorProvider(fixedProviders(schemaProviders));
     }
 
     @Override
-    public String connectorType() {
+    public String configKey() {
         return CONNECTOR_TYPE;
     }
 
     @Override
-    public IncomingConnector createIncomingConnector(Config config) {
-        return createIncomingConnector(PulsarConnectorConfig.create(Objects.requireNonNull(config)));
-    }
-
-    /**
-     * Create an unstarted incoming Pulsar binding.
-     *
-     * @param config typed configuration
-     * @return incoming connector
-     */
-    public IncomingConnector createIncomingConnector(PulsarConnectorConfig config) {
-        requireDirection(config, ConnectorDirection.INCOMING);
-        PulsarSchemaResolver.ResolvedSchema schema = PulsarSchemaResolver.resolve(config,
-                                                                                  ConnectorDirection.INCOMING,
-                                                                                  schemaProviders);
-        return incomingFactory.createIncomingConnector(config, schema);
-    }
-
-    @Override
-    public OutgoingConnector createOutgoingConnector(Config config) {
-        return createOutgoingConnector(PulsarConnectorConfig.create(Objects.requireNonNull(config)));
-    }
-
-    /**
-     * Create an unstarted outgoing Pulsar binding.
-     *
-     * @param config typed configuration
-     * @return outgoing connector
-     */
-    public OutgoingConnector createOutgoingConnector(PulsarConnectorConfig config) {
-        requireDirection(config, ConnectorDirection.OUTGOING);
-        PulsarSchemaResolver.ResolvedSchema schema = PulsarSchemaResolver.resolve(config,
-                                                                                  ConnectorDirection.OUTGOING,
-                                                                                  schemaProviders);
-        return outgoingFactory.createOutgoingConnector(config, schema);
-    }
-
-    private static void requireDirection(PulsarConnectorConfig config, ConnectorDirection expected) {
-        Objects.requireNonNull(config);
-        if (config.direction() != expected) {
-            throw new IllegalArgumentException("Pulsar connector configuration for channel " + config.channelName()
-                                                       + " has direction " + config.direction()
-                                                       + ", expected " + expected);
-        }
-    }
-
-    private static Supplier<List<PulsarSchemaProvider>> fixedProviders(PulsarSchemaProvider[] schemaProviders) {
-        Objects.requireNonNull(schemaProviders, "schemaProviders");
-        List<PulsarSchemaProvider> providers = List.copyOf(Arrays.asList(schemaProviders.clone()));
-        return () -> providers;
+    public MessagingConnector create(Config config, String name) {
+        return PulsarConnector.builder()
+                .config(Objects.requireNonNull(config))
+                .name(Objects.requireNonNull(name))
+                .schemaProviders(schemaProviders.get())
+                .build();
     }
 }
