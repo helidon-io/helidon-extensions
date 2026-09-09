@@ -30,6 +30,7 @@ import io.helidon.common.Api;
  */
 @Api.Preview
 @Prototype.Blueprint(isPublic = false, decorator = JmsRuntimeConfigSupport.BuilderDecorator.class)
+@Prototype.Sealed
 @Prototype.Configured
 @Prototype.CustomMethods(JmsRuntimeConfigSupport.class)
 interface JmsRuntimeConfigBlueprint {

@@ -31,6 +31,7 @@ import io.helidon.messaging.spi.MessagingConnectorProviderConfig;
  */
 @Api.Preview
 @Prototype.Blueprint(decorator = KafkaConnectorConfigSupport.BuilderDecorator.class)
+@Prototype.Sealed
 @Prototype.Configured(value = KafkaConnectorProvider.CONNECTOR_TYPE, root = false)
 @Prototype.Provides(MessagingConnectorProvider.class)
 @Prototype.CustomMethods(KafkaConnectorConfigSupport.class)

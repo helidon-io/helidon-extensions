@@ -29,6 +29,7 @@ import io.helidon.common.Api;
  */
 @Api.Preview
 @Prototype.Blueprint(decorator = KafkaConnectorConfigSupport.IncomingBuilderDecorator.class)
+@Prototype.Sealed
 @Prototype.Configured
 interface KafkaIncomingConfigBlueprint {
     /**

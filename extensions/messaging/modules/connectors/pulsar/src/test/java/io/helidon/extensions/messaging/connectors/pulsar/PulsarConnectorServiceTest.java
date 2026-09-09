@@ -68,7 +68,7 @@ class PulsarConnectorServiceTest {
                     .config(Config.just(ConfigSources.create(Map.of(
                             "connector.orders-broker.type", PulsarConnectorProvider.CONNECTOR_TYPE,
                             "connector.orders-broker.service-url", "pulsar://127.0.0.1:6650"))))
-                    .build();
+                    .buildPrototype();
             MessagingConnector connector = config.connector().getFirst();
             assertThat(connector.name(), is("orders-broker"));
             assertThat(connector.type(), is(PulsarConnectorProvider.CONNECTOR_TYPE));
