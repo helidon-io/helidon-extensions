@@ -55,8 +55,9 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
         this.key = key;
         this.entity = Objects.requireNonNull(entity, "entity");
         this.entityAvailable = entityAvailable;
-        this.kafkaHeaders = snapshot(headers);
-        this.headers = commonHeaders(kafkaHeaders);
+        List<ImmutableHeader> headerSnapshot = snapshot(headers);
+        this.kafkaHeaders = List.copyOf(headerSnapshot);
+        this.headers = commonHeaders(headerSnapshot);
         this.topic = topic;
         this.partition = partition;
         this.offset = offset;
@@ -183,22 +184,23 @@ final class KafkaMessageImpl<K, V> implements KafkaMessage<K, V> {
         return kafkaHeaders;
     }
 
-    private static List<KafkaMessage.Header> snapshot(List<? extends KafkaMessage.Header> headers) {
-        List<KafkaMessage.Header> result = new ArrayList<>(headers.size());
+    private static List<ImmutableHeader> snapshot(List<? extends KafkaMessage.Header> headers) {
+        List<ImmutableHeader> result = new ArrayList<>(headers.size());
         for (KafkaMessage.Header header : headers) {
             Objects.requireNonNull(header);
-            result.add(new ImmutableHeader(header.name(), header.value().orElse(null)));
+            result.add(header instanceof ImmutableHeader immutableHeader
+                               ? immutableHeader
+                               : new ImmutableHeader(header.name(), header.value().orElse(null)));
         }
-        return List.copyOf(result);
+        return result;
     }
 
-    private static MessageHeaders commonHeaders(List<KafkaMessage.Header> headers) {
+    private static MessageHeaders commonHeaders(List<ImmutableHeader> headers) {
         MessageHeaders.Builder result = MessageHeaders.builder();
-        for (KafkaMessage.Header header : headers) {
-            Optional<byte[]> value = header.value();
-            result.add(header.name(), value.isPresent()
-                    ? MessageHeaderValue.BinaryValue.create(value.orElseThrow())
-                    : MessageHeaderValue.NullValue.create());
+        for (ImmutableHeader header : headers) {
+            result.add(header.name(), header.value == null
+                    ? MessageHeaderValue.NullValue.create()
+                    : MessageHeaderValue.BinaryValue.create(header.value));
         }
         return result.build();
     }
