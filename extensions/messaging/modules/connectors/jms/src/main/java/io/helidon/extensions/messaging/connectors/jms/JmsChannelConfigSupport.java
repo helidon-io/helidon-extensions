@@ -136,7 +136,8 @@ final class JmsChannelConfigSupport {
                         + (target.connectionFactoryName().isPresent() ? 1 : 0)
                         + (target.jndiConnectionFactory().isPresent() ? 1 : 0);
                 if (factoryRoutes > 1) {
-                    throw new IllegalArgumentException("JMS connection factory, registry name, and JNDI name are mutually exclusive");
+                    throw new IllegalArgumentException(
+                            "JMS connection factory, registry name, and JNDI name are mutually exclusive");
                 }
                 if (target.destination().isPresent() && target.jndiDestination().isPresent()) {
                     throw new IllegalArgumentException(DESTINATION_PROPERTY + " and " + JNDI_DESTINATION_PROPERTY
@@ -243,7 +244,8 @@ final class JmsChannelConfigSupport {
                         + (target.connectionFactoryName().isPresent() ? 1 : 0)
                         + (target.jndiConnectionFactory().isPresent() ? 1 : 0);
                 if (factoryRoutes > 1) {
-                    throw new IllegalArgumentException("JMS connection factory, registry name, and JNDI name are mutually exclusive");
+                    throw new IllegalArgumentException(
+                            "JMS connection factory, registry name, and JNDI name are mutually exclusive");
                 }
                 if (target.destination().isPresent() && target.jndiDestination().isPresent()) {
                     throw new IllegalArgumentException(DESTINATION_PROPERTY + " and " + JNDI_DESTINATION_PROPERTY
