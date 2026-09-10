@@ -19,6 +19,7 @@ package io.helidon.extensions.messaging.connectors.kafka;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -606,14 +607,17 @@ final class KafkaOutgoingChannel {
         private void mergePortableWrapperHeaders(RecordHeaders headers,
                                                  DeadLetterMessage<?> message,
                                                  Message<?> originalMessage) {
-            List<MessageHeader> unmatchedOriginalHeaders = new ArrayList<>(originalMessage.headers().entries());
+            Map<MessageHeader, Integer> originalHeaderCounts = new HashMap<>();
+            for (MessageHeader header : originalMessage.headers()) {
+                originalHeaderCounts.merge(header, 1, Integer::sum);
+            }
             for (MessageHeader header : message.headers()) {
                 if (DLQ_RESERVED_HEADERS.contains(header.name())) {
                     continue;
                 }
-                int originalIndex = unmatchedOriginalHeaders.indexOf(header);
-                if (originalIndex >= 0) {
-                    unmatchedOriginalHeaders.remove(originalIndex);
+                int originalCount = originalHeaderCounts.getOrDefault(header, 0);
+                if (originalCount > 0) {
+                    originalHeaderCounts.put(header, originalCount - 1);
                     continue;
                 }
                 addPortableHeader(headers, header);
