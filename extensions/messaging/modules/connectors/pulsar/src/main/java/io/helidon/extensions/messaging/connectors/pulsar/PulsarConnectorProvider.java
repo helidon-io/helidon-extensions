@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
 
-import io.helidon.common.Api;
 import io.helidon.config.Config;
 import io.helidon.messaging.spi.MessagingConnector;
 import io.helidon.messaging.spi.MessagingConnectorProvider;
@@ -29,24 +28,8 @@ import io.helidon.service.registry.Service;
 /**
  * Provider of configured Apache Pulsar connectors.
  */
-@Api.Preview
 @Service.Singleton
-public final class PulsarConnectorProvider implements MessagingConnectorProvider {
-    /** Connector type used in messaging configuration. */
-    public static final String CONNECTOR_TYPE = "helidon-pulsar";
-    /** Dead-letter property containing the original Pulsar topic. */
-    public static final String DLQ_ORIGINAL_TOPIC_HEADER = "dlq-orig-topic";
-    /** Dead-letter property containing the base64-encoded original message ID. */
-    public static final String DLQ_ORIGINAL_MESSAGE_ID_HEADER = "dlq-orig-message-id";
-    /** Dead-letter property containing the original publication time. */
-    public static final String DLQ_ORIGINAL_PUBLISH_TIME_HEADER = "dlq-orig-publish-time";
-    /** Dead-letter property containing the original producer name. */
-    public static final String DLQ_ORIGINAL_PRODUCER_NAME_HEADER = "dlq-orig-producer-name";
-    /** Dead-letter property containing the original sequence ID. */
-    public static final String DLQ_ORIGINAL_SEQUENCE_ID_HEADER = "dlq-orig-sequence-id";
-    /** Dead-letter property containing the original redelivery count. */
-    public static final String DLQ_ORIGINAL_REDELIVERY_COUNT_HEADER = "dlq-orig-redelivery-count";
-
+final class PulsarConnectorProvider implements MessagingConnectorProvider {
     private final Supplier<List<PulsarSchemaProvider>> schemaProviders;
 
     @Service.Inject
@@ -56,7 +39,7 @@ public final class PulsarConnectorProvider implements MessagingConnectorProvider
 
     @Override
     public String configKey() {
-        return CONNECTOR_TYPE;
+        return PulsarConnector.CONNECTOR_TYPE;
     }
 
     @Override

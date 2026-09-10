@@ -434,6 +434,7 @@ class PulsarIncomingChannelTest {
 
     private static PulsarIncomingConfig.Builder configBuilder(PulsarSchemaType schema, int maxMessageBytes) {
         return PulsarIncomingConfig.builder()
+                .connector("pulsar")
                 .channelName("in")
                 .topic("persistent://public/default/in")
                 .schema(schema)

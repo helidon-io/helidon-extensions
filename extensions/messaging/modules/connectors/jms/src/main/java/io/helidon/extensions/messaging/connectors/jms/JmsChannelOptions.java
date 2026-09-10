@@ -68,8 +68,7 @@ interface JmsChannelOptions {
      */
     @Option.Configured(JmsRuntimeConfigSupport.JNDI_ENVIRONMENT_PROPERTY)
     @Option.Confidential
-    @Option.Singular("jndiEnvironmentProperty")
-    Map<String, String> jndiEnvironment();
+    Optional<Map<String, String>> jndiEnvironment();
 
     /**
      * JMS destination name used to create a queue or topic through the session.

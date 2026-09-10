@@ -36,12 +36,12 @@ import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.TypedMessageBuilder;
 
-import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorProvider.DLQ_ORIGINAL_MESSAGE_ID_HEADER;
-import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorProvider.DLQ_ORIGINAL_PRODUCER_NAME_HEADER;
-import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorProvider.DLQ_ORIGINAL_PUBLISH_TIME_HEADER;
-import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorProvider.DLQ_ORIGINAL_REDELIVERY_COUNT_HEADER;
-import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorProvider.DLQ_ORIGINAL_SEQUENCE_ID_HEADER;
-import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER;
+import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnector.DLQ_ORIGINAL_MESSAGE_ID_HEADER;
+import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnector.DLQ_ORIGINAL_PRODUCER_NAME_HEADER;
+import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnector.DLQ_ORIGINAL_PUBLISH_TIME_HEADER;
+import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnector.DLQ_ORIGINAL_REDELIVERY_COUNT_HEADER;
+import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnector.DLQ_ORIGINAL_SEQUENCE_ID_HEADER;
+import static io.helidon.extensions.messaging.connectors.pulsar.PulsarConnector.DLQ_ORIGINAL_TOPIC_HEADER;
 
 final class PulsarMessageMapper {
     private static final String LEGACY_FAILURE_TYPE_HEADER = "helidon_messaging_dead_letter_failure_type";

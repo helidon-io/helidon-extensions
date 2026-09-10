@@ -171,7 +171,7 @@ final class JmsConnectorConfigSupport {
             requireNonBlank(DESTINATION_PROPERTY, target.destination());
             requireNonBlank(USERNAME_PROPERTY, target.username());
             requireNonBlank(CLIENT_ID_PROPERTY, target.clientId());
-            requireNonNullEntries(JNDI_ENVIRONMENT_PROPERTY, target.jndiEnvironment());
+            target.jndiEnvironment().ifPresent(it -> requireNonNullEntries(JNDI_ENVIRONMENT_PROPERTY, it));
 
             int factoryRoutes = (target.connectionFactory().isPresent() ? 1 : 0)
                     + (target.connectionFactoryName().isPresent() ? 1 : 0)

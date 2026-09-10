@@ -18,33 +18,18 @@ package io.helidon.extensions.messaging.connectors.jms;
 
 import java.util.Objects;
 
-import io.helidon.common.Api;
 import io.helidon.config.Config;
 import io.helidon.messaging.spi.MessagingConnector;
 import io.helidon.messaging.spi.MessagingConnectorProvider;
-import io.helidon.service.registry.GlobalServiceRegistry;
 import io.helidon.service.registry.Service;
 import io.helidon.service.registry.ServiceRegistry;
 
 /**
  * Provider of configured JMS connectors.
  */
-@Api.Preview
 @Service.Singleton
-public final class JmsConnectorProvider implements MessagingConnectorProvider {
-    /**
-     * JMS connector type used in messaging configuration.
-     */
-    public static final String CONNECTOR_TYPE = "helidon-jms";
-
+final class JmsConnectorProvider implements MessagingConnectorProvider {
     private final JmsConnectionFactoryResolver resolver;
-
-    /**
-     * Create a provider for service discovery.
-     */
-    public JmsConnectorProvider() {
-        this.resolver = config -> new JmsResourceResolver(GlobalServiceRegistry.registry()).resolve(config);
-    }
 
     @Service.Inject
     JmsConnectorProvider(ServiceRegistry registry) {
@@ -53,7 +38,7 @@ public final class JmsConnectorProvider implements MessagingConnectorProvider {
 
     @Override
     public String configKey() {
-        return CONNECTOR_TYPE;
+        return JmsConnector.CONNECTOR_TYPE;
     }
 
     @Override

@@ -17,12 +17,14 @@
 package io.helidon.extensions.messaging.connectors.kafka;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
 import io.helidon.common.Api;
+import io.helidon.messaging.spi.MessagingOutgoingConfig;
 
 /**
  * Kafka outgoing channel configuration. Unspecified client options use the configured connector defaults.
@@ -31,16 +33,7 @@ import io.helidon.common.Api;
 @Prototype.Blueprint(decorator = KafkaConnectorConfigSupport.OutgoingBuilderDecorator.class)
 @Prototype.Sealed
 @Prototype.Configured
-interface KafkaOutgoingConfigBlueprint {
-    /**
-     * Logical messaging channel name.
-     *
-     * @return channel name
-     */
-    @Option.Required
-    @Option.Configured
-    String channelName();
-
+interface KafkaOutgoingConfigBlueprint extends MessagingOutgoingConfig {
     /**
      * Kafka topic, overriding the connector default.
      *
@@ -54,15 +47,16 @@ interface KafkaOutgoingConfigBlueprint {
      *
      * @return configured bootstrapServers
      */
-    @Option.Configured(KafkaConnectorConfigSupport.BOOTSTRAP_SERVERS_PROPERTY)
-    Optional<String> bootstrapServers();
+    @Option.Configured
+    @Option.Singular
+    Optional<List<String>> bootstrapServers();
 
     /**
      * Channel-specific client close timeout.
      *
      * @return configured closeTimeout
      */
-    @Option.Configured(KafkaConnectorConfigSupport.CLOSE_TIMEOUT_PROPERTY)
+    @Option.Configured
     Optional<Duration> closeTimeout();
 
     /**
@@ -70,7 +64,7 @@ interface KafkaOutgoingConfigBlueprint {
      *
      * @return configured keySerializer
      */
-    @Option.Configured(KafkaConnectorConfigSupport.KEY_SERIALIZER_PROPERTY)
+    @Option.Configured
     Optional<String> keySerializer();
 
     /**
@@ -78,7 +72,7 @@ interface KafkaOutgoingConfigBlueprint {
      *
      * @return configured valueSerializer
      */
-    @Option.Configured(KafkaConnectorConfigSupport.VALUE_SERIALIZER_PROPERTY)
+    @Option.Configured
     Optional<String> valueSerializer();
 
     /**
@@ -86,7 +80,7 @@ interface KafkaOutgoingConfigBlueprint {
      *
      * @return configured sendTimeout
      */
-    @Option.Configured(KafkaConnectorConfigSupport.SEND_TIMEOUT_PROPERTY)
+    @Option.Configured
     Optional<Duration> sendTimeout();
 
     /**
@@ -98,5 +92,5 @@ interface KafkaOutgoingConfigBlueprint {
     @Option.Configured
     @Option.Confidential
     @Option.Singular("property")
-    Map<String, String> properties();
+    Optional<Map<String, String>> properties();
 }

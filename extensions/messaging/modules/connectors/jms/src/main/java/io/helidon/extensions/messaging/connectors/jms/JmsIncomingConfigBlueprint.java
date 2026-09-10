@@ -22,22 +22,30 @@ import java.util.Optional;
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
 import io.helidon.common.Api;
+import io.helidon.messaging.spi.MessagingIncomingConfig;
 
 /**
  * Incoming JMS channel configuration. Absent options inherit the connector's defaults.
  */
 @Api.Preview
-@Prototype.Blueprint
+@Prototype.Blueprint(decorator = JmsChannelConfigSupport.Incoming.BuilderDecorator.class)
 @Prototype.Sealed
 @Prototype.Configured
-interface JmsIncomingConfigBlueprint extends JmsChannelConfigBlueprint {
+@Prototype.CustomMethods(JmsChannelConfigSupport.Incoming.class)
+interface JmsIncomingConfigBlueprint extends MessagingIncomingConfig, JmsChannelOptions {
     /**
-     * Logical messaging channel name.
+     * JMS connection password read from configuration. This value is moved to {@link #passwordSource()} and cleared from
+     * the builder before the prototype is created.
      *
-     * @return channel name
+     * @return configured password
      */
-    @Option.Configured
-    String channelName();
+    @Override
+    @Option.Configured(JmsRuntimeConfigSupport.PASSWORD_PROPERTY)
+    @Option.Confidential
+    @Option.Access("")
+    @Option.Decorator(JmsChannelConfigSupport.Incoming.ConfiguredPasswordDecorator.class)
+    @Option.Redundant
+    Optional<String> configuredPassword();
 
     /**
      * Incoming JMS selector.

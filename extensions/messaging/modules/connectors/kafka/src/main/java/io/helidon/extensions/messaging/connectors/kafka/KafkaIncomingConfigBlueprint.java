@@ -17,12 +17,14 @@
 package io.helidon.extensions.messaging.connectors.kafka;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
 import io.helidon.common.Api;
+import io.helidon.messaging.spi.MessagingIncomingConfig;
 
 /**
  * Kafka incoming channel configuration. Unspecified client options use the configured connector defaults.
@@ -31,16 +33,7 @@ import io.helidon.common.Api;
 @Prototype.Blueprint(decorator = KafkaConnectorConfigSupport.IncomingBuilderDecorator.class)
 @Prototype.Sealed
 @Prototype.Configured
-interface KafkaIncomingConfigBlueprint {
-    /**
-     * Logical messaging channel name.
-     *
-     * @return channel name
-     */
-    @Option.Required
-    @Option.Configured
-    String channelName();
-
+interface KafkaIncomingConfigBlueprint extends MessagingIncomingConfig {
     /**
      * Kafka topic, overriding the connector default.
      *
@@ -54,15 +47,16 @@ interface KafkaIncomingConfigBlueprint {
      *
      * @return configured bootstrapServers
      */
-    @Option.Configured(KafkaConnectorConfigSupport.BOOTSTRAP_SERVERS_PROPERTY)
-    Optional<String> bootstrapServers();
+    @Option.Configured
+    @Option.Singular
+    Optional<List<String>> bootstrapServers();
 
     /**
      * Channel-specific client close timeout.
      *
      * @return configured closeTimeout
      */
-    @Option.Configured(KafkaConnectorConfigSupport.CLOSE_TIMEOUT_PROPERTY)
+    @Option.Configured
     Optional<Duration> closeTimeout();
 
     /**
@@ -70,7 +64,7 @@ interface KafkaIncomingConfigBlueprint {
      *
      * @return configured groupId
      */
-    @Option.Configured(KafkaConnectorConfigSupport.GROUP_ID_PROPERTY)
+    @Option.Configured
     Optional<String> groupId();
 
     /**
@@ -78,7 +72,7 @@ interface KafkaIncomingConfigBlueprint {
      *
      * @return configured keyDeserializer
      */
-    @Option.Configured(KafkaConnectorConfigSupport.KEY_DESERIALIZER_PROPERTY)
+    @Option.Configured
     Optional<String> keyDeserializer();
 
     /**
@@ -86,7 +80,7 @@ interface KafkaIncomingConfigBlueprint {
      *
      * @return configured valueDeserializer
      */
-    @Option.Configured(KafkaConnectorConfigSupport.VALUE_DESERIALIZER_PROPERTY)
+    @Option.Configured
     Optional<String> valueDeserializer();
 
     /**
@@ -94,7 +88,7 @@ interface KafkaIncomingConfigBlueprint {
      *
      * @return configured autoOffsetReset
      */
-    @Option.Configured(KafkaConnectorConfigSupport.AUTO_OFFSET_RESET_PROPERTY)
+    @Option.Configured
     Optional<String> autoOffsetReset();
 
     /**
@@ -102,7 +96,7 @@ interface KafkaIncomingConfigBlueprint {
      *
      * @return configured pollTimeout
      */
-    @Option.Configured(KafkaConnectorConfigSupport.POLL_TIMEOUT_PROPERTY)
+    @Option.Configured
     Optional<Duration> pollTimeout();
 
     /**
@@ -114,5 +108,5 @@ interface KafkaIncomingConfigBlueprint {
     @Option.Configured
     @Option.Confidential
     @Option.Singular("property")
-    Map<String, String> properties();
+    Optional<Map<String, String>> properties();
 }

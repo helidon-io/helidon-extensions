@@ -66,15 +66,19 @@ class JmsRetryMetricsTest {
                     .destination("events")
                     .build();
             try (IncomingChannel incomingOrders = connector.incoming(JmsIncomingConfig.builder()
+                                                                             .connector("test-jms")
                                                                              .channelName("orders")
                                                                              .build());
                     IncomingChannel incomingAudit = connector.incoming(JmsIncomingConfig.builder()
+                                                                               .connector("test-jms")
                                                                                .channelName("audit")
                                                                                .build());
                     OutgoingChannel outgoingOrders = connector.outgoing(JmsOutgoingConfig.builder()
+                                                                                .connector("test-jms")
                                                                                 .channelName("orders")
                                                                                 .build());
                     OutgoingChannel outgoingAudit = connector.outgoing(JmsOutgoingConfig.builder()
+                                                                               .connector("test-jms")
                                                                                .channelName("audit")
                                                                                .build())) {
                 assertThat(retryMetricNames(meterRegistry, retryPrefix),

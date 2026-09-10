@@ -31,16 +31,18 @@ JmsConnector jms = JmsConnector.builder()
         .build();
 
 IncomingChannel orders = jms.incoming(JmsIncomingConfig.builder()
+        .connector(jms.name())
         .channelName("orders")
         .destination("orders")
         .build());
 OutgoingChannel results = jms.outgoing(JmsOutgoingConfig.builder()
+        .connector(jms.name())
         .channelName("order-results")
         .destination("order-results")
         .build());
 ```
 
-Each channel inherits the connector's factory and defaults. Register these channels with `MessagingGraph.Builder.incomingChannel`
+Each channel inherits the connector's factory and defaults. Register these channels with `MessagingConfig.Builder.incomingChannel`
 and `outgoingChannel`; the graph owns their startup and shutdown. Channel creation does not open a connection.
 
 ### Service Registry

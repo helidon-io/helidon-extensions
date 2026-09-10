@@ -109,6 +109,7 @@ class JmsBackPressureIT {
                 JmsTestClient.sendText(broker.connectionFactory(), queue, false, "waiting", ignored -> { });
                 IncomingChannel connector = JmsConnector.builder().name("test-jms").connectionFactory(connectorFactory).build()
                         .incoming(JmsIncomingConfig.builder()
+                                                         .connector("test-jms")
                                                          .channelName("activation-gate")
                                                          .destination(queue)
                                                          .closeTimeout(Duration.ofSeconds(5))

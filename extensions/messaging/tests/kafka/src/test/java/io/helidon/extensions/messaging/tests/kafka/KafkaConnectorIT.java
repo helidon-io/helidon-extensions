@@ -66,6 +66,7 @@ import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessagingChannel;
+import io.helidon.messaging.MessagingConfig;
 import io.helidon.messaging.MessagingGraph;
 import io.helidon.messaging.MessagingRuntime;
 import io.helidon.messaging.spi.OutgoingChannel;
@@ -106,12 +107,12 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.utility.DockerImageName;
 
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_LEADER_EPOCH_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_LEADER_EPOCH_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_OFFSET_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_PARTITION_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_TOPIC_HEADER;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
@@ -138,7 +139,7 @@ class KafkaConnectorIT {
         createTopic(topic);
         KafkaConnector kafka = KafkaConnector.builder()
                 .name("test-kafka")
-                .bootstrapServers(KAFKA.getBootstrapServers())
+                .addBootstrapServer(KAFKA.getBootstrapServers())
                 .build();
         OutgoingChannel connector = kafka.outgoing(outgoingChannelConfig(topic));
 
@@ -213,12 +214,13 @@ class KafkaConnectorIT {
         createTopic(topic);
         KafkaConnector kafka = KafkaConnector.builder()
                 .name("test-kafka")
-                .bootstrapServers(KAFKA.getBootstrapServers())
+                .addBootstrapServer(KAFKA.getBootstrapServers())
                 .build();
         OutgoingChannel connector = kafka.outgoing(outgoingChannelConfig(topic));
-        MessagingGraph.Builder builder = MessagingGraph.builder();
-        MessagingChannel<String> channel = builder.channel("kafka-output", String.class);
-        builder.outgoingChannel(channel, connector);
+        MessagingChannel<String> channel = MessagingChannel.create("kafka-output", String.class);
+        MessagingConfig.Builder builder = MessagingGraph.builder()
+                .channel(channel)
+                .outgoingChannel(channel, connector);
 
         try (MessagingGraph graph = builder.build()) {
             graph.start();
@@ -838,6 +840,7 @@ class KafkaConnectorIT {
 
     private static KafkaOutgoingConfig outgoingChannelConfig(String topic) {
         return KafkaOutgoingConfig.builder()
+                .connector("test-kafka")
                 .channelName(KafkaMessagingTypes.OUTGOING_CHANNEL)
                 .topic(topic)
                 .build();
@@ -849,7 +852,8 @@ class KafkaConnectorIT {
                   connector:
                     test-kafka:
                       type: helidon-kafka
-                      bootstrap.servers: "%s"
+                      bootstrap-servers:
+                        - "%s"
                   outgoing:
                     %s:
                       connector: test-kafka
@@ -868,14 +872,15 @@ class KafkaConnectorIT {
                   connector:
                     test-kafka:
                       type: helidon-kafka
-                      bootstrap.servers: "%s"
+                      bootstrap-servers:
+                        - "%s"
                   incoming:
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      group.id: "%s"
-                      auto.offset.reset: earliest
-                      poll.timeout: PT0.1S
+                      group-id: "%s"
+                      auto-offset-reset: earliest
+                      poll-timeout: PT0.1S
                       failure:
                         retry:
                           delay: PT0.05S
@@ -885,7 +890,7 @@ class KafkaConnectorIT {
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      value.serializer: "%s"
+                      value-serializer: "%s"
                 """.formatted(KAFKA.getBootstrapServers(),
                                KafkaMessagingTypes.FORWARDING_INCOMING_CHANNEL,
                                incomingTopic,
@@ -904,14 +909,15 @@ class KafkaConnectorIT {
                   connector:
                     test-kafka:
                       type: helidon-kafka
-                      bootstrap.servers: "%s"
+                      bootstrap-servers:
+                        - "%s"
                   incoming:
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      group.id: "%s"
-                      auto.offset.reset: earliest
-                      poll.timeout: PT0.1S
+                      group-id: "%s"
+                      auto-offset-reset: earliest
+                      poll-timeout: PT0.1S
                       failure:
                         retry:
                           delay: PT0.05S
@@ -923,7 +929,7 @@ class KafkaConnectorIT {
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      value.serializer: "%s"
+                      value-serializer: "%s"
                 """.formatted(KAFKA.getBootstrapServers(),
                                KafkaMessagingTypes.FAILING_FORWARDING_INCOMING_CHANNEL,
                                incomingTopic,
@@ -940,14 +946,15 @@ class KafkaConnectorIT {
                   connector:
                     test-kafka:
                       type: helidon-kafka
-                      bootstrap.servers: "%s"
+                      bootstrap-servers:
+                        - "%s"
                   incoming:
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      group.id: "%s"
-                      auto.offset.reset: earliest
-                      poll.timeout: PT0.1S
+                      group-id: "%s"
+                      auto-offset-reset: earliest
+                      poll-timeout: PT0.1S
                       failure:
                         retry:
                           delay: PT0.05S
@@ -968,14 +975,15 @@ class KafkaConnectorIT {
                   connector:
                     test-kafka:
                       type: helidon-kafka
-                      bootstrap.servers: "%s"
+                      bootstrap-servers:
+                        - "%s"
                   incoming:
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      group.id: "%s"
-                      auto.offset.reset: earliest
-                      poll.timeout: PT0.1S
+                      group-id: "%s"
+                      auto-offset-reset: earliest
+                      poll-timeout: PT0.1S
                       failure:
                         retry:
                           delay: PT0.05S
@@ -996,14 +1004,15 @@ class KafkaConnectorIT {
                   connector:
                     test-kafka:
                       type: helidon-kafka
-                      bootstrap.servers: "%s"
+                      bootstrap-servers:
+                        - "%s"
                   incoming:
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      group.id: "%s"
-                      auto.offset.reset: earliest
-                      poll.timeout: PT0.1S
+                      group-id: "%s"
+                      auto-offset-reset: earliest
+                      poll-timeout: PT0.1S
                       failure:
                         retry:
                           delay: PT0.05S
@@ -1022,24 +1031,25 @@ class KafkaConnectorIT {
                   connector:
                     test-kafka:
                       type: helidon-kafka
-                      bootstrap.servers: "%s"
+                      bootstrap-servers:
+                        - "%s"
                   incoming:
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      group.id: "%s"
-                      key.deserializer: "%s"
-                      value.deserializer: "%s"
-                      auto.offset.reset: earliest
-                      poll.timeout: PT0.1S
+                      group-id: "%s"
+                      key-deserializer: "%s"
+                      value-deserializer: "%s"
+                      auto-offset-reset: earliest
+                      poll-timeout: PT0.1S
                       properties:
                         max.poll.records: "1"
                   outgoing:
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      key.serializer: "%s"
-                      value.serializer: "%s"
+                      key-serializer: "%s"
+                      value-serializer: "%s"
                 """.formatted(KAFKA.getBootstrapServers(),
                                KafkaMessagingTypes.NUMERIC_INCOMING_CHANNEL,
                                topic,
@@ -1060,14 +1070,15 @@ class KafkaConnectorIT {
                   connector:
                     test-kafka:
                       type: helidon-kafka
-                      bootstrap.servers: "%s"
+                      bootstrap-servers:
+                        - "%s"
                   incoming:
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      group.id: "%s"
-                      auto.offset.reset: earliest
-                      poll.timeout: PT0.1S
+                      group-id: "%s"
+                      auto-offset-reset: earliest
+                      poll-timeout: PT0.1S
                       properties:
                         max.poll.records: "2"
                 """.formatted(KAFKA.getBootstrapServers(),
@@ -1087,14 +1098,15 @@ class KafkaConnectorIT {
                   connector:
                     test-kafka:
                       type: helidon-kafka
-                      bootstrap.servers: "%s"
+                      bootstrap-servers:
+                        - "%s"
                   incoming:
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      group.id: "%s"
-                      auto.offset.reset: earliest
-                      poll.timeout: PT0.1S
+                      group-id: "%s"
+                      auto-offset-reset: earliest
+                      poll-timeout: PT0.1S
                       properties:
                         max.poll.records: "2"
                 """.formatted(KAFKA.getBootstrapServers(),
@@ -1112,14 +1124,15 @@ class KafkaConnectorIT {
                   connector:
                     test-kafka:
                       type: helidon-kafka
-                      bootstrap.servers: "%s"
+                      bootstrap-servers:
+                        - "%s"
                   incoming:
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      group.id: "%s"
-                      auto.offset.reset: earliest
-                      poll.timeout: PT0.1S
+                      group-id: "%s"
+                      auto-offset-reset: earliest
+                      poll-timeout: PT0.1S
                       failure:
                         retry:
                           delay: PT0.05S
@@ -1141,17 +1154,19 @@ class KafkaConnectorIT {
                   connector:
                     test-kafka:
                       type: helidon-kafka
-                      bootstrap.servers: "%s"
+                      bootstrap-servers:
+                        - "%s"
                   incoming:
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      group.id: "%s"
-                      auto.offset.reset: earliest
-                      poll.timeout: PT0.1S
+                      group-id: "%s"
+                      auto-offset-reset: earliest
+                      poll-timeout: PT0.1S
                       failure:
                         retry:
                           delay: %s
+                          overall-timeout: PT30S
                       properties:
                         max.poll.records: "1"
                         max.poll.interval.ms: "%d"
@@ -1172,14 +1187,15 @@ class KafkaConnectorIT {
                   connector:
                     test-kafka:
                       type: helidon-kafka
-                      bootstrap.servers: "%s"
+                      bootstrap-servers:
+                        - "%s"
                   incoming:
                     %s:
                       connector: test-kafka
                       topic: "%s"
-                      group.id: "%s"
-                      auto.offset.reset: earliest
-                      poll.timeout: PT0.1S
+                      group-id: "%s"
+                      auto-offset-reset: earliest
+                      poll-timeout: PT0.1S
                       failure:
                         retry:
                           delay: PT0.05S

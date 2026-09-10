@@ -25,6 +25,8 @@ import io.helidon.common.Api;
 import io.helidon.config.Config;
 import io.helidon.messaging.spi.IncomingChannel;
 import io.helidon.messaging.spi.MessagingConnector;
+import io.helidon.messaging.spi.MessagingIncomingConfig;
+import io.helidon.messaging.spi.MessagingOutgoingConfig;
 import io.helidon.messaging.spi.OutgoingChannel;
 
 /**
@@ -32,6 +34,43 @@ import io.helidon.messaging.spi.OutgoingChannel;
  */
 @Api.Preview
 public final class KafkaConnector implements MessagingConnector, RuntimeType.Api<KafkaConnectorConfig> {
+    /**
+     * Kafka connector type used in messaging configuration.
+     */
+    public static final String CONNECTOR_TYPE = "helidon-kafka";
+
+    /**
+     * Dead-letter header containing the original Kafka topic.
+     */
+    public static final String DLQ_ORIGINAL_TOPIC_HEADER = "dlq-orig-topic";
+
+    /**
+     * Dead-letter header containing the original Kafka partition.
+     */
+    public static final String DLQ_ORIGINAL_PARTITION_HEADER = "dlq-orig-partition";
+
+    /**
+     * Dead-letter header containing the original Kafka offset.
+     */
+    public static final String DLQ_ORIGINAL_OFFSET_HEADER = "dlq-orig-offset";
+
+    /**
+     * Dead-letter header containing the original Kafka record timestamp in milliseconds.
+     * <p>
+     * This is source metadata. The dead-letter record itself has its own publication timestamp.
+     */
+    public static final String DLQ_ORIGINAL_TIMESTAMP_HEADER = "dlq-orig-timestamp";
+
+    /**
+     * Dead-letter header containing the name of the original {@link KafkaMessage.TimestampType}.
+     */
+    public static final String DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER = "dlq-orig-timestamp-type";
+
+    /**
+     * Dead-letter header containing the original Kafka leader epoch.
+     */
+    public static final String DLQ_ORIGINAL_LEADER_EPOCH_HEADER = "dlq-orig-leader-epoch";
+
     private final KafkaConnectorConfig config;
     private final KafkaIncomingChannel incomingFactory = new KafkaIncomingChannel();
     private final KafkaOutgoingChannel outgoingFactory = new KafkaOutgoingChannel();
@@ -86,12 +125,12 @@ public final class KafkaConnector implements MessagingConnector, RuntimeType.Api
 
     @Override
     public String type() {
-        return KafkaConnectorProvider.CONNECTOR_TYPE;
+        return CONNECTOR_TYPE;
     }
 
     @Override
-    public Optional<IncomingChannel> incoming(Config channelConfig) {
-        return Optional.of(incoming(KafkaIncomingConfig.create(Objects.requireNonNull(channelConfig))));
+    public Optional<IncomingChannel> incoming(MessagingIncomingConfig channelConfig) {
+        return Optional.of(incoming(incomingConfig(channelConfig)));
     }
 
     /**
@@ -106,8 +145,8 @@ public final class KafkaConnector implements MessagingConnector, RuntimeType.Api
     }
 
     @Override
-    public Optional<OutgoingChannel> outgoing(Config channelConfig) {
-        return Optional.of(outgoing(KafkaOutgoingConfig.create(Objects.requireNonNull(channelConfig))));
+    public Optional<OutgoingChannel> outgoing(MessagingOutgoingConfig channelConfig) {
+        return Optional.of(outgoing(outgoingConfig(channelConfig)));
     }
 
     /**
@@ -119,5 +158,25 @@ public final class KafkaConnector implements MessagingConnector, RuntimeType.Api
     public OutgoingChannel outgoing(KafkaOutgoingConfig channelConfig) {
         Objects.requireNonNull(channelConfig);
         return outgoingFactory.createOutgoingChannel(KafkaConnectorConfigSupport.outgoing(config, channelConfig));
+    }
+
+    private static KafkaIncomingConfig incomingConfig(MessagingIncomingConfig channelConfig) {
+        Objects.requireNonNull(channelConfig);
+        if (channelConfig instanceof KafkaIncomingConfig kafkaConfig) {
+            return kafkaConfig;
+        }
+        KafkaIncomingConfig.Builder builder = KafkaIncomingConfig.builder();
+        channelConfig.config().ifPresent(builder::config);
+        return builder.from(channelConfig).build();
+    }
+
+    private static KafkaOutgoingConfig outgoingConfig(MessagingOutgoingConfig channelConfig) {
+        Objects.requireNonNull(channelConfig);
+        if (channelConfig instanceof KafkaOutgoingConfig kafkaConfig) {
+            return kafkaConfig;
+        }
+        KafkaOutgoingConfig.Builder builder = KafkaOutgoingConfig.builder();
+        channelConfig.config().ifPresent(builder::config);
+        return builder.from(channelConfig).build();
     }
 }

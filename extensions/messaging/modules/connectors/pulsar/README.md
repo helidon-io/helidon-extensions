@@ -144,17 +144,21 @@ PulsarConnector pulsar = PulsarConnector.builder()
         .schema(PulsarSchemaType.STRING)
         .build();
 
-MessagingGraph.Builder builder = MessagingGraph.builder();
-MessagingChannel<String> incoming = builder.channel("orders", String.class);
-MessagingChannel<String> outgoing = builder.channel("order-results", String.class);
+MessagingChannel<String> incoming = MessagingChannel.create("orders", String.class);
+MessagingChannel<String> outgoing = MessagingChannel.create("order-results", String.class);
+MessagingConfig.Builder builder = MessagingGraph.builder()
+        .channel(incoming)
+        .channel(outgoing);
 
 builder.incomingChannel(incoming, pulsar.incoming(PulsarIncomingConfig.builder()
+                .connector(pulsar.name())
                 .channelName("orders")
                 .topic("persistent://commerce/orders/order-events")
                 .subscriptionName("inventory-service")
                 .build()))
         .messageSink(incoming, message -> process(message.entity()));
 builder.outgoingChannel(outgoing, pulsar.outgoing(PulsarOutgoingConfig.builder()
+        .connector(pulsar.name())
         .channelName("order-results")
         .topic("persistent://commerce/orders/order-results")
         .build()));

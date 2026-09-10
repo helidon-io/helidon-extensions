@@ -38,7 +38,7 @@ import org.apache.pulsar.client.api.SubscriptionMode;
 final class PulsarConnectorConfigSupport {
     /** Pulsar connector name. */
     @Prototype.Constant
-    static final String CONNECTOR_NAME = PulsarConnectorProvider.CONNECTOR_TYPE;
+    static final String CONNECTOR_NAME = PulsarConnector.CONNECTOR_TYPE;
     /** Service URL configuration property. */
     @Prototype.Constant
     static final String SERVICE_URL_PROPERTY = "service-url";
@@ -206,9 +206,9 @@ final class PulsarConnectorConfigSupport {
         return Long.MAX_VALUE - seconds < fraction ? Long.MAX_VALUE : Math.max(0, seconds + fraction);
     }
 
-    private static Map<String, String> properties(Map<String, String> common, Map<String, String> channel) {
+    private static Map<String, String> properties(Map<String, String> common, Optional<Map<String, String>> channel) {
         Map<String, String> properties = new LinkedHashMap<>(common);
-        properties.putAll(channel);
+        channel.ifPresent(properties::putAll);
         return Map.copyOf(properties);
     }
 
@@ -314,8 +314,8 @@ final class PulsarConnectorConfigSupport {
             requireNonBlank(TOPIC_PROPERTY, target.topic());
             requireNonBlank(SCHEMA_PROVIDER_PROPERTY, target.schemaProvider());
             requireNonBlank(SUBSCRIPTION_NAME_PROPERTY, target.subscriptionName());
-            requireNonNullEntries(CLIENT_PROPERTIES_PROPERTY, target.clientProperties());
-            requireNonNullEntries(CONSUMER_PROPERTIES_PROPERTY, target.consumerProperties());
+            target.clientProperties().ifPresent(values -> requireNonNullEntries(CLIENT_PROPERTIES_PROPERTY, values));
+            target.consumerProperties().ifPresent(values -> requireNonNullEntries(CONSUMER_PROPERTIES_PROPERTY, values));
             target.receiverQueueSize().ifPresent(value -> requirePositive(RECEIVER_QUEUE_SIZE_PROPERTY, value));
             target.maxMessageBytes().ifPresent(value -> requirePositive(MAX_MESSAGE_BYTES_PROPERTY, value));
             target.receiveTimeout().ifPresent(PulsarConnectorConfigSupport::requireReceiveTimeout);
@@ -336,8 +336,8 @@ final class PulsarConnectorConfigSupport {
             requireNonBlank(SERVICE_URL_PROPERTY, target.serviceUrl());
             requireNonBlank(TOPIC_PROPERTY, target.topic());
             requireNonBlank(SCHEMA_PROVIDER_PROPERTY, target.schemaProvider());
-            requireNonNullEntries(CLIENT_PROPERTIES_PROPERTY, target.clientProperties());
-            requireNonNullEntries(PRODUCER_PROPERTIES_PROPERTY, target.producerProperties());
+            target.clientProperties().ifPresent(values -> requireNonNullEntries(CLIENT_PROPERTIES_PROPERTY, values));
+            target.producerProperties().ifPresent(values -> requireNonNullEntries(PRODUCER_PROPERTIES_PROPERTY, values));
             target.sendTimeout().ifPresent(PulsarConnectorConfigSupport::requireSendTimeout);
             target.closeTimeout().ifPresent(value -> requireNonNegative(CLOSE_TIMEOUT_PROPERTY, value));
         }
