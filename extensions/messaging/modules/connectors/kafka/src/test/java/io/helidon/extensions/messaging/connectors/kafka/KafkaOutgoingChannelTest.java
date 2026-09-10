@@ -418,6 +418,32 @@ class KafkaOutgoingChannelTest {
     }
 
     @Test
+    void testDeadLetterHeaderMergePreservesInterleavedDuplicatesAndWrapperExtras() {
+        MockProducer<Object, Object> producer = mockProducer(true);
+        KafkaOutgoingChannel connector = new KafkaOutgoingChannel(_ -> producer);
+        KafkaMessage<Void, String> original = KafkaMessage.<Void, String>builder("audit event")
+                .addHeader("trace", "first")
+                .addNullHeader("marker")
+                .addHeader("trace", "first")
+                .build();
+        MessageHeaders wrapperHeaders = MessageHeaders.builder()
+                .addAll(original.headers())
+                .add("extra", "value")
+                .add(original.headers().entries().getFirst())
+                .build();
+
+        start(connector, config()).send(customDeadLetter(original, "wrapped event", wrapperHeaders));
+
+        ProducerRecord<Object, Object> record = producer.history().getFirst();
+        assertThat(List.of(record.headers().toArray()).stream().map(Header::key).toList(),
+                   is(List.of("trace", "marker", "trace", "extra", "trace",
+                              DeadLetterMessage.SOURCE_CHANNEL_HEADER, DeadLetterMessage.ATTEMPTS_HEADER)));
+        assertThat(headerValues(record, "trace"), is(List.of("first", "first", "first")));
+        assertThat(record.headers().lastHeader("marker").value(), nullValue());
+        assertThat(headerValue(record, "extra"), is("value"));
+    }
+
+    @Test
     void testBatchEnqueuesAllRecordsBeforeWaiting() throws Exception {
         MockProducer<Object, Object> producer = mockProducer(false);
         KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
@@ -930,7 +956,12 @@ class KafkaOutgoingChannelTest {
                                                              Map<String, String> additionalHeaders) {
         MessageHeaders.Builder headers = MessageHeaders.builder().addAll(originalMessage.headers());
         additionalHeaders.forEach(headers::set);
-        MessageHeaders immutableHeaders = headers.build();
+        return customDeadLetter(originalMessage, entity, headers.build());
+    }
+
+    private static <T> DeadLetterMessage<T> customDeadLetter(Message<T> originalMessage,
+                                                          T entity,
+                                                          MessageHeaders immutableHeaders) {
         MessageMetadata localMetadata = MessageMetadata.builder()
                 .set(DeadLetterMessage.FAILURE_TYPE_METADATA, IllegalArgumentException.class.getName())
                 .set(DeadLetterMessage.FAILURE_MESSAGE_METADATA, "custom failure")
