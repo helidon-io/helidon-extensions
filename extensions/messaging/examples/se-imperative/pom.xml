@@ -33,6 +33,7 @@
     <name>Helidon Extensions Messaging Example SE Imperative</name>
 
     <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
         <mainClass>io.helidon.extensions.messaging.examples.imperative.KafkaMain</mainClass>
         <helidon.extension.messaging.version>27.0.0-SNAPSHOT</helidon.extension.messaging.version>
     </properties>
