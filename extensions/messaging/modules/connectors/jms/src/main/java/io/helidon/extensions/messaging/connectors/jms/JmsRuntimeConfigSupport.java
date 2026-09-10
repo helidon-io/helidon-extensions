@@ -25,64 +25,29 @@ import java.util.function.Supplier;
 
 import io.helidon.builder.api.Prototype;
 
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.CLIENT_ID_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.CLOSE_TIMEOUT_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.CONNECTION_FACTORY_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.DESTINATION_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.DURABLE_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.JNDI_CONNECTION_FACTORY_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.JNDI_DESTINATION_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.JNDI_ENVIRONMENT_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.MAX_BODY_BYTES_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.MESSAGE_SELECTOR_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.NO_LOCAL_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.PASSWORD_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.RECEIVE_TIMEOUT_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.RECONNECT_INITIAL_DELAY_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.RECONNECT_JITTER_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.RECONNECT_MAX_DELAY_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.SUBSCRIPTION_NAME_PROPERTY;
+import static io.helidon.extensions.messaging.connectors.jms.JmsConnectorConfigSupport.USERNAME_PROPERTY;
+
 /**
- * Support methods and constants for {@link JmsRuntimeConfig}.
+ * Support methods for {@link JmsRuntimeConfig}.
  */
 final class JmsRuntimeConfigSupport {
-    @Prototype.Constant
-    static final String CONNECTION_FACTORY_PROPERTY = "connection-factory";
-    @Prototype.Constant
-    static final String JNDI_CONNECTION_FACTORY_PROPERTY = "jndi.connection-factory";
-    @Prototype.Constant
-    static final String JNDI_DESTINATION_PROPERTY = "jndi.destination";
-    @Prototype.Constant
-    static final String JNDI_ENVIRONMENT_PROPERTY = "jndi.environment";
-    @Prototype.Constant
-    static final String DESTINATION_PROPERTY = "destination";
-    @Prototype.Constant
-    static final String DESTINATION_TYPE_PROPERTY = "destination-type";
-    @Prototype.Constant
-    static final String USERNAME_PROPERTY = "username";
-    @Prototype.Constant
-    static final String PASSWORD_PROPERTY = "password";
-    @Prototype.Constant
-    static final String CLIENT_ID_PROPERTY = "client-id";
-    @Prototype.Constant
-    static final String MESSAGE_SELECTOR_PROPERTY = "message-selector";
-    @Prototype.Constant
-    static final String DURABLE_PROPERTY = "durable";
-    @Prototype.Constant
-    static final String SUBSCRIPTION_NAME_PROPERTY = "subscription-name";
-    @Prototype.Constant
-    static final String NO_LOCAL_PROPERTY = "no-local";
-    @Prototype.Constant
-    static final String TRANSACTED_PROPERTY = "transacted";
-    @Prototype.Constant
-    static final String ALLOW_OBJECT_MESSAGES_PROPERTY = "allow-object-messages";
-    @Prototype.Constant
-    static final String MAX_BODY_BYTES_PROPERTY = "max-body-bytes";
-    @Prototype.Constant
-    static final String RECEIVE_TIMEOUT_PROPERTY = "receive-timeout";
-    @Prototype.Constant
-    static final String CLOSE_TIMEOUT_PROPERTY = "close-timeout";
-    @Prototype.Constant
-    static final String RECONNECT_INITIAL_DELAY_PROPERTY = "reconnect.initial-delay";
-    @Prototype.Constant
-    static final String RECONNECT_MAX_DELAY_PROPERTY = "reconnect.max-delay";
-    @Prototype.Constant
-    static final String RECONNECT_JITTER_PROPERTY = "reconnect.jitter";
-
-    @Prototype.Constant
-    static final String DEFAULT_RECEIVE_TIMEOUT = "PT0.1S";
-    @Prototype.Constant
-    static final String DEFAULT_CLOSE_TIMEOUT = "PT10S";
-    @Prototype.Constant
-    static final String DEFAULT_RECONNECT_INITIAL_DELAY = "PT0.1S";
-    @Prototype.Constant
-    static final String DEFAULT_RECONNECT_MAX_DELAY = "PT30S";
-    @Prototype.Constant
-    static final int DEFAULT_MAX_BODY_BYTES = 1_048_576;
-
     private JmsRuntimeConfigSupport() {
     }
 

@@ -39,7 +39,7 @@ interface JmsOutgoingConfigBlueprint extends MessagingOutgoingConfig, JmsChannel
      * @return configured password
      */
     @Override
-    @Option.Configured(JmsRuntimeConfigSupport.PASSWORD_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.PASSWORD_PROPERTY)
     @Option.Confidential
     @Option.Access("")
     @Option.Decorator(JmsChannelConfigSupport.Outgoing.ConfiguredPasswordDecorator.class)

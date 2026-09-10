@@ -46,10 +46,10 @@ class JmsRuntimeConfigTest {
     void testDefaultsAndNestedConfiguration() {
         JmsRuntimeConfig config = JmsRuntimeConfig.create(Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("channel-name", "orders"),
-                Map.entry(JmsRuntimeConfig.DESTINATION_PROPERTY, "orders"),
-                Map.entry(JmsRuntimeConfig.DESTINATION_TYPE_PROPERTY, "QUEUE"),
-                Map.entry(JmsRuntimeConfig.RECONNECT_INITIAL_DELAY_PROPERTY, "PT1S"),
-                Map.entry(JmsRuntimeConfig.RECONNECT_MAX_DELAY_PROPERTY, "PT10S"),
+                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
+                Map.entry(JmsConnectorConfig.DESTINATION_TYPE_PROPERTY, "QUEUE"),
+                Map.entry(JmsConnectorConfig.RECONNECT_INITIAL_DELAY_PROPERTY, "PT1S"),
+                Map.entry(JmsConnectorConfig.RECONNECT_MAX_DELAY_PROPERTY, "PT10S"),
                 Map.entry("jndi.environment.java.naming.factory.initial", "example.Factory")))));
 
         assertThat(config.destination().orElseThrow(), is("orders"));
@@ -58,7 +58,7 @@ class JmsRuntimeConfigTest {
         assertThat(config.reconnectInitialDelay(), is(Duration.ofSeconds(1)));
         assertThat(config.reconnectMaxDelay(), is(Duration.ofSeconds(10)));
         assertThat(config.allowObjectMessages(), is(false));
-        assertThat(config.maxBodyBytes(), is(JmsRuntimeConfig.DEFAULT_MAX_BODY_BYTES));
+        assertThat(config.maxBodyBytes(), is(JmsConnectorConfig.DEFAULT_MAX_BODY_BYTES));
         assertThat(config.jndiEnvironment(),
                    is(Map.of("java.naming.factory.initial", "example.Factory")));
     }
@@ -144,9 +144,9 @@ class JmsRuntimeConfigTest {
     void testConfiguredPasswordIsMovedToDefensiveStorage() {
         Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("channel-name", "orders"),
-                Map.entry(JmsRuntimeConfig.DESTINATION_PROPERTY, "orders"),
-                Map.entry(JmsRuntimeConfig.USERNAME_PROPERTY, "orders-user"),
-                Map.entry(JmsRuntimeConfig.PASSWORD_PROPERTY, "secret"))));
+                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
+                Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
+                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
         JmsRuntimeConfig.Builder builder = JmsRuntimeConfig.builder().config(configSource);
         assertThat(builder.configuredPassword().orElseThrow(), is("secret"));
 
@@ -163,9 +163,9 @@ class JmsRuntimeConfigTest {
     void testProgrammaticPasswordChangesClearConfiguredStaging() {
         Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("channel-name", "orders"),
-                Map.entry(JmsRuntimeConfig.DESTINATION_PROPERTY, "orders"),
-                Map.entry(JmsRuntimeConfig.USERNAME_PROPERTY, "orders-user"),
-                Map.entry(JmsRuntimeConfig.PASSWORD_PROPERTY, "secret"))));
+                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
+                Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
+                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
         JmsRuntimeConfig.Builder replacing = JmsRuntimeConfig.builder().config(configSource);
         assertThat(replacing.configuredPassword().orElseThrow(), is("secret"));
 
@@ -186,9 +186,9 @@ class JmsRuntimeConfigTest {
     void testConfiguredPasswordIsNotAliasedWhenCopyingBuilders() {
         Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("channel-name", "orders"),
-                Map.entry(JmsRuntimeConfig.DESTINATION_PROPERTY, "orders"),
-                Map.entry(JmsRuntimeConfig.USERNAME_PROPERTY, "orders-user"),
-                Map.entry(JmsRuntimeConfig.PASSWORD_PROPERTY, "secret"))));
+                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
+                Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
+                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
         JmsRuntimeConfig.Builder source = JmsRuntimeConfig.builder().config(configSource);
         JmsRuntimeConfig.Builder copy = JmsRuntimeConfig.builder().from(source);
 
@@ -214,9 +214,9 @@ class JmsRuntimeConfigTest {
     void testPrototypeCopyOverridesStaleConfiguredPassword() {
         Config configSource = Config.just(ConfigSources.create(Map.ofEntries(
                 Map.entry("channel-name", "orders"),
-                Map.entry(JmsRuntimeConfig.DESTINATION_PROPERTY, "orders"),
-                Map.entry(JmsRuntimeConfig.USERNAME_PROPERTY, "orders-user"),
-                Map.entry(JmsRuntimeConfig.PASSWORD_PROPERTY, "stale-secret"))));
+                Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
+                Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
+                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "stale-secret"))));
         JmsRuntimeConfig prototype = incomingBuilder()
                 .username("orders-user")
                 .password("prototype-secret")
