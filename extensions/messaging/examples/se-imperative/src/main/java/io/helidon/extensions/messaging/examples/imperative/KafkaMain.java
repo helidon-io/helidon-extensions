@@ -29,10 +29,8 @@ public final class KafkaMain {
 
     /**
      * Start the application and register its shutdown handler.
-     *
-     * @param args command line arguments
      */
-    public static void main(String[] args) {
+    static void main() {
         LogConfig.configureRuntime();
         KafkaApplication application = KafkaApplication.start(Config.create());
         Main.addShutdownHandler(application::close);

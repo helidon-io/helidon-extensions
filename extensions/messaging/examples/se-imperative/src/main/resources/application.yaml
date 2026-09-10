@@ -19,9 +19,8 @@ server:
   host: "0.0.0.0"
 
 # External values used by the typed builders in KafkaApplication.
-kafka:
-  bootstrap-servers:
-    - "localhost:9092"
+app:
+  kafka-bootstrap-servers: "localhost:9092"
+  kafka-group-id: "imperative-inventory-service"
   orders-topic: "orders"
   messages-topic: "http-messages"
-  group-id: "imperative-inventory-service"

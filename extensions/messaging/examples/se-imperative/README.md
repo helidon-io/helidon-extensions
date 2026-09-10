@@ -77,8 +77,7 @@ for the complete graph. The graph starts before the HTTP server; shutdown first
 stops HTTP requests, then drains and closes the graph's channel connections.
 Kafka connection values are read from `application.yaml` and passed to the
 typed builders. For example, override the broker with
-`-Dkafka.bootstrap-servers.0=other-host:9092` before `-jar` to replace the first
-bootstrap server.
+`-Dapp.kafka-bootstrap-servers=other-host:9092` before `-jar`.
 
 ## Build and run
 

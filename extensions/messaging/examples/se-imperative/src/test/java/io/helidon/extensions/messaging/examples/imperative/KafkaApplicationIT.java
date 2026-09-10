@@ -73,10 +73,10 @@ class KafkaApplicationIT {
         Config config = Config.builder(ConfigSources.create(Map.of(
                         "server.port", "0",
                         "server.host", "127.0.0.1",
-                        "kafka.bootstrap-servers.0", KAFKA.getBootstrapServers(),
-                        "kafka.orders-topic", ordersTopic,
-                        "kafka.messages-topic", messagesTopic,
-                        "kafka.group-id", "inventory-" + suffix)), ConfigSources.classpath("application.yaml"))
+                        "app.kafka-bootstrap-servers", KAFKA.getBootstrapServers(),
+                        "app.orders-topic", ordersTopic,
+                        "app.messages-topic", messagesTopic,
+                        "app.kafka-group-id", "inventory-" + suffix)), ConfigSources.classpath("application.yaml"))
                 .disableEnvironmentVariablesSource()
                 .disableSystemPropertiesSource()
                 .build();
