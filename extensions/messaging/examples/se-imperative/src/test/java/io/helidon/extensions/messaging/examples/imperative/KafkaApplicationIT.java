@@ -21,7 +21,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
@@ -30,6 +32,7 @@ import io.helidon.http.Status;
 import io.helidon.webclient.http1.Http1Client;
 
 import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.DescribeConsumerGroupsOptions;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -37,6 +40,8 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.GroupIdNotFoundException;
+import org.apache.kafka.common.errors.RetriableException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
@@ -48,7 +53,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.KafkaContainer;
 
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @Testcontainers(disabledWithoutDocker = true)
 @Execution(ExecutionMode.SAME_THREAD)
@@ -121,5 +128,84 @@ class KafkaApplicationIT {
             }
             assertThat("Kafka order must reach the application's incoming channel", received, is("order-42"));
         }
+    }
+
+    @Test
+    @Timeout(90)
+    void closesKafkaConsumerWhenHttpConfigurationThrowsError() throws Exception {
+        String suffix = UUID.randomUUID().toString();
+        String ordersTopic = "orders-" + suffix;
+        String messagesTopic = "http-messages-" + suffix;
+        String group = "inventory-" + suffix;
+        var expectedFailure = new LinkageError("HTTP server configuration failed");
+        Admin admin = Admin.create(Map.of("bootstrap.servers", KAFKA.getBootstrapServers()));
+        try {
+            admin.createTopics(List.of(new NewTopic(ordersTopic, 1, (short) 1),
+                                       new NewTopic(messagesTopic, 1, (short) 1)))
+                    .all().get(WAIT.toSeconds(), TimeUnit.SECONDS);
+
+            Config config = Config.builder(ConfigSources.create(Map.of(
+                            "server.port", "0",
+                            "server.host", "127.0.0.1",
+                            "app.kafka-bootstrap-servers", KAFKA.getBootstrapServers(),
+                            "app.orders-topic", ordersTopic,
+                            "app.messages-topic", messagesTopic,
+                            "app.kafka-group-id", group)))
+                    .disableEnvironmentVariablesSource()
+                    .disableSystemPropertiesSource()
+                    .addMapper(Integer.class, node -> {
+                        if (node.key().toString().equals("server.port")) {
+                            // Observe an active connection before failing HTTP setup.
+                            awaitConsumerGroupMembers(admin, group, 1);
+                            throw expectedFailure;
+                        }
+                        return Integer.parseInt(node.asString().get());
+                    })
+                    .build();
+
+            LinkageError failure = assertThrows(LinkageError.class, () -> {
+                try (KafkaApplication _ = KafkaApplication.start(config)) {
+                    // Close the application if startup unexpectedly succeeds.
+                }
+            });
+            assertThat("HTTP startup must propagate the original Error", failure, sameInstance(expectedFailure));
+            awaitConsumerGroupMembers(admin, group, 0);
+        } finally {
+            admin.close(Duration.ofSeconds(5));
+        }
+    }
+
+    private static void awaitConsumerGroupMembers(Admin admin, String group, int expectedMembers) {
+        int activeMembers = -1;
+        long deadline = System.nanoTime() + WAIT.toNanos();
+        try {
+            while (System.nanoTime() < deadline) {
+                try {
+                    activeMembers = admin.describeConsumerGroups(List.of(group),
+                                                                 new DescribeConsumerGroupsOptions().timeoutMs(1000))
+                            .describedGroups()
+                            .get(group)
+                            .get(Math.min(TimeUnit.SECONDS.toNanos(1), deadline - System.nanoTime()), TimeUnit.NANOSECONDS)
+                            .members()
+                            .size();
+                } catch (ExecutionException e) {
+                    if (e.getCause() instanceof GroupIdNotFoundException) {
+                        activeMembers = 0;
+                    } else if (!(e.getCause() instanceof RetriableException)) {
+                        throw new IllegalStateException("Cannot describe consumer group " + group, e);
+                    }
+                } catch (TimeoutException _) {
+                    // Retry transient Admin delays within the overall deadline.
+                }
+                if (activeMembers == expectedMembers) {
+                    return;
+                }
+                Thread.sleep(50);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while awaiting consumer group " + group, e);
+        }
+        assertThat("active members in consumer group " + group, activeMembers, is(expectedMembers));
     }
 }

@@ -102,11 +102,10 @@ final class KafkaApplication implements AutoCloseable {
                 .build()
                 .start();
 
-        Emitter<String> emitter = graph.emitter(httpMessages);
-
-        WebServer server;
         try {
-            server = WebServer.builder()
+            Emitter<String> emitter = graph.emitter(httpMessages);
+
+            WebServer server = WebServer.builder()
                     .config(config.get("server"))
                     .shutdownHook(false)
                     .routing(routing -> routing
@@ -115,17 +114,14 @@ final class KafkaApplication implements AutoCloseable {
                                 response.status(Status.NO_CONTENT_204).send();
                             })
                             .get("/orders/latest", (_, response) -> response.send(latestOrder.get())))
-                    .build();
+                    .build()
+                    .start();
 
-            server.start();
-        } catch (Exception e) {
-            // server failed to start, close the messaging graph
+            return new KafkaApplication(graph, server);
+        } catch (RuntimeException | Error e) {
             graph.close();
             throw e;
         }
-
-        // server started, graph started - we expect close() to be called
-        return new KafkaApplication(graph, server);
     }
 
     WebServer server() {
