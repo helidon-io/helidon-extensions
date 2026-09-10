@@ -267,6 +267,7 @@ class KafkaOutgoingChannelTest {
                 "audit event",
                 new RecordHeaders()
                         .add("trace-id", "first".getBytes(StandardCharsets.UTF_8))
+                        .add("trace-id", "first".getBytes(StandardCharsets.UTF_8))
                         .add("trace-id", "second".getBytes(StandardCharsets.UTF_8))
                         .add("binary", new byte[] {0x00, (byte) 0xFF})
                         .add("null-header", null)
@@ -307,7 +308,7 @@ class KafkaOutgoingChannelTest {
         assertThat(record.timestamp(), nullValue());
         assertThat(record.key(), is("source-key"));
         assertThat(record.value(), is("audit event"));
-        assertThat(headerValues(record, "trace-id"), is(List.of("first", "second")));
+        assertThat(headerValues(record, "trace-id"), is(List.of("first", "first", "second")));
         assertThat(record.headers().lastHeader("binary").value(), is(new byte[] {0x00, (byte) 0xFF}));
         assertThat(record.headers().lastHeader("null-header").value(), nullValue());
         assertThat(headerValue(record, DeadLetterMessage.SOURCE_CHANNEL_HEADER), is("orders-in"));
