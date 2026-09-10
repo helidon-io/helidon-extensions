@@ -111,7 +111,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     static final String OPT_DISCRIMINATOR_REPRESENTATION = "discriminatorRepresentation";
     private static final String EXT_DISCRIMINATOR_REPRESENTATION =
             "x-helidon-discriminator-representation";
-    private String helidonVersion = "4.5.4";
+    private static final String DEFAULT_HELIDON_VERSION = "v4";
+    private String helidonVersion = DEFAULT_HELIDON_VERSION;
     private String javaVersion = "21";
     private boolean generateClient = true;
     private boolean generateErrorHandler = true;
@@ -234,10 +235,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return "Generates a Helidon SE 4.x declarative server using @RestServer.Endpoint annotations.";
     }
 
-    // -------------------------------------------------------------------------
-    // Option processing
-    // -------------------------------------------------------------------------
-
     @Override
     public void processOpts() {
         super.processOpts();
@@ -245,6 +242,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         if (additionalProperties.containsKey(OPT_HELIDON_VERSION)) {
             helidonVersion = additionalProperties.get(OPT_HELIDON_VERSION).toString();
         }
+        helidonVersion = HelidonVersionResolver.resolve(helidonVersion);
         if (additionalProperties.containsKey(OPT_JAVA_VERSION)) {
             javaVersion = normalizeJavaVersion(additionalProperties.get(OPT_JAVA_VERSION));
         }
