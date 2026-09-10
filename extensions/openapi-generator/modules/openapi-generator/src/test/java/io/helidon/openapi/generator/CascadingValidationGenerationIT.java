@@ -515,7 +515,7 @@ class CascadingValidationGenerationIT {
                 .setGeneratorName("helidon-declarative")
                 .setInputSpec(inputSpec)
                 .setOutputDir(target.toString())
-                .addAdditionalProperty("helidonVersion", "4.5.4")
+                .addAdditionalProperty("helidonVersion", "4.5.0")
                 .addAdditionalProperty("apiPackage", "io.helidon.example.api")
                 .addAdditionalProperty("modelPackage", "io.helidon.example.model")
                 .addAdditionalProperty("invokerPackage", "io.helidon.example");

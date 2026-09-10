@@ -16,7 +16,15 @@
 
 package io.helidon.openapi.generator;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -223,7 +231,19 @@ class HelidonDeclarativeCodegenTest {
     }
 
     @Test
+    void defaultHelidonVersionOptionIsShorthandV4() {
+        String defaultVersion = codegen.cliOptions().stream()
+                .filter(option -> "helidonVersion".equals(option.getOpt()))
+                .findFirst()
+                .orElseThrow()
+                .getDefault();
+
+        assertThat(defaultVersion, is("v4"));
+    }
+
+    @Test
     void processOptsRejectsNonIntegerJavaVersion() {
+        codegen.additionalProperties().put("helidonVersion", "4.5.0");
         codegen.additionalProperties().put("javaVersion", "1.8");
 
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
@@ -235,9 +255,123 @@ class HelidonDeclarativeCodegenTest {
     @Test
     void processOptsExposesIntegerJavaVersion() {
         codegen.additionalProperties().put("javaVersion", "17");
+        codegen.additionalProperties().put("helidonVersion", "4.5.0");
 
         codegen.processOpts();
 
         assertThat(codegen.additionalProperties().get("javaVersion"), is("17"));
+    }
+
+    @Test
+    void processOptsExposesConfiguredHelidonVersion() {
+        codegen.additionalProperties().put("helidonVersion", "4.5.0");
+
+        codegen.processOpts();
+
+        assertThat(codegen.additionalProperties().get("helidonVersion"), is("4.5.0"));
+    }
+
+    @Test
+    void resolveHelidonVersionLeavesSpecificVersionAlone() {
+        URI unusedEndpoint = URI.create("http://127.0.0.1:1/api/versions/");
+
+        assertThat(HelidonDeclarativeCodegen.resolveHelidonVersion("4.5.0", unusedEndpoint), is("4.5.0"));
+    }
+
+    @Test
+    void resolveHelidonVersionFetchesVersionShorthand() throws Exception {
+        try (TestHttpEndpoint endpoint = TestHttpEndpoint.responding(200, "4.5.9\n")) {
+            String resolved = HelidonDeclarativeCodegen.resolveHelidonVersion("v4", endpoint.baseUri());
+
+            assertThat(resolved, is("4.5.9"));
+            assertThat(endpoint.requestLine(), containsString("GET /api/versions/v4 HTTP/1.1"));
+        }
+    }
+
+    @Test
+    void resolveHelidonVersionRejectsBlankResponse() throws Exception {
+        try (TestHttpEndpoint endpoint = TestHttpEndpoint.responding(200, "\n")) {
+            IllegalArgumentException exception = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> HelidonDeclarativeCodegen.resolveHelidonVersion("v4", endpoint.baseUri()));
+
+            assertThat(exception.getMessage(), containsString("Failed to resolve Helidon version 'v4'"));
+            assertThat(exception.getMessage(), containsString("Set helidonVersion to a specific Helidon release"));
+        }
+    }
+
+    @Test
+    void resolveHelidonVersionFailsClearlyOnHttpError() throws Exception {
+        try (TestHttpEndpoint endpoint = TestHttpEndpoint.responding(404, "not found")) {
+            IllegalArgumentException exception = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> HelidonDeclarativeCodegen.resolveHelidonVersion("v4", endpoint.baseUri()));
+
+            assertThat(exception.getMessage(), containsString("Failed to resolve Helidon version 'v4'"));
+            assertThat(exception.getMessage(), containsString("Set helidonVersion to a specific Helidon release"));
+        }
+    }
+
+    private static final class TestHttpEndpoint implements AutoCloseable {
+        private final ServerSocket serverSocket;
+        private final Thread thread;
+        private final AtomicReference<String> requestLine = new AtomicReference<>();
+
+        private TestHttpEndpoint(ServerSocket serverSocket, int statusCode, String body) {
+            this.serverSocket = serverSocket;
+            this.thread = new Thread(() -> serve(statusCode, body), "helidon-version-test-server");
+            this.thread.setDaemon(true);
+        }
+
+        static TestHttpEndpoint responding(int statusCode, String body) throws IOException {
+            ServerSocket serverSocket = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
+            TestHttpEndpoint endpoint = new TestHttpEndpoint(serverSocket, statusCode, body);
+            endpoint.thread.start();
+            return endpoint;
+        }
+
+        URI baseUri() {
+            return URI.create("http://127.0.0.1:" + serverSocket.getLocalPort() + "/api/versions/");
+        }
+
+        String requestLine() throws InterruptedException {
+            thread.join(2_000);
+            return requestLine.get();
+        }
+
+        @Override
+        public void close() throws Exception {
+            serverSocket.close();
+            thread.join(2_000);
+        }
+
+        private void serve(int statusCode, String body) {
+            try (serverSocket; Socket socket = serverSocket.accept()) {
+                readRequest(socket);
+                byte[] responseBody = body.getBytes(StandardCharsets.UTF_8);
+                String statusText = statusCode >= 200 && statusCode < 300 ? "OK" : "ERROR";
+                String headers = "HTTP/1.1 "
+                        + statusCode
+                        + " "
+                        + statusText
+                        + "\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Length: "
+                        + responseBody.length
+                        + "\r\nConnection: close\r\n\r\n";
+                socket.getOutputStream().write(headers.getBytes(StandardCharsets.US_ASCII));
+                socket.getOutputStream().write(responseBody);
+            } catch (IOException ignored) {
+                // The test may close the server socket while the server thread is waiting for a connection.
+            }
+        }
+
+        private void readRequest(Socket socket) throws IOException {
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+            requestLine.set(reader.readLine());
+            String line;
+            while ((line = reader.readLine()) != null && !line.isEmpty()) {
+                // Read headers before writing the response.
+            }
+        }
     }
 }
