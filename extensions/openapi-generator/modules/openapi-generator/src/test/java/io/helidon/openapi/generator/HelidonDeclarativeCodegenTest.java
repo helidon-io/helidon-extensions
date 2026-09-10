@@ -275,13 +275,13 @@ class HelidonDeclarativeCodegenTest {
     void resolveHelidonVersionLeavesSpecificVersionAlone() {
         URI unusedEndpoint = URI.create("http://127.0.0.1:1/api/versions/");
 
-        assertThat(HelidonDeclarativeCodegen.resolveHelidonVersion("4.5.0", unusedEndpoint), is("4.5.0"));
+        assertThat(HelidonVersionResolver.resolve("4.5.0", unusedEndpoint), is("4.5.0"));
     }
 
     @Test
     void resolveHelidonVersionFetchesVersionShorthand() throws Exception {
         try (TestHttpEndpoint endpoint = TestHttpEndpoint.responding(200, "4.5.9\n")) {
-            String resolved = HelidonDeclarativeCodegen.resolveHelidonVersion("v4", endpoint.baseUri());
+            String resolved = HelidonVersionResolver.resolve("v4", endpoint.baseUri());
 
             assertThat(resolved, is("4.5.9"));
             assertThat(endpoint.requestLine(), containsString("GET /api/versions/v4 HTTP/1.1"));
@@ -289,11 +289,20 @@ class HelidonDeclarativeCodegenTest {
     }
 
     @Test
+    void resolveHelidonVersionFetchesLiveVersionShorthand() {
+        String resolved = HelidonVersionResolver.resolve(
+                "v4",
+                HelidonVersionResolver.RESOLUTION_URI);
+
+        assertThat("Resolved Helidon version: " + resolved, resolved.matches("4\\.\\d+\\.\\d+"), is(true));
+    }
+
+    @Test
     void resolveHelidonVersionRejectsBlankResponse() throws Exception {
         try (TestHttpEndpoint endpoint = TestHttpEndpoint.responding(200, "\n")) {
             IllegalArgumentException exception = assertThrows(
                     IllegalArgumentException.class,
-                    () -> HelidonDeclarativeCodegen.resolveHelidonVersion("v4", endpoint.baseUri()));
+                    () -> HelidonVersionResolver.resolve("v4", endpoint.baseUri()));
 
             assertThat(exception.getMessage(), containsString("Failed to resolve Helidon version 'v4'"));
             assertThat(exception.getMessage(), containsString("Set helidonVersion to a specific Helidon release"));
@@ -305,7 +314,7 @@ class HelidonDeclarativeCodegenTest {
         try (TestHttpEndpoint endpoint = TestHttpEndpoint.responding(404, "not found")) {
             IllegalArgumentException exception = assertThrows(
                     IllegalArgumentException.class,
-                    () -> HelidonDeclarativeCodegen.resolveHelidonVersion("v4", endpoint.baseUri()));
+                    () -> HelidonVersionResolver.resolve("v4", endpoint.baseUri()));
 
             assertThat(exception.getMessage(), containsString("Failed to resolve Helidon version 'v4'"));
             assertThat(exception.getMessage(), containsString("Set helidonVersion to a specific Helidon release"));

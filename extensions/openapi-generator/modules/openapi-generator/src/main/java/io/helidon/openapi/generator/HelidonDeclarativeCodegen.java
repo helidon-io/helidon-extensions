@@ -17,17 +17,12 @@
 package io.helidon.openapi.generator;
 
 import java.io.File;
-import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -117,8 +112,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private static final String EXT_DISCRIMINATOR_REPRESENTATION =
             "x-helidon-discriminator-representation";
     private static final String DEFAULT_HELIDON_VERSION = "v4";
-    private static final URI HELIDON_VERSION_RESOLUTION_URI = URI.create("https://helidon.io/api/versions/");
-    private static final Duration HELIDON_VERSION_RESOLUTION_TIMEOUT = Duration.ofSeconds(5);
     private String helidonVersion = DEFAULT_HELIDON_VERSION;
     private String javaVersion = "21";
     private boolean generateClient = true;
@@ -242,10 +235,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return "Generates a Helidon SE 4.x declarative server using @RestServer.Endpoint annotations.";
     }
 
-    // -------------------------------------------------------------------------
-    // Option processing
-    // -------------------------------------------------------------------------
-
     @Override
     public void processOpts() {
         super.processOpts();
@@ -253,7 +242,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         if (additionalProperties.containsKey(OPT_HELIDON_VERSION)) {
             helidonVersion = additionalProperties.get(OPT_HELIDON_VERSION).toString();
         }
-        helidonVersion = resolveHelidonVersion(helidonVersion);
+        helidonVersion = HelidonVersionResolver.resolve(helidonVersion);
         if (additionalProperties.containsKey(OPT_JAVA_VERSION)) {
             javaVersion = normalizeJavaVersion(additionalProperties.get(OPT_JAVA_VERSION));
         }
@@ -346,55 +335,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         }
         return text;
     }
-
-    private static String resolveHelidonVersion(String version) {
-        return resolveHelidonVersion(version, HELIDON_VERSION_RESOLUTION_URI);
-    }
-
-    static String resolveHelidonVersion(String version, URI baseUri) {
-        if (!version.startsWith("v")) {
-            return version;
-        }
-
-        String requestedVersion = version.trim();
-        URI requestUri = null;
-        try {
-            requestUri = baseUri.resolve(requestedVersion);
-            HttpRequest request = HttpRequest.newBuilder(requestUri)
-                    .timeout(HELIDON_VERSION_RESOLUTION_TIMEOUT)
-                    .GET()
-                    .build();
-            HttpResponse<String> response = HttpClient.newHttpClient()
-                    .send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IOException("HTTP " + response.statusCode());
-            }
-            return parseResolvedHelidonVersion(requestedVersion, requestUri, response.body());
-        } catch (Exception e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            throw new IllegalArgumentException(helidonVersionResolutionFailure(requestedVersion, requestUri, e.getMessage()));
-        }
-    }
-
-    private static String parseResolvedHelidonVersion(String shorthand, URI requestUri, String body) {
-        String resolvedVersion = body == null ? "" : body.trim();
-        if (resolvedVersion.isEmpty()) {
-            throw new IllegalArgumentException(helidonVersionResolutionFailure(shorthand, requestUri, "Helidon version service returned an empty response body"));
-        }
-        return resolvedVersion;
-    }
-
-    private static String helidonVersionResolutionFailure(
-            String shorthand,
-            URI requestUri,
-            String reason) {
-        return String.format(
-                "Failed to resolve Helidon version '%s' from %s: %s. Set helidonVersion to a specific Helidon release instead of a version shorthand.",
-                shorthand, requestUri, reason);
-    }
-
 
     // -------------------------------------------------------------------------
     // Naming: use plain camelCase (no "Api" suffix) so classname = "Pets", not "PetsApi"
