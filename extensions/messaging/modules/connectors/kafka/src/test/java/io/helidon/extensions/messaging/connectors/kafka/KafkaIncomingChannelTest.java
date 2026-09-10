@@ -82,9 +82,10 @@ class KafkaIncomingChannelTest {
     void testConnectorType() {
         KafkaConnector connector = KafkaConnector.builder()
                 .name("test-kafka")
-                .bootstrapServers("localhost:9092")
+                .addBootstrapServer("localhost:9092")
                 .build();
         try (IncomingChannel channel = connector.incoming(KafkaIncomingConfig.builder()
+                .connector(connector.name())
                 .channelName("audit")
                 .topic(TOPIC)
                 .build())) {
@@ -2013,6 +2014,7 @@ class KafkaIncomingChannelTest {
 
     private static KafkaConnectorConfigSupport.IncomingSettings config(Duration closeTimeout, Map<String, String> properties) {
         KafkaIncomingConfig channelConfig = KafkaIncomingConfig.builder()
+                .connector("test-kafka")
                 .channelName("audit")
                 .topic(TOPIC)
                 .groupId("audit-test")
@@ -2022,7 +2024,7 @@ class KafkaIncomingChannelTest {
                 .build();
         KafkaConnectorConfig connectorConfig = KafkaConnectorConfig.builder()
                 .name("test-kafka")
-                .bootstrapServers("localhost:9092")
+                .addBootstrapServer("localhost:9092")
                 .buildPrototype();
         return KafkaConnectorConfigSupport.incoming(connectorConfig, channelConfig);
     }

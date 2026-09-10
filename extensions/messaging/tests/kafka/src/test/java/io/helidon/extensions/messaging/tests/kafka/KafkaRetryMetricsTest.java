@@ -55,7 +55,7 @@ class KafkaRetryMetricsTest {
     void separatesCommitRetryMetricsByChannel() {
         String retryPrefix = "messaging-kafka-offset-commit-";
         removeRetryMetrics(meterRegistry, retryPrefix);
-        KafkaConnector kafka = KafkaConnector.builder().name("test-kafka").bootstrapServers("localhost:9092").build();
+        KafkaConnector kafka = KafkaConnector.builder().name("test-kafka").addBootstrapServer("localhost:9092").build();
 
         try (IncomingChannel orders = kafka.incoming(config("orders"));
                 IncomingChannel audit = kafka.incoming(config("audit"))) {
@@ -68,6 +68,7 @@ class KafkaRetryMetricsTest {
 
     private static KafkaIncomingConfig config(String channelName) {
         return KafkaIncomingConfig.builder()
+                .connector("test-kafka")
                 .channelName(channelName)
                 .topic("events")
                 .build();

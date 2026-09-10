@@ -16,7 +16,9 @@
 
 package io.helidon.extensions.messaging.tests.jms;
 
-import io.helidon.extensions.messaging.connectors.jms.JmsConnectorProvider;
+import io.helidon.common.types.ResolvedType;
+import io.helidon.extensions.messaging.connectors.jms.JmsConnector;
+import io.helidon.messaging.spi.MessagingConnectorProvider;
 import io.helidon.service.registry.DescriptorHandler;
 import io.helidon.service.registry.ServiceDiscovery;
 
@@ -29,19 +31,21 @@ class JmsModuleDiscoveryIT {
     @Test
     void connectorMetadataIsDiscoveredFromNamedModules() {
         Module testModule = JmsModuleDiscoveryIT.class.getModule();
-        Module connectorModule = JmsConnectorProvider.class.getModule();
+        Module connectorModule = JmsConnector.class.getModule();
         boolean connectorDescriptorDiscovered = ServiceDiscovery.create()
                 .allMetadata()
                 .stream()
                 .map(DescriptorHandler::descriptor)
-                .anyMatch(descriptor -> descriptor.serviceType()
-                        .fqName()
-                        .equals(JmsConnectorProvider.class.getName()));
+                .anyMatch(descriptor -> descriptor.serviceType().packageName().equals(JmsConnector.class.getPackageName())
+                        && descriptor.contracts().contains(ResolvedType.create(MessagingConnectorProvider.class)));
 
         assertThat("integration test module", testModule.isNamed(), is(true));
         assertThat(testModule.getName(), is("io.helidon.extensions.messaging.tests.jms"));
         assertThat("JMS connector module", connectorModule.isNamed(), is(true));
         assertThat(connectorModule.getName(), is("io.helidon.extensions.messaging.connectors.jms"));
         assertThat("JMS connector service descriptor", connectorDescriptorDiscovered, is(true));
+        assertThat("Connector provider is not registered with ServiceLoader", connectorModule.getDescriptor().provides()
+                .stream().noneMatch(provider -> provider.service().equals(MessagingConnectorProvider.class.getName())),
+                   is(true));
     }
 }

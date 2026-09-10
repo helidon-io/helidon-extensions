@@ -23,6 +23,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
+import io.helidon.messaging.spi.MessagingConnector;
+
 import org.apache.pulsar.client.api.Schema;
 import org.junit.jupiter.api.Test;
 
@@ -194,7 +196,7 @@ class PulsarSchemaResolverTest {
     void channelSchemaProviderOverridesCommonProvider() {
         AtomicInteger commonCalls = new AtomicInteger();
         AtomicInteger channelCalls = new AtomicInteger();
-        PulsarConnector connector = PulsarConnector.builder()
+        MessagingConnector connector = PulsarConnector.builder()
                 .name("pulsar")
                 .serviceUrl("pulsar://127.0.0.1:6650")
                 .schemaProvider("common")
@@ -208,12 +210,13 @@ class PulsarSchemaResolverTest {
                 }))
                 .build();
 
-        connector.outgoing(config(null));
-        connector.outgoing(config("channel"));
+        connector.outgoing(config(null)).orElseThrow();
+        connector.outgoing(config("channel")).orElseThrow();
         connector.incoming(PulsarIncomingConfig.builder()
+                                   .connector("pulsar")
                                    .channelName(CHANNEL)
                                    .topic("persistent://public/default/orders")
-                                   .build());
+                                   .build()).orElseThrow();
 
         assertThat(commonCalls.get(), is(2));
         assertThat(channelCalls.get(), is(1));
@@ -235,6 +238,7 @@ class PulsarSchemaResolverTest {
 
     private static PulsarOutgoingConfig config(String schemaProvider) {
         PulsarOutgoingConfig.Builder builder = PulsarOutgoingConfig.builder()
+                .connector("pulsar")
                 .channelName(CHANNEL)
                 .topic("persistent://public/default/orders");
         if (schemaProvider != null) {

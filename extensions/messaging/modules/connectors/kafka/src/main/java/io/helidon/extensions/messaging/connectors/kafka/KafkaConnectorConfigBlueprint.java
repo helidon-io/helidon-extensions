@@ -17,6 +17,7 @@
 package io.helidon.extensions.messaging.connectors.kafka;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -32,25 +33,26 @@ import io.helidon.messaging.spi.MessagingConnectorProviderConfig;
 @Api.Preview
 @Prototype.Blueprint(decorator = KafkaConnectorConfigSupport.BuilderDecorator.class)
 @Prototype.Sealed
-@Prototype.Configured(value = KafkaConnectorProvider.CONNECTOR_TYPE, root = false)
+@Prototype.Configured(value = KafkaConnector.CONNECTOR_TYPE, root = false)
 @Prototype.Provides(MessagingConnectorProvider.class)
 @Prototype.CustomMethods(KafkaConnectorConfigSupport.class)
 interface KafkaConnectorConfigBlueprint extends MessagingConnectorProviderConfig, Prototype.Factory<KafkaConnector> {
     /**
      * Kafka bootstrap servers.
      *
-     * @return comma-separated bootstrap servers
+     * @return bootstrap server addresses
      */
     @Option.Required
-    @Option.Configured(KafkaConnectorConfigSupport.BOOTSTRAP_SERVERS_PROPERTY)
-    String bootstrapServers();
+    @Option.Configured
+    @Option.Singular
+    List<String> bootstrapServers();
 
     /**
      * Default Kafka topic. Each channel must supply a topic when this is not configured.
      *
      * @return default topic
      */
-    @Option.Configured(KafkaConnectorConfigSupport.TOPIC_PROPERTY)
+    @Option.Configured
     Optional<String> topic();
 
     /**
@@ -58,7 +60,7 @@ interface KafkaConnectorConfigBlueprint extends MessagingConnectorProviderConfig
      *
      * @return default consumer group identifier
      */
-    @Option.Configured(KafkaConnectorConfigSupport.GROUP_ID_PROPERTY)
+    @Option.Configured
     Optional<String> groupId();
 
     /**
@@ -66,7 +68,7 @@ interface KafkaConnectorConfigBlueprint extends MessagingConnectorProviderConfig
      *
      * @return key serializer class name
      */
-    @Option.Configured(KafkaConnectorConfigSupport.KEY_SERIALIZER_PROPERTY)
+    @Option.Configured
     @Option.Default(KafkaConnectorConfigSupport.DEFAULT_KEY_SERIALIZER)
     String keySerializer();
 
@@ -75,7 +77,7 @@ interface KafkaConnectorConfigBlueprint extends MessagingConnectorProviderConfig
      *
      * @return value serializer class name
      */
-    @Option.Configured(KafkaConnectorConfigSupport.VALUE_SERIALIZER_PROPERTY)
+    @Option.Configured
     @Option.Default(KafkaConnectorConfigSupport.DEFAULT_VALUE_SERIALIZER)
     String valueSerializer();
 
@@ -84,7 +86,7 @@ interface KafkaConnectorConfigBlueprint extends MessagingConnectorProviderConfig
      *
      * @return key deserializer class name
      */
-    @Option.Configured(KafkaConnectorConfigSupport.KEY_DESERIALIZER_PROPERTY)
+    @Option.Configured
     @Option.Default(KafkaConnectorConfigSupport.DEFAULT_KEY_DESERIALIZER)
     String keyDeserializer();
 
@@ -93,7 +95,7 @@ interface KafkaConnectorConfigBlueprint extends MessagingConnectorProviderConfig
      *
      * @return value deserializer class name
      */
-    @Option.Configured(KafkaConnectorConfigSupport.VALUE_DESERIALIZER_PROPERTY)
+    @Option.Configured
     @Option.Default(KafkaConnectorConfigSupport.DEFAULT_VALUE_DESERIALIZER)
     String valueDeserializer();
 
@@ -102,7 +104,7 @@ interface KafkaConnectorConfigBlueprint extends MessagingConnectorProviderConfig
      *
      * @return offset reset policy
      */
-    @Option.Configured(KafkaConnectorConfigSupport.AUTO_OFFSET_RESET_PROPERTY)
+    @Option.Configured
     @Option.Default(KafkaConnectorConfigSupport.DEFAULT_AUTO_OFFSET_RESET)
     String autoOffsetReset();
 
@@ -112,7 +114,7 @@ interface KafkaConnectorConfigBlueprint extends MessagingConnectorProviderConfig
      *
      * @return poll timeout
      */
-    @Option.Configured(KafkaConnectorConfigSupport.POLL_TIMEOUT_PROPERTY)
+    @Option.Configured
     @Option.Default(KafkaConnectorConfigSupport.DEFAULT_POLL_TIMEOUT)
     Duration pollTimeout();
 
@@ -123,7 +125,7 @@ interface KafkaConnectorConfigBlueprint extends MessagingConnectorProviderConfig
      *
      * @return send timeout
      */
-    @Option.Configured(KafkaConnectorConfigSupport.SEND_TIMEOUT_PROPERTY)
+    @Option.Configured
     @Option.Default(KafkaConnectorConfigSupport.DEFAULT_SEND_TIMEOUT)
     Duration sendTimeout();
 
@@ -135,7 +137,7 @@ interface KafkaConnectorConfigBlueprint extends MessagingConnectorProviderConfig
      *
      * @return close timeout
      */
-    @Option.Configured(KafkaConnectorConfigSupport.CLOSE_TIMEOUT_PROPERTY)
+    @Option.Configured
     @Option.Default(KafkaConnectorConfigSupport.DEFAULT_CLOSE_TIMEOUT)
     Duration closeTimeout();
 
@@ -145,7 +147,7 @@ interface KafkaConnectorConfigBlueprint extends MessagingConnectorProviderConfig
      *
      * @return additional Kafka client properties
      */
-    @Option.Configured("properties")
+    @Option.Configured
     @Option.Confidential
     @Option.Singular("property")
     Map<String, String> properties();

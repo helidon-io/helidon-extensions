@@ -18,13 +18,15 @@ package io.helidon.extensions.messaging.connectors.kafka;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 import io.helidon.builder.api.Prototype;
 
+import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.producer.ProducerConfig;
 
 /**
  * Support methods and constants for {@link KafkaConnectorConfig}.
@@ -34,13 +36,13 @@ final class KafkaConnectorConfigSupport {
      * Kafka connector name.
      */
     @Prototype.Constant
-    static final String CONNECTOR_NAME = KafkaConnectorProvider.CONNECTOR_TYPE;
+    static final String CONNECTOR_NAME = KafkaConnector.CONNECTOR_TYPE;
 
     /**
      * Config property for Kafka bootstrap servers.
      */
     @Prototype.Constant
-    static final String BOOTSTRAP_SERVERS_PROPERTY = "bootstrap.servers";
+    static final String BOOTSTRAP_SERVERS_PROPERTY = "bootstrap-servers";
 
     /**
      * Config property for the Kafka topic.
@@ -52,61 +54,61 @@ final class KafkaConnectorConfigSupport {
      * Config property for the Kafka consumer group identifier.
      */
     @Prototype.Constant
-    static final String GROUP_ID_PROPERTY = "group.id";
+    static final String GROUP_ID_PROPERTY = "group-id";
 
     /**
      * Config property for the Kafka key serializer.
      */
     @Prototype.Constant
-    static final String KEY_SERIALIZER_PROPERTY = "key.serializer";
+    static final String KEY_SERIALIZER_PROPERTY = "key-serializer";
 
     /**
      * Config property for the Kafka value serializer.
      */
     @Prototype.Constant
-    static final String VALUE_SERIALIZER_PROPERTY = "value.serializer";
+    static final String VALUE_SERIALIZER_PROPERTY = "value-serializer";
 
     /**
      * Config property for the Kafka key deserializer.
      */
     @Prototype.Constant
-    static final String KEY_DESERIALIZER_PROPERTY = "key.deserializer";
+    static final String KEY_DESERIALIZER_PROPERTY = "key-deserializer";
 
     /**
      * Config property for the Kafka value deserializer.
      */
     @Prototype.Constant
-    static final String VALUE_DESERIALIZER_PROPERTY = "value.deserializer";
+    static final String VALUE_DESERIALIZER_PROPERTY = "value-deserializer";
 
     /**
      * Config property for the Kafka consumer offset reset policy.
      */
     @Prototype.Constant
-    static final String AUTO_OFFSET_RESET_PROPERTY = "auto.offset.reset";
+    static final String AUTO_OFFSET_RESET_PROPERTY = "auto-offset-reset";
 
     /**
      * Config property for the consumer poll timeout.
      */
     @Prototype.Constant
-    static final String POLL_TIMEOUT_PROPERTY = "poll.timeout";
+    static final String POLL_TIMEOUT_PROPERTY = "poll-timeout";
 
     /**
      * Config property for the producer send timeout.
      */
     @Prototype.Constant
-    static final String SEND_TIMEOUT_PROPERTY = "send.timeout";
+    static final String SEND_TIMEOUT_PROPERTY = "send-timeout";
 
     /**
      * Config property for the Kafka client close timeout.
      */
     @Prototype.Constant
-    static final String CLOSE_TIMEOUT_PROPERTY = "close.timeout";
+    static final String CLOSE_TIMEOUT_PROPERTY = "close-timeout";
 
     /**
      * Kafka property controlling automatic offset commits.
      */
     @Prototype.Constant
-    static final String ENABLE_AUTO_COMMIT_PROPERTY = "enable.auto.commit";
+    static final String ENABLE_AUTO_COMMIT_PROPERTY = ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG;
 
     /**
      * Default Kafka key serializer.
@@ -156,22 +158,14 @@ final class KafkaConnectorConfigSupport {
     @Prototype.Constant
     static final String DEFAULT_CLOSE_TIMEOUT = "PT10S";
 
-    private static final Set<String> CONNECTOR_PROPERTIES = Set.of("name",
-                                                                   "connector",
-                                                                   "channel-name",
-                                                                   TOPIC_PROPERTY,
-                                                                   POLL_TIMEOUT_PROPERTY,
-                                                                   SEND_TIMEOUT_PROPERTY,
-                                                                   CLOSE_TIMEOUT_PROPERTY);
-
     private KafkaConnectorConfigSupport() {
     }
 
     static Map<String, Object> producerProperties(OutgoingSettings config) {
-        Map<String, Object> properties = kafkaProperties(config.properties());
-        properties.put(BOOTSTRAP_SERVERS_PROPERTY, config.bootstrapServers());
-        properties.put(KEY_SERIALIZER_PROPERTY, config.keySerializer());
-        properties.put(VALUE_SERIALIZER_PROPERTY, config.valueSerializer());
+        Map<String, Object> properties = new LinkedHashMap<>(config.properties());
+        properties.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, String.join(",", config.bootstrapServers()));
+        properties.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, config.keySerializer());
+        properties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, config.valueSerializer());
         return Map.copyOf(properties);
     }
 
@@ -181,13 +175,13 @@ final class KafkaConnectorConfigSupport {
 
     static Map<String, Object> consumerProperties(IncomingSettings config,
                                                  int maxDeliveryMessages) {
-        Map<String, Object> properties = kafkaProperties(config.properties());
-        properties.put(BOOTSTRAP_SERVERS_PROPERTY, config.bootstrapServers());
-        properties.put(GROUP_ID_PROPERTY, config.groupId());
-        properties.put(KEY_DESERIALIZER_PROPERTY, config.keyDeserializer());
-        properties.put(VALUE_DESERIALIZER_PROPERTY, config.valueDeserializer());
-        properties.put(AUTO_OFFSET_RESET_PROPERTY, config.autoOffsetReset());
-        properties.put(ENABLE_AUTO_COMMIT_PROPERTY, false);
+        Map<String, Object> properties = new LinkedHashMap<>(config.properties());
+        properties.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, String.join(",", config.bootstrapServers()));
+        properties.put(ConsumerConfig.GROUP_ID_CONFIG, config.groupId());
+        properties.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, config.keyDeserializer());
+        properties.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, config.valueDeserializer());
+        properties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, config.autoOffsetReset());
+        properties.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
         bound(properties,
               ConsumerConfig.MAX_POLL_RECORDS_CONFIG,
               maxDeliveryMessages,
@@ -206,7 +200,7 @@ final class KafkaConnectorConfigSupport {
                                     channel.autoOffsetReset().orElse(common.autoOffsetReset()),
                                     channel.pollTimeout().orElse(common.pollTimeout()),
                                     channel.closeTimeout().orElse(common.closeTimeout()),
-                                    properties(common.properties(), channel.properties()));
+                                    properties(common.properties(), channel.properties().orElseGet(Map::of)));
     }
 
     static OutgoingSettings outgoing(KafkaConnectorConfig common, KafkaOutgoingConfig channel) {
@@ -217,7 +211,7 @@ final class KafkaConnectorConfigSupport {
                                    channel.valueSerializer().orElse(common.valueSerializer()),
                                    channel.sendTimeout().orElse(common.sendTimeout()),
                                    channel.closeTimeout().orElse(common.closeTimeout()),
-                                   properties(common.properties(), channel.properties()));
+                                   properties(common.properties(), channel.properties().orElseGet(Map::of)));
     }
 
     private static Map<String, String> properties(Map<String, String> common, Map<String, String> channel) {
@@ -285,18 +279,15 @@ final class KafkaConnectorConfigSupport {
         }
     }
 
-    private static Map<String, Object> kafkaProperties(Map<String, String> configured) {
-        Map<String, Object> properties = new LinkedHashMap<>(configured);
-        properties.keySet().removeAll(CONNECTOR_PROPERTIES);
-        return properties;
-    }
-
     /**
      * Validates Kafka connector configuration.
      */
     static final class BuilderDecorator implements Prototype.BuilderDecorator<KafkaConnectorConfig.BuilderBase<?, ?>> {
         @Override
         public void decorate(KafkaConnectorConfig.BuilderBase<?, ?> target) {
+            if (target.bootstrapServers().isEmpty()) {
+                throw new IllegalArgumentException(BOOTSTRAP_SERVERS_PROPERTY + " must not be empty");
+            }
             requireNonNullEntries("properties", target.properties());
             requirePollTimeout(target.pollTimeout());
             requireSendTimeout(target.sendTimeout());
@@ -308,7 +299,7 @@ final class KafkaConnectorConfigSupport {
             implements Prototype.BuilderDecorator<KafkaIncomingConfig.BuilderBase<?, ?>> {
         @Override
         public void decorate(KafkaIncomingConfig.BuilderBase<?, ?> target) {
-            requireNonNullEntries("properties", target.properties());
+            target.properties().ifPresent(properties -> requireNonNullEntries("properties", properties));
             target.pollTimeout().ifPresent(KafkaConnectorConfigSupport::requirePollTimeout);
             target.closeTimeout().ifPresent(KafkaConnectorConfigSupport::requireCloseTimeout);
         }
@@ -318,7 +309,7 @@ final class KafkaConnectorConfigSupport {
             implements Prototype.BuilderDecorator<KafkaOutgoingConfig.BuilderBase<?, ?>> {
         @Override
         public void decorate(KafkaOutgoingConfig.BuilderBase<?, ?> target) {
-            requireNonNullEntries("properties", target.properties());
+            target.properties().ifPresent(properties -> requireNonNullEntries("properties", properties));
             target.sendTimeout().ifPresent(KafkaConnectorConfigSupport::requireSendTimeout);
             target.closeTimeout().ifPresent(KafkaConnectorConfigSupport::requireCloseTimeout);
         }
@@ -326,7 +317,7 @@ final class KafkaConnectorConfigSupport {
 
     record IncomingSettings(String channelName,
                             String topic,
-                            String bootstrapServers,
+                            List<String> bootstrapServers,
                             String groupId,
                             String keyDeserializer,
                             String valueDeserializer,
@@ -337,7 +328,7 @@ final class KafkaConnectorConfigSupport {
     }
 
     record OutgoingSettings(String topic,
-                            String bootstrapServers,
+                            List<String> bootstrapServers,
                             String keySerializer,
                             String valueSerializer,
                             Duration sendTimeout,

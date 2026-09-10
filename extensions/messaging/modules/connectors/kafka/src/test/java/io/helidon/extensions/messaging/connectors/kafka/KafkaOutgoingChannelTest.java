@@ -77,9 +77,10 @@ class KafkaOutgoingChannelTest {
     void testConnectorType() {
         KafkaConnector connector = KafkaConnector.builder()
                 .name("test-kafka")
-                .bootstrapServers("localhost:9092")
+                .addBootstrapServer("localhost:9092")
                 .build();
         try (OutgoingChannel channel = connector.outgoing(KafkaOutgoingConfig.builder()
+                .connector(connector.name())
                 .channelName("audit")
                 .topic(TOPIC)
                 .build())) {
@@ -212,7 +213,7 @@ class KafkaOutgoingChannelTest {
         assertThat(record.key(), is("source-key"));
         assertThat(record.value(), nullValue());
         assertThat(new String(record.headers()
-                                      .lastHeader(KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER)
+                                      .lastHeader(KafkaConnector.DLQ_ORIGINAL_TOPIC_HEADER)
                                       .value(),
                               StandardCharsets.UTF_8),
                    is("source-topic"));
@@ -275,13 +276,13 @@ class KafkaOutgoingChannelTest {
                              "forged-type".getBytes(StandardCharsets.UTF_8))
                         .add(LEGACY_FAILURE_MESSAGE_HEADER,
                              "forged-message".getBytes(StandardCharsets.UTF_8))
-                        .add(KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER,
+                        .add(KafkaConnector.DLQ_ORIGINAL_TOPIC_HEADER,
                              "forged".getBytes(StandardCharsets.UTF_8))
-                        .add(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_HEADER,
+                        .add(KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_HEADER,
                              "forged".getBytes(StandardCharsets.UTF_8))
-                        .add(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER,
+                        .add(KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER,
                              "forged".getBytes(StandardCharsets.UTF_8))
-                        .add(KafkaConnectorProvider.DLQ_ORIGINAL_LEADER_EPOCH_HEADER,
+                        .add(KafkaConnector.DLQ_ORIGINAL_LEADER_EPOCH_HEADER,
                              "forged".getBytes(StandardCharsets.UTF_8)),
                 Optional.of(9));
         RuntimeException processingFailure = new IllegalStateException("dispatch failed");
@@ -315,13 +316,13 @@ class KafkaOutgoingChannelTest {
         assertThat(record.headers().lastHeader(DeadLetterMessage.FAILURE_MESSAGE_METADATA), nullValue());
         assertThat(record.headers().lastHeader(LEGACY_FAILURE_TYPE_HEADER), nullValue());
         assertThat(record.headers().lastHeader(LEGACY_FAILURE_MESSAGE_HEADER), nullValue());
-        assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER), is("source-topic"));
-        assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER), is("7"));
-        assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER), is("42"));
-        assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_HEADER), is("987654321"));
-        assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER),
+        assertThat(headerValue(record, KafkaConnector.DLQ_ORIGINAL_TOPIC_HEADER), is("source-topic"));
+        assertThat(headerValue(record, KafkaConnector.DLQ_ORIGINAL_PARTITION_HEADER), is("7"));
+        assertThat(headerValue(record, KafkaConnector.DLQ_ORIGINAL_OFFSET_HEADER), is("42"));
+        assertThat(headerValue(record, KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_HEADER), is("987654321"));
+        assertThat(headerValue(record, KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER),
                    is(KafkaMessage.TimestampType.LOG_APPEND_TIME.name()));
-        assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_LEADER_EPOCH_HEADER), is("9"));
+        assertThat(headerValue(record, KafkaConnector.DLQ_ORIGINAL_LEADER_EPOCH_HEADER), is("9"));
     }
 
     @Test
@@ -330,12 +331,12 @@ class KafkaOutgoingChannelTest {
         KafkaOutgoingChannel connector = new KafkaOutgoingChannel(ignored -> producer);
         KafkaMessage<String, String> original = KafkaMessage.<String, String>builder("audit event")
                 .key("source-key")
-                .addHeader(KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER, "forged")
-                .addHeader(KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER, "forged")
-                .addHeader(KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER, "forged")
-                .addHeader(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_HEADER, "forged")
-                .addHeader(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER, "forged")
-                .addHeader(KafkaConnectorProvider.DLQ_ORIGINAL_LEADER_EPOCH_HEADER, "forged")
+                .addHeader(KafkaConnector.DLQ_ORIGINAL_TOPIC_HEADER, "forged")
+                .addHeader(KafkaConnector.DLQ_ORIGINAL_PARTITION_HEADER, "forged")
+                .addHeader(KafkaConnector.DLQ_ORIGINAL_OFFSET_HEADER, "forged")
+                .addHeader(KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_HEADER, "forged")
+                .addHeader(KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER, "forged")
+                .addHeader(KafkaConnector.DLQ_ORIGINAL_LEADER_EPOCH_HEADER, "forged")
                 .build();
         DeadLetterMessage<String> deadLetter = DeadLetterMessage.create(original,
                                                                          "orders-in",
@@ -346,12 +347,12 @@ class KafkaOutgoingChannelTest {
 
         ProducerRecord<Object, Object> record = producer.history().getFirst();
         assertThat(record.timestamp(), nullValue());
-        assertThat(record.headers().lastHeader(KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER), nullValue());
-        assertThat(record.headers().lastHeader(KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER), nullValue());
-        assertThat(record.headers().lastHeader(KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER), nullValue());
-        assertThat(record.headers().lastHeader(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_HEADER), nullValue());
-        assertThat(record.headers().lastHeader(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER), nullValue());
-        assertThat(record.headers().lastHeader(KafkaConnectorProvider.DLQ_ORIGINAL_LEADER_EPOCH_HEADER), nullValue());
+        assertThat(record.headers().lastHeader(KafkaConnector.DLQ_ORIGINAL_TOPIC_HEADER), nullValue());
+        assertThat(record.headers().lastHeader(KafkaConnector.DLQ_ORIGINAL_PARTITION_HEADER), nullValue());
+        assertThat(record.headers().lastHeader(KafkaConnector.DLQ_ORIGINAL_OFFSET_HEADER), nullValue());
+        assertThat(record.headers().lastHeader(KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_HEADER), nullValue());
+        assertThat(record.headers().lastHeader(KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER), nullValue());
+        assertThat(record.headers().lastHeader(KafkaConnector.DLQ_ORIGINAL_LEADER_EPOCH_HEADER), nullValue());
     }
 
     @Test
@@ -381,12 +382,12 @@ class KafkaOutgoingChannelTest {
         wrapperHeaders.put(DeadLetterMessage.ATTEMPTS_HEADER, "999");
         wrapperHeaders.put(LEGACY_FAILURE_TYPE_HEADER, "forged");
         wrapperHeaders.put(LEGACY_FAILURE_MESSAGE_HEADER, "forged");
-        wrapperHeaders.put(KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER, "forged");
-        wrapperHeaders.put(KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER, "forged");
-        wrapperHeaders.put(KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER, "forged");
-        wrapperHeaders.put(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_HEADER, "forged");
-        wrapperHeaders.put(KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER, "forged");
-        wrapperHeaders.put(KafkaConnectorProvider.DLQ_ORIGINAL_LEADER_EPOCH_HEADER, "forged");
+        wrapperHeaders.put(KafkaConnector.DLQ_ORIGINAL_TOPIC_HEADER, "forged");
+        wrapperHeaders.put(KafkaConnector.DLQ_ORIGINAL_PARTITION_HEADER, "forged");
+        wrapperHeaders.put(KafkaConnector.DLQ_ORIGINAL_OFFSET_HEADER, "forged");
+        wrapperHeaders.put(KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_HEADER, "forged");
+        wrapperHeaders.put(KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER, "forged");
+        wrapperHeaders.put(KafkaConnector.DLQ_ORIGINAL_LEADER_EPOCH_HEADER, "forged");
         DeadLetterMessage<String> deadLetter = customDeadLetter(KafkaMessageImpl.create(sourceRecord),
                                                                 "wrapped event",
                                                                 wrapperHeaders);
@@ -406,13 +407,13 @@ class KafkaOutgoingChannelTest {
         assertThat(headerValue(record, DeadLetterMessage.ATTEMPTS_HEADER), is("4"));
         assertThat(record.headers().lastHeader(LEGACY_FAILURE_TYPE_HEADER), nullValue());
         assertThat(record.headers().lastHeader(LEGACY_FAILURE_MESSAGE_HEADER), nullValue());
-        assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER), is("source-topic"));
-        assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER), is("7"));
-        assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER), is("42"));
-        assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_HEADER), is("987654321"));
-        assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER),
+        assertThat(headerValue(record, KafkaConnector.DLQ_ORIGINAL_TOPIC_HEADER), is("source-topic"));
+        assertThat(headerValue(record, KafkaConnector.DLQ_ORIGINAL_PARTITION_HEADER), is("7"));
+        assertThat(headerValue(record, KafkaConnector.DLQ_ORIGINAL_OFFSET_HEADER), is("42"));
+        assertThat(headerValue(record, KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_HEADER), is("987654321"));
+        assertThat(headerValue(record, KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER),
                    is(KafkaMessage.TimestampType.LOG_APPEND_TIME.name()));
-        assertThat(headerValue(record, KafkaConnectorProvider.DLQ_ORIGINAL_LEADER_EPOCH_HEADER), is("9"));
+        assertThat(headerValue(record, KafkaConnector.DLQ_ORIGINAL_LEADER_EPOCH_HEADER), is("9"));
     }
 
     @Test
@@ -885,6 +886,7 @@ class KafkaOutgoingChannelTest {
 
     private static KafkaConnectorConfigSupport.OutgoingSettings config(Duration sendTimeout) {
         KafkaOutgoingConfig channelConfig = KafkaOutgoingConfig.builder()
+                .connector("test-kafka")
                 .channelName("audit")
                 .topic(TOPIC)
                 .sendTimeout(sendTimeout)
@@ -892,7 +894,7 @@ class KafkaOutgoingChannelTest {
                 .build();
         KafkaConnectorConfig connectorConfig = KafkaConnectorConfig.builder()
                 .name("test-kafka")
-                .bootstrapServers("localhost:9092")
+                .addBootstrapServer("localhost:9092")
                 .buildPrototype();
         return KafkaConnectorConfigSupport.outgoing(connectorConfig, channelConfig);
     }

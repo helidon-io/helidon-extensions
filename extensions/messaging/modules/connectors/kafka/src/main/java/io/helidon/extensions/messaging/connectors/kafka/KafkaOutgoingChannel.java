@@ -50,12 +50,12 @@ import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.header.internals.RecordHeaders;
 
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_LEADER_EPOCH_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_OFFSET_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_PARTITION_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER;
-import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_LEADER_EPOCH_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_OFFSET_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_PARTITION_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER;
+import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_TOPIC_HEADER;
 
 /**
  * Kafka outgoing connector.

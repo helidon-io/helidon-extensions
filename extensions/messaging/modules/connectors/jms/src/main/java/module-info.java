@@ -41,6 +41,4 @@ module io.helidon.extensions.messaging.connectors.jms {
 
     exports io.helidon.extensions.messaging.connectors.jms;
 
-    provides io.helidon.messaging.spi.MessagingConnectorProvider
-            with io.helidon.extensions.messaging.connectors.jms.JmsConnectorProvider;
 }

@@ -19,11 +19,15 @@ package io.helidon.extensions.messaging.connectors.jms;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.Optional;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.messaging.spi.MessagingConnector;
+import io.helidon.messaging.spi.MessagingOutgoingConfig;
 import io.helidon.messaging.spi.OutgoingChannel;
+import io.helidon.service.registry.ServiceRegistryConfig;
+import io.helidon.service.registry.ServiceRegistryManager;
 
 import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;
@@ -51,10 +55,12 @@ class JmsConnectorConfigTest {
                 .build();
 
         assertThat(connector.incoming(JmsIncomingConfig.builder()
+                                             .connector("orders-jms")
                                              .channelName("orders")
                                              .destination("orders")
                                              .build()), notNullValue());
         assertThat(connector.outgoing(JmsOutgoingConfig.builder()
+                                             .connector("orders-jms")
                                              .channelName("audit")
                                              .destination("audit")
                                              .build()), notNullValue());
@@ -63,18 +69,25 @@ class JmsConnectorConfigTest {
 
     @Test
     void testProviderCreatesNamedConnectorWithoutChannelConfiguration() {
-        MessagingConnector connector = new JmsConnectorProvider().create(
-                Config.just(ConfigSources.create(Map.of("transacted", "true",
-                                                       "reconnect.initial-delay", "PT1S",
-                                                       "reconnect.max-delay", "PT10S"))),
-                "orders-jms");
+        ServiceRegistryManager manager = ServiceRegistryManager.create(ServiceRegistryConfig.builder()
+                .discoverServicesFromServiceLoader(false)
+                .build());
+        try {
+            MessagingConnector connector = manager.registry().get(JmsConnectorProvider.class).create(
+                    Config.just(ConfigSources.create(Map.of("transacted", "true",
+                                                           "reconnect.initial-delay", "PT1S",
+                                                           "reconnect.max-delay", "PT10S"))),
+                    "orders-jms");
 
-        assertThat(connector.name(), is("orders-jms"));
-        assertThat(connector.type(), is(JmsConnectorProvider.CONNECTOR_TYPE));
-        JmsConnectorConfig prototype = ((JmsConnector) connector).prototype();
-        assertThat(prototype.transacted().orElseThrow(), is(true));
-        assertThat(prototype.reconnectInitialDelay().orElseThrow(), is(Duration.ofSeconds(1)));
-        assertThat(prototype.reconnectMaxDelay().orElseThrow(), is(Duration.ofSeconds(10)));
+            assertThat(connector.name(), is("orders-jms"));
+            assertThat(connector.type(), is(JmsConnector.CONNECTOR_TYPE));
+            JmsConnectorConfig prototype = ((JmsConnector) connector).prototype();
+            assertThat(prototype.transacted().orElseThrow(), is(true));
+            assertThat(prototype.reconnectInitialDelay().orElseThrow(), is(Duration.ofSeconds(1)));
+            assertThat(prototype.reconnectMaxDelay().orElseThrow(), is(Duration.ofSeconds(10)));
+        } finally {
+            manager.shutdown();
+        }
     }
 
     @Test
@@ -89,7 +102,7 @@ class JmsConnectorConfigTest {
         when(session.createQueue("audit")).thenReturn(queue);
         when(session.createProducer(queue)).thenReturn(producer);
 
-        JmsConnector connector = JmsConnector.builder()
+        MessagingConnector connector = JmsConnector.builder()
                 .name("orders-jms")
                 .connectionFactory(factory)
                 .username("orders-user")
@@ -98,10 +111,11 @@ class JmsConnectorConfigTest {
                 .destination("default-queue")
                 .build();
         OutgoingChannel outgoing = connector.outgoing(JmsOutgoingConfig.builder()
+                                                             .connector("orders-jms")
                                                              .channelName("audit")
                                                              .destination("audit")
                                                              .transacted(false)
-                                                             .build());
+                                                             .build()).orElseThrow();
         try {
             outgoing.start();
             verify(factory).createConnection("orders-user", "secret");
@@ -110,6 +124,49 @@ class JmsConnectorConfigTest {
         } finally {
             outgoing.close();
         }
+    }
+
+    @Test
+    void testGenericOutgoingChannelReadsRetainedConfiguration() throws Exception {
+        ConnectionFactory factory = mock(ConnectionFactory.class);
+        Connection connection = mock(Connection.class);
+        Session session = mock(Session.class);
+        Queue queue = mock(Queue.class);
+        MessageProducer producer = mock(MessageProducer.class);
+        when(factory.createConnection()).thenReturn(connection);
+        when(connection.createSession(false, Session.AUTO_ACKNOWLEDGE)).thenReturn(session);
+        when(session.createQueue("audit")).thenReturn(queue);
+        when(session.createProducer(queue)).thenReturn(producer);
+
+        MessagingConnector connector = JmsConnector.builder()
+                .name("orders-jms")
+                .connectionFactory(factory)
+                .transacted(true)
+                .build();
+        MessagingOutgoingConfig channel = MessagingOutgoingConfig.builder()
+                .config(Config.just(ConfigSources.create(Map.of("destination", "audit", "transacted", "false"))))
+                .connector("orders-jms")
+                .channelName("audit")
+                .build();
+        try (OutgoingChannel outgoing = connector.outgoing(channel).orElseThrow()) {
+            outgoing.start();
+            verify(connection).createSession(false, Session.AUTO_ACKNOWLEDGE);
+            verify(session).createQueue("audit");
+        }
+    }
+
+    @Test
+    void testChannelJndiEnvironmentDistinguishesAbsentAndEmptyOverrides() {
+        JmsOutgoingConfig absent = JmsOutgoingConfig.builder()
+                .connector("orders-jms")
+                .channelName("audit")
+                .build();
+        JmsOutgoingConfig empty = JmsOutgoingConfig.builder(absent)
+                .jndiEnvironment(Map.of())
+                .build();
+
+        assertThat(absent.jndiEnvironment(), is(Optional.empty()));
+        assertThat(empty.jndiEnvironment(), is(Optional.of(Map.of())));
     }
 
     @Test
@@ -122,11 +179,13 @@ class JmsConnectorConfigTest {
                 .build();
 
         assertThat(connector.incoming(JmsIncomingConfig.builder()
+                                             .connector("orders-jms")
                                              .channelName("orders")
                                              .destination("orders")
                                              .build()), notNullValue());
         assertThrows(IllegalArgumentException.class,
                      () -> connector.incoming(JmsIncomingConfig.builder()
+                                                      .connector("orders-jms")
                                                       .channelName("orders")
                                                       .destination("orders")
                                                       .destinationType(JmsDestinationType.QUEUE)
@@ -150,6 +209,7 @@ class JmsConnectorConfigTest {
         assertThat(connector.prototype().toString().contains("secret"), is(false));
 
         JmsIncomingConfig channel = JmsIncomingConfig.builder()
+                .connector("orders-jms")
                 .channelName("orders")
                 .username("orders-user")
                 .password("channel-secret")

@@ -24,8 +24,10 @@ import io.helidon.config.ConfigSources;
 import io.helidon.messaging.MessagingConfig;
 import io.helidon.messaging.spi.MessagingConnector;
 import io.helidon.messaging.spi.MessagingConnectorProvider;
+import io.helidon.messaging.spi.MessagingOutgoingConfig;
 import io.helidon.service.registry.Service;
 import io.helidon.service.registry.ServiceRegistry;
+import io.helidon.service.registry.ServiceRegistryConfig;
 import io.helidon.service.registry.ServiceRegistryManager;
 
 import org.apache.pulsar.client.api.PulsarClient;
@@ -53,25 +55,27 @@ class PulsarConnectorServiceTest {
 
     @Test
     void providerIsDiscoveredFromUnnamedClasspathMetadata() {
-        ServiceRegistryManager manager = ServiceRegistryManager.create();
+        ServiceRegistryManager manager = ServiceRegistryManager.create(ServiceRegistryConfig.builder()
+                                                                              .discoverServicesFromServiceLoader(false)
+                                                                              .build());
         try {
             ServiceRegistry registry = manager.registry();
             MessagingConnectorProvider provider = registry.all(MessagingConnectorProvider.class)
                     .stream()
-                    .filter(PulsarConnectorProvider.class::isInstance)
+                    .filter(it -> it.configKey().equals(PulsarConnector.CONNECTOR_TYPE))
                     .findFirst()
                     .orElseThrow();
 
-            assertThat(provider.configKey(), is(PulsarConnectorProvider.CONNECTOR_TYPE));
+            assertThat(provider.configKey(), is(PulsarConnector.CONNECTOR_TYPE));
             MessagingConfig config = MessagingConfig.builder()
                     .serviceRegistry(registry)
                     .config(Config.just(ConfigSources.create(Map.of(
-                            "connector.orders-broker.type", PulsarConnectorProvider.CONNECTOR_TYPE,
+                            "connector.orders-broker.type", PulsarConnector.CONNECTOR_TYPE,
                             "connector.orders-broker.service-url", "pulsar://127.0.0.1:6650"))))
                     .buildPrototype();
             MessagingConnector connector = config.connector().getFirst();
             assertThat(connector.name(), is("orders-broker"));
-            assertThat(connector.type(), is(PulsarConnectorProvider.CONNECTOR_TYPE));
+            assertThat(connector.type(), is(PulsarConnector.CONNECTOR_TYPE));
             assertThat(connector instanceof PulsarConnector, is(true));
         } finally {
             manager.shutdown();
@@ -81,15 +85,21 @@ class PulsarConnectorServiceTest {
     @Test
     void schemaProviderIsInjectedFromServiceRegistry() {
         SCHEMA_INVOCATIONS.set(0);
-        ServiceRegistryManager manager = ServiceRegistryManager.create();
+        ServiceRegistryManager manager = ServiceRegistryManager.create(ServiceRegistryConfig.builder()
+                                                                              .discoverServicesFromServiceLoader(false)
+                                                                              .build());
         try {
-            PulsarConnectorProvider provider = manager.registry().get(PulsarConnectorProvider.class);
+            MessagingConnectorProvider provider = manager.registry().all(MessagingConnectorProvider.class)
+                    .stream()
+                    .filter(it -> it.configKey().equals(PulsarConnector.CONNECTOR_TYPE))
+                    .findFirst()
+                    .orElseThrow();
             MessagingConnector connector = provider.create(Config.just(ConfigSources.create(Map.of(
                     "service-url", "pulsar://127.0.0.1:6650"))), "pulsar");
-            connector.outgoing(Config.just(ConfigSources.create(Map.of(
-                    "channel-name", "registry-schema",
-                    "topic", "persistent://public/default/registry-schema",
-                    "schema-provider", "registry-int32")))).orElseThrow();
+            connector.outgoing(MessagingOutgoingConfig.create(Config.just(ConfigSources.create(Map.of(
+                    "registry-schema.connector", "pulsar",
+                    "registry-schema.topic", "persistent://public/default/registry-schema",
+                    "registry-schema.schema-provider", "registry-int32"))).get("registry-schema"))).orElseThrow();
 
             assertThat(SCHEMA_INVOCATIONS.get(), is(1));
         } finally {

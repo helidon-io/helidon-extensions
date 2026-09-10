@@ -12,8 +12,12 @@ settlement and Kafka consumer-group maintenance.
 </dependency>
 ```
 
-The connector provider is discovered through the Helidon Service Registry or Java service loading. It creates a configured
+The connector provider is discovered through the Helidon Service Registry. It creates a configured
 `KafkaConnector`, which creates incoming and outgoing channel connections.
+
+For complete runnable applications, see the [imperative example](../../../examples/se-imperative/README.md) and
+[declarative example](../../../examples/se-declarative/README.md). Both use this Kafka connector for incoming and outgoing
+messaging.
 
 ## Configuration
 
@@ -25,14 +29,16 @@ messaging:
   connector:
     orders-kafka:
       type: helidon-kafka
-      bootstrap.servers: broker-a:9092,broker-b:9092
-      key.serializer: org.apache.kafka.common.serialization.StringSerializer
-      value.serializer: org.apache.kafka.common.serialization.StringSerializer
-      key.deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value.deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      poll.timeout: PT0.1S
-      send.timeout: PT30S
-      close.timeout: PT10S
+      bootstrap-servers:
+        - broker-a:9092
+        - broker-b:9092
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      poll-timeout: PT0.1S
+      send-timeout: PT30S
+      close-timeout: PT10S
       properties:
         security.protocol: SASL_SSL
 
@@ -40,8 +46,8 @@ messaging:
     orders:
       connector: orders-kafka
       topic: orders
-      group.id: inventory-service
-      auto.offset.reset: earliest
+      group-id: inventory-service
+      auto-offset-reset: earliest
 
   outgoing:
     order-results:
@@ -49,14 +55,15 @@ messaging:
       topic: order-results
 ```
 
-`bootstrap.servers` is required on the connector. Each channel must have a `topic`, either configured on the channel or
-inherited from the connector default. An incoming channel uses its channel name as `group.id` when neither the connector
-nor the channel configures a group. The default serializers and deserializers handle String keys and values, and
-`auto.offset.reset` defaults
-to `latest`.
+`bootstrap-servers` is a required list on the connector. A channel may replace it with its own list. Each channel must have
+a `topic`, either configured on the channel or inherited from the connector default. An incoming channel uses its channel
+name as `group-id` when neither the connector nor the channel configures a group. The default serializers and deserializers
+handle String keys and values, and `auto-offset-reset` defaults to `latest`.
 
 Additional Kafka client settings go under `properties`. Typed connector options take precedence over entries with the
-same Kafka property name. The incoming connector also disables automatic offset commits and caps `max.poll.records` at
+same Kafka property name. Keys under `properties` use Kafka's native names, such as `security.protocol`, and are passed
+through without filtering. Helidon channel metadata and poll, send, and close timeouts are not Kafka client properties.
+The incoming connector also disables automatic offset commits and caps `max.poll.records` at
 the runtime delivery limit. Kafka fetch and record byte limits remain Kafka client properties; runtime admission does not
 bound transient client or deserializer allocation.
 
@@ -70,21 +77,26 @@ Create the connector once and configure each channel with its typed blueprint:
 ```java
 KafkaConnector kafka = KafkaConnector.builder()
         .name("orders-kafka")
-        .bootstrapServers("localhost:9092")
+        .addBootstrapServer("localhost:9092")
         .build();
-MessagingGraph.Builder builder = MessagingGraph.builder();
-MessagingChannel<String> orders = builder.channel("orders", String.class);
-MessagingChannel<String> results = builder.channel("order-results", String.class);
+MessagingChannel<String> orders = MessagingChannel.create("orders", String.class);
+MessagingChannel<String> results = MessagingChannel.create("order-results", String.class);
+MessagingConfig.Builder builder = MessagingGraph.builder()
+        .addConnector(kafka)
+        .channel(orders)
+        .channel(results);
 
-builder.incomingChannel(orders, kafka.incoming(KafkaIncomingConfig.builder()
-        .channelName("orders")
+builder.incoming(Map.of(orders.name(), KafkaIncomingConfig.builder()
+        .connector(kafka.name())
+        .channelName(orders.name())
         .topic("orders")
         .groupId("inventory-service")
         .autoOffsetReset("earliest")
         .build()));
 builder.messageSink(orders, message -> System.out.println(message.entity()));
-builder.outgoingChannel(results, kafka.outgoing(KafkaOutgoingConfig.builder()
-        .channelName("order-results")
+builder.outgoing(Map.of(results.name(), KafkaOutgoingConfig.builder()
+        .connector(kafka.name())
+        .channelName(results.name())
         .topic("order-results")
         .build()));
 
@@ -195,5 +207,5 @@ null-valued Kafka record while retaining the available source metadata.
 ## Shutdown
 
 Graceful shutdown stops new polling and allows the active retained delivery to settle. Forced shutdown wakes the Kafka
-consumer and interrupts connector-owned waits. `close.timeout` bounds active-delivery quiescence and Kafka client close;
+consumer and interrupts connector-owned waits. `close-timeout` bounds active-delivery quiescence and Kafka client close;
 zero requests shutdown without waiting. Close operations are idempotent.

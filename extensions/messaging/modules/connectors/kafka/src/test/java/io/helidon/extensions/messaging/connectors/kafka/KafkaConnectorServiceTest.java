@@ -17,8 +17,6 @@
 package io.helidon.extensions.messaging.connectors.kafka;
 
 import java.util.List;
-import java.util.Map;
-import java.util.ServiceLoader;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
@@ -27,6 +25,7 @@ import io.helidon.messaging.MessagingConfig;
 import io.helidon.messaging.spi.MessagingConnector;
 import io.helidon.messaging.spi.MessagingConnectorProvider;
 import io.helidon.service.registry.ServiceRegistry;
+import io.helidon.service.registry.ServiceRegistryConfig;
 import io.helidon.service.registry.ServiceRegistryManager;
 
 import org.junit.jupiter.api.Test;
@@ -37,18 +36,14 @@ import static org.hamcrest.MatcherAssert.assertThat;
 
 class KafkaConnectorServiceTest {
     @Test
-    void testProviderIsDiscoveredByServiceLoader() {
-        assertThat(ServiceLoader.load(MessagingConnectorProvider.class)
-                           .stream()
-                           .anyMatch(provider -> provider.type().equals(KafkaConnectorProvider.class)),
-                   is(true));
-    }
-
-    @Test
     void testNamedConnectorMapConfiguration() {
-        Config config = Config.just(ConfigSources.create(Map.of(
-                "connector.orders-kafka.type", KafkaConnectorProvider.CONNECTOR_TYPE,
-                "connector.orders-kafka.bootstrap.servers", "broker:9092")));
+        ConfigNode.ObjectNode connector = ConfigNode.ObjectNode.builder()
+                .addValue("type", KafkaConnector.CONNECTOR_TYPE)
+                .addList("bootstrap-servers", ConfigNode.ListNode.builder().addValue("broker:9092").build())
+                .build();
+        Config config = Config.just(ConfigSources.create(ConfigNode.ObjectNode.builder()
+                .addObject("connector", ConfigNode.ObjectNode.builder().addObject("orders-kafka", connector).build())
+                .build()));
         assertNamedConnector(config);
     }
 
@@ -56,8 +51,8 @@ class KafkaConnectorServiceTest {
     void testNamedConnectorListConfiguration() {
         ConfigNode.ObjectNode connector = ConfigNode.ObjectNode.builder()
                 .addValue("name", "orders-kafka")
-                .addValue("type", KafkaConnectorProvider.CONNECTOR_TYPE)
-                .addObject("bootstrap", ConfigNode.ObjectNode.builder().addValue("servers", "broker:9092").build())
+                .addValue("type", KafkaConnector.CONNECTOR_TYPE)
+                .addList("bootstrap-servers", ConfigNode.ListNode.builder().addValue("broker:9092").build())
                 .build();
         Config config = Config.just(ConfigSources.create(ConfigNode.ObjectNode.builder()
                 .addList("connector", ConfigNode.ListNode.builder().addObject(connector).build())
@@ -67,14 +62,13 @@ class KafkaConnectorServiceTest {
 
     @Test
     void testConnectorsAreDiscoveredByServiceRegistry() {
-        ServiceRegistryManager registryManager = ServiceRegistryManager.create();
+        ServiceRegistryManager registryManager = registryManager();
         try {
             ServiceRegistry registry = registryManager.registry();
 
             MessagingConnectorProvider provider = registry.get(MessagingConnectorProvider.class);
 
-            assertThat(provider, instanceOf(KafkaConnectorProvider.class));
-            assertThat(provider.configKey(), is(KafkaConnectorProvider.CONNECTOR_TYPE));
+            assertThat(provider.configKey(), is(KafkaConnector.CONNECTOR_TYPE));
             assertThat(provider instanceof AutoCloseable, is(false));
         } finally {
             registryManager.shutdown();
@@ -82,7 +76,7 @@ class KafkaConnectorServiceTest {
     }
 
     private static void assertNamedConnector(Config config) {
-        ServiceRegistryManager manager = ServiceRegistryManager.create();
+        ServiceRegistryManager manager = registryManager();
         try {
             List<MessagingConnector> connectors = MessagingConfig.builder()
                     .serviceRegistry(manager.registry())
@@ -93,9 +87,15 @@ class KafkaConnectorServiceTest {
             assertThat(connectors.getFirst(), instanceOf(KafkaConnector.class));
             KafkaConnector connector = (KafkaConnector) connectors.getFirst();
             assertThat(connector.name(), is("orders-kafka"));
-            assertThat(connector.prototype().bootstrapServers(), is("broker:9092"));
+            assertThat(connector.prototype().bootstrapServers(), is(List.of("broker:9092")));
         } finally {
             manager.shutdown();
         }
+    }
+
+    private static ServiceRegistryManager registryManager() {
+        return ServiceRegistryManager.create(ServiceRegistryConfig.builder()
+                                                     .discoverServicesFromServiceLoader(false)
+                                                     .build());
     }
 }

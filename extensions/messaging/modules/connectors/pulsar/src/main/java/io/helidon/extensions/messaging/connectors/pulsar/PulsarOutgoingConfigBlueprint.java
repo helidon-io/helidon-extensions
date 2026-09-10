@@ -23,6 +23,7 @@ import java.util.Optional;
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
 import io.helidon.common.Api;
+import io.helidon.messaging.spi.MessagingOutgoingConfig;
 
 /**
  * Apache Pulsar outgoing channel overrides. Omitted options inherit the connector defaults.
@@ -31,16 +32,7 @@ import io.helidon.common.Api;
 @Prototype.Blueprint(decorator = PulsarConnectorConfigSupport.OutgoingBuilderDecorator.class)
 @Prototype.Sealed
 @Prototype.Configured
-interface PulsarOutgoingConfigBlueprint {
-    /**
-     * Name of the logical messaging channel.
-     *
-     * @return channel name
-     */
-    @Option.Required
-    @Option.Configured
-    String channelName();
-
+interface PulsarOutgoingConfigBlueprint extends MessagingOutgoingConfig {
     /**
      * Pulsar broker service URL override. Defaults to the connector service URL.
      *
@@ -57,7 +49,7 @@ interface PulsarOutgoingConfigBlueprint {
     @Option.Configured(PulsarConnectorConfigSupport.CLIENT_PROPERTIES_PROPERTY)
     @Option.Confidential
     @Option.Singular("clientProperty")
-    Map<String, String> clientProperties();
+    Optional<Map<String, String>> clientProperties();
 
     /**
      * Pulsar topic.
@@ -108,5 +100,5 @@ interface PulsarOutgoingConfigBlueprint {
     @Option.Configured(PulsarConnectorConfigSupport.PRODUCER_PROPERTIES_PROPERTY)
     @Option.Confidential
     @Option.Singular("producerProperty")
-    Map<String, String> producerProperties();
+    Optional<Map<String, String>> producerProperties();
 }

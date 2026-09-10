@@ -25,6 +25,8 @@ import io.helidon.common.Api;
 import io.helidon.config.Config;
 import io.helidon.messaging.spi.IncomingChannel;
 import io.helidon.messaging.spi.MessagingConnector;
+import io.helidon.messaging.spi.MessagingIncomingConfig;
+import io.helidon.messaging.spi.MessagingOutgoingConfig;
 import io.helidon.messaging.spi.OutgoingChannel;
 
 /**
@@ -32,6 +34,21 @@ import io.helidon.messaging.spi.OutgoingChannel;
  */
 @Api.Preview
 public final class PulsarConnector implements MessagingConnector, RuntimeType.Api<PulsarConnectorConfig> {
+    /** Connector type used in messaging configuration. */
+    public static final String CONNECTOR_TYPE = "helidon-pulsar";
+    /** Dead-letter property containing the original Pulsar topic. */
+    public static final String DLQ_ORIGINAL_TOPIC_HEADER = "dlq-orig-topic";
+    /** Dead-letter property containing the base64-encoded original message ID. */
+    public static final String DLQ_ORIGINAL_MESSAGE_ID_HEADER = "dlq-orig-message-id";
+    /** Dead-letter property containing the original publication time. */
+    public static final String DLQ_ORIGINAL_PUBLISH_TIME_HEADER = "dlq-orig-publish-time";
+    /** Dead-letter property containing the original producer name. */
+    public static final String DLQ_ORIGINAL_PRODUCER_NAME_HEADER = "dlq-orig-producer-name";
+    /** Dead-letter property containing the original sequence ID. */
+    public static final String DLQ_ORIGINAL_SEQUENCE_ID_HEADER = "dlq-orig-sequence-id";
+    /** Dead-letter property containing the original redelivery count. */
+    public static final String DLQ_ORIGINAL_REDELIVERY_COUNT_HEADER = "dlq-orig-redelivery-count";
+
     private final PulsarConnectorConfig config;
     private final PulsarIncomingChannel incomingFactory = new PulsarIncomingChannel();
     private final PulsarOutgoingChannel outgoingFactory = new PulsarOutgoingChannel();
@@ -86,12 +103,12 @@ public final class PulsarConnector implements MessagingConnector, RuntimeType.Ap
 
     @Override
     public String type() {
-        return PulsarConnectorProvider.CONNECTOR_TYPE;
+        return CONNECTOR_TYPE;
     }
 
     @Override
-    public Optional<IncomingChannel> incoming(Config channelConfig) {
-        return Optional.of(incoming(PulsarIncomingConfig.create(Objects.requireNonNull(channelConfig))));
+    public Optional<IncomingChannel> incoming(MessagingIncomingConfig channelConfig) {
+        return Optional.of(incoming(incomingConfig(Objects.requireNonNull(channelConfig))));
     }
 
     /**
@@ -105,8 +122,8 @@ public final class PulsarConnector implements MessagingConnector, RuntimeType.Ap
     }
 
     @Override
-    public Optional<OutgoingChannel> outgoing(Config channelConfig) {
-        return Optional.of(outgoing(PulsarOutgoingConfig.create(Objects.requireNonNull(channelConfig))));
+    public Optional<OutgoingChannel> outgoing(MessagingOutgoingConfig channelConfig) {
+        return Optional.of(outgoing(outgoingConfig(Objects.requireNonNull(channelConfig))));
     }
 
     /**
@@ -117,5 +134,23 @@ public final class PulsarConnector implements MessagingConnector, RuntimeType.Ap
      */
     public OutgoingChannel outgoing(PulsarOutgoingConfig channelConfig) {
         return outgoingFactory.createOutgoingChannel(config, Objects.requireNonNull(channelConfig));
+    }
+
+    private static PulsarIncomingConfig incomingConfig(MessagingIncomingConfig channelConfig) {
+        if (channelConfig instanceof PulsarIncomingConfig pulsarConfig) {
+            return pulsarConfig;
+        }
+        var builder = PulsarIncomingConfig.builder();
+        channelConfig.config().ifPresent(builder::config);
+        return builder.from(channelConfig).build();
+    }
+
+    private static PulsarOutgoingConfig outgoingConfig(MessagingOutgoingConfig channelConfig) {
+        if (channelConfig instanceof PulsarOutgoingConfig pulsarConfig) {
+            return pulsarConfig;
+        }
+        var builder = PulsarOutgoingConfig.builder();
+        channelConfig.config().ifPresent(builder::config);
+        return builder.from(channelConfig).build();
     }
 }

@@ -16,6 +16,8 @@
 
 package io.helidon.extensions.messaging.connectors.jms;
 
+import java.lang.reflect.Modifier;
+
 import io.helidon.config.Config;
 import io.helidon.messaging.spi.MessagingConnectorProvider;
 import io.helidon.service.registry.ServiceRegistry;
@@ -35,20 +37,31 @@ import static org.mockito.Mockito.mock;
 class JmsConnectorServiceTest {
     @Test
     void testConfiguredProviderIsDiscoveredByServiceRegistry() {
-        ServiceRegistryManager registryManager = ServiceRegistryManager.create();
+        ServiceRegistryManager registryManager = ServiceRegistryManager.create(ServiceRegistryConfig.builder()
+                .discoverServicesFromServiceLoader(false)
+                .build());
         try {
             ServiceRegistry registry = registryManager.registry();
             MessagingConnectorProvider provider = registry.get(MessagingConnectorProvider.class);
 
             assertThat(provider, instanceOf(JmsConnectorProvider.class));
-            assertThat(provider.configKey(), is(JmsConnectorProvider.CONNECTOR_TYPE));
+            assertThat(Modifier.isPublic(provider.getClass().getModifiers()), is(false));
+            assertThat(provider.configKey(), is(JmsConnector.CONNECTOR_TYPE));
 
             JmsConnector connector = (JmsConnector) provider.create(Config.empty(), "orders-jms");
             assertThat(connector.name(), is("orders-jms"));
-            assertThat(connector.type(), is(JmsConnectorProvider.CONNECTOR_TYPE));
+            assertThat(connector.type(), is(JmsConnector.CONNECTOR_TYPE));
 
-            var incoming = JmsIncomingConfig.builder().channelName("orders").destination("orders").build();
-            var outgoing = JmsOutgoingConfig.builder().channelName("audit").destination("audit").build();
+            var incoming = JmsIncomingConfig.builder()
+                    .connector("orders-jms")
+                    .channelName("orders")
+                    .destination("orders")
+                    .build();
+            var outgoing = JmsOutgoingConfig.builder()
+                    .connector("orders-jms")
+                    .channelName("audit")
+                    .destination("audit")
+                    .build();
             assertThat(connector.incoming(incoming), not(sameInstance(connector.incoming(incoming))));
             assertThat(connector.outgoing(outgoing), not(sameInstance(connector.outgoing(outgoing))));
         } finally {

@@ -263,7 +263,7 @@ class PulsarOutgoingChannelTest {
         assertThat(transport.properties.getFirst().containsKey(DeadLetterMessage.FAILURE_MESSAGE_METADATA), is(false));
         assertThat(transport.properties.getFirst().containsKey(LEGACY_FAILURE_TYPE_HEADER), is(false));
         assertThat(transport.properties.getFirst().containsKey(LEGACY_FAILURE_MESSAGE_HEADER), is(false));
-        assertThat(transport.properties.getFirst().get(PulsarConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER),
+        assertThat(transport.properties.getFirst().get(PulsarConnector.DLQ_ORIGINAL_TOPIC_HEADER),
                    is("persistent://public/default/input"));
     }
 
@@ -312,6 +312,7 @@ class PulsarOutgoingChannelTest {
 
     private static PulsarOutgoingConfig.Builder configBuilder(PulsarSchemaType schema) {
         return PulsarOutgoingConfig.builder()
+                .connector("pulsar")
                 .channelName("out")
                 .topic("persistent://public/default/out")
                 .schema(schema);

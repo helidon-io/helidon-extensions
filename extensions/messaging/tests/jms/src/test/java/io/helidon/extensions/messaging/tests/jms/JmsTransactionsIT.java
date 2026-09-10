@@ -106,6 +106,7 @@ class JmsTransactionsIT {
     private static OutgoingChannel connector(ConnectionFactory connectionFactory, String destination) {
         return JmsConnector.builder().name("test-jms").connectionFactory(connectionFactory).build()
                 .outgoing(JmsOutgoingConfig.builder()
+                                                 .connector("test-jms")
                                                  .channelName(destination)
                                                  .destination(destination)
                                                  .transacted(true)

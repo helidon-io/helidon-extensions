@@ -38,18 +38,28 @@ class PulsarConnectorConfigTest {
     @Test
     void requiredOptionsAndDefaults() {
         assertThrows(RuntimeException.class, () -> PulsarConnector.builder().name("pulsar").build());
-        assertThrows(RuntimeException.class, () -> PulsarOutgoingConfig.builder().topic(TOPIC).build());
+        assertThrows(RuntimeException.class,
+                     () -> PulsarOutgoingConfig.builder().connector("pulsar").topic(TOPIC).build());
 
         PulsarConnector connector = commonBuilder().build();
         assertThat(connector.prototype().schema(), is(PulsarSchemaType.STRING));
         assertThat(connector.prototype().schemaProvider().isEmpty(), is(true));
         PulsarConnectorConfig config = connector.prototype();
         assertThat(incomingBuilder().build().schema().isEmpty(), is(true));
+        assertThat(incomingBuilder().build().clientProperties().isEmpty(), is(true));
+        assertThat(incomingBuilder().build().consumerProperties().isEmpty(), is(true));
+        assertThat(outgoingBuilder().build().producerProperties().isEmpty(), is(true));
         assertThat(config.topic().isEmpty(), is(true));
         assertThrows(IllegalArgumentException.class,
-                     () -> connector.incoming(PulsarIncomingConfig.builder().channelName(CHANNEL).build()));
+                     () -> connector.incoming(PulsarIncomingConfig.builder()
+                                                      .connector("pulsar")
+                                                      .channelName(CHANNEL)
+                                                      .build()));
         assertThrows(IllegalArgumentException.class,
-                     () -> connector.outgoing(PulsarOutgoingConfig.builder().channelName(CHANNEL).build()));
+                     () -> connector.outgoing(PulsarOutgoingConfig.builder()
+                                                      .connector("pulsar")
+                                                      .channelName(CHANNEL)
+                                                      .build()));
         assertThat(config.subscriptionType(), is(PulsarSubscriptionType.EXCLUSIVE));
         assertThat(config.subscriptionInitialPosition(), is(PulsarSubscriptionInitialPosition.LATEST));
         assertThat(config.batchIndexAcknowledgmentEnabled(), is(false));
@@ -67,24 +77,28 @@ class PulsarConnectorConfigTest {
                 "schema", "BYTES",
                 "schema-provider", "orders-json",
                 "client-properties.authPluginClassName", "example.Auth")));
-        PulsarIncomingConfig incoming = PulsarIncomingConfig.create(config(Map.of(
-                "channel-name", CHANNEL,
+        PulsarIncomingConfig incoming = PulsarIncomingConfig.create(channelConfig(Map.of(
+                "connector", "pulsar",
                 "topic", TOPIC,
                 "schema", "INT32",
                 "subscription-name", "orders-subscription",
                 "consumer-properties.consumerName", "orders-consumer")));
-        PulsarOutgoingConfig outgoing = PulsarOutgoingConfig.create(config(Map.of(
-                "channel-name", CHANNEL,
+        PulsarOutgoingConfig outgoing = PulsarOutgoingConfig.create(channelConfig(Map.of(
+                "connector", "pulsar",
                 "topic", TOPIC,
                 "producer-properties.producerName", "orders-producer")));
 
         assertThat(connector.prototype().schema(), is(PulsarSchemaType.BYTES));
         assertThat(connector.prototype().schemaProvider().orElseThrow(), is("orders-json"));
         assertThat(connector.prototype().clientProperties(), is(Map.of("authPluginClassName", "example.Auth")));
+        assertThat(incoming.channelName(), is(CHANNEL));
+        assertThat(outgoing.channelName(), is(CHANNEL));
+        assertThat(incoming.connector(), is("pulsar"));
+        assertThat(outgoing.connector(), is("pulsar"));
         assertThat(incoming.schema().orElseThrow(), is(PulsarSchemaType.INT32));
         assertThat(incoming.subscriptionName().orElseThrow(), is("orders-subscription"));
-        assertThat(incoming.consumerProperties(), is(Map.of("consumerName", "orders-consumer")));
-        assertThat(outgoing.producerProperties(), is(Map.of("producerName", "orders-producer")));
+        assertThat(incoming.consumerProperties().orElseThrow(), is(Map.of("consumerName", "orders-consumer")));
+        assertThat(outgoing.producerProperties().orElseThrow(), is(Map.of("producerName", "orders-producer")));
     }
 
     @Test
@@ -108,9 +122,9 @@ class PulsarConnectorConfigTest {
                 .producerProperties(Map.of("shared", "producer", "overridden", "common"))
                 .buildPrototype();
         var inheritedIncoming = PulsarConnectorConfigSupport.incoming(
-                common, PulsarIncomingConfig.builder().channelName(CHANNEL).build());
+                common, PulsarIncomingConfig.builder().connector("pulsar").channelName(CHANNEL).build());
         var inheritedOutgoing = PulsarConnectorConfigSupport.outgoing(
-                common, PulsarOutgoingConfig.builder().channelName(CHANNEL).build());
+                common, PulsarOutgoingConfig.builder().connector("pulsar").channelName(CHANNEL).build());
 
         assertThat(inheritedIncoming.topic(), is(TOPIC));
         assertThat(inheritedIncoming.schema(), is(PulsarSchemaType.BYTES));
@@ -127,8 +141,8 @@ class PulsarConnectorConfigTest {
         assertThat(inheritedOutgoing.sendTimeout(), is(Duration.ofSeconds(5)));
         assertThat(inheritedOutgoing.closeTimeout(), is(Duration.ofSeconds(6)));
 
-        var incoming = PulsarConnectorConfigSupport.incoming(common, PulsarIncomingConfig.create(config(Map.ofEntries(
-                Map.entry("channel-name", CHANNEL),
+        var incoming = PulsarConnectorConfigSupport.incoming(common, PulsarIncomingConfig.create(channelConfig(Map.ofEntries(
+                Map.entry("connector", "pulsar"),
                 Map.entry("topic", "override-topic"),
                 Map.entry("service-url", "pulsar://other:6650"),
                 Map.entry("schema", "INT32"),
@@ -141,6 +155,7 @@ class PulsarConnectorConfigTest {
                 Map.entry("client-properties.overridden", "channel"),
                 Map.entry("consumer-properties.overridden", "channel")))));
         var outgoing = PulsarConnectorConfigSupport.outgoing(common, PulsarOutgoingConfig.builder()
+                .connector("pulsar")
                 .channelName(CHANNEL)
                 .topic("outgoing-topic")
                 .sendTimeout(Duration.ofSeconds(9))
@@ -225,15 +240,21 @@ class PulsarConnectorConfigTest {
         return Config.just(ConfigSources.create(values));
     }
 
+    private static Config channelConfig(Map<String, String> values) {
+        Map<String, String> channelValues = new HashMap<>();
+        values.forEach((key, value) -> channelValues.put(CHANNEL + "." + key, value));
+        return config(channelValues).get(CHANNEL);
+    }
+
     private static PulsarConnectorConfig.Builder commonBuilder() {
         return PulsarConnector.builder().name("pulsar").serviceUrl("pulsar://localhost:6650");
     }
 
     private static PulsarIncomingConfig.Builder incomingBuilder() {
-        return PulsarIncomingConfig.builder().channelName(CHANNEL).topic(TOPIC);
+        return PulsarIncomingConfig.builder().connector("pulsar").channelName(CHANNEL).topic(TOPIC);
     }
 
     private static PulsarOutgoingConfig.Builder outgoingBuilder() {
-        return PulsarOutgoingConfig.builder().channelName(CHANNEL).topic(TOPIC);
+        return PulsarOutgoingConfig.builder().connector("pulsar").channelName(CHANNEL).topic(TOPIC);
     }
 }

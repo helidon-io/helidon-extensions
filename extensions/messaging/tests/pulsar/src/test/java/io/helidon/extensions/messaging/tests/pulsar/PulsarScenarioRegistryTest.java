@@ -16,15 +16,21 @@
 
 package io.helidon.extensions.messaging.tests.pulsar;
 
-import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorProvider;
+import java.util.Map;
+
+import io.helidon.config.Config;
+import io.helidon.config.ConfigSources;
+import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnector;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.IncomingReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonSchemaProvider;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.OutgoingSender;
 import io.helidon.messaging.ConsumerRegistration;
 import io.helidon.messaging.EmitterRegistration;
 import io.helidon.messaging.MessagingRuntime;
+import io.helidon.messaging.spi.MessagingConnector;
 import io.helidon.messaging.spi.MessagingConnectorProvider;
 import io.helidon.service.registry.ServiceRegistry;
+import io.helidon.service.registry.ServiceRegistryConfig;
 import io.helidon.service.registry.ServiceRegistryManager;
 
 import org.apache.pulsar.client.api.Schema;
@@ -37,13 +43,19 @@ import static org.hamcrest.MatcherAssert.assertThat;
 class PulsarScenarioRegistryTest {
     @Test
     void discoversConnectorProviderFromClasspathMetadata() {
-        ServiceRegistryManager manager = ServiceRegistryManager.create();
+        ServiceRegistryManager manager = ServiceRegistryManager.create(ServiceRegistryConfig.builder()
+                                                                              .discoverServicesFromServiceLoader(false)
+                                                                              .build());
         try {
             ServiceRegistry registry = manager.registry();
 
             MessagingConnectorProvider provider = registry.get(MessagingConnectorProvider.class);
-            assertThat(provider, instanceOf(PulsarConnectorProvider.class));
-            assertThat(provider.configKey(), is(PulsarConnectorProvider.CONNECTOR_TYPE));
+            assertThat(provider.configKey(), is(PulsarConnector.CONNECTOR_TYPE));
+            MessagingConnector connector = provider.create(Config.just(ConfigSources.create(Map.of(
+                    "service-url", "pulsar://127.0.0.1:6650"))), "orders-broker");
+            assertThat(connector, instanceOf(PulsarConnector.class));
+            assertThat(connector.name(), is("orders-broker"));
+            assertThat(connector.type(), is(PulsarConnector.CONNECTOR_TYPE));
         } finally {
             manager.shutdown();
         }

@@ -26,6 +26,8 @@ import io.helidon.common.Api;
 import io.helidon.config.Config;
 import io.helidon.messaging.spi.IncomingChannel;
 import io.helidon.messaging.spi.MessagingConnector;
+import io.helidon.messaging.spi.MessagingIncomingConfig;
+import io.helidon.messaging.spi.MessagingOutgoingConfig;
 import io.helidon.messaging.spi.OutgoingChannel;
 import io.helidon.service.registry.GlobalServiceRegistry;
 
@@ -34,6 +36,11 @@ import io.helidon.service.registry.GlobalServiceRegistry;
  */
 @Api.Preview
 public final class JmsConnector implements MessagingConnector, RuntimeType.Api<JmsConnectorConfig> {
+    /**
+     * JMS connector type used in messaging configuration.
+     */
+    public static final String CONNECTOR_TYPE = "helidon-jms";
+
     private final JmsConnectorConfig config;
     private final JmsConnectionFactoryResolver resolver;
 
@@ -92,12 +99,18 @@ public final class JmsConnector implements MessagingConnector, RuntimeType.Api<J
 
     @Override
     public String type() {
-        return JmsConnectorProvider.CONNECTOR_TYPE;
+        return JmsConnector.CONNECTOR_TYPE;
     }
 
     @Override
-    public Optional<IncomingChannel> incoming(Config channelConfig) {
-        return Optional.of(incoming(JmsIncomingConfig.create(Objects.requireNonNull(channelConfig))));
+    public Optional<IncomingChannel> incoming(MessagingIncomingConfig channelConfig) {
+        Objects.requireNonNull(channelConfig);
+        if (channelConfig instanceof JmsIncomingConfig jmsConfig) {
+            return Optional.of(incoming(jmsConfig));
+        }
+        var builder = JmsIncomingConfig.builder();
+        channelConfig.config().ifPresent(builder::config);
+        return Optional.of(incoming(builder.from(channelConfig).build()));
     }
 
     /**
@@ -125,8 +138,14 @@ public final class JmsConnector implements MessagingConnector, RuntimeType.Api<J
     }
 
     @Override
-    public Optional<OutgoingChannel> outgoing(Config channelConfig) {
-        return Optional.of(outgoing(JmsOutgoingConfig.create(Objects.requireNonNull(channelConfig))));
+    public Optional<OutgoingChannel> outgoing(MessagingOutgoingConfig channelConfig) {
+        Objects.requireNonNull(channelConfig);
+        if (channelConfig instanceof JmsOutgoingConfig jmsConfig) {
+            return Optional.of(outgoing(jmsConfig));
+        }
+        var builder = JmsOutgoingConfig.builder();
+        channelConfig.config().ifPresent(builder::config);
+        return Optional.of(outgoing(builder.from(channelConfig).build()));
     }
 
     /**
@@ -152,7 +171,7 @@ public final class JmsConnector implements MessagingConnector, RuntimeType.Api<J
         source.connectionFactoryName().ifPresent(target::connectionFactory);
         source.jndiConnectionFactory().ifPresent(target::jndiConnectionFactory);
         source.jndiDestination().ifPresent(target::jndiDestination);
-        target.addJndiEnvironment(source.jndiEnvironment());
+        source.jndiEnvironment().ifPresent(target::addJndiEnvironment);
         source.destination().ifPresent(target::destination);
         source.destinationType().ifPresent(target::destinationType);
         source.username().ifPresent(target::username);
@@ -172,14 +191,14 @@ public final class JmsConnector implements MessagingConnector, RuntimeType.Api<J
         source.reconnectJitter().ifPresent(target::reconnectJitter);
     }
 
-    private JmsRuntimeConfig.Builder runtimeConfig(JmsChannelConfig channelConfig, String channelName) {
+    private JmsRuntimeConfig.Builder runtimeConfig(JmsChannelOptions channelConfig, String channelName) {
         var target = JmsRuntimeConfig.builder().channelName(channelName);
         apply(target, config);
         apply(target, channelConfig);
         return target;
     }
 
-    private JmsConnectionFactoryResolver resolver(JmsChannelConfig channelConfig) {
+    private JmsConnectionFactoryResolver resolver(JmsChannelOptions channelConfig) {
         if (channelConfig.connectionFactory().isPresent()) {
             var factory = channelConfig.connectionFactory().orElseThrow();
             return _ -> factory;

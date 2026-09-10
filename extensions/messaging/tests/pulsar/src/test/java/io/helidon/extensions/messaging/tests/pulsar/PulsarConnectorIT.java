@@ -36,7 +36,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnector;
-import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorProvider;
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarIncomingConfig;
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarMessage;
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarOutgoingConfig;
@@ -54,6 +53,7 @@ import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingChannel;
+import io.helidon.messaging.MessagingConfig;
 import io.helidon.messaging.MessagingGraph;
 import io.helidon.messaging.MessagingRuntime;
 import io.helidon.messaging.spi.OutgoingChannel;
@@ -105,15 +105,21 @@ class PulsarConnectorIT {
                 .schemaProvider(PulsarMessagingTypes.JSON_SCHEMA_PROVIDER)
                 .addSchemaProvider(new JsonSchemaProvider())
                 .build();
-        MessagingGraph.Builder builder = MessagingGraph.builder();
-        MessagingChannel<PulsarTestPayload> incoming = builder.channel("imperative-in", PulsarTestPayload.class);
-        MessagingChannel<PulsarTestPayload> outgoing = builder.channel("imperative-out", PulsarTestPayload.class);
+        MessagingChannel<PulsarTestPayload> incoming =
+                MessagingChannel.create("imperative-in", PulsarTestPayload.class);
+        MessagingChannel<PulsarTestPayload> outgoing =
+                MessagingChannel.create("imperative-out", PulsarTestPayload.class);
+        MessagingConfig.Builder builder = MessagingGraph.builder()
+                .channel(incoming)
+                .channel(outgoing);
         LinkedBlockingQueue<PulsarTestPayload> received = new LinkedBlockingQueue<>();
         builder.incomingChannel(incoming, pulsar.incoming(PulsarIncomingConfig.builder()
+                .connector(pulsar.name())
                 .channelName(incoming.name())
                 .build()))
                 .messageSink(incoming, message -> received.add(message.entity()));
         builder.outgoingChannel(outgoing, pulsar.outgoing(PulsarOutgoingConfig.builder()
+                .connector(pulsar.name())
                 .channelName(outgoing.name())
                 .build()));
 
@@ -286,6 +292,7 @@ class PulsarConnectorIT {
                 .schema(schemaCase.type())
                 .build();
         PulsarOutgoingConfig channel = PulsarOutgoingConfig.builder()
+                .connector(pulsar.name())
                 .channelName(uniqueName("schema-out"))
                 .topic(topic)
                 .build();
@@ -724,7 +731,7 @@ class PulsarConnectorIT {
         assertThat(message.getProperties().containsKey(DeadLetterMessage.FAILURE_MESSAGE_METADATA), is(false));
         assertThat(message.getProperties().containsKey(LEGACY_FAILURE_TYPE_HEADER), is(false));
         assertThat(message.getProperties().containsKey(LEGACY_FAILURE_MESSAGE_HEADER), is(false));
-        assertThat(message.getProperty(PulsarConnectorProvider.DLQ_ORIGINAL_TOPIC_HEADER),
+        assertThat(message.getProperty(PulsarConnector.DLQ_ORIGINAL_TOPIC_HEADER),
                    is(canonicalTopic(sourceTopic)));
     }
 
