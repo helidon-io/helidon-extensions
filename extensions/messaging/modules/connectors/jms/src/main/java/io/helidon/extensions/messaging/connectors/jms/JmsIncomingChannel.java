@@ -334,6 +334,7 @@ final class JmsIncomingChannel {
                     .overallTimeout(RECONNECT_OVERALL_TIMEOUT)
                     .addApplyOn(JMSException.class)
                     .addApplyOn(RuntimeException.class)
+                    .addSkipOn(JmsResourceConfigurationException.class)
                     .addSkipOn(JmsResourceCleanupException.class)
                     .buildPrototype();
             return Retry.create(retryConfig);

@@ -378,6 +378,7 @@ final class JmsOutgoingChannel {
                     .overallTimeout(RECONNECT_OVERALL_TIMEOUT)
                     .addApplyOn(JMSException.class)
                     .addApplyOn(RuntimeException.class)
+                    .addSkipOn(JmsResourceConfigurationException.class)
                     .addSkipOn(JmsResourceCleanupException.class)
                     .addSkipOn(ReconnectClosedException.class)
                     .buildPrototype();

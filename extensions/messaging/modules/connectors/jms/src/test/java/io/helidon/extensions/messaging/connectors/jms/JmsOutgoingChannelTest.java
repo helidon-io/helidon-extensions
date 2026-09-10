@@ -20,7 +20,9 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -32,6 +34,7 @@ import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
 import io.helidon.messaging.MessagingException;
 import io.helidon.messaging.spi.OutgoingChannel;
+import io.helidon.service.registry.ServiceRegistry;
 
 import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;
@@ -67,6 +70,38 @@ import static org.mockito.Mockito.when;
 
 class JmsOutgoingChannelTest {
     private static final String CHANNEL = "audit";
+
+    @Test
+    @Timeout(10)
+    void missingNamedConnectionFactoryStopsStartupWithoutRetry() throws Exception {
+        ServiceRegistry registry = mock(ServiceRegistry.class);
+        when(registry.firstNamed(ConnectionFactory.class, "missing-factory")).thenReturn(Optional.empty());
+        JmsRuntimeConfig config = JmsRuntimeConfig.builder()
+                .from(config(false))
+                .connectionFactory("missing-factory")
+                .build();
+        OutgoingChannel connector = JmsOutgoingChannel.create(config, new JmsResourceResolver(registry));
+        FutureTask<MessagingException> startupFailure = new FutureTask<>(() -> assertThrows(MessagingException.class,
+                                                                                          connector::start));
+        Thread starter = Thread.ofVirtual().start(startupFailure);
+
+        try {
+            MessagingException failure = startupFailure.get(2, TimeUnit.SECONDS);
+
+            assertThat(failure.getMessage(), containsString("No JMS ConnectionFactory named missing-factory"));
+            assertThat(failure.getMessage(), containsString("channel " + CHANNEL));
+            verify(registry).firstNamed(ConnectionFactory.class, "missing-factory");
+        } finally {
+            try {
+                connector.forceClose();
+            } finally {
+                starter.interrupt();
+                starter.join(Duration.ofSeconds(2));
+            }
+            connector.close();
+            assertThat("outgoing startup thread terminated", starter.isAlive(), is(false));
+        }
+    }
 
     @Test
     void perMessageSendFailureReportsPrefixAmbiguousItemAndSuffix() throws Exception {

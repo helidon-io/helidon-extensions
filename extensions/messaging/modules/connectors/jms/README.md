@@ -326,10 +326,15 @@ and failed, because the broker might already have accepted it.
 
 Reconnection is connector-owned. The messaging graph does not discard and recreate the binding.
 
-When startup or an established connection fails, the connector closes the old connection, session, consumer, or
-producer and retries with exponential backoff. The delay starts at `reconnect.initial-delay`, is capped at
+When startup or an established connection encounters a recoverable failure, the connector closes the old connection,
+session, consumer, or producer and retries with exponential backoff. The delay starts at `reconnect.initial-delay`, is capped at
 `reconnect.max-delay`, and receives the configured fractional jitter. Both delay values must be at least 1 millisecond.
-Reconnection continues while the graph remains active; graph startup and shutdown deadlines can interrupt it.
+Reconnection continues while the graph remains active; closing the graph interrupts it. The graph does not impose a
+startup deadline.
+
+Resource configuration errors fail startup without reconnecting: a missing registered connection factory, an invalid
+or missing JNDI name, an invalid initial-context configuration, or a resource whose type does not match the configured
+connection factory or destination. Transient naming-service communication and availability failures remain retryable.
 
 A replacement connection is opened only after the previous resource generation closes successfully. A cleanup failure
 or `close-timeout` expiry is terminal because continuing could overlap or leak provider resources.
