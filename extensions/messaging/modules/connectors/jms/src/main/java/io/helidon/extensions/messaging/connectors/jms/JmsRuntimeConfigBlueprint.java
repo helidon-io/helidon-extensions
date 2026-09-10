@@ -48,7 +48,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return named connection factory
      */
-    @Option.Configured(JmsRuntimeConfigSupport.CONNECTION_FACTORY_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.CONNECTION_FACTORY_PROPERTY)
     Optional<String> connectionFactory();
 
     /**
@@ -56,7 +56,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return JNDI connection factory name
      */
-    @Option.Configured(JmsRuntimeConfigSupport.JNDI_CONNECTION_FACTORY_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.JNDI_CONNECTION_FACTORY_PROPERTY)
     Optional<String> jndiConnectionFactory();
 
     /**
@@ -64,7 +64,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return JNDI destination name
      */
-    @Option.Configured(JmsRuntimeConfigSupport.JNDI_DESTINATION_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.JNDI_DESTINATION_PROPERTY)
     Optional<String> jndiDestination();
 
     /**
@@ -72,7 +72,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return JNDI environment
      */
-    @Option.Configured(JmsRuntimeConfigSupport.JNDI_ENVIRONMENT_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.JNDI_ENVIRONMENT_PROPERTY)
     @Option.Confidential
     @Option.Singular("jndiEnvironmentProperty")
     Map<String, String> jndiEnvironment();
@@ -82,7 +82,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return destination name
      */
-    @Option.Configured(JmsRuntimeConfigSupport.DESTINATION_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.DESTINATION_PROPERTY)
     Optional<String> destination();
 
     /**
@@ -90,7 +90,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return destination type
      */
-    @Option.Configured(JmsRuntimeConfigSupport.DESTINATION_TYPE_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.DESTINATION_TYPE_PROPERTY)
     @Option.DefaultCode("JmsDestinationType.QUEUE")
     JmsDestinationType destinationType();
 
@@ -99,7 +99,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return connection user name
      */
-    @Option.Configured(JmsRuntimeConfigSupport.USERNAME_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.USERNAME_PROPERTY)
     Optional<String> username();
 
     /**
@@ -108,7 +108,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return configured password
      */
-    @Option.Configured(JmsRuntimeConfigSupport.PASSWORD_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.PASSWORD_PROPERTY)
     @Option.Confidential
     @Option.Access("")
     @Option.Decorator(JmsRuntimeConfigSupport.ConfiguredPasswordDecorator.class)
@@ -142,7 +142,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return client identifier
      */
-    @Option.Configured(JmsRuntimeConfigSupport.CLIENT_ID_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.CLIENT_ID_PROPERTY)
     Optional<String> clientId();
 
     /**
@@ -150,7 +150,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return selector
      */
-    @Option.Configured(JmsRuntimeConfigSupport.MESSAGE_SELECTOR_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.MESSAGE_SELECTOR_PROPERTY)
     Optional<String> messageSelector();
 
     /**
@@ -158,7 +158,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return whether the subscription is durable
      */
-    @Option.Configured(JmsRuntimeConfigSupport.DURABLE_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.DURABLE_PROPERTY)
     @Option.DefaultBoolean(false)
     boolean durable();
 
@@ -167,7 +167,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return subscription name
      */
-    @Option.Configured(JmsRuntimeConfigSupport.SUBSCRIPTION_NAME_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.SUBSCRIPTION_NAME_PROPERTY)
     Optional<String> subscriptionName();
 
     /**
@@ -175,7 +175,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return whether the subscription is no-local
      */
-    @Option.Configured(JmsRuntimeConfigSupport.NO_LOCAL_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.NO_LOCAL_PROPERTY)
     @Option.DefaultBoolean(false)
     boolean noLocal();
 
@@ -184,7 +184,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return whether the JMS session is transacted
      */
-    @Option.Configured(JmsRuntimeConfigSupport.TRANSACTED_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.TRANSACTED_PROPERTY)
     @Option.DefaultBoolean(false)
     boolean transacted();
 
@@ -194,7 +194,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return whether object messages are allowed
      */
-    @Option.Configured(JmsRuntimeConfigSupport.ALLOW_OBJECT_MESSAGES_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.ALLOW_OBJECT_MESSAGES_PROPERTY)
     @Option.DefaultBoolean(false)
     boolean allowObjectMessages();
 
@@ -206,8 +206,8 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return maximum incoming bytes-message body size
      */
-    @Option.Configured(JmsRuntimeConfigSupport.MAX_BODY_BYTES_PROPERTY)
-    @Option.DefaultCode("JmsRuntimeConfigSupport.DEFAULT_MAX_BODY_BYTES")
+    @Option.Configured(JmsConnectorConfigSupport.MAX_BODY_BYTES_PROPERTY)
+    @Option.DefaultCode("JmsConnectorConfigSupport.DEFAULT_MAX_BODY_BYTES")
     int maxBodyBytes();
 
     /**
@@ -215,8 +215,8 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return receive timeout
      */
-    @Option.Configured(JmsRuntimeConfigSupport.RECEIVE_TIMEOUT_PROPERTY)
-    @Option.Default(JmsRuntimeConfigSupport.DEFAULT_RECEIVE_TIMEOUT)
+    @Option.Configured(JmsConnectorConfigSupport.RECEIVE_TIMEOUT_PROPERTY)
+    @Option.Default(JmsConnectorConfigSupport.DEFAULT_RECEIVE_TIMEOUT)
     Duration receiveTimeout();
 
     /**
@@ -224,8 +224,8 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return close timeout
      */
-    @Option.Configured(JmsRuntimeConfigSupport.CLOSE_TIMEOUT_PROPERTY)
-    @Option.Default(JmsRuntimeConfigSupport.DEFAULT_CLOSE_TIMEOUT)
+    @Option.Configured(JmsConnectorConfigSupport.CLOSE_TIMEOUT_PROPERTY)
+    @Option.Default(JmsConnectorConfigSupport.DEFAULT_CLOSE_TIMEOUT)
     Duration closeTimeout();
 
     /**
@@ -233,8 +233,8 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return initial reconnect delay
      */
-    @Option.Configured(JmsRuntimeConfigSupport.RECONNECT_INITIAL_DELAY_PROPERTY)
-    @Option.Default(JmsRuntimeConfigSupport.DEFAULT_RECONNECT_INITIAL_DELAY)
+    @Option.Configured(JmsConnectorConfigSupport.RECONNECT_INITIAL_DELAY_PROPERTY)
+    @Option.Default(JmsConnectorConfigSupport.DEFAULT_RECONNECT_INITIAL_DELAY)
     Duration reconnectInitialDelay();
 
     /**
@@ -242,8 +242,8 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return maximum reconnect delay
      */
-    @Option.Configured(JmsRuntimeConfigSupport.RECONNECT_MAX_DELAY_PROPERTY)
-    @Option.Default(JmsRuntimeConfigSupport.DEFAULT_RECONNECT_MAX_DELAY)
+    @Option.Configured(JmsConnectorConfigSupport.RECONNECT_MAX_DELAY_PROPERTY)
+    @Option.Default(JmsConnectorConfigSupport.DEFAULT_RECONNECT_MAX_DELAY)
     Duration reconnectMaxDelay();
 
     /**
@@ -251,7 +251,7 @@ interface JmsRuntimeConfigBlueprint {
      *
      * @return reconnect jitter fraction
      */
-    @Option.Configured(JmsRuntimeConfigSupport.RECONNECT_JITTER_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.RECONNECT_JITTER_PROPERTY)
     @Option.DefaultDouble(0.2)
     double reconnectJitter();
 }

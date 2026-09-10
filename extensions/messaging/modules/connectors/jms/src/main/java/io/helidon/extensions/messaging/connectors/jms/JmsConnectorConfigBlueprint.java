@@ -44,7 +44,7 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      * @return configured password
      */
     @Override
-    @Option.Configured(JmsRuntimeConfigSupport.PASSWORD_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.PASSWORD_PROPERTY)
     @Option.Confidential
     @Option.Access("")
     @Option.Decorator(JmsConnectorConfigSupport.ConfiguredPasswordDecorator.class)
@@ -56,7 +56,7 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      *
      * @return selector
      */
-    @Option.Configured(JmsRuntimeConfigSupport.MESSAGE_SELECTOR_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.MESSAGE_SELECTOR_PROPERTY)
     Optional<String> messageSelector();
 
     /**
@@ -64,7 +64,7 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      *
      * @return whether the subscription is durable
      */
-    @Option.Configured(JmsRuntimeConfigSupport.DURABLE_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.DURABLE_PROPERTY)
     @Option.DefaultBoolean(false)
     Optional<Boolean> durable();
 
@@ -73,7 +73,7 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      *
      * @return subscription name
      */
-    @Option.Configured(JmsRuntimeConfigSupport.SUBSCRIPTION_NAME_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.SUBSCRIPTION_NAME_PROPERTY)
     Optional<String> subscriptionName();
 
     /**
@@ -81,7 +81,7 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      *
      * @return whether the subscription is no-local
      */
-    @Option.Configured(JmsRuntimeConfigSupport.NO_LOCAL_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.NO_LOCAL_PROPERTY)
     @Option.DefaultBoolean(false)
     Optional<Boolean> noLocal();
 
@@ -93,8 +93,8 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      *
      * @return maximum incoming bytes-message body size
      */
-    @Option.Configured(JmsRuntimeConfigSupport.MAX_BODY_BYTES_PROPERTY)
-    @Option.DefaultCode("JmsRuntimeConfigSupport.DEFAULT_MAX_BODY_BYTES")
+    @Option.Configured(JmsConnectorConfigSupport.MAX_BODY_BYTES_PROPERTY)
+    @Option.DefaultCode("JmsConnectorConfigSupport.DEFAULT_MAX_BODY_BYTES")
     Optional<Integer> maxBodyBytes();
 
     /**
@@ -102,8 +102,8 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      *
      * @return receive timeout
      */
-    @Option.Configured(JmsRuntimeConfigSupport.RECEIVE_TIMEOUT_PROPERTY)
-    @Option.Default(JmsRuntimeConfigSupport.DEFAULT_RECEIVE_TIMEOUT)
+    @Option.Configured(JmsConnectorConfigSupport.RECEIVE_TIMEOUT_PROPERTY)
+    @Option.Default(JmsConnectorConfigSupport.DEFAULT_RECEIVE_TIMEOUT)
     Optional<Duration> receiveTimeout();
 
     /**
@@ -112,7 +112,7 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      * @return destination type
      */
     @Override
-    @Option.Configured(JmsRuntimeConfigSupport.DESTINATION_TYPE_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.DESTINATION_TYPE_PROPERTY)
     @Option.DefaultCode("JmsDestinationType.QUEUE")
     Optional<JmsDestinationType> destinationType();
 
@@ -122,7 +122,7 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      * @return whether the JMS session is transacted
      */
     @Override
-    @Option.Configured(JmsRuntimeConfigSupport.TRANSACTED_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.TRANSACTED_PROPERTY)
     @Option.DefaultBoolean(false)
     Optional<Boolean> transacted();
 
@@ -133,7 +133,7 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      * @return whether object messages are allowed
      */
     @Override
-    @Option.Configured(JmsRuntimeConfigSupport.ALLOW_OBJECT_MESSAGES_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.ALLOW_OBJECT_MESSAGES_PROPERTY)
     @Option.DefaultBoolean(false)
     Optional<Boolean> allowObjectMessages();
 
@@ -143,8 +143,8 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      * @return close timeout
      */
     @Override
-    @Option.Configured(JmsRuntimeConfigSupport.CLOSE_TIMEOUT_PROPERTY)
-    @Option.Default(JmsRuntimeConfigSupport.DEFAULT_CLOSE_TIMEOUT)
+    @Option.Configured(JmsConnectorConfigSupport.CLOSE_TIMEOUT_PROPERTY)
+    @Option.Default(JmsConnectorConfigSupport.DEFAULT_CLOSE_TIMEOUT)
     Optional<Duration> closeTimeout();
 
     /**
@@ -153,8 +153,8 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      * @return initial reconnect delay
      */
     @Override
-    @Option.Configured(JmsRuntimeConfigSupport.RECONNECT_INITIAL_DELAY_PROPERTY)
-    @Option.Default(JmsRuntimeConfigSupport.DEFAULT_RECONNECT_INITIAL_DELAY)
+    @Option.Configured(JmsConnectorConfigSupport.RECONNECT_INITIAL_DELAY_PROPERTY)
+    @Option.Default(JmsConnectorConfigSupport.DEFAULT_RECONNECT_INITIAL_DELAY)
     Optional<Duration> reconnectInitialDelay();
 
     /**
@@ -163,8 +163,8 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      * @return maximum reconnect delay
      */
     @Override
-    @Option.Configured(JmsRuntimeConfigSupport.RECONNECT_MAX_DELAY_PROPERTY)
-    @Option.Default(JmsRuntimeConfigSupport.DEFAULT_RECONNECT_MAX_DELAY)
+    @Option.Configured(JmsConnectorConfigSupport.RECONNECT_MAX_DELAY_PROPERTY)
+    @Option.Default(JmsConnectorConfigSupport.DEFAULT_RECONNECT_MAX_DELAY)
     Optional<Duration> reconnectMaxDelay();
 
     /**
@@ -173,7 +173,7 @@ interface JmsConnectorConfigBlueprint extends MessagingConnectorProviderConfig, 
      * @return reconnect jitter fraction
      */
     @Override
-    @Option.Configured(JmsRuntimeConfigSupport.RECONNECT_JITTER_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.RECONNECT_JITTER_PROPERTY)
     @Option.DefaultDouble(0.2)
     Optional<Double> reconnectJitter();
 }

@@ -40,7 +40,7 @@ interface JmsIncomingConfigBlueprint extends MessagingIncomingConfig, JmsChannel
      * @return configured password
      */
     @Override
-    @Option.Configured(JmsRuntimeConfigSupport.PASSWORD_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.PASSWORD_PROPERTY)
     @Option.Confidential
     @Option.Access("")
     @Option.Decorator(JmsChannelConfigSupport.Incoming.ConfiguredPasswordDecorator.class)
@@ -52,7 +52,7 @@ interface JmsIncomingConfigBlueprint extends MessagingIncomingConfig, JmsChannel
      *
      * @return selector
      */
-    @Option.Configured(JmsRuntimeConfigSupport.MESSAGE_SELECTOR_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.MESSAGE_SELECTOR_PROPERTY)
     Optional<String> messageSelector();
 
     /**
@@ -60,7 +60,7 @@ interface JmsIncomingConfigBlueprint extends MessagingIncomingConfig, JmsChannel
      *
      * @return whether the subscription is durable
      */
-    @Option.Configured(JmsRuntimeConfigSupport.DURABLE_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.DURABLE_PROPERTY)
     Optional<Boolean> durable();
 
     /**
@@ -68,7 +68,7 @@ interface JmsIncomingConfigBlueprint extends MessagingIncomingConfig, JmsChannel
      *
      * @return subscription name
      */
-    @Option.Configured(JmsRuntimeConfigSupport.SUBSCRIPTION_NAME_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.SUBSCRIPTION_NAME_PROPERTY)
     Optional<String> subscriptionName();
 
     /**
@@ -76,7 +76,7 @@ interface JmsIncomingConfigBlueprint extends MessagingIncomingConfig, JmsChannel
      *
      * @return whether the subscription is no-local
      */
-    @Option.Configured(JmsRuntimeConfigSupport.NO_LOCAL_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.NO_LOCAL_PROPERTY)
     Optional<Boolean> noLocal();
 
     /**
@@ -87,7 +87,7 @@ interface JmsIncomingConfigBlueprint extends MessagingIncomingConfig, JmsChannel
      *
      * @return maximum incoming bytes-message body size
      */
-    @Option.Configured(JmsRuntimeConfigSupport.MAX_BODY_BYTES_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.MAX_BODY_BYTES_PROPERTY)
     Optional<Integer> maxBodyBytes();
 
     /**
@@ -95,7 +95,7 @@ interface JmsIncomingConfigBlueprint extends MessagingIncomingConfig, JmsChannel
      *
      * @return receive timeout
      */
-    @Option.Configured(JmsRuntimeConfigSupport.RECEIVE_TIMEOUT_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.RECEIVE_TIMEOUT_PROPERTY)
     Optional<Duration> receiveTimeout();
 
 }

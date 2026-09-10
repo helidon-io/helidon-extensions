@@ -42,7 +42,7 @@ interface JmsChannelOptions {
      *
      * @return named connection factory
      */
-    @Option.Configured(JmsRuntimeConfigSupport.CONNECTION_FACTORY_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.CONNECTION_FACTORY_PROPERTY)
     Optional<String> connectionFactoryName();
 
     /**
@@ -50,7 +50,7 @@ interface JmsChannelOptions {
      *
      * @return JNDI connection factory name
      */
-    @Option.Configured(JmsRuntimeConfigSupport.JNDI_CONNECTION_FACTORY_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.JNDI_CONNECTION_FACTORY_PROPERTY)
     Optional<String> jndiConnectionFactory();
 
     /**
@@ -58,7 +58,7 @@ interface JmsChannelOptions {
      *
      * @return JNDI destination name
      */
-    @Option.Configured(JmsRuntimeConfigSupport.JNDI_DESTINATION_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.JNDI_DESTINATION_PROPERTY)
     Optional<String> jndiDestination();
 
     /**
@@ -66,7 +66,7 @@ interface JmsChannelOptions {
      *
      * @return JNDI environment
      */
-    @Option.Configured(JmsRuntimeConfigSupport.JNDI_ENVIRONMENT_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.JNDI_ENVIRONMENT_PROPERTY)
     @Option.Confidential
     Optional<Map<String, String>> jndiEnvironment();
 
@@ -75,7 +75,7 @@ interface JmsChannelOptions {
      *
      * @return destination name
      */
-    @Option.Configured(JmsRuntimeConfigSupport.DESTINATION_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.DESTINATION_PROPERTY)
     Optional<String> destination();
 
     /**
@@ -83,7 +83,7 @@ interface JmsChannelOptions {
      *
      * @return destination type
      */
-    @Option.Configured(JmsRuntimeConfigSupport.DESTINATION_TYPE_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.DESTINATION_TYPE_PROPERTY)
     Optional<JmsDestinationType> destinationType();
 
     /**
@@ -91,7 +91,7 @@ interface JmsChannelOptions {
      *
      * @return connection user name
      */
-    @Option.Configured(JmsRuntimeConfigSupport.USERNAME_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.USERNAME_PROPERTY)
     Optional<String> username();
 
     /**
@@ -100,7 +100,7 @@ interface JmsChannelOptions {
      *
      * @return configured password
      */
-    @Option.Configured(JmsRuntimeConfigSupport.PASSWORD_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.PASSWORD_PROPERTY)
     @Option.Confidential
     @Option.Access("")
     @Option.Redundant
@@ -133,7 +133,7 @@ interface JmsChannelOptions {
      *
      * @return client identifier
      */
-    @Option.Configured(JmsRuntimeConfigSupport.CLIENT_ID_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.CLIENT_ID_PROPERTY)
     Optional<String> clientId();
 
     /**
@@ -141,7 +141,7 @@ interface JmsChannelOptions {
      *
      * @return whether the JMS session is transacted
      */
-    @Option.Configured(JmsRuntimeConfigSupport.TRANSACTED_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.TRANSACTED_PROPERTY)
     Optional<Boolean> transacted();
 
     /**
@@ -150,7 +150,7 @@ interface JmsChannelOptions {
      *
      * @return whether object messages are allowed
      */
-    @Option.Configured(JmsRuntimeConfigSupport.ALLOW_OBJECT_MESSAGES_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.ALLOW_OBJECT_MESSAGES_PROPERTY)
     Optional<Boolean> allowObjectMessages();
 
     /**
@@ -158,7 +158,7 @@ interface JmsChannelOptions {
      *
      * @return close timeout
      */
-    @Option.Configured(JmsRuntimeConfigSupport.CLOSE_TIMEOUT_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.CLOSE_TIMEOUT_PROPERTY)
     Optional<Duration> closeTimeout();
 
     /**
@@ -166,7 +166,7 @@ interface JmsChannelOptions {
      *
      * @return initial reconnect delay
      */
-    @Option.Configured(JmsRuntimeConfigSupport.RECONNECT_INITIAL_DELAY_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.RECONNECT_INITIAL_DELAY_PROPERTY)
     Optional<Duration> reconnectInitialDelay();
 
     /**
@@ -174,7 +174,7 @@ interface JmsChannelOptions {
      *
      * @return maximum reconnect delay
      */
-    @Option.Configured(JmsRuntimeConfigSupport.RECONNECT_MAX_DELAY_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.RECONNECT_MAX_DELAY_PROPERTY)
     Optional<Duration> reconnectMaxDelay();
 
     /**
@@ -182,6 +182,6 @@ interface JmsChannelOptions {
      *
      * @return reconnect jitter fraction
      */
-    @Option.Configured(JmsRuntimeConfigSupport.RECONNECT_JITTER_PROPERTY)
+    @Option.Configured(JmsConnectorConfigSupport.RECONNECT_JITTER_PROPERTY)
     Optional<Double> reconnectJitter();
 }
