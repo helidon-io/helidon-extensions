@@ -20,21 +20,21 @@ server:
 
 messaging:
   connector:
-    orders-kafka:
+    kafka-1:
       type: "helidon-kafka"
       bootstrap-servers:
         - "localhost:9092"
   incoming:
-    orders:
-      connector: "orders-kafka"
+    messages-from-kafka:
+      connector: kafka-1
       execution:
         max-in-flight-messages: 64
-      topic: "orders"
-      group-id: "declarative-inventory-service"
+      topic: "http-messages"
+      group-id: "declarative-messaging-example"
       auto-offset-reset: "earliest"
   outgoing:
-    http-messages:
-      connector: "orders-kafka"
+    messages-to-kafka:
+      connector: kafka-1
       topic: "http-messages"
       properties:
         linger.ms: "5"

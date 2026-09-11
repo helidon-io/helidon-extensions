@@ -32,11 +32,11 @@ import io.helidon.webserver.http.RestServer;
 @Http.Path("/")
 @Service.Singleton
 class MessagingEndpoint {
-    private final AtomicReference<String> latestOrder = new AtomicReference<>("No orders received");
+    private final AtomicReference<String> latestMessage = new AtomicReference<>("No messages received");
     private final Emitter<String> messages;
 
     @Service.Inject
-    MessagingEndpoint(@Service.Named("http-messages") Emitter<String> messages) {
+    MessagingEndpoint(@Service.Named("messages-to-kafka") Emitter<String> messages) {
         this.messages = messages;
     }
 
@@ -48,16 +48,16 @@ class MessagingEndpoint {
         messages.emit(message);
     }
 
-    @Messaging.ReceiveFrom("orders")
-    void receive(String order) {
-        latestOrder.set(order);
-        System.out.println("Received order: " + order);
+    @Messaging.ReceiveFrom("messages-from-kafka")
+    void receive(String message) {
+        latestMessage.set(message);
+        System.out.println("Received message: " + message);
     }
 
     @Http.GET
-    @Http.Path("/orders/latest")
+    @Http.Path("/messages/latest")
     @Http.Produces(MediaTypes.TEXT_PLAIN_VALUE)
-    String latestOrder() {
-        return latestOrder.get();
+    String latestMessage() {
+        return latestMessage.get();
     }
 }

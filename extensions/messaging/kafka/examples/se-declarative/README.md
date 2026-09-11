@@ -16,42 +16,49 @@ limitations under the License.
 
 # Declarative Kafka messaging
 
-This example connects annotated messaging and HTTP methods to Kafka.
-The [imperative example](../se-imperative/README.md) implements the same
-behavior using typed connector and graph builders.
+This example sends an HTTP request body through Kafka and receives it back in
+the same application using annotated messaging and HTTP methods:
+
+```text
+POST /messages
+  -> messages-to-kafka
+  -> Kafka topic: http-messages
+  -> messages-from-kafka
+  -> GET /messages/latest
+```
 
 [MessagingEndpoint.java](src/main/java/io/helidon/extensions/messaging/examples/declarative/MessagingEndpoint.java)
 injects a named `Emitter<String>` to publish HTTP request bodies, and receives
-orders through `@Messaging.ReceiveFrom("orders")`. The service registry manages
-the messaging runtime and webserver lifecycle using the generated application
-binding.
+the same messages through `@Messaging.ReceiveFrom("messages-from-kafka")`.
+The service registry manages the messaging runtime and webserver lifecycle
+using the generated application binding.
 
 The configuration separates a reusable connector instance from its channels:
 
 ```yaml
 messaging:
   connector:
-    orders-kafka:
+    kafka-1:
       type: helidon-kafka
       bootstrap-servers:
         - localhost:9092
   incoming:
-    orders:
-      connector: orders-kafka
+    messages-from-kafka:
+      connector: kafka-1
       execution:
         max-in-flight-messages: 64
-      topic: orders
-      group-id: declarative-inventory-service
+      topic: http-messages
+      group-id: declarative-messaging-example
       auto-offset-reset: earliest
   outgoing:
-    http-messages:
-      connector: orders-kafka
+    messages-to-kafka:
+      connector: kafka-1
       topic: http-messages
       properties:
         linger.ms: "5"
 ```
 
-`helidon-kafka` selects the provider, while `orders-kafka` names this configured
+`helidon-kafka` selects the provider, while `kafka-1` names this configured
 connector instance. Both channels reference that instance and inherit its
 bootstrap server list. Helidon options use kebab-case names such as
 `bootstrap-servers`, `group-id`, and `auto-offset-reset`. Additional native Kafka
@@ -64,7 +71,7 @@ following equivalent configuration:
 ```yaml
 connector:
   - type: helidon-kafka
-    name: orders-kafka
+    name: kafka-1
     bootstrap-servers:
       - localhost:9092
 ```
@@ -72,11 +79,11 @@ connector:
 Incoming and outgoing channel names are the keys under their respective nodes.
 The runtime reads each connection's connector reference and execution settings;
 the Kafka connector reads topic and client settings from the same node. The
-incoming connection limits orders to 64 in-flight messages; unspecified
+incoming connection limits processing to 64 in-flight messages; unspecified
 execution settings use the messaging defaults.
 
 For example, replace the first shared bootstrap server with
-`-Dmessaging.connector.orders-kafka.bootstrap-servers.0=other-host:9092` before
+`-Dmessaging.connector.kafka-1.bootstrap-servers.0=other-host:9092` before
 `-jar`.
 
 ## Build and run
@@ -88,7 +95,6 @@ Run these commands from this example's directory. Start the local Kafka broker:
 
 ```shell
 docker compose up -d --wait
-docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic orders --partitions 1 --replication-factor 1
 docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic http-messages --partitions 1 --replication-factor 1
 ```
 
@@ -102,42 +108,27 @@ java -jar target/helidon-extensions-messaging-examples-se-declarative.jar
 The HTTP server listens on port 8080. The broker configuration is for local
 development. Only one copy of the supplied broker can bind port 9092.
 
-## Try both directions
+## Send and receive a message
 
-In another terminal, consume the application's outgoing topic:
-
-```shell
-docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic http-messages --from-beginning
-```
-
-Publish a message using HTTP:
+In another terminal, publish a message using HTTP:
 
 ```shell
 curl -i -H "Content-Type: text/plain" --data "created from HTTP" http://localhost:8080/messages
 ```
 
-The response is `204 No Content`; the Kafka console consumer prints
-`created from HTTP`. The HTTP response follows completion of the Kafka send;
-it does not wait for a separate Kafka consumer to process the message.
-
-To exercise the incoming channel, run the console producer and type `order-42`,
-then press Enter:
+The response is `204 No Content`. The application receives the message from
+Kafka and prints `Received message: created from HTTP`. Read it back using HTTP:
 
 ```shell
-docker compose exec kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic orders
+curl http://localhost:8080/messages/latest
 ```
 
-The application prints `Received order: order-42`. Inspect its last received
-order using HTTP:
+The response is `created from HTTP`. Kafka delivery is asynchronous, so repeat
+the GET if the message has not arrived yet. Before any message arrives, the
+response is `No messages received`. This example keeps only the last received
+message in memory.
 
-```shell
-curl http://localhost:8080/orders/latest
-```
-
-The response is `order-42`. Before any order arrives, it is
-`No orders received`. This small example keeps only the last order in memory.
-
-Stop the application and console clients with Ctrl+C, then remove the example
+Stop the application with Ctrl+C, then remove the example
 broker:
 
 ```shell
@@ -150,9 +141,9 @@ docker compose down
 mvn clean verify
 ```
 
-The test starts its own Kafka broker on a random port. It verifies an HTTP POST
-with an independent Kafka consumer, then publishes an order with a Kafka
-producer and checks the application's HTTP endpoint. It starts the application
+The test starts its own Kafka broker on a random port. It posts a message over
+HTTP, waits for it to pass through Kafka back to the application, and checks
+that `GET /messages/latest` returns the posted message. It starts the application
 only after the broker is ready and shuts it down before stopping the broker.
 The test skips when Docker is unavailable. Run Docker-backed tests serially,
 without Maven's `-T` option.

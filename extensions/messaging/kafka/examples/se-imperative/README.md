@@ -16,50 +16,59 @@ limitations under the License.
 
 # Imperative Kafka messaging
 
-This example builds a messaging graph and an HTTP server using typed Java
-builders. The [declarative example](../se-declarative/README.md)
-implements the same behavior using annotations and configuration.
+This example sends an HTTP request body through Kafka and receives it back in
+the same application using typed connector, messaging graph, and HTTP server
+builders. The [declarative example](../se-declarative/README.md) implements the
+same behavior using annotations and configuration.
+
+```text
+POST /messages
+  -> messages-to-kafka
+  -> Kafka topic: http-messages
+  -> messages-from-kafka
+  -> GET /messages/latest
+```
 
 One `KafkaConnector` holds shared connection settings. Register it with the
 graph and supply typed configurations for the incoming and outgoing channels:
 
 ```java
 KafkaConnector kafka = KafkaConnector.builder()
-        .name("orders-kafka")
+        .name("kafka-1")
         .addBootstrapServer("localhost:9092")
         .build();
 
-MessagingChannel<String> orders = MessagingChannel.create("orders", String.class);
-MessagingChannel<String> httpMessages = MessagingChannel.create("http-messages", String.class);
-MessagingConfig.Builder builder = MessagingGraph.builder()
-        .channel(orders)
-        .channel(httpMessages);
+MessagingChannel<String> incoming = MessagingChannel.create("messages-from-kafka", String.class);
+MessagingChannel<String> outgoing = MessagingChannel.create("messages-to-kafka", String.class);
 
-KafkaIncomingConfig ordersConfig = KafkaIncomingConfig.builder()
+KafkaIncomingConfig incomingConfig = KafkaIncomingConfig.builder()
         .connector(kafka.name())
-        .channelName(orders.name())
+        .channelName(incoming.name())
         .execution(execution -> execution.maxInFlightMessages(64))
-        .topic("orders")
-        .groupId("inventory-service")
+        .topic("http-messages")
+        .groupId("imperative-messaging-example")
         .autoOffsetReset("earliest")
         .build();
 
-KafkaOutgoingConfig messagesConfig = KafkaOutgoingConfig.builder()
+KafkaOutgoingConfig outgoingConfig = KafkaOutgoingConfig.builder()
         .connector(kafka.name())
-        .channelName(httpMessages.name())
+        .channelName(outgoing.name())
         .topic("http-messages")
         .putProperty("linger.ms", "5")
         .build();
 
-MessagingGraph graph = builder.addConnector(kafka)
-        .incoming(Map.of(orders.name(), ordersConfig))
-        .outgoing(Map.of(httpMessages.name(), messagesConfig))
-        .messageSink(orders, message -> System.out.println(message.entity()))
+MessagingGraph graph = MessagingGraph.builder()
+        .addConnector(kafka)
+        .channel(incoming)
+        .channel(outgoing)
+        .incoming(Map.of(incoming.name(), incomingConfig))
+        .outgoing(Map.of(outgoing.name(), outgoingConfig))
+        .messageSink(incoming, message -> System.out.println(message.entity()))
         .build();
 ```
 
 The graph creates and manages the channel connections from these configurations.
-The incoming connection limits orders to 64 in-flight messages; unspecified
+The incoming connection limits processing to 64 in-flight messages; unspecified
 execution settings use the messaging defaults. Each configuration identifies
 its connector instance and logical channel explicitly.
 
@@ -68,7 +77,7 @@ Bootstrap servers are a list: use `addBootstrapServer` for one entry or
 client settings use `putProperty`, retaining their dotted names such as
 `linger.ms`.
 
-`graph.emitter(httpMessages)` supplies the emitter used by the HTTP handler.
+`graph.emitter(outgoing)` supplies the emitter used by the HTTP handler.
 A payload can be sent directly with `emitter.emit(text)`.
 Use `Message.builder(text)` when headers or other metadata are needed.
 
@@ -90,7 +99,6 @@ Run these commands from this example's directory. Start the local Kafka broker:
 
 ```shell
 docker compose up -d --wait
-docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic orders --partitions 1 --replication-factor 1
 docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic http-messages --partitions 1 --replication-factor 1
 ```
 
@@ -104,42 +112,27 @@ java -jar target/helidon-extensions-messaging-examples-se-imperative.jar
 The HTTP server listens on port 8080. The broker configuration is for local
 development. Only one copy of the supplied broker can bind port 9092.
 
-## Try both directions
+## Send and receive a message
 
-In another terminal, consume the application's outgoing topic:
-
-```shell
-docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic http-messages --from-beginning
-```
-
-Publish a message using HTTP:
+In another terminal, publish a message using HTTP:
 
 ```shell
 curl -i -H "Content-Type: text/plain" --data "created from HTTP" http://localhost:8080/messages
 ```
 
-The response is `204 No Content`; the Kafka console consumer prints
-`created from HTTP`. The HTTP response follows completion of the Kafka send;
-it does not wait for a separate Kafka consumer to process the message.
-
-To exercise the incoming channel, run the console producer and type `order-42`,
-then press Enter:
+The response is `204 No Content`. The application receives the message from
+Kafka and prints `Received message: created from HTTP`. Read it back using HTTP:
 
 ```shell
-docker compose exec kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic orders
+curl http://localhost:8080/messages/latest
 ```
 
-The application prints `Received order: order-42`. Inspect its last received
-order using HTTP:
+The response is `created from HTTP`. Kafka delivery is asynchronous, so repeat
+the GET if the message has not arrived yet. Before any message arrives, the
+response is `No messages received`. This example keeps only the last received
+message in memory.
 
-```shell
-curl http://localhost:8080/orders/latest
-```
-
-The response is `order-42`. Before any order arrives, it is
-`No orders received`. This small example keeps only the last order in memory.
-
-Stop the application and console clients with Ctrl+C, then remove the example
+Stop the application with Ctrl+C, then remove the example
 broker:
 
 ```shell
@@ -152,9 +145,9 @@ docker compose down
 mvn clean verify
 ```
 
-The test starts its own Kafka broker on a random port. It verifies an HTTP POST
-with an independent Kafka consumer, then publishes an order with a Kafka
-producer and checks the application's HTTP endpoint. It starts the application
+The test starts its own Kafka broker on a random port. It posts a message over
+HTTP, waits for it to pass through Kafka back to the application, and checks
+that `GET /messages/latest` returns the posted message. It starts the application
 only after the broker is ready and shuts it down before stopping the broker.
 The test skips when Docker is unavailable. Run Docker-backed tests serially,
 without Maven's `-T` option.

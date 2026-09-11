@@ -17,11 +17,7 @@
 package io.helidon.extensions.messaging.examples.declarative;
 
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
@@ -32,60 +28,33 @@ import io.helidon.service.registry.ServiceRegistryManager;
 import io.helidon.webclient.http1.Http1Client;
 import io.helidon.webserver.WebServer;
 
-import org.apache.kafka.clients.admin.Admin;
-import org.apache.kafka.clients.admin.NewTopic;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.serialization.StringDeserializer;
-import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import org.junit.jupiter.api.parallel.Execution;
-import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.KafkaContainer;
 
+import static org.awaitility.Awaitility.await;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 @Testcontainers(disabledWithoutDocker = true)
-@Execution(ExecutionMode.SAME_THREAD)
 class DeclarativeMessagingIT {
-    private static final Duration WAIT = Duration.ofSeconds(20);
-
     @Container
-    private static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.3.1");
+    private static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.3.1")
+            .withEnv("KAFKA_AUTO_CREATE_TOPICS_ENABLE", "true");
 
     @Test
     @Timeout(90)
-    void publishesHttpMessagesAndReceivesOrders() throws Exception {
-        String suffix = UUID.randomUUID().toString();
-        String ordersTopic = "orders-" + suffix;
-        String messagesTopic = "http-messages-" + suffix;
-        try (Admin admin = Admin.create(Map.of("bootstrap.servers", KAFKA.getBootstrapServers()))) {
-            admin.createTopics(List.of(new NewTopic(ordersTopic, 1, (short) 1),
-                                       new NewTopic(messagesTopic, 1, (short) 1)))
-                    .all().get(WAIT.toSeconds(), TimeUnit.SECONDS);
-        }
-
-        // The broker is already running when the application configuration and service registry are created.
+    void receivesMessageSentOverHttp() {
         Config config = Config.builder(ConfigSources.create(Map.of(
                         "server.port", "0",
-                        "server.host", "127.0.0.1",
-                        "server.shutdown-hook", "false",
-                        "messaging.connector.orders-kafka.bootstrap-servers.0", KAFKA.getBootstrapServers(),
-                        "messaging.incoming.orders.topic", ordersTopic,
-                        "messaging.incoming.orders.group-id", "inventory-" + suffix,
-                        "messaging.outgoing.http-messages.topic", messagesTopic)),
+                        "messaging.connector.kafka-1.bootstrap-servers.0", KAFKA.getBootstrapServers())),
                                       ConfigSources.classpath("application.yaml"))
                 .disableEnvironmentVariablesSource()
                 .disableSystemPropertiesSource()
                 .build();
+
         ServiceRegistryConfig registryConfig = ServiceRegistryConfig.builder()
                 .discoverServices(false)
                 .discoverServicesFromServiceLoader(false)
@@ -94,47 +63,19 @@ class DeclarativeMessagingIT {
                 .putContractInstance(Config.class, config)
                 .build();
         ServiceRegistryManager manager = ServiceRegistryManager.start(ApplicationBinding.create(), registryConfig);
-        try (KafkaProducer<String, String> producer = new KafkaProducer<>(
-                     Map.of(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers(),
-                            ProducerConfig.MAX_BLOCK_MS_CONFIG, 10000),
-                     new StringSerializer(), new StringSerializer());
-             KafkaConsumer<String, String> consumer = new KafkaConsumer<>(
-                     Map.of(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers(),
-                            ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false),
-                     new StringDeserializer(), new StringDeserializer())) {
+        try {
             WebServer server = manager.registry().get(WebServer.class);
             Http1Client client = Http1Client.builder()
                     .baseUri("http://127.0.0.1:" + server.port())
-                    .keepAlive(false)
-                    .readTimeout(Duration.ofSeconds(5))
                     .build();
-            var partition = new TopicPartition(messagesTopic, 0);
-            consumer.assign(List.of(partition));
-            consumer.seekToBeginning(List.of(partition));
-
+            String message = "created from HTTP";
             try (var response = client.post("/messages")
                     .contentType(MediaTypes.TEXT_PLAIN)
-                    .submit("created from HTTP")) {
+                    .submit(message)) {
                 assertThat(response.status(), is(Status.NO_CONTENT_204));
             }
-            List<String> published = new ArrayList<>();
-            long deadline = System.nanoTime() + WAIT.toNanos();
-            while (published.isEmpty() && System.nanoTime() < deadline) {
-                consumer.poll(Duration.ofMillis(100)).forEach(record -> published.add(record.value()));
-            }
-            assertThat("HTTP request must reach the configured Kafka topic",
-                       published,
-                       is(List.of("created from HTTP")));
-
-            producer.send(new ProducerRecord<>(ordersTopic, "order-42"))
-                    .get(WAIT.toSeconds(), TimeUnit.SECONDS);
-            String received = client.get("/orders/latest").requestEntity(String.class);
-            deadline = System.nanoTime() + WAIT.toNanos();
-            while (!received.equals("order-42") && System.nanoTime() < deadline) {
-                Thread.sleep(25);
-                received = client.get("/orders/latest").requestEntity(String.class);
-            }
-            assertThat("Kafka order must reach the annotated receiver", received, is("order-42"));
+            await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
+                    assertThat(client.get("/messages/latest").requestEntity(String.class), is(message)));
         } finally {
             manager.shutdown();
         }

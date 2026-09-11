@@ -16,9 +16,8 @@ limitations under the License.
 
 # Kafka messaging examples
 
-These examples use the Kafka connector to publish HTTP request bodies to Kafka
-and receive orders from another Kafka topic. They demonstrate the same behavior
-with two programming models:
+Both examples send an HTTP request body through the `http-messages` Kafka topic
+and expose the same received message at `GET /messages/latest`:
 
 - [Imperative](se-imperative/README.md): typed connector, channel configuration,
   and graph builders with HTTP service lifecycle callbacks.
