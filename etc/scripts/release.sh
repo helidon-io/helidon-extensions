@@ -56,7 +56,7 @@ $(basename "${0}") create_tag
         The version to use.
 
   --extension=ID
-        The extension id to use.
+        The directory under extensions, e.g. eureka or messaging/kafka.
 
   --help
         Prints the usage and exits.
@@ -114,7 +114,7 @@ case ${COMMAND} in
     echo "ERROR: extension required" >&2
     usage
     exit 1
-  elif [ ! -f "${WS_DIR}/extensions/${EXTENSION_ID}/pom.xml" ] ; then
+  elif [ ! -f "${WS_DIR}/extensions/${EXTENSION_ID}/bom/pom.xml" ] ; then
     echo "ERROR: unknown extension id ${EXTENSION_ID}" >&2
     exit 1
   fi
@@ -138,8 +138,8 @@ resolve_extension() {
   local branch_name extension
   branch_name="$(git -C "${WS_DIR}" branch --show-current)"
   if [[ "${branch_name}" == */release-* ]] ; then
-    extension="${branch_name%%/*}"
-    if [ -f "${WS_DIR}/extensions/${extension}/pom.xml" ] ; then
+    extension="${branch_name%/release-*}"
+    if [ -f "${WS_DIR}/extensions/${extension}/bom/pom.xml" ] ; then
       echo "${extension}"
     else
       echo "ERROR: unknown extension ${extension}" >&2
@@ -428,7 +428,7 @@ update_version(){
       set_project_version "${WS_DIR}/${pom}" "${version}"
 
       # Update the extension.version property
-      set_property "${WS_DIR}/${pom}" "${extension}.extension.version" "${version}"
+      set_property "${WS_DIR}/${pom}" "${extension//\//.}.extension.version" "${version}"
 
       # Update parent version
       read -r parent_group_id _ _ < <(parent_gav "${WS_DIR}/${pom}") || true
@@ -484,6 +484,7 @@ create_tag() {
   echo "version=${version}" >&6
   echo "tag=${tag_name}" >&6
   echo "extension=${extension}" >&6
+  echo "artifact=${extension//\//-}" >&6
   echo "poms=${poms}" >&6
 }
 

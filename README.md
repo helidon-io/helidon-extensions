@@ -38,11 +38,9 @@ This project welcomes contributions from the community. Before submitting a pull
 
 When adding a new extension, the following things must be done:
 
-1. Create the extension directory under [`extensions/`](extensions/) (structure MUST be aligned with existing extensions)
-2. Add the extension module to [`extensions/pom.xml`](extensions/pom.xml)
-3. Add a build step to [workflow](.github/workflows/validate.yml)
-   1. Add a new job, aligned with existing extensions as a last job before `gate`
-   2. Add the new job to the list of `needs` of the `gate` job 
+1. Create the extension directory under [`extensions/`](extensions/), optionally inside a grouping directory such as `messaging/`. Follow the existing `bom/modules/tests/examples` structure and declare `helidon.version` in the extension root POM.
+2. Add the extension module to [`extensions/pom.xml`](extensions/pom.xml), or to its grouping POM.
+3. Validation and releases discover extensions by `bom/pom.xml`; see the [release directory convention](etc/scripts/RELEASE.md#directory-convention).
 
 ## Security
 

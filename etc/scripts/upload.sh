@@ -152,7 +152,7 @@ BEARER=$(printf "%s:%s" "${CENTRAL_USER}" "${CENTRAL_PASSWORD}" | base64)
 
 find_release_version() {
   local project_artifact project_dir pom version
-  project_artifact="helidon-extensions-${EXTENSION}-project"
+  project_artifact="helidon-extensions-${EXTENSION//\//-}-project"
   project_dir="${STAGING_DIR}/io/helidon/extensions/${EXTENSION}/${project_artifact}"
 
   if [ ! -d "${project_dir}" ] ; then
@@ -198,7 +198,7 @@ upload_release() {
 # prints deployment ID
 central_upload() {
   local extension_id upload_bundle version
-  extension_id="${3}"
+  extension_id="${3//\//-}"
   version="${4}"
 
   printf "Uploading artifacts...\n" >&2

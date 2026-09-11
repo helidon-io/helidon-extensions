@@ -18,24 +18,27 @@
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
-                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.helidon.extensions</groupId>
-        <artifactId>helidon-extensions-project</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
-        <relativePath>../../pom.xml</relativePath>
+        <groupId>io.helidon.extensions.messaging.kafka</groupId>
+        <artifactId>helidon-extensions-messaging-kafka-project</artifactId>
+        <version>27.0.0-SNAPSHOT</version>
     </parent>
-
-    <artifactId>helidon-extensions-messaging-project</artifactId>
     <packaging>pom</packaging>
 
-    <name>Helidon Extensions Messaging Project</name>
+    <groupId>io.helidon.extensions.messaging.examples</groupId>
+    <artifactId>helidon-extensions-messaging-examples-project</artifactId>
+    <name>Helidon Extensions Messaging Examples</name>
+
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.sources.skip>true</maven.sources.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+    </properties>
 
     <modules>
-        <module>kafka</module>
-        <module>jms</module>
-        <module>pulsar</module>
+        <module>se-imperative</module>
+        <module>se-declarative</module>
     </modules>
 </project>
