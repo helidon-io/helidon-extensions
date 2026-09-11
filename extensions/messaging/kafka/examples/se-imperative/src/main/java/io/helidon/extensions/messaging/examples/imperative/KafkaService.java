@@ -34,11 +34,11 @@ import io.helidon.webserver.http.HttpRules;
 import io.helidon.webserver.http.HttpService;
 
 /**
- * Publishes HTTP messages to Kafka and exposes the latest received order.
+ * Sends HTTP messages through Kafka and exposes the latest received message.
  */
 @SuppressWarnings(Api.SUPPRESS_PREVIEW)
 final class KafkaService implements HttpService {
-    private final AtomicReference<String> latestOrder = new AtomicReference<>("No orders received");
+    private final AtomicReference<String> latestMessage = new AtomicReference<>("No messages received");
     private final MessagingGraph graph;
     private final Emitter<String> messages;
 
@@ -50,49 +50,46 @@ final class KafkaService implements HttpService {
                 .asList(String.class)
                 .orElseThrow(() -> new ConfigException("kafka-bootstrap-servers is missing"));
 
-        String ordersTopic = config.get("orders-topic")
-                .asString()
-                .orElseThrow(() -> new ConfigException("orders-topic is missing"));
         String messagesTopic = config.get("messages-topic")
                 .asString()
                 .orElseThrow(() -> new ConfigException("messages-topic is missing"));
 
         KafkaConnector kafka = KafkaConnector.builder()
-                .name("orders-kafka")
+                .name("kafka-1")
                 .bootstrapServers(kafkaBootstrapServers)
                 .build();
 
-        MessagingChannel<String> orders = MessagingChannel.create("orders", String.class);
-        MessagingChannel<String> httpMessages = MessagingChannel.create("http-messages", String.class);
+        MessagingChannel<String> incoming = MessagingChannel.create("messages-from-kafka", String.class);
+        MessagingChannel<String> outgoing = MessagingChannel.create("messages-to-kafka", String.class);
 
-        KafkaIncomingConfig ordersConfig = KafkaIncomingConfig.builder()
+        KafkaIncomingConfig incomingConfig = KafkaIncomingConfig.builder()
                 .connector(kafka.name())
-                .channelName(orders.name())
+                .channelName(incoming.name())
                 .execution(execution -> execution.maxInFlightMessages(64))
-                .topic(ordersTopic)
+                .topic(messagesTopic)
                 .groupId(kafkaGroupId)
                 .autoOffsetReset("earliest")
                 .build();
 
-        KafkaOutgoingConfig messagesConfig = KafkaOutgoingConfig.builder()
+        KafkaOutgoingConfig outgoingConfig = KafkaOutgoingConfig.builder()
                 .connector(kafka.name())
-                .channelName(httpMessages.name())
+                .channelName(outgoing.name())
                 .topic(messagesTopic)
                 .putProperty("linger.ms", "5")
                 .build();
 
         graph = MessagingGraph.builder()
                 .addConnector(kafka)
-                .channel(orders)
-                .channel(httpMessages)
-                .incoming(Map.of(orders.name(), ordersConfig))
-                .outgoing(Map.of(httpMessages.name(), messagesConfig))
-                .messageSink(orders, message -> {
-                    latestOrder.set(message.entity());
-                    System.out.println("Received order: " + message.entity());
+                .channel(incoming)
+                .channel(outgoing)
+                .incoming(Map.of(incoming.name(), incomingConfig))
+                .outgoing(Map.of(outgoing.name(), outgoingConfig))
+                .messageSink(incoming, message -> {
+                    latestMessage.set(message.entity());
+                    System.out.println("Received message: " + message.entity());
                 })
                 .build();
-        messages = graph.emitter(httpMessages);
+        messages = graph.emitter(outgoing);
     }
 
     @Override
@@ -100,7 +97,7 @@ final class KafkaService implements HttpService {
         rules.post("/messages", (request, response) -> {
             messages.emit(request.content().as(String.class));
             response.status(Status.NO_CONTENT_204).send();
-        }).get("/orders/latest", (_, response) -> response.send(latestOrder.get()));
+        }).get("/messages/latest", (_, response) -> response.send(latestMessage.get()));
     }
 
     @Override

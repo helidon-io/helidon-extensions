@@ -36,6 +36,7 @@
         <maven.deploy.skip>true</maven.deploy.skip>
         <mainClass>io.helidon.extensions.messaging.examples.declarative.Main</mainClass>
         <messaging.kafka.extension.version>27.0.0-SNAPSHOT</messaging.kafka.extension.version>
+        <version.lib.awaitility>4.3.0</version.lib.awaitility>
     </properties>
 
     <dependencyManagement>
@@ -113,8 +114,9 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>org.hamcrest</groupId>
-            <artifactId>hamcrest-all</artifactId>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <version>${version.lib.awaitility}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
