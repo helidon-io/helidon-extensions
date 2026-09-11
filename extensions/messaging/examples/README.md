@@ -21,7 +21,7 @@ and receive orders from another Kafka topic. They demonstrate the same behavior
 with two programming models:
 
 - [Imperative](se-imperative/README.md): typed connector, channel configuration,
-  and graph builders with explicit application lifecycle management.
+  and graph builders with HTTP service lifecycle callbacks.
 - [Declarative](se-declarative/README.md): annotated HTTP and messaging methods,
   YAML configuration, and a generated service-registry binding.
 

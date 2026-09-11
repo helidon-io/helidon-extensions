@@ -30,6 +30,9 @@ import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.http.Status;
 import io.helidon.webclient.http1.Http1Client;
+import io.helidon.webserver.WebServer;
+import io.helidon.webserver.http.HttpRules;
+import io.helidon.webserver.http.HttpService;
 
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.DescribeConsumerGroupsOptions;
@@ -88,8 +91,8 @@ class KafkaApplicationIT {
                 .disableSystemPropertiesSource()
                 .build();
 
-        try (KafkaApplication application = KafkaApplication.start(config);
-             KafkaProducer<String, String> producer = new KafkaProducer<>(
+        WebServer server = KafkaMain.start(config);
+        try (KafkaProducer<String, String> producer = new KafkaProducer<>(
                      Map.of(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers(),
                             ProducerConfig.MAX_BLOCK_MS_CONFIG, 10000),
                      new StringSerializer(), new StringSerializer());
@@ -98,7 +101,7 @@ class KafkaApplicationIT {
                             ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false),
                      new StringDeserializer(), new StringDeserializer())) {
             Http1Client client = Http1Client.builder()
-                    .baseUri("http://127.0.0.1:" + application.server().port())
+                    .baseUri("http://127.0.0.1:" + server.port())
                     .keepAlive(false)
                     .readTimeout(Duration.ofSeconds(5))
                     .build();
@@ -127,17 +130,22 @@ class KafkaApplicationIT {
                 received = client.get("/orders/latest").requestEntity(String.class);
             }
             assertThat("Kafka order must reach the application's incoming channel", received, is("order-42"));
+        } finally {
+            server.stop();
+        }
+        try (Admin admin = Admin.create(Map.of("bootstrap.servers", KAFKA.getBootstrapServers()))) {
+            awaitConsumerGroupMembers(admin, "inventory-" + suffix, 0);
         }
     }
 
     @Test
     @Timeout(90)
-    void closesKafkaConsumerWhenHttpConfigurationThrowsError() throws Exception {
+    void closesKafkaConsumerWhenServerStartupThrowsError() throws Exception {
         String suffix = UUID.randomUUID().toString();
         String ordersTopic = "orders-" + suffix;
         String messagesTopic = "http-messages-" + suffix;
         String group = "inventory-" + suffix;
-        var expectedFailure = new LinkageError("HTTP server configuration failed");
+        var expectedFailure = new LinkageError("HTTP server startup failed");
         Admin admin = Admin.create(Map.of("bootstrap.servers", KAFKA.getBootstrapServers()));
         try {
             admin.createTopics(List.of(new NewTopic(ordersTopic, 1, (short) 1),
@@ -153,23 +161,32 @@ class KafkaApplicationIT {
                             "app.kafka-group-id", group)))
                     .disableEnvironmentVariablesSource()
                     .disableSystemPropertiesSource()
-                    .addMapper(Integer.class, node -> {
-                        if (node.key().toString().equals("server.port")) {
-                            // Observe an active connection before failing HTTP setup.
-                            awaitConsumerGroupMembers(admin, group, 1);
-                            throw expectedFailure;
-                        }
-                        return Integer.parseInt(node.asString().get());
-                    })
                     .build();
 
-            LinkageError failure = assertThrows(LinkageError.class, () -> {
-                try (KafkaApplication _ = KafkaApplication.start(config)) {
-                    // Close the application if startup unexpectedly succeeds.
-                }
-            });
+            WebServer server = WebServer.builder()
+                    .config(config.get("server"))
+                    .routing(routing -> routing
+                            .register(new KafkaService(config.get("app")))
+                            .register(new HttpService() {
+                                @Override
+                                public void routing(HttpRules rules) {
+                                }
+
+                                @Override
+                                public void afterStart(WebServer webServer) {
+                                    awaitConsumerGroupMembers(admin, group, 1);
+                                    throw expectedFailure;
+                                }
+                            }))
+                    .build();
+            LinkageError failure;
+            try {
+                failure = assertThrows(LinkageError.class, server::start);
+                awaitConsumerGroupMembers(admin, group, 0);
+            } finally {
+                server.stop();
+            }
             assertThat("HTTP startup must propagate the original Error", failure, sameInstance(expectedFailure));
-            awaitConsumerGroupMembers(admin, group, 0);
         } finally {
             admin.close(Duration.ofSeconds(5));
         }

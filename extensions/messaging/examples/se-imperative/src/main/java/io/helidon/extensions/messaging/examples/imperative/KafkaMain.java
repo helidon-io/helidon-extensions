@@ -16,9 +16,9 @@
 
 package io.helidon.extensions.messaging.examples.imperative;
 
-import io.helidon.Main;
 import io.helidon.config.Config;
 import io.helidon.logging.common.LogConfig;
+import io.helidon.webserver.WebServer;
 
 /**
  * Starts the imperative Kafka messaging example.
@@ -28,12 +28,19 @@ public final class KafkaMain {
     }
 
     /**
-     * Start the application and register its shutdown handler.
+     * Start the application.
      */
     static void main() {
         LogConfig.configureRuntime();
-        KafkaApplication application = KafkaApplication.start(Config.create());
-        Main.addShutdownHandler(application::close);
-        System.out.println("Server started on: http://localhost:" + application.server().port());
+        WebServer server = start(Config.create());
+        System.out.println("Server started on: http://localhost:" + server.port());
+    }
+
+    static WebServer start(Config config) {
+        return WebServer.builder()
+                .config(config.get("server"))
+                .routing(routing -> routing.register(new KafkaService(config.get("app"))))
+                .build()
+                .start();
     }
 }

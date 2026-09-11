@@ -18,7 +18,7 @@ server:
   port: 8080
   host: "0.0.0.0"
 
-# External values used by the typed builders in KafkaApplication.
+# External values used by the typed builders in KafkaService.
 app:
   kafka-bootstrap-servers: "localhost:9092"
   kafka-group-id: "imperative-inventory-service"

@@ -72,9 +72,11 @@ client settings use `putProperty`, retaining their dotted names such as
 A payload can be sent directly with `emitter.emit(text)`.
 Use `Message.builder(text)` when headers or other metadata are needed.
 
-See [KafkaApplication.java](src/main/java/io/helidon/extensions/messaging/examples/imperative/KafkaApplication.java)
-for the complete graph. The graph starts before the HTTP server; shutdown first
-stops HTTP requests, then drains and closes the graph's channel connections.
+See [KafkaService.java](src/main/java/io/helidon/extensions/messaging/examples/imperative/KafkaService.java)
+for the complete graph and HTTP routes. The service starts the graph in
+`beforeStart()` and closes it in `afterStop()`. WebServer's standard shutdown
+hook stops HTTP requests before draining and closing the graph's channel
+connections; no separate application shutdown handler is needed.
 Kafka connection values are read from `application.yaml` and passed to the
 typed builders. For example, override the broker with
 `-Dapp.kafka-bootstrap-servers=other-host:9092` before `-jar`.

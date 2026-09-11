@@ -30,41 +30,37 @@ import io.helidon.http.Status;
 import io.helidon.messaging.Emitter;
 import io.helidon.messaging.MessagingChannel;
 import io.helidon.messaging.MessagingGraph;
-import io.helidon.webserver.WebServer;
+import io.helidon.webserver.http.HttpRules;
+import io.helidon.webserver.http.HttpService;
 
 /**
- * Owns the messaging graph and HTTP server, including startup and shutdown ordering.
+ * Publishes HTTP messages to Kafka and exposes the latest received order.
  */
 @SuppressWarnings(Api.SUPPRESS_PREVIEW)
-final class KafkaApplication implements AutoCloseable {
+final class KafkaService implements HttpService {
+    private final AtomicReference<String> latestOrder = new AtomicReference<>("No orders received");
     private final MessagingGraph graph;
-    private final WebServer server;
+    private final Emitter<String> messages;
 
-    private KafkaApplication(MessagingGraph graph, WebServer server) {
-        this.graph = graph;
-        this.server = server;
-    }
-
-    static KafkaApplication start(Config config) {
-        String kafkaGroupId = config.get("app.kafka-group-id")
+    KafkaService(Config config) {
+        String kafkaGroupId = config.get("kafka-group-id")
                 .asString()
-                .orElseThrow(() -> new ConfigException("app.kafka-group-id is missing"));
-        List<String> kafkaBootstrapServers = config.get("app.kafka-bootstrap-servers")
+                .orElseThrow(() -> new ConfigException("kafka-group-id is missing"));
+        List<String> kafkaBootstrapServers = config.get("kafka-bootstrap-servers")
                 .asList(String.class)
-                .orElseThrow(() -> new ConfigException("app.kafka-bootstrap-servers is missing"));
+                .orElseThrow(() -> new ConfigException("kafka-bootstrap-servers is missing"));
 
-        String ordersTopic = config.get("app.orders-topic")
+        String ordersTopic = config.get("orders-topic")
                 .asString()
-                .orElseThrow(() -> new ConfigException("app.orders-topic is missing"));
-        String messagesTopic = config.get("app.messages-topic")
+                .orElseThrow(() -> new ConfigException("orders-topic is missing"));
+        String messagesTopic = config.get("messages-topic")
                 .asString()
-                .orElseThrow(() -> new ConfigException("app.messages-topic is missing"));
+                .orElseThrow(() -> new ConfigException("messages-topic is missing"));
 
         KafkaConnector kafka = KafkaConnector.builder()
                 .name("orders-kafka")
                 .bootstrapServers(kafkaBootstrapServers)
                 .build();
-
 
         MessagingChannel<String> orders = MessagingChannel.create("orders", String.class);
         MessagingChannel<String> httpMessages = MessagingChannel.create("http-messages", String.class);
@@ -85,11 +81,7 @@ final class KafkaApplication implements AutoCloseable {
                 .putProperty("linger.ms", "5")
                 .build();
 
-        // "business logic"
-        var latestOrder = new AtomicReference<>("No orders received");
-
-        // prepare the messaging graph
-        MessagingGraph graph = MessagingGraph.builder()
+        graph = MessagingGraph.builder()
                 .addConnector(kafka)
                 .channel(orders)
                 .channel(httpMessages)
@@ -99,42 +91,25 @@ final class KafkaApplication implements AutoCloseable {
                     latestOrder.set(message.entity());
                     System.out.println("Received order: " + message.entity());
                 })
-                .build()
-                .start();
-
-        try {
-            Emitter<String> emitter = graph.emitter(httpMessages);
-
-            WebServer server = WebServer.builder()
-                    .config(config.get("server"))
-                    .shutdownHook(false)
-                    .routing(routing -> routing
-                            .post("/messages", (request, response) -> {
-                                emitter.emit(request.content().as(String.class));
-                                response.status(Status.NO_CONTENT_204).send();
-                            })
-                            .get("/orders/latest", (_, response) -> response.send(latestOrder.get())))
-                    .build()
-                    .start();
-
-            return new KafkaApplication(graph, server);
-        } catch (RuntimeException | Error e) {
-            graph.close();
-            throw e;
-        }
-    }
-
-    WebServer server() {
-        return server;
+                .build();
+        messages = graph.emitter(httpMessages);
     }
 
     @Override
-    public void close() {
-        // Stop accepting HTTP requests before draining and closing the graph's channel connections.
-        try {
-            server.stop();
-        } finally {
-            graph.close();
-        }
+    public void routing(HttpRules rules) {
+        rules.post("/messages", (request, response) -> {
+            messages.emit(request.content().as(String.class));
+            response.status(Status.NO_CONTENT_204).send();
+        }).get("/orders/latest", (_, response) -> response.send(latestOrder.get()));
+    }
+
+    @Override
+    public void beforeStart() {
+        graph.start();
+    }
+
+    @Override
+    public void afterStop() {
+        graph.close();
     }
 }
