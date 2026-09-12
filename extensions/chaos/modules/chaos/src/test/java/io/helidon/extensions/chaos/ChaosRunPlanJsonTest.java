@@ -34,6 +34,7 @@ import static org.hamcrest.Matchers.hasEntry;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ChaosRunPlanJsonTest {
@@ -87,6 +88,25 @@ class ChaosRunPlanJsonTest {
     }
 
     @Test
+    void parsesWeightedChoiceEffect() {
+        assertDoesNotThrow(() -> ChaosRunPlanJson.parse(json(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {
+                      "weight": 3,
+                      "effect": {"type": "synthetic-http-response", "status": 503}
+                    },
+                    {
+                      "weight": 1,
+                      "effect": {"type": "latency", "delay": "PT0.25S"}
+                    }
+                  ]
+                }
+                """)), LIMITS));
+    }
+
+    @Test
     void rejectsInvalidLatency() {
         assertBadRequest(withEffect("""
                 {"type": "latency"}
@@ -117,6 +137,95 @@ class ChaosRunPlanJsonTest {
     }
 
     @Test
+    void rejectsMalformedWeightedChoiceEffects() {
+        assertBadRequest(withEffect("""
+                {"type": "weighted-choice"}
+                """), "/stages/0/disruptions/0/effect/outcomes");
+        assertBadRequest(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"effect": {"type": "synthetic-http-response", "status": 503}}
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/weight");
+        assertBadRequest(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1.5, "effect": {"type": "synthetic-http-response", "status": 503}}
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/weight");
+        assertBadRequest(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [{"weight": 1}]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/effect");
+        assertBadRequest(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {
+                      "weight": 1,
+                      "unexpected": true,
+                      "effect": {"type": "synthetic-http-response", "status": 503}
+                    }
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/unexpected");
+    }
+
+    @Test
+    void rejectsInvalidWeightedChoiceEffects() {
+        assertInvalidPlan(withEffect("""
+                {"type": "weighted-choice", "outcomes": []}
+                """), "/stages/0/disruptions/0/effect/outcomes");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 0, "effect": {"type": "synthetic-http-response", "status": 503}}
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/weight");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": -1, "effect": {"type": "synthetic-http-response", "status": 503}}
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/weight");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {
+                      "weight": 1,
+                      "effect": {"type": "weighted-choice", "outcomes": [
+                        {"weight": 1, "effect": {"type": "synthetic-http-response", "status": 503}}
+                      ]}
+                    }
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/effect/type");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {
+                      "weight": 9223372036854775807,
+                      "effect": {"type": "synthetic-http-response", "status": 503}
+                    },
+                    {"weight": 1, "effect": {"type": "latency", "delay": "PT0.001S"}}
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes");
+    }
+
+    @Test
     void keepsEffectPropertiesMutuallyExclusive() {
         assertBadRequest(withEffect("""
                 {"type": "latency", "delay": "PT0.25S", "status": 503}
@@ -124,6 +233,15 @@ class ChaosRunPlanJsonTest {
         assertBadRequest(withEffect("""
                 {"type": "synthetic-http-response", "status": 503, "delay": "PT0.25S"}
                 """), "/stages/0/disruptions/0/effect/delay");
+        assertBadRequest(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "status": 503,
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "synthetic-http-response", "status": 503}}
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/status");
     }
 
     @Test

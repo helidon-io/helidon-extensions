@@ -190,6 +190,34 @@ effect sampling uses a separate deterministic stream from activation sampling. A
 the application handler runs, so application processing time does not consume chaos concurrency budget. If an artificial
 delay is interrupted, the request continues through routing with its thread interrupt status restored.
 
+To select one of several effects for each accepted activation, use `weighted-choice`:
+
+```json
+{
+  "type": "weighted-choice",
+  "outcomes": [
+    {
+      "weight": 60,
+      "effect": {"type": "synthetic-http-response", "status": 503}
+    },
+    {
+      "weight": 25,
+      "effect": {"type": "synthetic-http-response", "status": 429}
+    },
+    {
+      "weight": 15,
+      "effect": {"type": "latency", "delay": "PT0.5S", "jitter": "PT0.1S"}
+    }
+  ]
+}
+```
+
+Weights are positive integers and do not need to total 100. At least one outcome is required, and the total weight must
+not exceed `Long.MAX_VALUE`. An outcome must be a `latency` or `synthetic-http-response` leaf effect; nested weighted
+choices are rejected. Selection is deterministic for the run seed and matching invocation number, uses a separate random
+stream from activation and latency jitter, and preserves declared outcome order in normalized responses. The disruption's
+cumulative and concurrent budgets apply across all selected outcomes.
+
 Activation can also select a deterministic fraction of matching requests:
 
 ```json
@@ -257,8 +285,9 @@ and stopping a run prevents new reservations while in-flight work drains.
 Runs are local to one Helidon server process, in memory, bounded, and not reconstructed after restart. A caller must create a run on each selected instance. Restart is an unconditional cleanup boundary.
 
 The current slice intentionally supports one stage, one inbound HTTP disruption, `always`, deterministic `probability`,
-or `periodic-burst` activation, exact or segment-aware prefix paths, a synthetic 4xx/5xx HTTP response, and latency before
-application routing. Its public vocabulary includes `runs`, `stages`,
+or `periodic-burst` activation, exact or segment-aware prefix paths, a synthetic 4xx/5xx HTTP response, latency before
+application routing, and deterministic weighted selection between those effects. Its public vocabulary includes `runs`,
+`stages`,
 `disruptions`, `scope`, `activation`, `effect`, and `budget` so later additions can introduce other bounded local effects
 without adopting another project's API.
 

@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Locale;
@@ -213,14 +214,59 @@ final class ChaosRunPlanJson {
     }
 
     private static ChaosEffect effect(JsonObject json, String path, ChaosLimitsConfig limits) {
-        rejectUnknown(json, path, Set.of("type", "status", "headers", "mediaType", "body", "delay", "jitter"));
+        return effect(json, path, limits, true);
+    }
+
+    private static ChaosEffect effect(JsonObject json,
+                                      String path,
+                                      ChaosLimitsConfig limits,
+                                      boolean weightedChoiceAllowed) {
+        rejectUnknown(json, path,
+                      Set.of("type", "status", "headers", "mediaType", "body", "delay", "jitter", "outcomes"));
         String type = requiredString(json, "type", path + "/type");
         return switch (type) {
         case "latency" -> latency(json, path, limits);
         case "synthetic-http-response" -> syntheticResponse(json, path, limits);
+        case "weighted-choice" -> {
+            if (!weightedChoiceAllowed) {
+                throw invalid(path + "/type", "nested-weighted-choice",
+                              "weighted-choice outcomes must be latency or synthetic-http-response.");
+            }
+            yield weightedChoice(json, path, limits);
+        }
         default -> throw invalid(path + "/type", "unsupported-type",
-                                 "Effect type must be latency or synthetic-http-response.");
+                                 "Effect type must be latency, synthetic-http-response, or weighted-choice.");
         };
+    }
+
+    private static ChaosWeightedChoice weightedChoice(JsonObject json, String path, ChaosLimitsConfig limits) {
+        rejectUnknown(json, path, Set.of("type", "outcomes"));
+        JsonArray values = requiredArray(json, "outcomes", path + "/outcomes");
+        if (values.size() == 0) {
+            throw invalid(path + "/outcomes", "empty-outcomes", "At least one weighted outcome is required.");
+        }
+        long totalWeight = 0;
+        var outcomes = new ArrayList<ChaosWeightedChoice.Outcome>(values.size());
+        for (int index = 0; index < values.size(); index++) {
+            String outcomePath = path + "/outcomes/" + index;
+            JsonObject value = requiredObject(values.get(index).orElseThrow(), outcomePath);
+            rejectUnknown(value, outcomePath, Set.of("weight", "effect"));
+            long weight = integer(value, "weight", outcomePath + "/weight");
+            if (weight <= 0) {
+                throw invalid(outcomePath + "/weight", "invalid-weight", "weight must be positive.");
+            }
+            try {
+                totalWeight = Math.addExact(totalWeight, weight);
+            } catch (ArithmeticException exception) {
+                throw invalid(path + "/outcomes", "weight-total", "The outcome weight total is too large.", exception);
+            }
+            ChaosEffect outcomeEffect = effect(requiredObject(value, "effect", outcomePath + "/effect"),
+                                                 outcomePath + "/effect",
+                                                 limits,
+                                                 false);
+            outcomes.add(new ChaosWeightedChoice.Outcome(weight, outcomeEffect));
+        }
+        return new ChaosWeightedChoice(outcomes);
     }
 
     private static ChaosLatency latency(JsonObject json, String path, ChaosLimitsConfig limits) {

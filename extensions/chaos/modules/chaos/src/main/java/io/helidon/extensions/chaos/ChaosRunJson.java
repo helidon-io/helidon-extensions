@@ -126,7 +126,22 @@ final class ChaosRunJson {
                 .set("jitter", latency.jitter().toString())
                 .build();
         case ChaosSyntheticResponse synthetic -> syntheticResponse(synthetic);
+        case ChaosWeightedChoice choice -> weightedChoice(choice);
         };
+    }
+
+    private static JsonObject weightedChoice(ChaosWeightedChoice choice) {
+        List<JsonObject> outcomes = choice.outcomes()
+                .stream()
+                .map(outcome -> JsonObject.builder()
+                        .set("weight", outcome.weight())
+                        .set("effect", effect(outcome.effect()))
+                        .build())
+                .toList();
+        return JsonObject.builder()
+                .set("type", "weighted-choice")
+                .setValues("outcomes", outcomes)
+                .build();
     }
 
     private static JsonObject syntheticResponse(ChaosSyntheticResponse synthetic) {

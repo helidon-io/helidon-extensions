@@ -28,6 +28,7 @@ final class ChaosRun {
     private final Instant expiresAt;
     private final long activationStreamSeed;
     private final long effectStreamSeed;
+    private final long choiceStreamSeed;
 
     private ChaosRunState state = ChaosRunState.RUNNING;
     private ChaosRunState drainedState;
@@ -62,6 +63,10 @@ final class ChaosRun {
                                                        plan.stage().name(),
                                                        disruption.name(),
                                                        "effect");
+        this.choiceStreamSeed = ChaosRandom.streamSeed(plan.seed(),
+                                                       plan.stage().name(),
+                                                       disruption.name(),
+                                                       "choice");
     }
 
     UUID id() {
@@ -115,6 +120,8 @@ final class ChaosRun {
         ChaosEffectAction action = switch (disruption.effect()) {
         case ChaosLatency latency -> latency.resolve(ChaosRandom.sample(effectStreamSeed, matched));
         case ChaosSyntheticResponse synthetic -> synthetic;
+        case ChaosWeightedChoice choice -> choice.resolve(ChaosRandom.sample(choiceStreamSeed, matched),
+                                                          ChaosRandom.sample(effectStreamSeed, matched));
         };
         inFlight++;
         activated++;

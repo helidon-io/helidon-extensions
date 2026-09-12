@@ -164,6 +164,61 @@ class ChaosExtensionIT {
         assertThat(APPLICATION_INVOCATIONS.get(), is(1));
     }
 
+    @Test
+    void executesDeterministicWeightedChoice() {
+        JsonObject plan = runPlan(42,
+                                  "stage",
+                                  "weighted",
+                                  "{\"type\":\"always\"}",
+                                  """
+                                          {
+                                            "type": "weighted-choice",
+                                            "outcomes": [
+                                              {
+                                                "weight": 3,
+                                                "effect": {
+                                                  "type": "synthetic-http-response",
+                                                  "status": 503
+                                                }
+                                              },
+                                              {
+                                                "weight": 1,
+                                                "effect": {
+                                                  "type": "latency",
+                                                  "delay": "PT0.001S"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                          """);
+        JsonObject created = postRun(control, plan);
+        JsonObject effect = created.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("effect").orElseThrow();
+        JsonArray outcomes = effect.arrayValue("outcomes").orElseThrow();
+        assertThat(effect.stringValue("type").orElseThrow(), is("weighted-choice"));
+        assertThat(outcomes.size(), is(2));
+        assertThat(outcomes.get(0).orElseThrow().asObject().longValue("weight").orElseThrow(), is(3L));
+        assertThat(outcomes.get(1).orElseThrow().asObject().objectValue("effect").orElseThrow()
+                           .stringValue("jitter").orElseThrow(), is("PT0S"));
+
+        Status[] expected = {
+                Status.SERVICE_UNAVAILABLE_503,
+                Status.SERVICE_UNAVAILABLE_503,
+                Status.SERVICE_UNAVAILABLE_503,
+                Status.OK_200,
+                Status.OK_200,
+                Status.SERVICE_UNAVAILABLE_503,
+                Status.SERVICE_UNAVAILABLE_503,
+                Status.SERVICE_UNAVAILABLE_503
+        };
+        for (Status status : expected) {
+            assertThat(application.get("/orders/42").request(String.class).status(), is(status));
+        }
+        assertThat(APPLICATION_INVOCATIONS.get(), is(2));
+    }
+
     private static JsonObject postRun(Http1Client control) {
         return postRun(control, runPlan(148_894, "reject-orders", "orders-503", "{\"type\":\"always\"}"));
     }
