@@ -47,6 +47,8 @@
         <version.java>26</version.java>
         <version.lib.artemis>2.55.0</version.lib.artemis>
         <version.lib.jakarta.jms-api>3.1.0</version.lib.jakarta.jms-api>
+        <version.lib.javax.jms-api>2.0.1</version.lib.javax.jms-api>
+        <version.lib.activemq-classic>5.19.11</version.lib.activemq-classic>
     </properties>
 
     <dependencyManagement>
@@ -62,6 +64,16 @@
                 <groupId>jakarta.jms</groupId>
                 <artifactId>jakarta.jms-api</artifactId>
                 <version>${version.lib.jakarta.jms-api}</version>
+            </dependency>
+            <dependency>
+                <groupId>javax.jms</groupId>
+                <artifactId>javax.jms-api</artifactId>
+                <version>${version.lib.javax.jms-api}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.activemq</groupId>
+                <artifactId>activemq-client</artifactId>
+                <version>${version.lib.activemq-classic}</version>
             </dependency>
             <dependency>
                 <groupId>org.testcontainers</groupId>

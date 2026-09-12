@@ -19,7 +19,8 @@ limitations under the License.
 Each connector is an independently versioned extension under this grouping directory:
 
 * [Kafka](kafka/modules/kafka/README.md), including [runnable examples](kafka/examples/README.md)
-* [JMS](jms/modules/jms/README.md), including [runnable examples](jms/examples/README.md)
+* [JMS](jms/modules/jms/README.md) and [javax JMS](jms/modules/jms-javax/README.md),
+  including [runnable Jakarta JMS examples](jms/examples/README.md)
 * [Pulsar](pulsar/modules/pulsar/README.md), including [runnable examples](pulsar/examples/README.md)
 
 Build all connectors with `mvn -f extensions/messaging/pom.xml install`, or build one

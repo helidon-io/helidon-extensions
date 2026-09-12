@@ -1,30 +1,74 @@
-# Helidon Declarative Messaging JMS Connector
+# Helidon Declarative Messaging JMS Javax Connector
 
-The JMS connector connects Helidon declarative messaging channels to Jakarta Messaging 3.1 queues and topics. It is
-provider-neutral: your application supplies a JMS provider and a `jakarta.jms.ConnectionFactory`.
+The JMS Javax connector connects Helidon declarative messaging channels to Java Message Service (JMS) 2.0 queues and topics. It is
+provider-neutral: your application supplies a JMS provider and a `javax.jms.ConnectionFactory`.
 
-For providers using `javax.jms`, use the sibling [jms-javax connector](../jms-javax/README.md).
-Both variants can run in one messaging graph using connector types `helidon-jms` and
-`helidon-jms-javax`, with a matching factory for each API. Provider client jars must
-also be compatible on the same classpath; the two Artemis client variants contain
-overlapping implementation classes. The mixed-API integration test uses an Artemis
-Jakarta client and an ActiveMQ Classic javax client instead.
+This module requires a JMS 2.0 provider; JMS 1.1 providers are not supported. It mirrors the
+[Jakarta JMS connector](../jms/README.md), with the same configuration and delivery behavior, using the
+`io.helidon.extensions.messaging.connectors.jms.javax` package and the `helidon-jms-javax` connector type.
 
-For complete HTTP-to-JMS round-trip applications using Apache Artemis, see the
+For complete HTTP-to-JMS round-trip applications using the Jakarta API and Apache Artemis, see the
 [imperative example](../../examples/se-imperative/README.md) and
-[declarative example](../../examples/se-declarative/README.md).
+[declarative example](../../examples/se-declarative/README.md). To adapt them, use this module's classes, a JMS 2.0
+provider, a `javax.jms.ConnectionFactory`, and the `helidon-jms-javax` connector type.
 
 ## Dependency
 
 ```xml
 <dependency>
     <groupId>io.helidon.extensions.messaging.connectors</groupId>
-    <artifactId>helidon-extensions-messaging-connectors-jms</artifactId>
+    <artifactId>helidon-extensions-messaging-connectors-jms-javax</artifactId>
 </dependency>
 ```
 
 Add your JMS provider client separately. The connector depends on no JMS implementation and does not select a broker
 implementation.
+
+## Using both JMS APIs
+
+Both connector modules can run in the same application. The APIs use distinct packages, factories resolve by their
+respective `ConnectionFactory` contracts, and the configured connector types are different:
+
+```yaml
+messaging:
+  connector:
+    source:
+      type: helidon-jms
+      connection-factory: jakarta-source
+    target:
+      type: helidon-jms-javax
+      connection-factory: javax-target
+  incoming:
+    incoming-messages:
+      connector: source
+      destination: source-queue
+  outgoing:
+    outgoing-messages:
+      connector: target
+      destination: target-queue
+```
+
+For example, a declarative bridge forwards the portable message and its application headers:
+
+```java
+@Service.Singleton
+class JmsBridge {
+    @Messaging.ReceiveFrom("incoming-messages")
+    @Messaging.SendTo("outgoing-messages")
+    Message<String> forward(Message<String> message) {
+        return message;
+    }
+}
+```
+
+Here `Message` is `io.helidon.messaging.Message`. Register factories implementing the respective API contracts
+under the configured `jakarta-source` and `javax-target` names. The reverse direction works the same way. Native JMS factories and messages are not interchangeable between `jakarta.jms` and `javax.jms`.
+The two connectors also have distinct `JmsMessage` types; map JMS-specific metadata explicitly when bridging them.
+Each connection uses its own local transaction; forwarding does not create one atomic transaction across connectors.
+
+Choose provider client libraries that can coexist as well. A vendor's Jakarta and javax client variants can contain
+the same implementation class names even though the JMS APIs use different packages. Putting both such variants on
+the same classpath is not supported; use compatible clients with distinct implementation packages.
 
 ## Connection factory
 
@@ -105,7 +149,7 @@ supplied channel options override them, including `false` boolean values.
 messaging:
   connector:
     orders-jms:
-      type: helidon-jms
+      type: helidon-jms-javax
       connection-factory: primary-jms
       reconnect:
         initial-delay: PT0.1S
@@ -135,7 +179,7 @@ The list form is also supported:
 messaging:
   connector:
     - name: orders-jms
-      type: helidon-jms
+      type: helidon-jms-javax
       connection-factory: primary-jms
 ```
 
@@ -153,7 +197,7 @@ password: ${JMS_PASSWORD}
 This example resolves `JMS_PASSWORD` from Helidon's default environment-variable config source. Applications can use
 any configured secret-capable source or config filter instead.
 
-The connector snapshots the configured password as `char[]`, converts it to the `String` required by the Jakarta JMS
+The connector snapshots the configured password as `char[]`, converts it to the `String` required by the JMS 2.0
 API only at connection creation, and clears its private copy when shutdown is requested. It does not log credentials.
 An application-owned typed configuration remains reusable and retains its own defensive password copy.
 
@@ -167,7 +211,7 @@ identifier:
 messaging:
   connector:
     orders-jms:
-      type: helidon-jms
+      type: helidon-jms-javax
   incoming:
     notifications:
       connector: orders-jms
@@ -300,7 +344,7 @@ Do not enable object messages for data from an untrusted broker, tenant, or prod
 The connector uses one synchronous consumer and one outstanding message per JMS session. It reserves runtime delivery
 capacity before calling `receive`, then holds that capacity until transport settlement is complete.
 
-The Jakarta Messaging API does not provide a portable way to limit a provider's client-side prefetch. Runtime delivery
+The JMS 2.0 API does not provide a portable way to limit a provider's client-side prefetch. Runtime delivery
 capacity therefore controls calls to `receive`, but a provider may already have moved additional messages from the
 broker into its client buffer. If broker-side acquisition must follow runtime backpressure, configure the supplied
 `ConnectionFactory` with provider-specific consumer credit or prefetch disabled. For Artemis, a consumer window size of
