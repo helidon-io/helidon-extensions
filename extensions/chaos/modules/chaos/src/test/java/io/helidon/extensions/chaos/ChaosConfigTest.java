@@ -16,11 +16,14 @@
 package io.helidon.extensions.chaos;
 
 import java.time.Duration;
+import java.util.HashSet;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -87,6 +90,32 @@ class ChaosConfigTest {
 
         assertThat(config.controlSocket().orElseThrow(), is("chaos-control"));
         assertThat(config.applicationSockets(), contains("@default"));
+    }
+
+    @Test
+    void rejectsNullSocketWhenReplacingApplicationSockets() {
+        Set<String> sockets = new HashSet<>();
+        sockets.add(null);
+
+        assertThrows(NullPointerException.class, () -> ChaosConfig.builder().applicationSockets(sockets));
+    }
+
+    @Test
+    void rejectsNullSocketWhenAddingApplicationSockets() {
+        Set<String> sockets = new HashSet<>();
+        sockets.add(null);
+
+        assertThrows(NullPointerException.class, () -> ChaosConfig.builder().addApplicationSockets(sockets));
+    }
+
+    @Test
+    void rejectsNullSocketAddedThroughApplicationSocketsAccessor() {
+        ChaosConfig.Builder builder = ChaosConfig.builder();
+        builder.applicationSockets().add(null);
+
+        NullPointerException exception = assertThrows(NullPointerException.class, builder::buildPrototype);
+
+        assertThat(exception.getMessage(), containsString("Application socket"));
     }
 
     @Test

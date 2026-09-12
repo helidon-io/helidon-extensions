@@ -53,6 +53,7 @@ interface ChaosConfigBlueprint extends Prototype.Factory<ChaosServerFeature> {
      * @return application socket names
      */
     @Option.Configured
+    @Option.Decorator(ChaosConfigSupport.ApplicationSocketDecorator.class)
     @Option.Singular
     Set<String> applicationSockets();
 
