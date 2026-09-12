@@ -21,6 +21,7 @@ import java.time.format.DateTimeParseException;
 import java.util.Map;
 import java.util.Optional;
 
+import io.helidon.extensions.chaos.ChaosActivation.PeriodicBurstActivation;
 import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 import io.helidon.json.JsonObject;
 import io.helidon.json.JsonParser;
@@ -75,6 +76,85 @@ class ChaosRunPlanJsonTest {
                 json(withActivation("{\"type\": \"probability\", \"probability\": 1}")),
                 LIMITS);
         assertThat(certain.stage().disruption().activation(), is(new ProbabilityActivation(1)));
+    }
+
+    @Test
+    void parsesPeriodicBurstActivation() {
+        ChaosRunPlan explicit = ChaosRunPlanJson.parse(
+                json(withActivation("""
+                        {
+                          "type": "periodic-burst",
+                          "initialSkip": 20,
+                          "cycleSize": 10,
+                          "burstSize": 3
+                        }
+                        """)),
+                LIMITS);
+        ChaosRunPlan defaultInitialSkip = ChaosRunPlanJson.parse(
+                json(withActivation("""
+                        {
+                          "type": "periodic-burst",
+                          "cycleSize": 10,
+                          "burstSize": 3
+                        }
+                        """)),
+                LIMITS);
+
+        assertThat(explicit.stage().disruption().activation(), is(new PeriodicBurstActivation(20, 10, 3)));
+        assertThat(defaultInitialSkip.stage().disruption().activation(), is(new PeriodicBurstActivation(0, 10, 3)));
+    }
+
+    @Test
+    void rejectsMalformedPeriodicBurstActivation() {
+        assertBadRequest(withActivation("""
+                {"type": "periodic-burst", "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/cycleSize");
+        assertBadRequest(withActivation("""
+                {"type": "periodic-burst", "cycleSize": 10}
+                """), "/stages/0/disruptions/0/activation/burstSize");
+        assertBadRequest(withActivation("""
+                {"type": "periodic-burst", "initialSkip": "twenty", "cycleSize": 10, "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/initialSkip");
+        assertBadRequest(withActivation("""
+                {"type": "periodic-burst", "cycleSize": 10.5, "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/cycleSize");
+    }
+
+    @Test
+    void rejectsInvalidPeriodicBurstActivation() {
+        assertInvalidPlan(withActivation("""
+                {"type": "periodic-burst", "initialSkip": -1, "cycleSize": 10, "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/initialSkip");
+        assertInvalidPlan(withActivation("""
+                {"type": "periodic-burst", "cycleSize": 0, "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/cycleSize");
+        assertInvalidPlan(withActivation("""
+                {"type": "periodic-burst", "cycleSize": 10, "burstSize": 0}
+                """), "/stages/0/disruptions/0/activation/burstSize");
+        assertInvalidPlan(withActivation("""
+                {"type": "periodic-burst", "cycleSize": 10, "burstSize": 11}
+                """), "/stages/0/disruptions/0/activation/burstSize");
+    }
+
+    @Test
+    void enforcesPeriodicBurstActivationInvariants() {
+        assertThrows(IllegalArgumentException.class, () -> new PeriodicBurstActivation(-1, 10, 3));
+        assertThrows(IllegalArgumentException.class, () -> new PeriodicBurstActivation(0, 0, 3));
+        assertThrows(IllegalArgumentException.class, () -> new PeriodicBurstActivation(0, 10, 0));
+        assertThrows(IllegalArgumentException.class, () -> new PeriodicBurstActivation(0, 10, 11));
+    }
+
+    @Test
+    void keepsActivationPropertiesMutuallyExclusive() {
+        assertBadRequest(withActivation("""
+                {"type": "always", "cycleSize": 10}
+                """), "/stages/0/disruptions/0/activation/cycleSize");
+        assertBadRequest(withActivation("""
+                {"type": "probability", "probability": 0.25, "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/burstSize");
+        assertBadRequest(withActivation("""
+                {"type": "periodic-burst", "probability": 0.25, "cycleSize": 10, "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/probability");
     }
 
     @Test

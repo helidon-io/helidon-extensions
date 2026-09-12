@@ -31,6 +31,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.common.media.type.MediaTypes;
+import io.helidon.extensions.chaos.ChaosActivation.PeriodicBurstActivation;
 import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -139,6 +140,62 @@ class ChaosRunEngineTest {
                                    new ProbabilityActivation(0.5), 42, "alternate"), "alice");
         assertThat(reserveSequence(identityEngine, 8),
                    is(List.of(false, true, true, true, true, false, false, true)));
+    }
+
+    @Test
+    void periodicBurstSkipsInitiallyThenRepeatsWithoutConsumingBudgetOnMisses() {
+        ChaosRunPlan plan = plan(10,
+                                 30,
+                                 20,
+                                 2,
+                                 "/orders",
+                                 new PeriodicBurstActivation(2, 4, 2),
+                                 42,
+                                 "synthetic");
+        ChaosRunView created = engine.create(plan, "alice");
+
+        List<Boolean> decisions = reserveSequence(engine, 12);
+
+        assertThat(decisions,
+                   is(List.of(false, false, true, true, false, false,
+                              true, true, false, false, true, true)));
+        ChaosRunView view = engine.get(created.id()).orElseThrow();
+        assertThat(view.matched(), is(12L));
+        assertThat(view.activated(), is(6L));
+        assertThat(view.skippedActivation(), is(6L));
+        assertThat(view.skippedConcurrent(), is(0L));
+        assertThat(view.skippedBudget(), is(0L));
+        assertThat(view.completed(), is(6L));
+    }
+
+    @Test
+    void periodicBurstCountsOnlyMatchingRequestsAndIgnoresSeed() {
+        PeriodicBurstActivation activation = new PeriodicBurstActivation(1, 3, 1);
+        engine.create(plan(10, 30, 20, 2, "/orders", activation, 42, "synthetic"), "alice");
+
+        assertThat(engine.reserve("GET", "/customers"), is(Optional.empty()));
+        assertThat(engine.reserve("POST", "/orders/42"), is(Optional.empty()));
+        List<Boolean> decisions = reserveSequence(engine, 5);
+
+        assertThat(decisions, is(List.of(false, true, false, false, true)));
+        assertThat(engine.list().getFirst().matched(), is(5L));
+
+        ChaosRunEngine differentSeedEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        differentSeedEngine.create(
+                plan(10, 30, 20, 2, "/orders", activation, 99, "synthetic"),
+                "alice");
+        assertThat(reserveSequence(differentSeedEngine, 5),
+                   is(List.of(false, true, false, false, true)));
+    }
+
+    @Test
+    void periodicBurstSupportsLongCounterBoundary() {
+        PeriodicBurstActivation activation =
+                new PeriodicBurstActivation(Long.MAX_VALUE - 2, Long.MAX_VALUE, 1);
+
+        assertThat(ChaosActivationDecider.activates(activation, 42, Long.MAX_VALUE - 2), is(false));
+        assertThat(ChaosActivationDecider.activates(activation, 42, Long.MAX_VALUE - 1), is(true));
+        assertThat(ChaosActivationDecider.activates(activation, 42, Long.MAX_VALUE), is(false));
     }
 
     @Test

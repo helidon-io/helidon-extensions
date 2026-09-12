@@ -31,6 +31,7 @@ import java.util.regex.Pattern;
 
 import io.helidon.common.media.type.MediaType;
 import io.helidon.common.media.type.MediaTypes;
+import io.helidon.extensions.chaos.ChaosActivation.PeriodicBurstActivation;
 import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 import io.helidon.json.JsonArray;
 import io.helidon.json.JsonObject;
@@ -161,7 +162,7 @@ final class ChaosRunPlanJson {
     }
 
     private static ChaosActivation activation(JsonObject json, String path) {
-        rejectUnknown(json, path, Set.of("type", "probability"));
+        rejectUnknown(json, path, Set.of("type", "probability", "initialSkip", "cycleSize", "burstSize"));
         String type = requiredString(json, "type", path + "/type");
         return switch (type) {
         case "always" -> {
@@ -186,8 +187,28 @@ final class ChaosRunPlanJson {
             }
             yield new ProbabilityActivation(normalized);
         }
+        case "periodic-burst" -> {
+            rejectUnknown(json, path, Set.of("type", "initialSkip", "cycleSize", "burstSize"));
+            long initialSkip = json.containsKey("initialSkip")
+                    ? integer(json, "initialSkip", path + "/initialSkip")
+                    : 0;
+            long cycleSize = integer(json, "cycleSize", path + "/cycleSize");
+            long burstSize = integer(json, "burstSize", path + "/burstSize");
+            if (initialSkip < 0) {
+                throw invalid(path + "/initialSkip", "invalid-initial-skip",
+                              "initialSkip must not be negative.");
+            }
+            if (cycleSize <= 0) {
+                throw invalid(path + "/cycleSize", "invalid-cycle-size", "cycleSize must be positive.");
+            }
+            if (burstSize <= 0 || burstSize > cycleSize) {
+                throw invalid(path + "/burstSize", "invalid-burst-size",
+                              "burstSize must be positive and at most cycleSize.");
+            }
+            yield new PeriodicBurstActivation(initialSkip, cycleSize, burstSize);
+        }
         default -> throw invalid(path + "/type", "unsupported-type",
-                                 "Activation type must be always or probability.");
+                                 "Activation type must be always, probability, or periodic-burst.");
         };
     }
 

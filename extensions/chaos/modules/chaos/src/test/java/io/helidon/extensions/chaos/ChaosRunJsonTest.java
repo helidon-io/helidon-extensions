@@ -26,6 +26,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.common.media.type.MediaTypes;
+import io.helidon.extensions.chaos.ChaosActivation.PeriodicBurstActivation;
 import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 import io.helidon.json.JsonArray;
 import io.helidon.json.JsonObject;
@@ -87,6 +88,25 @@ class ChaosRunJsonTest {
                 .objectValue("activation").orElseThrow();
         assertThat(activation.stringValue("type").orElseThrow(), is("probability"));
         assertThat(activation.doubleValue("probability").orElseThrow(), is(0.25));
+    }
+
+    @Test
+    void writesNormalizedPeriodicBurstActivation() {
+        ChaosRunPlan periodicBurstPlan = plan(new PeriodicBurstActivation(0, 10, 3));
+
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   periodicBurstPlan));
+
+        JsonObject activation = json.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("activation").orElseThrow();
+        assertThat(activation.stringValue("type").orElseThrow(), is("periodic-burst"));
+        assertThat(activation.longValue("initialSkip").orElseThrow(), is(0L));
+        assertThat(activation.longValue("cycleSize").orElseThrow(), is(10L));
+        assertThat(activation.longValue("burstSize").orElseThrow(), is(3L));
     }
 
     @Test

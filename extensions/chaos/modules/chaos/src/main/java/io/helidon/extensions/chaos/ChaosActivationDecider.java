@@ -17,6 +17,7 @@ package io.helidon.extensions.chaos;
 
 import java.nio.charset.StandardCharsets;
 
+import io.helidon.extensions.chaos.ChaosActivation.PeriodicBurstActivation;
 import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 
 /**
@@ -52,6 +53,14 @@ final class ChaosActivationDecider {
             long sampleBits = mix64(streamSeed + (matchedInvocation - 1) * GOLDEN_GAMMA);
             double sample = (sampleBits >>> 11) * DOUBLE_UNIT;
             return sample < probability.probability();
+        }
+        if (activation instanceof PeriodicBurstActivation periodicBurst) {
+            long cycleInvocation = matchedInvocation - periodicBurst.initialSkip();
+            if (cycleInvocation <= 0) {
+                return false;
+            }
+            long cyclePosition = (cycleInvocation - 1) % periodicBurst.cycleSize();
+            return cyclePosition < periodicBurst.burstSize();
         }
         return true;
     }

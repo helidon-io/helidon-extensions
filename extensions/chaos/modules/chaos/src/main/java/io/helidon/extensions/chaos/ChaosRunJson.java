@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+import io.helidon.extensions.chaos.ChaosActivation.PeriodicBurstActivation;
 import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 import io.helidon.json.JsonArray;
 import io.helidon.json.JsonObject;
@@ -90,6 +91,14 @@ final class ChaosRunJson {
             return JsonObject.builder()
                     .set("type", "probability")
                     .set("probability", probability.probability())
+                    .build();
+        }
+        if (activation instanceof PeriodicBurstActivation periodicBurst) {
+            return JsonObject.builder()
+                    .set("type", "periodic-burst")
+                    .set("initialSkip", periodicBurst.initialSkip())
+                    .set("cycleSize", periodicBurst.cycleSize())
+                    .set("burstSize", periodicBurst.burstSize())
                     .build();
         }
         return JsonObject.builder()

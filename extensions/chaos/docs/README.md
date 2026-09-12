@@ -172,6 +172,24 @@ Activation can also select a deterministic fraction of matching requests:
 
 `probability` must be between `2^-53` (approximately `1.1102230246251565e-16`) and one, matching the sampler's explicit 53-bit resolution. Values below that resolution, or values below one that would round to one, are rejected rather than silently changing their meaning. The extension derives an independent pseudo-random stream from the run `seed` and unambiguously encoded stage/disruption identity. The same normalized plan, seed, and matched-request order therefore produce the same decisions. Probability misses increment `skippedActivation` and do not consume cumulative or concurrency budget. The implementation uses extension-owned deterministic mixing rather than a JDK random-generator implementation.
 
+For a repeating count-based burst, use `periodic-burst` activation:
+
+```json
+{
+  "type": "periodic-burst",
+  "initialSkip": 20,
+  "cycleSize": 10,
+  "burstSize": 3
+}
+```
+
+Only requests matching the disruption scope advance the activation count. `initialSkip` is optional and defaults to zero.
+After those initial requests, the first `burstSize` requests in every `cycleSize` requests activate the disruption. The
+example therefore does not activate chaos for requests 1 through 20, activates requests 21 through 23, does not activate
+chaos for requests 24 through 30, and repeats that ten-request cycle. `cycleSize` and `burstSize` must be positive, and
+`burstSize` must not exceed `cycleSize`. The run seed does not affect this deterministic schedule. Periodic-burst
+misses increment `skippedActivation` and do not consume cumulative or concurrency budget.
+
 ```bash
 curl --fail-with-body \
   --user operator:test-only-password \
@@ -211,10 +229,10 @@ and stopping a run prevents new reservations while in-flight work drains.
 
 Runs are local to one Helidon server process, in memory, bounded, and not reconstructed after restart. A caller must create a run on each selected instance. Restart is an unconditional cleanup boundary.
 
-The current slice intentionally supports one stage, one inbound HTTP disruption, `always` or deterministic
-`probability` activation, exact or segment-aware prefix paths, and a synthetic 4xx/5xx HTTP response. Its public vocabulary includes `runs`, `stages`,
-`disruptions`, `scope`, `activation`, `effect`, and `budget` so later additions can introduce invocation cycles,
-repetitions, and other bounded local effects without adopting another project's API.
+The current slice intentionally supports one stage, one inbound HTTP disruption, `always`, deterministic `probability`,
+or `periodic-burst` activation, exact or segment-aware prefix paths, and a synthetic 4xx/5xx HTTP response. Its public vocabulary includes `runs`, `stages`,
+`disruptions`, `scope`, `activation`, `effect`, and `budget` so later additions can introduce other bounded local effects
+without adopting another project's API.
 
 Out of scope for this slice are timeout or connection-stall effects, bytecode injection, exception injection inside
 arbitrary methods, outbound client failures, CPU or memory pressure, network faults outside the process, distributed
