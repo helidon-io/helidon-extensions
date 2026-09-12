@@ -169,8 +169,13 @@ outgoing `KafkaMessage` with a null entity.
 
 ## Incoming settlement and consumer groups
 
-Each Kafka poll is one retained `MessageBatch`. Before polling, the connector reserves the runtime's maximum delivery
-capacity and caps `max.poll.records` accordingly. While that batch is processed, assigned partitions remain paused and the
+With `auto-offset-reset: latest`, the connector captures the topic's end offsets before reporting readiness for
+partitions that have no committed offset. These starting offsets also apply to partitions assigned later, so records
+published after `graph.start()` returns remain eligible for delivery. Committed offsets always take precedence;
+other reset policies retain Kafka's normal behavior. Startup offset lookups are bounded by `default.api.timeout.ms`.
+
+Each normal Kafka poll is one retained `MessageBatch`. Before fetching records, the connector reserves the runtime's
+maximum delivery capacity and caps `max.poll.records` accordingly. While that batch is processed, assigned partitions remain paused and the
 consumer owner continues maintenance polls for heartbeats and rebalance callbacks. This also applies while normal or
 pre-dispatch-failure admission is temporarily unavailable.
 
