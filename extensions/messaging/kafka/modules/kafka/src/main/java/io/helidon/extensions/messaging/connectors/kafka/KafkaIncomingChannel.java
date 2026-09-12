@@ -78,6 +78,8 @@ import org.apache.kafka.common.errors.WakeupException;
  * only heartbeat-maintenance polls run. A defensive post-poll check rejects a client result that exceeds the reserved
  * message count without committing it. Kafka fetch and record byte limits remain transport-specific client properties;
  * runtime admission does not bound transient Kafka-client or deserializer memory.
+ * For {@code latest} partitions without committed offsets, the starting offsets are captured before reporting readiness
+ * and applied on assignment, so delayed group assignment does not skip records published after startup.
  */
 final class KafkaIncomingChannel {
     private static final System.Logger LOGGER = System.getLogger(KafkaIncomingChannel.class.getName());
@@ -420,9 +422,9 @@ final class KafkaIncomingChannel {
                         context.maxDeliveryMessages()));
                 activeConsumer.set(consumer);
                 if (!closed.get()) {
-                    SourceRebalanceListener rebalanceListener = new SourceRebalanceListener(consumer);
+                    SourceRebalanceListener rebalanceListener = new SourceRebalanceListener(consumer,
+                                                                                            verifyBrokerReadiness(consumer));
                     consumer.subscribe(List.of(config.topic()), rebalanceListener);
-                    verifyBrokerReadiness(consumer);
                     boolean running = context.awaitRunning();
                     startupOwner.compareAndSet(owner, null);
                     if (running && !closed.get() && !draining.get()) {
@@ -1252,7 +1254,7 @@ final class KafkaIncomingChannel {
             }
         }
 
-        private void verifyBrokerReadiness(Consumer<Object, Object> consumer) {
+        private Map<TopicPartition, Long> verifyBrokerReadiness(Consumer<Object, Object> consumer) {
             List<PartitionInfo> partitions = consumer.partitionsFor(config.topic(), commitTimeout);
             if (partitions == null || partitions.isEmpty()) {
                 throw new MessagingException("Kafka topic " + config.topic() + " has no available partitions");
@@ -1261,10 +1263,16 @@ final class KafkaIncomingChannel {
             for (PartitionInfo partition : partitions) {
                 topicPartitions.add(new TopicPartition(partition.topic(), partition.partition()));
             }
-            if (consumer.committed(topicPartitions, commitTimeout) == null) {
+            Map<TopicPartition, OffsetAndMetadata> committed = consumer.committed(topicPartitions, commitTimeout);
+            if (committed == null) {
                 throw new MessagingException("Kafka broker returned no committed-offset response for topic "
                                                      + config.topic());
             }
+            if (!"latest".equals(config.autoOffsetReset())) {
+                return Map.of();
+            }
+            topicPartitions.removeIf(partition -> committed.get(partition) != null);
+            return topicPartitions.isEmpty() ? Map.of() : consumer.endOffsets(topicPartitions, commitTimeout);
         }
 
         private void closeConsumer(Consumer<Object, Object> consumer, Duration timeout) {
@@ -1376,11 +1384,13 @@ final class KafkaIncomingChannel {
 
         private final class SourceRebalanceListener implements ConsumerRebalanceListener {
             private final Consumer<Object, Object> consumer;
+            private final Map<TopicPartition, Long> startupOffsets;
             private PendingPoll pendingPoll;
             private boolean capacityWaiting;
 
-            private SourceRebalanceListener(Consumer<Object, Object> consumer) {
+            private SourceRebalanceListener(Consumer<Object, Object> consumer, Map<TopicPartition, Long> startupOffsets) {
                 this.consumer = consumer;
+                this.startupOffsets = new LinkedHashMap<>(startupOffsets);
             }
 
             @Override
@@ -1392,6 +1402,19 @@ final class KafkaIncomingChannel {
             public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
                 if (capacityWaiting || pendingPoll != null) {
                     consumer.pause(consumer.assignment());
+                }
+                Set<TopicPartition> initialPartitions = new HashSet<>(partitions);
+                initialPartitions.retainAll(startupOffsets.keySet());
+                if (!initialPartitions.isEmpty()) {
+                    Map<TopicPartition, OffsetAndMetadata> committed = consumer.committed(initialPartitions, commitTimeout);
+                    for (TopicPartition partition : initialPartitions) {
+                        if (committed.get(partition) == null) {
+                            // Retain the starting offset until a commit survives subsequent reassignments.
+                            consumer.seek(partition, startupOffsets.get(partition));
+                        } else {
+                            startupOffsets.remove(partition);
+                        }
+                    }
                 }
             }
 

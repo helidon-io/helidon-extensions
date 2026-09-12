@@ -19,6 +19,7 @@ package io.helidon.extensions.messaging.connectors.kafka;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -77,6 +78,108 @@ class KafkaIncomingChannelTest {
     private static final String TOPIC = "audit-events";
     private static final TopicPartition TOPIC_PARTITION = new TopicPartition(TOPIC, 0);
     private static final TopicPartition SECOND_TOPIC_PARTITION = new TopicPartition(TOPIC, 1);
+
+    @Test
+    void testLatestStartupOffsetSurvivesUncommittedReassignment() {
+        TrackingMockConsumer consumer = new TrackingMockConsumer(OffsetResetStrategy.LATEST);
+        consumer.updateEndOffsets(Map.of(TOPIC_PARTITION, 7L));
+        RecordingContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public boolean awaitRunning() {
+                assertThat(consumer.pollCount(), is(0));
+                consumer.updateEndOffsets(Map.of(TOPIC_PARTITION, 9L));
+                return true;
+            }
+        };
+        consumer.schedulePollTask(() -> consumer.rebalance(Set.of(TOPIC_PARTITION)));
+        consumer.schedulePollTask(() -> {
+            consumer.rebalance(Set.of());
+            consumer.updateEndOffsets(Map.of(TOPIC_PARTITION, 10L));
+            consumer.rebalance(Set.of(TOPIC_PARTITION));
+            assertThat(consumer.position(TOPIC_PARTITION), is(7L));
+            consumer.addRecord(record(7, "after-start", new RecordHeaders()));
+        });
+        IncomingConnectorHarness connector = new IncomingConnectorHarness(_ -> consumer);
+        consumer.afterCommit(connector::close);
+
+        connector.createIncomingChannel(config(Duration.ofSeconds(1), Map.of(), "latest")).run(context);
+
+        assertThat(context.messages().stream().map(Message::entity).toList(), is(List.of("after-start")));
+        assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(8L));
+    }
+
+    @Test
+    void testNewCommittedOffsetTakesPrecedenceOverLatestStartupOffset() {
+        TrackingMockConsumer consumer = new TrackingMockConsumer(OffsetResetStrategy.LATEST);
+        consumer.updateEndOffsets(Map.of(TOPIC_PARTITION, 7L));
+        IncomingConnectorHarness connector = new IncomingConnectorHarness(_ -> consumer);
+        consumer.schedulePollTask(() -> consumer.rebalance(Set.of(TOPIC_PARTITION)));
+        consumer.schedulePollTask(() -> {
+            consumer.rebalance(Set.of());
+            consumer.commitAsync(Map.of(TOPIC_PARTITION, new OffsetAndMetadata(9L)),
+                                 (_, failure) -> assertThat(failure, nullValue()));
+            consumer.afterCommit(connector::close);
+            consumer.updateEndOffsets(Map.of(TOPIC_PARTITION, 11L));
+            consumer.rebalance(Set.of(TOPIC_PARTITION));
+            assertThat(consumer.position(TOPIC_PARTITION), is(9L));
+            consumer.addRecord(record(8, "already-processed", new RecordHeaders()));
+            consumer.addRecord(record(9, "unprocessed", new RecordHeaders()));
+        });
+        RecordingContext context = new RecordingContext(new ArrayList<>());
+
+        connector.createIncomingChannel(config(Duration.ofSeconds(1), Map.of(), "latest")).run(context);
+
+        assertThat(context.messages().stream().map(Message::entity).toList(), is(List.of("unprocessed")));
+        assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(10L));
+    }
+
+    @Test
+    void testCooperativeAssignmentDoesNotRewindRetainedPartition() {
+        TrackingMockConsumer consumer = new TrackingMockConsumer(OffsetResetStrategy.LATEST);
+        consumer.updateEndOffsets(Map.of(TOPIC_PARTITION, 7L));
+        IncomingConnectorHarness connector = new IncomingConnectorHarness(_ -> consumer);
+        consumer.schedulePollTask(() -> {
+            consumer.rebalance(Set.of(TOPIC_PARTITION));
+            consumer.seek(TOPIC_PARTITION, 8L);
+            // An unchanged assignment invokes the callback with no newly assigned partitions.
+            consumer.rebalance(Set.of(TOPIC_PARTITION));
+            assertThat(consumer.position(TOPIC_PARTITION), is(8L));
+            connector.close();
+        });
+
+        connector.createIncomingChannel(config(Duration.ofSeconds(1), Map.of(), "latest"))
+                .run(new RecordingContext(new ArrayList<>()));
+
+        assertThat(consumer.commitCount(), is(0));
+    }
+
+    @Test
+    void testLatestOffsetLookupFailureDoesNotReportReady() {
+        IllegalStateException lookupFailure = new IllegalStateException("offset lookup failed");
+        TrackingMockConsumer consumer = new TrackingMockConsumer(OffsetResetStrategy.LATEST) {
+            @Override
+            public Map<TopicPartition, Long> endOffsets(Collection<TopicPartition> partitions, Duration timeout) {
+                throw lookupFailure;
+            }
+        };
+        AtomicBoolean ready = new AtomicBoolean();
+        IncomingConnectorContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            public boolean awaitRunning() {
+                ready.set(true);
+                return false;
+            }
+        };
+        IncomingChannel source = new KafkaIncomingChannel(_ -> consumer)
+                .createIncomingChannel(config(Duration.ofSeconds(1), Map.of(), "latest"));
+
+        MessagingException failure = assertThrows(MessagingException.class, () -> source.run(context));
+
+        assertThat(failure.getCause(), sameInstance(lookupFailure));
+        assertThat(ready.get(), is(false));
+        assertThat(consumer.pollCount(), is(0));
+        assertThat(consumer.closed(), is(true));
+    }
 
     @Test
     void testConnectorType() {
@@ -2013,11 +2116,18 @@ class KafkaIncomingChannelTest {
     }
 
     private static KafkaConnectorConfigSupport.IncomingSettings config(Duration closeTimeout, Map<String, String> properties) {
+        return config(closeTimeout, properties, "earliest");
+    }
+
+    private static KafkaConnectorConfigSupport.IncomingSettings config(Duration closeTimeout,
+                                                                       Map<String, String> properties,
+                                                                       String autoOffsetReset) {
         KafkaIncomingConfig channelConfig = KafkaIncomingConfig.builder()
                 .connector("test-kafka")
                 .channelName("audit")
                 .topic(TOPIC)
                 .groupId("audit-test")
+                .autoOffsetReset(autoOffsetReset)
                 .pollTimeout(Duration.ofMillis(10))
                 .closeTimeout(closeTimeout)
                 .properties(properties)
@@ -2163,7 +2273,11 @@ class KafkaIncomingChannelTest {
         private RuntimeException closeFailure;
 
         private TrackingMockConsumer() {
-            super(OffsetResetStrategy.EARLIEST);
+            this(OffsetResetStrategy.EARLIEST);
+        }
+
+        private TrackingMockConsumer(OffsetResetStrategy strategy) {
+            super(strategy);
             updatePartitions(TOPIC,
                              List.of(new PartitionInfo(TOPIC,
                                                        TOPIC_PARTITION.partition(),

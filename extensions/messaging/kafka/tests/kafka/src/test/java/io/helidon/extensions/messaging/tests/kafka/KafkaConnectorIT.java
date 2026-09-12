@@ -28,14 +28,19 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaConnector;
+import io.helidon.extensions.messaging.connectors.kafka.KafkaIncomingConfig;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaOutgoingConfig;
 import io.helidon.extensions.messaging.connectors.kafka.KafkaMessage;
 import io.helidon.extensions.messaging.tests.kafka.KafkaMessagingTypes.AlwaysFailIncomingReceiver;
@@ -79,6 +84,7 @@ import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.CooperativeStickyAssignor;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -113,6 +119,7 @@ import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DL
 import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_HEADER;
 import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_TIMESTAMP_TYPE_HEADER;
 import static io.helidon.extensions.messaging.connectors.kafka.KafkaConnector.DLQ_ORIGINAL_TOPIC_HEADER;
+import static org.hamcrest.CoreMatchers.hasItem;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
@@ -131,6 +138,60 @@ class KafkaConnectorIT {
 
     @Container
     private static final KafkaContainer KAFKA = new KafkaContainer(KAFKA_IMAGE);
+
+    @Test
+    @Timeout(value = 60)
+    void testGraphStartInitializesLatestOffsetsBeforeImmediatePublish() {
+        String topic = uniqueName("latest-startup");
+        KafkaConnector kafka = KafkaConnector.builder()
+                .name("test-kafka")
+                .addBootstrapServer(KAFKA.getBootstrapServers())
+                .build();
+        MessagingChannel<String> incoming = MessagingChannel.create("incoming", String.class);
+        KafkaIncomingConfig config = KafkaIncomingConfig.builder()
+                .connector(kafka.name())
+                .channelName(incoming.name())
+                .topic(topic)
+                .groupId(uniqueName("group"))
+                .build();
+        BlockingQueue<String> received = new LinkedBlockingQueue<>();
+
+        try (KafkaProducer<String, String> producer = new KafkaProducer<>(
+                Map.of(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers()),
+                new StringSerializer(),
+                new StringSerializer());
+             MessagingGraph graph = MessagingGraph.builder()
+                     .channel(incoming)
+                     .incomingChannel(incoming, kafka.incoming(config))
+                     .messageSink(incoming, message -> received.add(message.entity()))
+                     .build()) {
+            createTopic(topic);
+            producer.partitionsFor(topic);
+
+            graph.start();
+            producer.send(new ProducerRecord<>(topic, "immediate message"))
+                    .get(WAIT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+
+            assertThat(received.poll(WAIT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS), is("immediate message"));
+        } catch (Exception e) {
+            throw new AssertionError("Kafka must receive messages published immediately after graph startup", e);
+        }
+    }
+
+    @Test
+    @Timeout(value = 60)
+    void testGraphStartReceivesImmediateMessagesWithSharedGroup() {
+        // More consumers than partitions must not prevent graph startup.
+        assertGroupStartup(1, Map.of());
+    }
+
+    @Test
+    @Timeout(value = 60)
+    void testGraphStartReceivesImmediateMessagesWithCooperativeAssignment() {
+        // Validate the same readiness boundary with Kafka's cooperative assignment strategy.
+        assertGroupStartup(2, Map.of(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG,
+                                    CooperativeStickyAssignor.class.getName()));
+    }
 
     @Test
     @Timeout(value = 60)
@@ -835,6 +896,59 @@ class KafkaConnectorIT {
         } finally {
             receiver.allowAllFinalAttemptsToFail();
             manager.shutdown();
+        }
+    }
+
+    private static void assertGroupStartup(int partitions, Map<String, String> properties) {
+        String topic = uniqueName("group-startup");
+        String group = uniqueName("group");
+        KafkaConnector kafka = KafkaConnector.builder()
+                .name("test-kafka")
+                .addBootstrapServer(KAFKA.getBootstrapServers())
+                .build();
+        MessagingChannel<String> first = MessagingChannel.create("first", String.class);
+        MessagingChannel<String> second = MessagingChannel.create("second", String.class);
+        Set<String> received = ConcurrentHashMap.newKeySet();
+        CountDownLatch receivedAll = new CountDownLatch(partitions);
+        MessagingConfig.Builder builder = MessagingGraph.builder();
+        for (MessagingChannel<String> channel : List.of(first, second)) {
+            KafkaIncomingConfig config = KafkaIncomingConfig.builder()
+                    .connector(kafka.name())
+                    .channelName(channel.name())
+                    .topic(topic)
+                    .groupId(group)
+                    .properties(properties)
+                    .putProperty(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "10000")
+                    .build();
+            builder.channel(channel)
+                    .incomingChannel(channel, kafka.incoming(config))
+                    .messageSink(channel, message -> {
+                        if (received.add(message.entity())) {
+                            receivedAll.countDown();
+                        }
+                    });
+        }
+
+        try (KafkaProducer<String, String> producer = new KafkaProducer<>(
+                Map.of(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers()),
+                new StringSerializer(),
+                new StringSerializer());
+             MessagingGraph graph = builder.build()) {
+            createTopic(topic, partitions);
+            producer.partitionsFor(topic);
+
+            graph.start();
+            for (int partition = 0; partition < partitions; partition++) {
+                producer.send(new ProducerRecord<>(topic, partition, null, "partition-" + partition))
+                        .get(WAIT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            }
+
+            assertThat(receivedAll.await(WAIT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+            for (int partition = 0; partition < partitions; partition++) {
+                assertThat(received, hasItem("partition-" + partition));
+            }
+        } catch (Exception e) {
+            throw new AssertionError("Kafka group members must keep joining while the graph starts", e);
         }
     }
 
