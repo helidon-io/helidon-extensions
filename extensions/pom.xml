@@ -40,6 +40,7 @@
         <module>neo4j</module>
         <module>oci-v3</module>
         <module>langchain4j</module>
+        <module>messaging</module>
         <module>eureka</module>
         <module>crac</module>
         <module>openapi-ui</module>

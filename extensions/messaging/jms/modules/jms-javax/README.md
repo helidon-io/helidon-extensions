@@ -1,0 +1,411 @@
+# Helidon Declarative Messaging JMS Javax Connector
+
+The JMS Javax connector connects Helidon declarative messaging channels to Java Message Service (JMS) 2.0 queues and topics. It is
+provider-neutral: your application supplies a JMS provider and a `javax.jms.ConnectionFactory`.
+
+This module requires a JMS 2.0 provider; JMS 1.1 providers are not supported. It mirrors the
+[Jakarta JMS connector](../jms/README.md), with the same configuration and delivery behavior, using the
+`io.helidon.extensions.messaging.connectors.jms.javax` package and the `helidon-jms-javax` connector type.
+
+For complete HTTP-to-JMS round-trip applications using the Jakarta API and Apache Artemis, see the
+[imperative example](../../examples/se-imperative/README.md) and
+[declarative example](../../examples/se-declarative/README.md). To adapt them, use this module's classes, a JMS 2.0
+provider, a `javax.jms.ConnectionFactory`, and the `helidon-jms-javax` connector type.
+
+## Dependency
+
+```xml
+<dependency>
+    <groupId>io.helidon.extensions.messaging.connectors</groupId>
+    <artifactId>helidon-extensions-messaging-connectors-jms-javax</artifactId>
+</dependency>
+```
+
+Add your JMS provider client separately. The connector depends on no JMS implementation and does not select a broker
+implementation.
+
+## Using both JMS APIs
+
+Both connector modules can run in the same application. The APIs use distinct packages, factories resolve by their
+respective `ConnectionFactory` contracts, and the configured connector types are different:
+
+```yaml
+messaging:
+  connector:
+    source:
+      type: helidon-jms
+      connection-factory: jakarta-source
+    target:
+      type: helidon-jms-javax
+      connection-factory: javax-target
+  incoming:
+    incoming-messages:
+      connector: source
+      destination: source-queue
+  outgoing:
+    outgoing-messages:
+      connector: target
+      destination: target-queue
+```
+
+For example, a declarative bridge forwards the portable message and its application headers:
+
+```java
+@Service.Singleton
+class JmsBridge {
+    @Messaging.ReceiveFrom("incoming-messages")
+    @Messaging.SendTo("outgoing-messages")
+    Message<String> forward(Message<String> message) {
+        return message;
+    }
+}
+```
+
+Here `Message` is `io.helidon.messaging.Message`. Register factories implementing the respective API contracts
+under the configured `jakarta-source` and `javax-target` names. The reverse direction works the same way. Native JMS factories and messages are not interchangeable between `jakarta.jms` and `javax.jms`.
+The two connectors also have distinct `JmsMessage` types; map JMS-specific metadata explicitly when bridging them.
+Each connection uses its own local transaction; forwarding does not create one atomic transaction across connectors.
+
+Choose provider client libraries that can coexist as well. A vendor's Jakarta and javax client variants can contain
+the same implementation class names even though the JMS APIs use different packages. Putting both such variants on
+the same classpath is not supported; use compatible clients with distinct implementation packages.
+
+## Connection factory
+
+The connector resolves a connection factory in one of three ways.
+
+### Imperative connector
+
+For an imperatively assembled messaging graph, create one configured connector and typed channel configurations:
+
+```java
+ConnectionFactory factory = createVendorConnectionFactory();
+JmsConnector jms = JmsConnector.builder()
+        .name("orders-jms")
+        .connectionFactory(factory)
+        .build();
+
+IncomingChannel orders = jms.incoming(JmsIncomingConfig.builder()
+        .connector(jms.name())
+        .channelName("orders")
+        .destination("orders")
+        .build());
+OutgoingChannel results = jms.outgoing(JmsOutgoingConfig.builder()
+        .connector(jms.name())
+        .channelName("order-results")
+        .destination("order-results")
+        .build());
+```
+
+Each channel inherits the connector's factory and defaults. Register these channels with `MessagingConfig.Builder.incomingChannel`
+and `outgoingChannel`; the graph owns their startup and shutdown. Channel creation does not open a connection.
+
+### Service Registry
+
+A declarative application can register one default connection factory as a contract instance before starting the
+registry:
+
+```java
+ConnectionFactory factory = createVendorConnectionFactory();
+ServiceRegistryConfig registryConfig = ServiceRegistryConfig.builder()
+        .putContractInstance(ConnectionFactory.class, factory)
+        .build();
+ServiceRegistryManager.start(ApplicationBinding.create(), registryConfig);
+```
+
+`ApplicationBinding` is the application's generated binding. Applications that use service discovery rather than a
+generated binding can pass the same configuration to their normal `ServiceRegistryManager.start` call.
+
+When several factories are needed, expose qualified instances through a
+`Service.ServicesFactory<ConnectionFactory>` and select one with `connection-factory` in connector or channel configuration.
+The corresponding typed builder method is `connectionFactoryName(String)`; `connectionFactory(ConnectionFactory)` supplies an
+actual factory. A
+configured name must resolve exactly; it does not fall back to the default factory.
+
+### JNDI
+
+Configure `jndi.connection-factory` to look up a connection factory from a fresh `InitialContext` during every
+connection attempt. `jndi.destination` can independently look up the destination. Provider-specific JNDI settings go
+under `jndi.environment`.
+
+```yaml
+jndi:
+  connection-factory: jms/ConnectionFactory
+  destination: jms/queue/orders
+  environment:
+    java.naming.factory.initial: com.example.jms.InitialContextFactory
+    java.naming.provider.url: tcp://broker.example:61616
+```
+
+Do not combine `connection-factory` with `jndi.connection-factory`, or `destination` with `jndi.destination`.
+
+## Configuration
+
+Named connector instances live under `messaging.connector`. The instance name is the channel's `connector` reference;
+`type` identifies the provider. Connector defaults are captured when the configured connector is created. Only explicitly
+supplied channel options override them, including `false` boolean values.
+
+```yaml
+messaging:
+  connector:
+    orders-jms:
+      type: helidon-jms-javax
+      connection-factory: primary-jms
+      reconnect:
+        initial-delay: PT0.1S
+        max-delay: PT30S
+        jitter: 0.2
+      max-body-bytes: 1048576
+      receive-timeout: PT0.1S
+      close-timeout: PT10S
+
+  incoming:
+    orders:
+      connector: orders-jms
+      destination: orders
+      destination-type: QUEUE
+      message-selector: "region = 'EU'"
+
+  outgoing:
+    order-results:
+      connector: orders-jms
+      destination: order-results
+      destination-type: QUEUE
+```
+
+The list form is also supported:
+
+```yaml
+messaging:
+  connector:
+    - name: orders-jms
+      type: helidon-jms-javax
+      connection-factory: primary-jms
+```
+
+`JmsConnectorProvider` only creates a named configured connector. `JmsConnector` creates `IncomingChannel` and
+`OutgoingChannel` instances from channel configuration, or from `JmsIncomingConfig` and `JmsOutgoingConfig` for imperative use.
+Incoming subscription defaults apply only to incoming channels.
+
+Connection credentials are optional but must be supplied together after common defaults and channel overrides are applied:
+
+```yaml
+username: app-user
+password: ${JMS_PASSWORD}
+```
+
+This example resolves `JMS_PASSWORD` from Helidon's default environment-variable config source. Applications can use
+any configured secret-capable source or config filter instead.
+
+The connector snapshots the configured password as `char[]`, converts it to the `String` required by the JMS 2.0
+API only at connection creation, and clears its private copy when shutdown is requested. It does not log credentials.
+An application-owned typed configuration remains reusable and retains its own defensive password copy.
+
+### Topic subscriptions
+
+A non-durable topic consumer needs only `destination-type: TOPIC`. A durable topic subscription additionally requires
+`durable`, `subscription-name`, and a client identifier. Configure `client-id` when the application assigns the
+identifier:
+
+```yaml
+messaging:
+  connector:
+    orders-jms:
+      type: helidon-jms-javax
+  incoming:
+    notifications:
+      connector: orders-jms
+      destination: notifications
+      destination-type: TOPIC
+      durable: true
+      client-id: inventory-service
+      subscription-name: inventory-notifications
+      no-local: false
+```
+
+Omit `client-id` when the `ConnectionFactory` supplies an administratively configured client identifier. An explicitly
+configured `client-id` is set immediately after creating the connection and cannot override an administered identifier.
+
+`no-local` is valid only for topics. Incoming subscription options belong to `JmsIncomingConfig` and are not exposed by
+`JmsOutgoingConfig`.
+
+## Declarative usage
+
+The connector participates in the normal declarative messaging API; no JMS-specific annotation is required.
+
+```java
+@Service.Singleton
+class OrderConsumer {
+    @Messaging.ReceiveFrom("orders")
+    void onOrders(MessageBatch<String> orders) {
+        for (Message<String> order : orders) {
+            process(order.entity());
+        }
+    }
+}
+```
+
+Send to an outgoing JMS binding through its named emitter:
+
+```java
+@Service.Singleton
+class ResultPublisher {
+    private final Emitter<String> results;
+
+    @Service.Inject
+    ResultPublisher(@Service.Named("order-results") Emitter<String> results) {
+        this.results = results;
+    }
+
+    void publish(String result) {
+        results.emit(result);
+    }
+}
+```
+
+Use `JmsMessage` when native correlation, type, or typed application properties are needed:
+
+```java
+JmsMessage<String> message = JmsMessage.<String>builder("accepted")
+        .correlationId("order-42")
+        .type("order-result")
+        .putProperty("region", "EU")
+        .putProperty("attempt", 1)
+        .putProperty("JMSXGroupID", "order-42")
+        .putProperty("JMSXGroupSeq", 1)
+        .build();
+results.emit(message);
+```
+
+Incoming `JmsMessage` instances expose immutable snapshots of the body, typed application properties, and selected
+JMS metadata: message and String correlation identifiers, type, timestamp, expiration, delivery time, priority, and
+redelivery state. They never expose the live native `Message`, `Session`, or `Connection`. Portable message headers
+preserve JMS Boolean, integer, 32/64-bit floating-point, and String value kinds; `jmsProperties()` additionally retains
+the native Byte, Short, Integer, and Long widths.
+
+Incoming `BytesMessage` bodies are rejected before allocation when their declared length exceeds `max-body-bytes`,
+which defaults to one MiB. Set this limit to the largest byte-array payload the application is prepared to retain.
+Other JMS body types do not expose a portable encoded byte length and are not governed by this option.
+
+## Body and property mapping
+
+Helidon message payloads are non-null. A provider bodyless JMS message enters the configured pre-dispatch failure
+policy; DROP can settle it, while DEAD_LETTER publishes a metadata-only bodyless JMS message without exposing an
+unsafe or unavailable source body. Such a metadata-only `JmsMessage` reports `bodyAvailable() == false`; calling
+`entity()` then throws instead of exposing an internal placeholder. A local dead-letter consumer can inspect it safely:
+
+```java
+void onDeadLetter(DeadLetterMessage<String> deadLetter) {
+    if (deadLetter.originalMessage() instanceof JmsMessage<?> jmsMessage
+            && !jmsMessage.bodyAvailable()) {
+        recordFailure(deadLetter.failureType(), deadLetter.failureMessage(), jmsMessage.jmsProperties());
+        return;
+    }
+    recover(deadLetter.entity());
+}
+```
+
+A JMS dead-letter target preserves this as a native bodyless JMS message. A connector that does not support unavailable
+bodies fails before its transport success point; use a local dead-letter consumer to transform the metadata into an
+explicit transport-compatible payload before routing it to another connector.
+
+| Helidon payload | JMS message |
+| --- | --- |
+| `String` | `TextMessage` |
+| `byte[]` | `BytesMessage` |
+| `Map<String, Object>` | `MapMessage` |
+| `List<?>` | `StreamMessage` |
+| other `Serializable` | `ObjectMessage`, only when explicitly enabled |
+
+Map and stream values must use JMS-supported primitive wrapper, `String`, `Character`, `byte[]`, or null values. JMS
+application properties support `Boolean`, numeric primitive wrappers, and `String`. Property names must be valid JMS
+selector identifiers and must not use the provider-reserved `JMS` prefix, except for the standard client-settable
+`JMSXGroupID` (`String`) and `JMSXGroupSeq` (`Integer`) properties. Other provider-owned `JMSX*` and `JMS_*` properties
+are not exposed as portable application headers. Generic portable headers may also set these two grouping properties;
+`JMSXGroupSeq` accepts a portable integer or decimal text value. Unsupported typed values and duplicate property names
+are rejected without stringification before the broker success point.
+
+Java object messages are disabled by default. Enabling them permits native Java serialization and deserialization and
+must be limited to trusted producers, trusted payload classes, and a properly restricted deserialization environment.
+Wrapping an outgoing `Serializable` payload in `JmsMessage` does not itself invoke serialization callbacks. The disabled
+object-message gate rejects it without serializing or deserializing it. When object messages are enabled, the connector
+makes a serialization round-trip immediately before handing a defensive body snapshot to the JMS provider; applications
+must not mutate the payload between building and sending the message. Deep immutability still depends on the serialized
+object graph and application classes:
+
+```yaml
+allow-object-messages: true
+```
+
+Do not enable object messages for data from an untrusted broker, tenant, or producer.
+
+## Incoming settlement
+
+The connector uses one synchronous consumer and one outstanding message per JMS session. It reserves runtime delivery
+capacity before calling `receive`, then holds that capacity until transport settlement is complete.
+
+The JMS 2.0 API does not provide a portable way to limit a provider's client-side prefetch. Runtime delivery
+capacity therefore controls calls to `receive`, but a provider may already have moved additional messages from the
+broker into its client buffer. If broker-side acquisition must follow runtime backpressure, configure the supplied
+`ConnectionFactory` with provider-specific consumer credit or prefetch disabled. For Artemis, a consumer window size of
+zero keeps the next message pending at the broker until the connector has another runtime reservation.
+
+For a non-transacted session, the connector uses `CLIENT_ACKNOWLEDGE` and acknowledges only after runtime delivery,
+including configured retry, drop, or dead-letter handling, has completed. For `transacted: true`, it commits the local
+JMS transaction at the same point. A terminal processing failure recovers or rolls back the session so the broker can
+redeliver the message according to its policy.
+
+A message rejected while its body is being mapped, including a disabled `ObjectMessage` or an oversized
+`BytesMessage`, also enters the configured runtime failure policy. Retries remain runtime-owned and do not deserialize
+or reread the rejected body. Drop and successful dead-letter handling acknowledge or commit the source only after the
+policy completes; a terminal `FAIL` recovers or rolls back it. Because an unsafe or invalid body cannot be retained, its
+dead-letter envelope is bodyless. Safe JMS application properties and native metadata are retained when the provider
+allows them to be read without touching the body.
+
+This provides at-least-once delivery. If the connection is lost after application processing but before acknowledgment
+or commit is confirmed, the message can be delivered again. Consumers should be idempotent when duplicates matter.
+
+## Outgoing completion and transactions
+
+Without a local transaction, a batch sends messages sequentially and reports per-message completion. A successful
+prefix can therefore precede an unsuccessful item.
+
+With `transacted: true`, all messages in one `MessageBatch` are sent on one local transaction and committed together.
+A successful commit is the batch success point. If send or commit fails and rollback cannot prove non-delivery, the
+outcome is indeterminate and retrying can create duplicates.
+
+The connector never automatically resends a message after `MessageProducer.send` or `Session.commit` has been invoked
+and failed, because the broker might already have accepted it.
+
+## Broker outages and reconnection
+
+Reconnection is connector-owned. The messaging graph does not discard and recreate the binding.
+
+When startup or an established connection encounters a recoverable failure, the connector closes the old connection,
+session, consumer, or producer and retries with exponential backoff. The delay starts at `reconnect.initial-delay`, is capped at
+`reconnect.max-delay`, and receives the configured fractional jitter. Both delay values must be at least 1 millisecond.
+Reconnection continues while the graph remains active; closing the graph interrupts it. The graph does not impose a
+startup deadline.
+
+Resource configuration errors fail startup without reconnecting: a missing registered connection factory, an invalid
+or missing JNDI name, an invalid initial-context configuration, or a resource whose type does not match the configured
+connection factory or destination. Transient naming-service communication and availability failures remain retryable.
+
+A replacement connection is opened only after the previous resource generation closes successfully. A cleanup failure
+or `close-timeout` expiry is terminal because continuing could overlap or leak provider resources.
+
+After recovery:
+
+- Queues retain unacknowledged and broker-persisted messages according to broker policy.
+- Durable topic subscriptions retain messages published while the client is offline according to broker policy.
+- Non-durable topic subscriptions do not receive messages published while disconnected.
+- A message whose acknowledgment or transaction outcome was lost can be redelivered.
+
+Provider-native reconnect settings can still affect detection and low-level recovery. The connector rebuilds its JMS
+resources so it does not depend on provider-specific automatic-reconnect behavior.
+
+## Shutdown
+
+Graceful shutdown stops acquiring messages and allows the active delivery to settle before closing JMS resources.
+`close-timeout` bounds connector-owned cleanup waits. Forced shutdown interrupts startup, reconnect backoff, receive,
+and active waits and makes a best effort to close the current connection. Close operations are idempotent.

@@ -25,7 +25,7 @@ on:
   pull_request:
   push:
     tags-ignore: [ '**' ]
-    branches-ignore: [ '*/release-*' ]
+    branches-ignore: [ '**/release-*' ]
 
 env:
   MVN_VERSION: 3.9.9
@@ -139,7 +139,7 @@ jobs:
           build-cache: read-only
           build-cache-id: ${{ matrix.extension.helidon_version }}
           maven-cache: read-only
-          test-artifact-name: ${{ matrix.extension.id }}-${{ matrix.platform.name }}
+          test-artifact-name: ${{ matrix.extension.artifact }}-${{ matrix.platform.name }}
           free-space: true
           run: |
             mvn --version

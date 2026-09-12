@@ -17,7 +17,7 @@ name: "Release"
 
 on:
   push:
-    branches: [ '*/release-*' ]
+    branches: [ '**/release-*' ]
 
 env:
   MVN_VERSION: 3.9.9
@@ -42,6 +42,7 @@ jobs:
       version: ${{ steps.create-tag.outputs.version }}
       tag: ${{ steps.create-tag.outputs.tag }}
       extension: ${{ steps.create-tag.outputs.extension }}
+      artifact: ${{ steps.create-tag.outputs.artifact }}
       poms: ${{ steps.create-tag.outputs.poms }}
     steps:
       - uses: actions/checkout@v6
@@ -72,7 +73,7 @@ jobs:
       - uses: ./.github/actions/common
         with:
           build-cache: read-only
-          artifact-name: io-helidon-extensions-${{ needs.create-tag.outputs.extension }}-artifacts
+          artifact-name: io-helidon-extensions-${{ needs.create-tag.outputs.artifact }}-artifacts
           artifact-path: staging
           run: |
             # stage changed poms
@@ -106,7 +107,7 @@ jobs:
           ref: ${{ needs.create-tag.outputs.tag }}
       - uses: actions/download-artifact@v8
         with:
-          name: io-helidon-extensions-${{ needs.create-tag.outputs.extension }}-artifacts
+          name: io-helidon-extensions-${{ needs.create-tag.outputs.artifact }}-artifacts
           path: staging
       - shell: bash
         env:

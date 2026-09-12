@@ -75,7 +75,7 @@ jobs:
           build-cache-id: ${{ matrix.extension.helidon_version }}
           maven-cache: read-only
           setup-latest-java: true
-          test-artifact-name: ${{ matrix.extension.id }}-latest-java
+          test-artifact-name: ${{ matrix.extension.artifact }}-latest-java
           free-space: true
           run: |
             mvn --version

@@ -48,8 +48,8 @@ OPTIONS:
 
   --branch-name NAME
         Resolve extensions from one branch name. Branches matching
-        <extension>/... select exactly one known extension, otherwise all
-        extensions are selected.
+        <extension>/... select that extension. A group prefix selects its
+        extensions, otherwise all extensions are selected.
 
   --base-sha SHA
         Base revision for pull-request style selection.
@@ -124,24 +124,11 @@ EXTENSION_IDS=()
 EXTENSION_HELIDON_VERSIONS=()
 SELECTED_INDEXES=()
 
-find_extension_index() {
-  local ext_id index
-
-  ext_id="${1}"
-  for index in "${!EXTENSION_IDS[@]}"; do
-    if [ "${EXTENSION_IDS[${index}]}" = "${ext_id}" ] ; then
-      printf '%s' "${index}"
-      return 0
-    fi
-  done
-  return 1
-}
-
 discover_extensions() {
   local entries ext_id helidon_version pom
 
-  entries=$(for pom in "${WS_DIR}"/extensions/*/pom.xml; do
-    if [ -f "${pom}" ] ; then
+  entries=$(for pom in "${WS_DIR}"/extensions/*/pom.xml "${WS_DIR}"/extensions/*/*/pom.xml; do
+    if [ -f "${pom%pom.xml}bom/pom.xml" ] ; then
       ext_id="${pom#"${WS_DIR}"/}"
       ext_id="${ext_id%/pom.xml}"
       ext_id="${ext_id#extensions/}"
@@ -150,7 +137,7 @@ discover_extensions() {
   done | LC_ALL=C sort)
 
   if [ -z "${entries}" ] ; then
-    echo "No extension pom.xml files found under ${WS_DIR}/extensions/*/pom.xml." >&2
+    echo "No extensions with bom/pom.xml found under ${WS_DIR}/extensions." >&2
     exit 1
   fi
 
@@ -188,7 +175,7 @@ select_extensions_by_ids() {
 }
 
 select_pull_request_extensions() {
-  local base_sha changed_files ext_id path requested_ids source_sha
+  local base_sha changed_files directory ext_id matched path requested_ids source_sha
 
   base_sha="${1}"
   source_sha="${2}"
@@ -202,24 +189,22 @@ select_pull_request_extensions() {
 
   while IFS= read -r path; do
     if [ -n "${path}" ] ; then
-      case "${path}" in
-      extensions/*/*)
-        ext_id="${path#extensions/}"
-        ext_id="${ext_id%%/*}"
-        if find_extension_index "${ext_id}" > /dev/null ; then
+      directory="${path#extensions/}"
+      directory="${directory%/*}"
+      matched=false
+      for ext_id in "${EXTENSION_IDS[@]}"; do
+        if [[ "${path}" == "extensions/${ext_id}/"* ]] \
+            || [[ "${path}" == extensions/* && "${ext_id}" == "${directory}/"* ]] ; then
           if ! contains_value "${ext_id}" "${requested_ids[@]}" ; then
             requested_ids+=("${ext_id}")
           fi
-        else
-          select_all_extensions
-          return 0
+          matched=true
         fi
-        ;;
-      *)
+      done
+      if [ "${matched}" = false ] ; then
         select_all_extensions
         return 0
-        ;;
-      esac
+      fi
     fi
   done <<< "${changed_files}"
 
@@ -232,19 +217,27 @@ select_pull_request_extensions() {
 }
 
 select_branch_extensions() {
-  local branch_name ext_id
+  local branch_name ext_id requested_ids
 
   branch_name="${1}"
-  case "${branch_name}" in
-  */*)
-    ext_id="${branch_name%%/*}"
-    if find_extension_index "${ext_id}" > /dev/null ; then
-      select_extensions_by_ids "${ext_id}"
-      return 0
+  requested_ids=()
+  for ext_id in "${EXTENSION_IDS[@]}"; do
+    if [[ "${branch_name}" == "${ext_id}/"* ]] ; then
+      requested_ids+=("${ext_id}")
     fi
-    ;;
-  esac
-  select_all_extensions
+  done
+  if [ "${#requested_ids[@]}" -eq 0 ] ; then
+    for ext_id in "${EXTENSION_IDS[@]}"; do
+      if [[ "${ext_id}" == "${branch_name%%/*}/"* ]] ; then
+        requested_ids+=("${ext_id}")
+      fi
+    done
+  fi
+  if [ "${#requested_ids[@]}" -gt 0 ] ; then
+    select_extensions_by_ids "${requested_ids[@]}"
+  else
+    select_all_extensions
+  fi
 }
 
 extensions_json() {
@@ -255,6 +248,7 @@ extensions_json() {
   for index in "${SELECTED_INDEXES[@]}"; do
     ext_id="${EXTENSION_IDS[${index}]}"
     json="${json}${separator}{\"id\":\"$(json_escape "${ext_id}")\""
+    json="${json},\"artifact\":\"$(json_escape "${ext_id//\//-}")\""
     json="${json},\"helidon_version\":\"$(json_escape "${EXTENSION_HELIDON_VERSIONS[${index}]}")\"}"
     separator=","
   done
