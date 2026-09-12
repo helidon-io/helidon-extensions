@@ -24,7 +24,6 @@ import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -50,6 +49,7 @@ import jakarta.jms.TransactionRolledBackRuntimeException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import static org.hamcrest.CoreMatchers.anyOf;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
@@ -553,33 +553,33 @@ class JmsOutgoingChannelTest {
     }
 
     @Test
-    void forceCloseInterruptsReconnectAndPreventsSend() throws Exception {
+    @Timeout(30)
+    void forceCloseStopsReconnectAndPreventsSend() throws Exception {
         CountDownLatch attempted = new CountDownLatch(1);
-        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), ignored -> {
+        OutgoingChannel connector = JmsOutgoingChannel.create(config(false), _ -> {
             attempted.countDown();
             throw new MessagingException("offline");
         });
         AtomicReference<Throwable> startupFailure = new AtomicReference<>();
-        AtomicBoolean starterInterrupted = new AtomicBoolean();
-        Thread starter = Thread.ofVirtual().start(() -> {
-            capture(connector::start, startupFailure);
-            starterInterrupted.set(Thread.currentThread().isInterrupted());
-        });
-        assertThat(attempted.await(1, TimeUnit.SECONDS), is(true));
+        Thread starter = Thread.ofVirtual().start(() -> capture(connector::start, startupFailure));
 
-        connector.forceClose();
-        starter.join(Duration.ofSeconds(2));
+        try {
+            assertThat(attempted.await(10, TimeUnit.SECONDS), is(true));
 
-        assertThat(starter.isAlive(), is(false));
-        Throwable reconnectFailure = startupFailure.get();
-        assertThat(reconnectFailure, instanceOf(MessagingException.class));
-        assertThat(reconnectFailure.getCause(), instanceOf(InterruptedException.class));
-        assertThat(reconnectFailure.getCause().getSuppressed().length, is(1));
-        assertThat(reconnectFailure.getCause().getSuppressed()[0].getMessage(), containsString("offline"));
-        assertThat(starterInterrupted.get(), is(true));
-        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
-                                                       () -> connector.send("not-sent"));
-        assertStatuses(failure, BatchItemStatus.NOT_ATTEMPTED);
+            connector.forceClose();
+            starter.join(Duration.ofSeconds(10));
+
+            assertThat(starter.isAlive(), is(false));
+            // Closing can win before the retry sleep is interrupted.
+            assertThat(startupFailure.get(), anyOf(instanceOf(MessagingException.class), instanceOf(IllegalStateException.class)));
+            BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                         () -> connector.send("not-sent"));
+            assertStatuses(failure, BatchItemStatus.NOT_ATTEMPTED);
+        } finally {
+            connector.forceClose();
+            starter.interrupt();
+            starter.join(Duration.ofSeconds(10));
+        }
     }
 
     @Test

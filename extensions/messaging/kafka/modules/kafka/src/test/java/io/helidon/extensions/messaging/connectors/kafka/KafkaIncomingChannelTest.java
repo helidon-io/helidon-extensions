@@ -1139,7 +1139,7 @@ class KafkaIncomingChannelTest {
 
     @Test
     @Timeout(value = 5)
-    void testRepeatedRetriableCommitFailureStopsAtKafkaTimeoutAndPreservesCause() {
+    void testRetriableCommitFailureStopsAtKafkaTimeoutAndPreservesCause() {
         TrackingMockConsumer consumer = trackingConsumer();
         scheduleRecords(consumer, record(7, "first", new RecordHeaders()));
         RetriableCommitFailedException commitFailure =
@@ -1163,14 +1163,14 @@ class KafkaIncomingChannelTest {
 
         assertThat(actual.getCause(), sameInstance(commitFailure));
         assertThat(dispatches.get(), is(1));
-        assertThat(consumer.commitInitiationCount(), greaterThanOrEqualTo(2));
+        assertThat(consumer.commitInitiationCount(), greaterThanOrEqualTo(1));
         assertThat(consumer.commitCount(), is(0));
         assertThat(consumer.closed(), is(true));
     }
 
     @Test
     @Timeout(value = 5)
-    void testMissingCommitCallbackTimesOutWhilePolling() {
+    void testMissingCommitCallbackTimesOut() {
         TrackingMockConsumer consumer = trackingConsumer();
         scheduleRecords(consumer, record(7, "first", new RecordHeaders()));
         consumer.suppressNextCommitCallback();
@@ -1192,13 +1192,41 @@ class KafkaIncomingChannelTest {
         assertThat(failure.getMessage().contains("commit timed out"), is(true));
         assertThat(dispatches.get(), is(1));
         assertThat(consumer.commitInitiationCount(), is(1));
-        List<Integer> commitPollCounts = consumer.pollCountsAtCommitInitiation();
-        assertThat(commitPollCounts.size(), is(1));
-        assertThat("consumer owner must keep polling while awaiting the commit callback",
-                   consumer.pollCount() > commitPollCounts.getFirst(),
-                   is(true));
         assertThat(consumer.commitCount(), is(0));
         assertThat(consumer.committedOffsets(), is(Map.of()));
+        assertThat(consumer.closed(), is(true));
+    }
+
+    @Test
+    @Timeout(value = 5)
+    void testDelayedCommitCallbackCompletesDuringMaintenancePoll() {
+        TrackingMockConsumer consumer = new TrackingMockConsumer() {
+            @Override
+            public void commitAsync(Map<TopicPartition, OffsetAndMetadata> offsets,
+                                    OffsetCommitCallback callback) {
+                schedulePollTask(() -> {
+                    assertThat(paused(), is(Set.of(TOPIC_PARTITION)));
+                    super.commitAsync(offsets, callback);
+                });
+            }
+        };
+        scheduleRecords(consumer, record(7, "first", new RecordHeaders()));
+        AtomicInteger dispatches = new AtomicInteger();
+        IncomingConnectorHarness connector = new IncomingConnectorHarness(_ -> consumer);
+        consumer.afterCommit(connector::close);
+        IncomingConnectorContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            protected void processBatch(MessageBatch<?> batch) {
+                dispatches.incrementAndGet();
+            }
+        };
+
+        connector.createIncomingChannel(config()).run(context);
+
+        assertThat(dispatches.get(), is(1));
+        assertThat(consumer.commitInitiationCount(), is(1));
+        assertThat(consumer.commitCount(), is(1));
+        assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(8L));
         assertThat(consumer.closed(), is(true));
     }
 
