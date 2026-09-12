@@ -190,7 +190,7 @@ final class JmsIncomingChannel {
                 runCompletion.countDown();
                 if (cleanupFailure != null) {
                     if (primaryFailure != null) {
-                        primaryFailure.addSuppressed(cleanupFailure);
+                        addSuppressed(primaryFailure, cleanupFailure);
                     } else if (!closeRequested.get()) {
                         throw cleanupFailure;
                     }
@@ -312,6 +312,12 @@ final class JmsIncomingChannel {
             return false;
         }
 
+        private static void addSuppressed(Throwable primary, Throwable failure) {
+            if (primary != failure) {
+                primary.addSuppressed(failure);
+            }
+        }
+
         private static RuntimeException mergeFailure(RuntimeException primary, RuntimeException failure) {
             if (failure == null || failure == primary) {
                 return primary;
@@ -348,6 +354,9 @@ final class JmsIncomingChannel {
             try (reservation) {
                 if (closed.get() || draining.get()) {
                     return DeliveryResult.STOP;
+                }
+                if (resources.broken()) {
+                    return DeliveryResult.RECONNECT;
                 }
 
                 javax.jms.Message nativeMessage;
@@ -612,7 +621,7 @@ final class JmsIncomingChannel {
                     RuntimeException cleanupFailure = cleanupFailedSetup(resources);
                     resourceReference.set(null);
                     if (cleanupFailure != null) {
-                        cleanupFailure.addSuppressed(e);
+                        addSuppressed(cleanupFailure, e);
                         throw new JmsResourceCleanupException(
                                 "Cannot clean up failed JMS connection setup for channel " + config.channelName(),
                                 cleanupFailure);
@@ -624,7 +633,7 @@ final class JmsIncomingChannel {
                     RuntimeException cleanupFailure = cleanupFailedSetup(resources);
                     resourceReference.set(null);
                     if (cleanupFailure != null) {
-                        cleanupFailure.addSuppressed(e);
+                        addSuppressed(cleanupFailure, e);
                         throw new JmsResourceCleanupException(
                                 "Cannot clean up failed JMS connection setup for channel " + config.channelName(),
                                 cleanupFailure);
@@ -691,7 +700,7 @@ final class JmsIncomingChannel {
             } catch (JMSException | RuntimeException e) {
                 RuntimeException cleanupFailure = cleanupFailedSetup(resources);
                 if (cleanupFailure != null) {
-                    cleanupFailure.addSuppressed(e);
+                    addSuppressed(cleanupFailure, e);
                     throw new JmsResourceCleanupException("Cannot clean up failed JMS connection setup for channel "
                                                                   + config.channelName(), cleanupFailure);
                 }
@@ -768,7 +777,7 @@ final class JmsIncomingChannel {
                                                                resourceCleanupDeadline(),
                                                                false);
                 if (primaryFailure != null && closeFailure != null) {
-                    primaryFailure.addSuppressed(closeFailure);
+                    addSuppressed(primaryFailure, closeFailure);
                 }
                 return;
             }
@@ -781,7 +790,7 @@ final class JmsIncomingChannel {
             } catch (JMSException | JMSRuntimeException e) {
                 resources.broken(e);
                 if (primaryFailure != null) {
-                    primaryFailure.addSuppressed(e);
+                    addSuppressed(primaryFailure, e);
                 }
                 closeResources(resources, resourceCleanupDeadline(), false);
             }
@@ -930,7 +939,11 @@ final class JmsIncomingChannel {
         }
 
         private Session session() {
-            return Objects.requireNonNull(session.get(), "JMS session");
+            Session current = session.get();
+            if (current == null || closing.get()) {
+                throw new JMSRuntimeException("JMS session is closed");
+            }
+            return current;
         }
 
         private Connection connection() {
@@ -942,7 +955,11 @@ final class JmsIncomingChannel {
         }
 
         private MessageConsumer consumer() {
-            return Objects.requireNonNull(consumer.get(), "JMS consumer");
+            MessageConsumer current = consumer.get();
+            if (current == null || closing.get()) {
+                throw new JMSRuntimeException("JMS consumer is closed");
+            }
+            return current;
         }
 
         private void consumer(MessageConsumer consumer) {

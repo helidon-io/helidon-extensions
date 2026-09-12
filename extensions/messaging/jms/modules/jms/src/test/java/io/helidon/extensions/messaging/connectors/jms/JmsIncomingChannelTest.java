@@ -437,6 +437,70 @@ class JmsIncomingChannelTest {
 
     @Test
     @Timeout(5)
+    void listenerFailureWhileAwaitingAdmissionReconnectsAndReleasesReservation() throws Exception {
+        JmsClient first = client();
+        JmsClient second = client();
+        AtomicReference<ExceptionListener> listener = new AtomicReference<>();
+        AtomicReference<Thread> closeWorker = new AtomicReference<>();
+        CountDownLatch closeStarted = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            listener.set(invocation.getArgument(0));
+            return null;
+        }).when(first.connection).setExceptionListener(any(ExceptionListener.class));
+        doAnswer(_ -> {
+            closeWorker.set(Thread.currentThread());
+            closeStarted.countDown();
+            return null;
+        }).when(first.connection).close();
+        ConnectionFactory factory = mock(ConnectionFactory.class);
+        when(factory.createConnection()).thenReturn(first.connection, second.connection);
+        TextMessage delivered = textMessage("after-admission-reconnect");
+        when(second.consumer.receive(anyLong())).thenReturn(delivered);
+        IncomingChannel connector = JmsIncomingChannel.create(config(false), _ -> factory);
+        doAnswer(_ -> {
+            connector.drain();
+            return null;
+        }).when(delivered).acknowledge();
+        TestReservation firstReservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
+        TestReservation secondReservation = new TestReservation(new ArrayList<>(), TestDelivery.completed()) {
+            @Override
+            public ConnectorDelivery start(MessageBatch<?> batch) {
+                assertThat(batch.get(0).entity(), is("after-admission-reconnect"));
+                return super.start(batch);
+            }
+        };
+        AtomicBoolean firstAdmission = new AtomicBoolean(true);
+        connector.run(new TestContext(new ArrayList<>(), firstReservation, secondReservation) {
+            @Override
+            public Optional<ConnectorDeliveryReservation> tryReserveDelivery() {
+                if (firstAdmission.compareAndSet(true, false)) {
+                    listener.get().onException(new JMSException("connection lost while awaiting admission"));
+                    try {
+                        // Grant admission only after the listener's asynchronous resource close has completed.
+                        assertThat(closeStarted.await(1, TimeUnit.SECONDS), is(true));
+                        assertThat(closeWorker.get().join(Duration.ofSeconds(1)), is(true));
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                }
+                return super.tryReserveDelivery();
+            }
+        });
+
+        assertThat(firstReservation.closed(), is(true));
+        assertThat(firstReservation.starts(), is(0));
+        assertThat(firstReservation.failedStarts(), is(0));
+        assertThat(secondReservation.starts(), is(1));
+        verify(factory, times(2)).createConnection();
+        verify(first.consumer, never()).receive(anyLong());
+        verify(first.connection).close();
+        verify(second.connection).start();
+        verify(delivered).acknowledge();
+    }
+
+    @Test
+    @Timeout(5)
     void poisonBodyMappingUsesFailurePolicyBeforeAcknowledging() throws Exception {
         JmsClient client = client();
         ObjectMessage nativeMessage = mock(ObjectMessage.class);
