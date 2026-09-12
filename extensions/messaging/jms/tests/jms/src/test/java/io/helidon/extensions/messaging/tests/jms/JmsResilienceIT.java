@@ -82,6 +82,10 @@ class JmsResilienceIT {
             sender.send("before restart outgoing");
             assertNativeText(broker, outgoingDestination, "before restart outgoing");
 
+            await(() -> broker.queueDeliveringCount(incomingDestination) == 0
+                            && broker.queuePendingMessageCount(incomingDestination) == 0,
+                  WAIT_TIMEOUT,
+                  "first incoming message was not acknowledged before broker restart");
             broker.stop();
             await(() -> trackingFactory.connectionCount() > initialConnections,
                   WAIT_TIMEOUT,
