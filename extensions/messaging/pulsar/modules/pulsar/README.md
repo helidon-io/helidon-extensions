@@ -3,6 +3,10 @@
 The Pulsar connector connects Helidon declarative messaging channels to Apache Pulsar topics. It uses the Apache
 Pulsar 4.0 LTS Java client and supports both incoming and outgoing channel bindings.
 
+For complete HTTP-to-Pulsar round-trip applications, see the
+[imperative example](../../examples/se-imperative/README.md) and
+[declarative example](../../examples/se-declarative/README.md).
+
 ## Dependency
 
 ```xml
