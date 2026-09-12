@@ -19,12 +19,12 @@ limitations under the License.
 Each connector is an independently versioned extension under this grouping directory:
 
 * [Kafka](kafka/modules/kafka/README.md), including [runnable examples](kafka/examples/README.md)
-* [JMS](jms/modules/jms/README.md)
+* [JMS](jms/modules/jms/README.md), including [runnable examples](jms/examples/README.md)
 * [Pulsar](pulsar/modules/pulsar/README.md), including [runnable examples](pulsar/examples/README.md)
 
 Build all connectors with `mvn -f extensions/messaging/pom.xml install`, or build one
 with `mvn -f extensions/messaging/kafka/pom.xml install`. Add `-Ptests` to include
-its integration tests and `-Pexamples` to include the Kafka and Pulsar examples.
+its integration tests and `-Pexamples` to include the Kafka, JMS, and Pulsar examples.
 
 Each connector has its own `bom`, `modules`, and `tests` directories. Import
 `io.helidon.extensions.messaging.kafka:helidon-extensions-messaging-kafka-bom` for

@@ -3,6 +3,10 @@
 The JMS connector connects Helidon declarative messaging channels to Jakarta Messaging 3.1 queues and topics. It is
 provider-neutral: your application supplies a JMS provider and a `jakarta.jms.ConnectionFactory`.
 
+For complete HTTP-to-JMS round-trip applications using Apache Artemis, see the
+[imperative example](../../examples/se-imperative/README.md) and
+[declarative example](../../examples/se-declarative/README.md).
+
 ## Dependency
 
 ```xml
