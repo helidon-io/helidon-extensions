@@ -162,6 +162,75 @@ Validation uses strict JSON. Request-shape errors return `400`; policy and limit
 }
 ```
 
+Stages execute in declared order. A stage may contain one disruption or may use an empty `disruptions` array as a
+passive interval for observing recovery:
+
+```json
+{
+  "name": "orders-degradation-sequence",
+  "maximumDuration": "PT30S",
+  "seed": 148894,
+  "stages": [
+    {
+      "name": "slow-orders",
+      "duration": "PT5S",
+      "disruptions": [{
+        "name": "orders-latency",
+        "scope": {
+          "type": "inbound-http",
+          "methods": ["GET"],
+          "path": {"match": "prefix", "value": "/orders"}
+        },
+        "activation": {"type": "always"},
+        "effect": {"type": "latency", "delay": "PT0.25S"},
+        "budget": {"maximumActivations": 100, "maximumConcurrent": 10}
+      }]
+    },
+    {
+      "name": "orders-outage",
+      "duration": "PT10S",
+      "disruptions": [{
+        "name": "orders-503",
+        "scope": {
+          "type": "inbound-http",
+          "methods": ["GET"],
+          "path": {"match": "prefix", "value": "/orders"}
+        },
+        "activation": {"type": "always"},
+        "effect": {"type": "synthetic-http-response", "status": 503},
+        "budget": {"maximumActivations": 100, "maximumConcurrent": 10}
+      }]
+    },
+    {
+      "name": "recovery",
+      "duration": "PT5S",
+      "disruptions": []
+    }
+  ]
+}
+```
+
+Stage intervals are contiguous and use `[startedAt, endsAt)` boundaries, so a request arriving exactly at a boundary
+uses the next stage. Stage names must be unique, every duration must be positive, and the duration total must not exceed
+`maximumDuration`. Activation sequences and budgets are independent per disruptive stage; response counters are run-wide
+aggregates. Scopes from every disruptive stage are reserved against other nonterminal runs for the run's lifetime,
+including while in-flight work drains. Passive stages reserve no scope.
+
+While a run is running, its representation identifies the stage selected for the current time:
+
+```json
+"currentStage": {
+  "index": 2,
+  "name": "recovery",
+  "startedAt": "2026-09-12T22:10:15Z",
+  "endsAt": "2026-09-12T22:10:20Z"
+}
+```
+
+`index` is zero-based and addresses the normalized `plan.stages` array. `currentStage` is omitted after the sequence ends
+or while the run is stopping. A request already reserved by an earlier stage finishes normally after a transition; the
+transition does not wait for in-flight work.
+
 An exact path matches only that path. A prefix is segment-aware: `/orders` matches `/orders` and `/orders/42`, but not `/orders-old`. The filter does not invoke application code after it reserves a synthetic response. Non-matching or budget-skipped traffic continues normally.
 
 For a fixed delay before application routing, use the `latency` effect:
@@ -268,6 +337,7 @@ curl --fail-with-body --request DELETE --user operator:test-only-password \
 |---|---:|
 | `maximum-active-runs` | `1` |
 | `maximum-run-duration` | `PT15M` |
+| `maximum-stages-per-run` | `16` |
 | `maximum-activations-per-disruption` | `10000` |
 | `maximum-concurrent-activations-per-disruption` | `64` |
 | `maximum-latency` | `PT30S` |
@@ -284,12 +354,11 @@ and stopping a run prevents new reservations while in-flight work drains.
 
 Runs are local to one Helidon server process, in memory, bounded, and not reconstructed after restart. A caller must create a run on each selected instance. Restart is an unconditional cleanup boundary.
 
-The current slice intentionally supports one stage, one inbound HTTP disruption, `always`, deterministic `probability`,
-or `periodic-burst` activation, exact or segment-aware prefix paths, a synthetic 4xx/5xx HTTP response, latency before
-application routing, and deterministic weighted selection between those effects. Its public vocabulary includes `runs`,
-`stages`,
-`disruptions`, `scope`, `activation`, `effect`, and `budget` so later additions can introduce other bounded local effects
-without adopting another project's API.
+The current slice intentionally supports bounded ordered stages with zero or one inbound HTTP disruption per stage,
+`always`, deterministic `probability`, or `periodic-burst` activation, exact or segment-aware prefix paths, a synthetic
+4xx/5xx HTTP response, latency before application routing, and deterministic weighted selection between those effects.
+Its public vocabulary includes `runs`, `stages`, `disruptions`, `scope`, `activation`, `effect`, and `budget` so later
+additions can introduce other bounded local effects without adopting another project's API.
 
 Out of scope for this slice are timeout or connection-stall effects, bytecode injection, exception injection inside
 arbitrary methods, outbound client failures, CPU or memory pressure, network faults outside the process, distributed

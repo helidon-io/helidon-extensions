@@ -36,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import static io.helidon.extensions.chaos.ChaosHttpScope.PathMatch.PREFIX;
 import static io.helidon.extensions.chaos.ChaosRunState.RUNNING;
 import static io.helidon.extensions.chaos.ChaosRunState.STOPPED;
+import static io.helidon.extensions.chaos.ChaosRunState.STOPPING;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -58,6 +59,11 @@ class ChaosRunJsonTest {
         assertThat(json.stringValue("expiresAt").orElseThrow(), is("2026-08-24T12:00:30Z"));
         assertThat(json.containsKey("terminalAt"), is(false));
         assertThat(json.containsKey("terminalReason"), is(false));
+        JsonObject currentStage = json.objectValue("currentStage").orElseThrow();
+        assertThat(currentStage.intValue("index").orElseThrow(), is(0));
+        assertThat(currentStage.stringValue("name").orElseThrow(), is("reject-orders"));
+        assertThat(currentStage.stringValue("startedAt").orElseThrow(), is("2026-08-24T12:00:00Z"));
+        assertThat(currentStage.stringValue("endsAt").orElseThrow(), is("2026-08-24T12:00:10Z"));
 
         JsonObject counters = json.objectValue("counters").orElseThrow();
         assertThat(counters.longValue("matched").orElseThrow(), is(7L));
@@ -135,11 +141,38 @@ class ChaosRunJsonTest {
 
         assertThat(terminal.stringValue("terminalAt").orElseThrow(), is("2026-08-24T12:00:04Z"));
         assertThat(terminal.stringValue("terminalReason").orElseThrow(), is("operator-stopped"));
+        assertThat(terminal.containsKey("currentStage"), is(false));
         JsonArray list = ChaosRunJson.toJson(List.of(view(STOPPED,
                                                          Optional.of(CREATED.plusSeconds(4)),
                                                          Optional.of("operator-stopped"))));
         assertThat(list.size(), is(1));
         assertThat(list.get(0).orElseThrow().asObject().toString(), is(terminal.toString()));
+    }
+
+    @Test
+    void omitsCurrentStageWhileStopping() {
+        JsonObject stopping = ChaosRunJson.toJson(view(STOPPING, Optional.empty(), Optional.empty()));
+
+        assertThat(stopping.containsKey("currentStage"), is(false));
+    }
+
+    @Test
+    void writesAllStagesIncludingPassiveRecovery() {
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   multiStagePlan(),
+                                                   Optional.of(new ChaosRunView.CurrentStage(1,
+                                                                                             "recovery",
+                                                                                             CREATED.plusSeconds(10),
+                                                                                             CREATED.plusSeconds(15)))));
+
+        JsonArray stages = json.objectValue("plan").orElseThrow().arrayValue("stages").orElseThrow();
+        assertThat(stages.size(), is(2));
+        JsonObject recovery = stages.get(1).orElseThrow().asObject();
+        assertThat(recovery.stringValue("name").orElseThrow(), is("recovery"));
+        assertThat(recovery.arrayValue("disruptions").orElseThrow().size(), is(0));
+        assertThat(json.objectValue("currentStage").orElseThrow().intValue("index").orElseThrow(), is(1));
     }
 
     @Test
@@ -247,6 +280,20 @@ class ChaosRunJsonTest {
                                      Optional<Instant> terminalAt,
                                      Optional<String> terminalReason,
                                      ChaosRunPlan plan) {
+        Optional<ChaosRunView.CurrentStage> currentStage = state == RUNNING
+                ? Optional.of(new ChaosRunView.CurrentStage(0,
+                                                            plan.stages().getFirst().name(),
+                                                            CREATED,
+                                                            CREATED.plus(plan.stages().getFirst().duration())))
+                : Optional.empty();
+        return view(state, terminalAt, terminalReason, plan, currentStage);
+    }
+
+    private static ChaosRunView view(ChaosRunState state,
+                                     Optional<Instant> terminalAt,
+                                     Optional<String> terminalReason,
+                                     ChaosRunPlan plan,
+                                     Optional<ChaosRunView.CurrentStage> currentStage) {
         return new ChaosRunView(ID,
                                 plan.name(),
                                 state,
@@ -256,6 +303,7 @@ class ChaosRunJsonTest {
                                 CREATED,
                                 CREATED,
                                 CREATED.plusSeconds(30),
+                                currentStage,
                                 terminalAt,
                                 terminalReason,
                                 7,
@@ -290,8 +338,18 @@ class ChaosRunJsonTest {
         ChaosRunPlan.ChaosDisruption disruption =
                 new ChaosRunPlan.ChaosDisruption("orders-503", scope, activation, effect, budget);
         ChaosRunPlan.ChaosStage stage =
-                new ChaosRunPlan.ChaosStage("reject-orders", Duration.ofSeconds(10), disruption);
-        return new ChaosRunPlan("orders-unavailable", Duration.ofSeconds(30), 148_894, stage);
+                new ChaosRunPlan.ChaosStage("reject-orders", Duration.ofSeconds(10), Optional.of(disruption));
+        return new ChaosRunPlan("orders-unavailable", Duration.ofSeconds(30), 148_894, List.of(stage));
+    }
+
+    private static ChaosRunPlan multiStagePlan() {
+        ChaosRunPlan.ChaosStage disruptive = plan().stages().getFirst();
+        ChaosRunPlan.ChaosStage recovery =
+                new ChaosRunPlan.ChaosStage("recovery", Duration.ofSeconds(5), Optional.empty());
+        return new ChaosRunPlan("orders-unavailable",
+                                Duration.ofSeconds(30),
+                                148_894,
+                                List.of(disruptive, recovery));
     }
 
     private static JsonObject json(String text) {

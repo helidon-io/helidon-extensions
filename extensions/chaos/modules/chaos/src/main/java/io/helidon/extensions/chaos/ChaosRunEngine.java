@@ -16,6 +16,7 @@
 package io.helidon.extensions.chaos;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.Iterator;
@@ -87,36 +88,42 @@ final class ChaosRunEngine implements AutoCloseable {
             Objects.requireNonNull(plan);
             Objects.requireNonNull(actor);
             ensureOpen();
+            Instant now = clock.instant();
+            refreshRuns(now);
             evictExpiredTerminalRuns();
 
             List<ChaosRun> activeRuns = activeRuns();
             if (activeRuns.size() >= limits.maximumActiveRuns()) {
                 throw new ConflictException("The maximum number of active chaos runs has been reached");
             }
-            ChaosHttpScope requestedScope = plan.stage().disruption().scope();
-            if (activeRuns.stream().anyMatch(run -> overlaps(run.scope(), requestedScope))) {
+            List<ChaosHttpScope> requestedScopes = scopes(plan);
+            if (activeRuns.stream().anyMatch(run -> overlaps(run.scopes(), requestedScopes))) {
                 throw new ConflictException("The requested scope overlaps an active chaos disruption");
             }
             evictForCapacity();
 
             UUID id = nextId();
-            ChaosRun run = new ChaosRun(id, ++sequence, plan, actor, clock.instant());
-            ChaosScheduler.Cancellable completionTask = scheduler.schedule(plan.stage().duration(),
+            ChaosRun run = new ChaosRun(id, ++sequence, plan, actor, now);
+            Duration runDuration = plan.duration();
+            ChaosScheduler.Cancellable completionTask = scheduler.schedule(runDuration,
                                                                            () -> terminate(id,
                                                                                            COMPLETED,
                                                                                            REASON_COMPLETED));
+            Optional<ChaosScheduler.Cancellable> expirationTask = Optional.empty();
             try {
-                ChaosScheduler.Cancellable expirationTask = scheduler.schedule(plan.maximumDuration(),
-                                                                                () -> terminate(id,
-                                                                                                EXPIRED,
-                                                                                                REASON_EXPIRED));
+                if (plan.maximumDuration().compareTo(runDuration) > 0) {
+                    expirationTask = Optional.of(scheduler.schedule(plan.maximumDuration(),
+                                                                    () -> terminate(id,
+                                                                                    EXPIRED,
+                                                                                    REASON_EXPIRED)));
+                }
                 run.tasks(completionTask, expirationTask);
             } catch (RuntimeException exception) {
                 completionTask.cancel();
                 throw exception;
             }
             runs.put(id, run);
-            return run.view();
+            return run.view(now);
         } finally {
             lock.unlock();
         }
@@ -130,8 +137,9 @@ final class ChaosRunEngine implements AutoCloseable {
             if (closed) {
                 return Optional.empty();
             }
+            Instant now = clock.instant();
             for (ChaosRun run : runs.values()) {
-                Optional<ChaosRun.Activation> activation = run.reserve(method, requestPath);
+                Optional<ChaosRun.Activation> activation = run.reserve(method, requestPath, now);
                 if (activation.isPresent()) {
                     return Optional.of(new Reservation(this, run.id(), activation.orElseThrow()));
                 }
@@ -146,8 +154,10 @@ final class ChaosRunEngine implements AutoCloseable {
         lock.lock();
         try {
             Objects.requireNonNull(id);
+            Instant now = clock.instant();
+            refreshRuns(now);
             evictExpiredTerminalRuns();
-            return Optional.ofNullable(runs.get(id)).map(ChaosRun::view);
+            return Optional.ofNullable(runs.get(id)).map(run -> run.view(now));
         } finally {
             lock.unlock();
         }
@@ -156,11 +166,13 @@ final class ChaosRunEngine implements AutoCloseable {
     List<ChaosRunView> list() {
         lock.lock();
         try {
+            Instant now = clock.instant();
+            refreshRuns(now);
             evictExpiredTerminalRuns();
             return runs.values()
                     .stream()
                     .sorted(Comparator.comparingLong(ChaosRun::sequence).reversed())
-                    .map(ChaosRun::view)
+                    .map(run -> run.view(now))
                     .toList();
         } finally {
             lock.unlock();
@@ -171,15 +183,17 @@ final class ChaosRunEngine implements AutoCloseable {
         lock.lock();
         try {
             Objects.requireNonNull(id);
+            Instant now = clock.instant();
+            refreshRuns(now);
             evictExpiredTerminalRuns();
             ChaosRun run = runs.get(id);
             if (run == null) {
                 throw new NotFoundException(id);
             }
             if (run.running()) {
-                run.terminate(STOPPED, REASON_STOPPED, clock.instant());
+                run.terminate(STOPPED, REASON_STOPPED, now);
             }
-            return run.view();
+            return run.view(now);
         } finally {
             lock.unlock();
         }
@@ -202,6 +216,18 @@ final class ChaosRunEngine implements AutoCloseable {
         } finally {
             lock.unlock();
         }
+    }
+
+    private static List<ChaosHttpScope> scopes(ChaosRunPlan plan) {
+        return plan.stages().stream()
+                .flatMap(stage -> stage.disruption().stream())
+                .map(ChaosRunPlan.ChaosDisruption::scope)
+                .toList();
+    }
+
+    private static boolean overlaps(List<ChaosHttpScope> first, List<ChaosHttpScope> second) {
+        return first.stream().anyMatch(firstScope -> second.stream()
+                .anyMatch(secondScope -> overlaps(firstScope, secondScope)));
     }
 
     private static boolean overlaps(ChaosHttpScope first, ChaosHttpScope second) {
@@ -240,12 +266,12 @@ final class ChaosRunEngine implements AutoCloseable {
         }
     }
 
-    private void release(UUID id) {
+    private void release(UUID id, int stageIndex) {
         lock.lock();
         try {
             ChaosRun run = runs.get(id);
             if (run != null) {
-                run.release(clock.instant());
+                run.release(stageIndex, clock.instant());
             }
         } finally {
             lock.unlock();
@@ -253,7 +279,11 @@ final class ChaosRunEngine implements AutoCloseable {
     }
 
     private List<ChaosRun> activeRuns() {
-        return runs.values().stream().filter(ChaosRun::running).toList();
+        return runs.values().stream().filter(run -> !run.terminal()).toList();
+    }
+
+    private void refreshRuns(Instant now) {
+        runs.values().forEach(run -> run.refresh(now));
     }
 
     private UUID nextId() {
@@ -297,12 +327,14 @@ final class ChaosRunEngine implements AutoCloseable {
     static final class Reservation implements AutoCloseable {
         private final ChaosRunEngine engine;
         private final UUID runId;
+        private final int stageIndex;
         private final ChaosEffectAction action;
         private final AtomicBoolean closed = new AtomicBoolean();
 
         private Reservation(ChaosRunEngine engine, UUID runId, ChaosRun.Activation activation) {
             this.engine = engine;
             this.runId = runId;
+            this.stageIndex = activation.stageIndex();
             this.action = activation.action();
         }
 
@@ -313,7 +345,7 @@ final class ChaosRunEngine implements AutoCloseable {
         @Override
         public void close() {
             if (closed.compareAndSet(false, true)) {
-                engine.release(runId);
+                engine.release(runId, stageIndex);
             }
         }
     }

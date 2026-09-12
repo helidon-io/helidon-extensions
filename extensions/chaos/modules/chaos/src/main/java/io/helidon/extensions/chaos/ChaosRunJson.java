@@ -49,6 +49,7 @@ final class ChaosRunJson {
                 .set("links", JsonObject.builder().set("self", RUN_PATH + run.id()).build());
         run.terminalAt().ifPresent(value -> result.set("terminalAt", value.toString()));
         run.terminalReason().ifPresent(value -> result.set("terminalReason", value));
+        run.currentStage().ifPresent(value -> result.set("currentStage", currentStage(value)));
         return result.build();
     }
 
@@ -61,7 +62,7 @@ final class ChaosRunJson {
                 .set("name", plan.name())
                 .set("maximumDuration", plan.maximumDuration().toString())
                 .set("seed", plan.seed())
-                .setValues("stages", List.of(stage(plan.stage())))
+                .setValues("stages", plan.stages().stream().map(ChaosRunJson::stage).toList())
                 .build();
     }
 
@@ -69,7 +70,16 @@ final class ChaosRunJson {
         return JsonObject.builder()
                 .set("name", stage.name())
                 .set("duration", stage.duration().toString())
-                .setValues("disruptions", List.of(disruption(stage.disruption())))
+                .setValues("disruptions", stage.disruption().stream().map(ChaosRunJson::disruption).toList())
+                .build();
+    }
+
+    private static JsonObject currentStage(ChaosRunView.CurrentStage stage) {
+        return JsonObject.builder()
+                .set("index", stage.index())
+                .set("name", stage.name())
+                .set("startedAt", stage.startedAt().toString())
+                .set("endsAt", stage.endsAt().toString())
                 .build();
     }
 

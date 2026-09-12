@@ -219,6 +219,33 @@ class ChaosExtensionIT {
         assertThat(APPLICATION_INVOCATIONS.get(), is(2));
     }
 
+    @Test
+    void executesOrderedStagesAndPassiveRecovery() throws InterruptedException {
+        JsonObject created = postRun(control, sequencePlan());
+        String id = created.stringValue("id").orElseThrow();
+        assertThat(created.objectValue("currentStage").orElseThrow().stringValue("name").orElseThrow(),
+                   is("slow-orders"));
+
+        long started = System.nanoTime();
+        var slowResponse = application.get("/orders/42").request(String.class);
+        Duration elapsed = Duration.ofNanos(System.nanoTime() - started);
+        assertThat(slowResponse.status(), is(Status.OK_200));
+        assertThat(elapsed.compareTo(Duration.ofMillis(40)) >= 0, is(true));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(1));
+
+        awaitStage(id, "orders-outage");
+        assertThat(application.get("/orders/42").request(String.class).status(),
+                   is(Status.SERVICE_UNAVAILABLE_503));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(1));
+
+        awaitStage(id, "recovery");
+        assertThat(application.get("/orders/42").request(String.class).status(), is(Status.OK_200));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(2));
+
+        JsonObject completed = awaitState(id, "COMPLETED");
+        assertThat(completed.containsKey("currentStage"), is(false));
+    }
+
     private static JsonObject postRun(Http1Client control) {
         return postRun(control, runPlan(148_894, "reject-orders", "orders-503", "{\"type\":\"always\"}"));
     }
@@ -258,6 +285,82 @@ class ChaosExtensionIT {
                   }]
                 }
                 """.formatted(seed, stageName, disruptionName, activation, effect)).readJsonObject();
+    }
+
+    private static JsonObject sequencePlan() {
+        return JsonParser.create("""
+                {
+                  "name": "orders-sequence",
+                  "maximumDuration": "PT5S",
+                  "seed": 42,
+                  "stages": [
+                    {
+                      "name": "slow-orders",
+                      "duration": "PT1S",
+                      "disruptions": [{
+                        "name": "orders-latency",
+                        "scope": {
+                          "type": "inbound-http",
+                          "methods": ["GET"],
+                          "path": {"match": "prefix", "value": "/orders"}
+                        },
+                        "activation": {"type": "always"},
+                        "effect": {"type": "latency", "delay": "PT0.05S"},
+                        "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                      }]
+                    },
+                    {
+                      "name": "orders-outage",
+                      "duration": "PT1S",
+                      "disruptions": [{
+                        "name": "orders-503",
+                        "scope": {
+                          "type": "inbound-http",
+                          "methods": ["GET"],
+                          "path": {"match": "prefix", "value": "/orders"}
+                        },
+                        "activation": {"type": "always"},
+                        "effect": {"type": "synthetic-http-response", "status": 503},
+                        "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                      }]
+                    },
+                    {
+                      "name": "recovery",
+                      "duration": "PT1S",
+                      "disruptions": []
+                    }
+                  ]
+                }
+                """).readJsonObject();
+    }
+
+    private JsonObject awaitStage(String id, String expected) throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        JsonObject run;
+        do {
+            run = control.get(RUNS + "/" + id).request(JsonObject.class).entity();
+            String current = run.objectValue("currentStage")
+                    .flatMap(stage -> stage.stringValue("name"))
+                    .orElse("");
+            if (expected.equals(current)) {
+                return run;
+            }
+            Thread.sleep(10);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("Run did not reach stage " + expected + ": " + run);
+    }
+
+    private JsonObject awaitState(String id, String expected) throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        JsonObject run;
+        do {
+            run = control.get(RUNS + "/" + id).request(JsonObject.class).entity();
+            if (expected.equals(run.stringValue("state").orElseThrow())) {
+                return run;
+            }
+            Thread.sleep(10);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("Run did not reach state " + expected + ": " + run);
     }
 
     private static JsonObject postRun(Http1Client control, JsonObject plan) {

@@ -85,40 +85,63 @@ final class ChaosRunPlanJson {
         long seed = json.containsKey("seed") ? integer(json, "seed", "/seed") : SEED_SOURCE.nextLong();
 
         JsonArray stages = requiredArray(json, "stages", "/stages");
-        if (stages.size() != 1) {
-            throw invalid("/stages", "stage-count", "Exactly one stage is supported.");
+        if (stages.size() == 0) {
+            throw invalid("/stages", "stage-count", "At least one stage is required.");
         }
-        ChaosRunPlan.ChaosStage stage = stage(requiredObject(stages.get(0).orElseThrow(), "/stages/0"),
-                                               maximumDuration,
-                                               limits);
-        return new ChaosRunPlan(name, maximumDuration, seed, stage);
+        if (stages.size() > limits.maximumStagesPerRun()) {
+            throw invalid("/stages", "stage-limit", "Stage count exceeds the server limit.");
+        }
+        Set<String> stageNames = new LinkedHashSet<>();
+        var parsedStages = new ArrayList<ChaosRunPlan.ChaosStage>(stages.size());
+        Duration totalDuration = Duration.ZERO;
+        for (int index = 0; index < stages.size(); index++) {
+            String path = "/stages/" + index;
+            ChaosRunPlan.ChaosStage stage = stage(requiredObject(stages.get(index).orElseThrow(), path),
+                                                   path,
+                                                   limits);
+            if (!stageNames.add(stage.name())) {
+                throw invalid(path + "/name", "duplicate-name", "Stage names must be unique within a run.");
+            }
+            try {
+                totalDuration = totalDuration.plus(stage.duration());
+            } catch (ArithmeticException exception) {
+                throw invalid(path + "/duration", "duration-limit",
+                              "Cumulative stage duration is too large.", exception);
+            }
+            if (totalDuration.compareTo(maximumDuration) > 0) {
+                throw invalid(path + "/duration", "duration-limit",
+                              "Cumulative stage duration exceeds maximumDuration.");
+            }
+            parsedStages.add(stage);
+        }
+        return new ChaosRunPlan(name, maximumDuration, seed, parsedStages);
     }
 
     private static ChaosRunPlan.ChaosStage stage(JsonObject json,
-                                                  Duration maximumDuration,
+                                                  String path,
                                                   ChaosLimitsConfig limits) {
-        String path = "/stages/0";
         rejectUnknown(json, path, Set.of("name", "duration", "disruptions"));
         String name = requiredNonBlank(json, "name", path + "/name");
         Duration duration = duration(json, "duration", path + "/duration");
         requirePositive(duration, path + "/duration");
-        if (duration.compareTo(maximumDuration) > 0) {
-            throw invalid(path + "/duration", "duration-limit", "Stage duration exceeds maximumDuration.");
-        }
 
         JsonArray disruptions = requiredArray(json, "disruptions", path + "/disruptions");
-        if (disruptions.size() != 1) {
-            throw invalid(path + "/disruptions", "disruption-count", "Exactly one disruption is supported.");
+        if (disruptions.size() > 1) {
+            throw invalid(path + "/disruptions", "disruption-count", "At most one disruption is supported per stage.");
         }
+        Optional<ChaosRunPlan.ChaosDisruption> disruption = disruptions.size() == 0
+                ? Optional.empty()
+                : Optional.of(disruption(requiredObject(disruptions.get(0).orElseThrow(), path + "/disruptions/0"),
+                                         path + "/disruptions/0",
+                                         limits));
         return new ChaosRunPlan.ChaosStage(name,
                                            duration,
-                                           disruption(requiredObject(disruptions.get(0).orElseThrow(),
-                                                                     path + "/disruptions/0"),
-                                                      limits));
+                                           disruption);
     }
 
-    private static ChaosRunPlan.ChaosDisruption disruption(JsonObject json, ChaosLimitsConfig limits) {
-        String path = "/stages/0/disruptions/0";
+    private static ChaosRunPlan.ChaosDisruption disruption(JsonObject json,
+                                                           String path,
+                                                           ChaosLimitsConfig limits) {
         rejectUnknown(json, path, Set.of("name", "scope", "activation", "effect", "budget"));
         String name = requiredNonBlank(json, "name", path + "/name");
         ChaosHttpScope scope = scope(requiredObject(json, "scope", path + "/scope"), path + "/scope");

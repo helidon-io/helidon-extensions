@@ -17,6 +17,7 @@ package io.helidon.extensions.chaos;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -195,7 +196,7 @@ class ChaosApplicationFilterTest {
         ChaosRunPlan.ChaosDisruption disruption =
                 new ChaosRunPlan.ChaosDisruption(disruptionName, scope, ChaosActivation.always(), effect, budget);
         ChaosRunPlan.ChaosStage stage =
-                new ChaosRunPlan.ChaosStage("stage", Duration.ofSeconds(30), disruption);
-        return new ChaosRunPlan("run", Duration.ofMinutes(1), 42, stage);
+                new ChaosRunPlan.ChaosStage("stage", Duration.ofSeconds(30), Optional.of(disruption));
+        return new ChaosRunPlan("run", Duration.ofMinutes(1), 42, List.of(stage));
     }
 }

@@ -18,6 +18,7 @@ package io.helidon.extensions.chaos;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -31,6 +32,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasEntry;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
@@ -48,14 +50,101 @@ class ChaosRunPlanJsonTest {
         assertThat(plan.name(), is("orders-unavailable"));
         assertThat(plan.maximumDuration(), is(Duration.ofSeconds(30)));
         assertThat(plan.seed(), is(148_894L));
-        assertThat(plan.stage().duration(), is(Duration.ofSeconds(10)));
-        assertThat(plan.stage().disruption().scope().methods(), contains("GET"));
-        assertThat(plan.stage().disruption().activation(), is(ChaosActivation.always()));
-        ChaosSyntheticResponse effect = (ChaosSyntheticResponse) plan.stage().disruption().effect();
+        assertThat(plan.stages(), hasSize(1));
+        ChaosRunPlan.ChaosStage stage = plan.stages().getFirst();
+        assertThat(stage.duration(), is(Duration.ofSeconds(10)));
+        ChaosRunPlan.ChaosDisruption disruption = stage.disruption().orElseThrow();
+        assertThat(disruption.scope().methods(), contains("GET"));
+        assertThat(disruption.activation(), is(ChaosActivation.always()));
+        ChaosSyntheticResponse effect = (ChaosSyntheticResponse) disruption.effect();
         assertThat(effect.status(), is(503));
         assertThat(effect.headers(), hasEntry("Retry-After", "1"));
         assertThat(new String(effect.body(), StandardCharsets.UTF_8),
                    is("Synthetic service failure"));
+    }
+
+    @Test
+    void parsesOrderedDisruptiveAndPassiveStages() {
+        ChaosRunPlan plan = ChaosRunPlanJson.parse(json(multiStageJson()), LIMITS);
+
+        assertThat(plan.stages(), hasSize(3));
+        assertThat(plan.stages().stream().map(ChaosRunPlan.ChaosStage::name).toList(),
+                   is(List.of("slow-orders", "orders-outage", "recovery")));
+        assertThat(plan.stages().get(0).disruption().orElseThrow().effect(), instanceOf(ChaosLatency.class));
+        assertThat(plan.stages().get(1).disruption().orElseThrow().effect(),
+                   instanceOf(ChaosSyntheticResponse.class));
+        assertThat(plan.stages().get(2).disruption(), is(Optional.empty()));
+        assertThat(plan.duration(), is(Duration.ofSeconds(20)));
+    }
+
+    @Test
+    void acceptsStageDurationTotalEqualToMaximumDuration() {
+        String input = multiStageJson().replace("PT30S", "PT20S");
+
+        assertDoesNotThrow(() -> ChaosRunPlanJson.parse(json(input), LIMITS));
+    }
+
+    @Test
+    void rejectsInvalidStageSequences() {
+        assertInvalidPlan("""
+                {"name":"empty","maximumDuration":"PT30S","stages":[]}
+                """, "/stages", "stage-count");
+
+        ChaosLimitsConfig twoStageLimit = ChaosLimitsConfig.builder().maximumStagesPerRun(2).build();
+        assertInvalidPlan(multiStageJson(), twoStageLimit, "/stages", "stage-limit");
+
+        assertInvalidPlan(multiStageJson().replace("\"name\": \"orders-outage\"",
+                                                   "\"name\": \"slow-orders\""),
+                          "/stages/1/name",
+                          "duplicate-name");
+
+        assertInvalidPlan("""
+                {
+                  "name":"too-many-disruptions",
+                  "maximumDuration":"PT30S",
+                  "stages":[{
+                    "name":"stage",
+                    "duration":"PT10S",
+                    "disruptions":[{}, {}]
+                  }]
+                }
+                """, "/stages/0/disruptions", "disruption-count");
+
+        assertInvalidPlan(multiStageJson().replace("PT30S", "PT19S"),
+                          "/stages/2/duration",
+                          "duration-limit");
+
+        ChaosLimitsConfig maximumDurationLimit = ChaosLimitsConfig.builder()
+                .maximumRunDuration(Duration.ofSeconds(Long.MAX_VALUE))
+                .build();
+        assertInvalidPlan("""
+                {
+                  "name":"duration-overflow",
+                  "maximumDuration":"PT9223372036854775807S",
+                  "stages":[
+                    {"name":"first","duration":"PT9223372036854775807S","disruptions":[]},
+                    {"name":"second","duration":"PT1S","disruptions":[]}
+                  ]
+                }
+                """, maximumDurationLimit, "/stages/1/duration", "duration-limit");
+    }
+
+    @Test
+    void rejectsMalformedStageDisruptions() {
+        assertBadRequest("""
+                {
+                  "name":"missing-disruptions",
+                  "maximumDuration":"PT30S",
+                  "stages":[{"name":"stage","duration":"PT10S"}]
+                }
+                """, "/stages/0/disruptions");
+        assertBadRequest("""
+                {
+                  "name":"non-array-disruptions",
+                  "maximumDuration":"PT30S",
+                  "stages":[{"name":"stage","duration":"PT10S","disruptions":{}}]
+                }
+                """, "/stages/0/disruptions");
     }
 
     @Test
@@ -67,7 +156,7 @@ class ChaosRunPlanJsonTest {
                 }
                 """)), LIMITS);
 
-        ChaosLatency effect = (ChaosLatency) plan.stage().disruption().effect();
+        ChaosLatency effect = (ChaosLatency) plan.stages().getFirst().disruption().orElseThrow().effect();
         assertThat(effect.delay(), is(Duration.ofMillis(250)));
         assertThat(effect.jitter(), is(Duration.ZERO));
     }
@@ -82,7 +171,7 @@ class ChaosRunPlanJsonTest {
                 }
                 """)), LIMITS);
 
-        ChaosLatency effect = (ChaosLatency) plan.stage().disruption().effect();
+        ChaosLatency effect = (ChaosLatency) plan.stages().getFirst().disruption().orElseThrow().effect();
         assertThat(effect.delay(), is(Duration.ofMillis(250)));
         assertThat(effect.jitter(), is(Duration.ofMillis(50)));
     }
@@ -262,18 +351,20 @@ class ChaosRunPlanJsonTest {
 
         ChaosRunPlan plan = ChaosRunPlanJson.parse(json(input), LIMITS);
 
-        assertThat(plan.stage().disruption().activation(), is(new ProbabilityActivation(0.25)));
+        assertThat(plan.stages().getFirst().disruption().orElseThrow().activation(),
+                   is(new ProbabilityActivation(0.25)));
 
         ChaosRunPlan minimum = ChaosRunPlanJson.parse(
                 json(withActivation("{\"type\": \"probability\", "
                                             + "\"probability\": 1.1102230246251565e-16}")),
                 LIMITS);
-        assertThat(minimum.stage().disruption().activation(),
+        assertThat(minimum.stages().getFirst().disruption().orElseThrow().activation(),
                    is(new ProbabilityActivation(0x1.0p-53)));
         ChaosRunPlan certain = ChaosRunPlanJson.parse(
                 json(withActivation("{\"type\": \"probability\", \"probability\": 1}")),
                 LIMITS);
-        assertThat(certain.stage().disruption().activation(), is(new ProbabilityActivation(1)));
+        assertThat(certain.stages().getFirst().disruption().orElseThrow().activation(),
+                   is(new ProbabilityActivation(1)));
     }
 
     @Test
@@ -298,8 +389,10 @@ class ChaosRunPlanJsonTest {
                         """)),
                 LIMITS);
 
-        assertThat(explicit.stage().disruption().activation(), is(new PeriodicBurstActivation(20, 10, 3)));
-        assertThat(defaultInitialSkip.stage().disruption().activation(), is(new PeriodicBurstActivation(0, 10, 3)));
+        assertThat(explicit.stages().getFirst().disruption().orElseThrow().activation(),
+                   is(new PeriodicBurstActivation(20, 10, 3)));
+        assertThat(defaultInitialSkip.stages().getFirst().disruption().orElseThrow().activation(),
+                   is(new PeriodicBurstActivation(0, 10, 3)));
     }
 
     @Test
@@ -496,22 +589,12 @@ class ChaosRunPlanJsonTest {
         assertBadRequest(validJson().replace("orders-unavailable", "bad\\ud800name"), "/name");
     }
 
-    @Test
-    void rejectsWrongStageAndDisruptionCounts() {
-        assertInvalidPlan("""
-                {"name":"empty","maximumDuration":"PT30S","stages":[]}
-                """, "/stages");
-        assertInvalidPlan("""
-                {
-                  "name":"empty",
-                  "maximumDuration":"PT30S",
-                  "stages":[{"name":"stage","duration":"PT10S","disruptions":[]}]
-                }
-                """, "/stages/0/disruptions");
-    }
-
     private static void assertInvalidPlan(String input, String path) {
         assertInvalidPlan(input, LIMITS, path);
+    }
+
+    private static void assertInvalidPlan(String input, String path, String code) {
+        assertInvalidPlan(input, LIMITS, path, code);
     }
 
     private static void assertBadRequest(String input, String path) {
@@ -526,6 +609,14 @@ class ChaosRunPlanJsonTest {
                                                         () -> ChaosRunPlanJson.parse(json(input), limits));
         assertThat(exception.status(), is(422));
         assertThat(exception.violations().getFirst().path(), is(path));
+    }
+
+    private static void assertInvalidPlan(String input, ChaosLimitsConfig limits, String path, String code) {
+        ChaosRequestException exception = assertThrows(ChaosRequestException.class,
+                                                        () -> ChaosRunPlanJson.parse(json(input), limits));
+        assertThat(exception.status(), is(422));
+        assertThat(exception.violations().getFirst().path(), is(path));
+        assertThat(exception.violations().getFirst().code(), is(code));
     }
 
     private static JsonObject json(String text) {
@@ -550,6 +641,53 @@ class ChaosRunPlanJsonTest {
                   "body": "Synthetic service failure"
                 }
                 """);
+    }
+
+    private static String multiStageJson() {
+        return """
+                {
+                  "name": "orders-degradation-sequence",
+                  "maximumDuration": "PT30S",
+                  "seed": 148894,
+                  "stages": [
+                    {
+                      "name": "slow-orders",
+                      "duration": "PT5S",
+                      "disruptions": [{
+                        "name": "orders-latency",
+                        "scope": {
+                          "type": "inbound-http",
+                          "methods": ["get"],
+                          "path": {"match": "prefix", "value": "/orders"}
+                        },
+                        "activation": {"type": "always"},
+                        "effect": {"type": "latency", "delay": "PT0.25S"},
+                        "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                      }]
+                    },
+                    {
+                      "name": "orders-outage",
+                      "duration": "PT10S",
+                      "disruptions": [{
+                        "name": "orders-503",
+                        "scope": {
+                          "type": "inbound-http",
+                          "methods": ["get"],
+                          "path": {"match": "prefix", "value": "/orders"}
+                        },
+                        "activation": {"type": "always"},
+                        "effect": {"type": "synthetic-http-response", "status": 503},
+                        "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                      }]
+                    },
+                    {
+                      "name": "recovery",
+                      "duration": "PT5S",
+                      "disruptions": []
+                    }
+                  ]
+                }
+                """;
     }
 
     private static String planJson(String effect) {

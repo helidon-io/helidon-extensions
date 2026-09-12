@@ -38,6 +38,7 @@ class ChaosConfigTest {
         assertThat(config.security().allowUnauthenticatedLocal(), is(false));
         assertThat(config.limits().maximumActiveRuns(), is(1));
         assertThat(config.limits().maximumRunDuration(), is(Duration.ofMinutes(15)));
+        assertThat(config.limits().maximumStagesPerRun(), is(16));
         assertThat(config.limits().maximumActivationsPerDisruption(), is(10_000L));
         assertThat(config.limits().maximumConcurrentActivationsPerDisruption(), is(64));
         assertThat(config.limits().maximumLatency(), is(Duration.ofSeconds(30)));
@@ -138,6 +139,8 @@ class ChaosConfigTest {
                      () -> ChaosLimitsConfig.builder().maximumActiveRuns(0).build());
         assertThrows(IllegalArgumentException.class,
                      () -> ChaosLimitsConfig.builder().maximumRunDuration(Duration.ZERO).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> ChaosLimitsConfig.builder().maximumStagesPerRun(0).build());
         assertThrows(IllegalArgumentException.class,
                      () -> ChaosLimitsConfig.builder().maximumActivationsPerDisruption(0).build());
         assertThrows(IllegalArgumentException.class,

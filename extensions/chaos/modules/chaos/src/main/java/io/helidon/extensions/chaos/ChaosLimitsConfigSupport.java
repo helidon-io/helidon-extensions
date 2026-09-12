@@ -33,6 +33,7 @@ final class ChaosLimitsConfigSupport {
         public void decorate(ChaosLimitsConfig.BuilderBase<?, ?> builder) {
             requirePositive(builder.maximumActiveRuns(), "maximum-active-runs");
             requirePositive(builder.maximumRunDuration(), "maximum-run-duration");
+            requirePositive(builder.maximumStagesPerRun(), "maximum-stages-per-run");
             requirePositive(builder.maximumActivationsPerDisruption(), "maximum-activations-per-disruption");
             requirePositive(builder.maximumConcurrentActivationsPerDisruption(),
                             "maximum-concurrent-activations-per-disruption");

@@ -46,6 +46,15 @@ interface ChaosLimitsConfigBlueprint {
     Duration maximumRunDuration();
 
     /**
+     * Maximum number of stages in one run.
+     *
+     * @return maximum stages
+     */
+    @Option.Configured
+    @Option.DefaultInt(16)
+    int maximumStagesPerRun();
+
+    /**
      * Maximum cumulative activations of one disruption.
      *
      * @return maximum activations
