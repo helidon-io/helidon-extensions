@@ -16,7 +16,7 @@
 package io.helidon.extensions.chaos;
 
 /**
- * Normalized effect in a Chaos run plan.
+ * Effect resolved for one accepted activation.
  */
-sealed interface ChaosEffect permits ChaosLatency, ChaosSyntheticResponse {
+sealed interface ChaosEffectAction permits ChaosLatencyAction, ChaosSyntheticResponse {
 }

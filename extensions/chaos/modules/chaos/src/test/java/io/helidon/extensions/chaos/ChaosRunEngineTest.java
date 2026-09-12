@@ -46,6 +46,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ChaosRunEngineTest {
@@ -90,7 +91,7 @@ class ChaosRunEngineTest {
         assertThat(engine.reserve("GET", "/orders/43"), is(Optional.empty()));
         first.close();
         try (ChaosRunEngine.Reservation second = engine.reserve("GET", "/orders/44").orElseThrow()) {
-            assertThat(((ChaosSyntheticResponse) second.effect()).status(), is(503));
+            assertThat(((ChaosSyntheticResponse) second.action()).status(), is(503));
         }
         assertThat(engine.reserve("GET", "/orders/45"), is(Optional.empty()));
 
@@ -203,6 +204,25 @@ class ChaosRunEngineTest {
         assertThat(ChaosActivationDecider.streamSeed(42, "a", "b\0c")
                            == ChaosActivationDecider.streamSeed(42, "a\0b", "c"),
                    is(false));
+    }
+
+    @Test
+    void latencyUsesStableIndependentSeededSequence() {
+        ChaosLatency latency = new ChaosLatency(Duration.ofMillis(250), Duration.ofMillis(50));
+        ChaosRunEngine firstEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        firstEngine.create(plan(10, 30, 20, 2, "/orders",
+                                ChaosActivation.always(), 42, "latency", latency), "alice");
+        List<Duration> first = latencySequence(firstEngine, 8);
+
+        ChaosRunEngine sameEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        sameEngine.create(plan(10, 30, 20, 2, "/orders",
+                               ChaosActivation.always(), 42, "latency", latency), "alice");
+        assertThat(latencySequence(sameEngine, 8), is(first));
+
+        ChaosRunEngine differentSeedEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        differentSeedEngine.create(plan(10, 30, 20, 2, "/orders",
+                                        ChaosActivation.always(), 43, "latency", latency), "alice");
+        assertThat(latencySequence(differentSeedEngine, 8), not(is(first)));
     }
 
     @Test
@@ -406,6 +426,17 @@ class ChaosRunEngineTest {
             reservation.ifPresent(ChaosRunEngine.Reservation::close);
         }
         return decisions;
+    }
+
+    private static List<Duration> latencySequence(ChaosRunEngine runEngine, int count) {
+        List<Duration> delays = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            try (ChaosRunEngine.Reservation reservation = runEngine.reserve("GET", "/orders/42").orElseThrow()) {
+                ChaosLatencyAction latency = (ChaosLatencyAction) reservation.action();
+                delays.add(latency.delay());
+            }
+        }
+        return delays;
     }
 
     private ChaosRunEngine engine(ChaosLimitsConfig limits) {

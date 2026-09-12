@@ -15,6 +15,7 @@
  */
 package io.helidon.extensions.chaos.tests.extension;
 
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.common.media.type.MediaTypes;
@@ -139,11 +140,47 @@ class ChaosExtensionIT {
         assertThat(APPLICATION_INVOCATIONS.get(), is(6));
     }
 
+    @Test
+    void executesLatencyBeforeApplicationRouting() {
+        JsonObject plan = runPlan(42,
+                                  "stage",
+                                  "latency",
+                                  "{\"type\":\"always\"}",
+                                  "{\"type\":\"latency\",\"delay\":\"PT0.1S\"}");
+        JsonObject created = postRun(control, plan);
+        JsonObject effect = created.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("effect").orElseThrow();
+        assertThat(effect.stringValue("jitter").orElseThrow(), is("PT0S"));
+
+        long started = System.nanoTime();
+        var response = application.get("/orders/42").request(String.class);
+        Duration elapsed = Duration.ofNanos(System.nanoTime() - started);
+
+        assertThat(response.status(), is(Status.OK_200));
+        assertThat(response.entity(), is("order"));
+        assertThat(elapsed.compareTo(Duration.ofMillis(90)) >= 0, is(true));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(1));
+    }
+
     private static JsonObject postRun(Http1Client control) {
         return postRun(control, runPlan(148_894, "reject-orders", "orders-503", "{\"type\":\"always\"}"));
     }
 
     private static JsonObject runPlan(long seed, String stageName, String disruptionName, String activation) {
+        return runPlan(seed,
+                       stageName,
+                       disruptionName,
+                       activation,
+                       "{\"type\":\"synthetic-http-response\",\"status\":503,\"body\":\"failure\"}");
+    }
+
+    private static JsonObject runPlan(long seed,
+                                      String stageName,
+                                      String disruptionName,
+                                      String activation,
+                                      String effect) {
         return JsonParser.create("""
                 {
                   "name": "orders-unavailable",
@@ -160,16 +197,12 @@ class ChaosExtensionIT {
                         "path": {"match": "prefix", "value": "/orders"}
                       },
                       "activation": %s,
-                      "effect": {
-                        "type": "synthetic-http-response",
-                        "status": 503,
-                        "body": "failure"
-                      },
+                      "effect": %s,
                       "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
                     }]
                   }]
                 }
-                """.formatted(seed, stageName, disruptionName, activation)).readJsonObject();
+                """.formatted(seed, stageName, disruptionName, activation, effect)).readJsonObject();
     }
 
     private static JsonObject postRun(Http1Client control, JsonObject plan) {

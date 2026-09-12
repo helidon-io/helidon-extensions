@@ -15,8 +15,28 @@
  */
 package io.helidon.extensions.chaos;
 
+import java.time.Duration;
+import java.util.Objects;
+
 /**
- * Normalized effect in a Chaos run plan.
+ * Latency resolved for one accepted activation.
+ *
+ * @param delay delay to apply
  */
-sealed interface ChaosEffect permits ChaosLatency, ChaosSyntheticResponse {
+record ChaosLatencyAction(Duration delay) implements ChaosEffectAction {
+
+    ChaosLatencyAction {
+        Objects.requireNonNull(delay, "delay is null");
+        if (delay.isNegative()) {
+            throw new IllegalArgumentException("delay must not be negative");
+        }
+    }
+
+    void apply() {
+        try {
+            Thread.sleep(delay);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
+    }
 }

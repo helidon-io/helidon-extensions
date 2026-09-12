@@ -1,6 +1,6 @@
 # Helidon Chaos extension
 
-The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response.
+The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response or inbound latency.
 
 This first slice targets Helidon 4.5.3 and is disabled by default.
 
@@ -164,6 +164,32 @@ Validation uses strict JSON. Request-shape errors return `400`; policy and limit
 
 An exact path matches only that path. A prefix is segment-aware: `/orders` matches `/orders` and `/orders/42`, but not `/orders-old`. The filter does not invoke application code after it reserves a synthetic response. Non-matching or budget-skipped traffic continues normally.
 
+For a fixed delay before application routing, use the `latency` effect:
+
+```json
+{
+  "type": "latency",
+  "delay": "PT0.25S"
+}
+```
+
+Add `jitter` for a uniformly selected delay below or above the base delay:
+
+```json
+{
+  "type": "latency",
+  "delay": "PT0.25S",
+  "jitter": "PT0.05S"
+}
+```
+
+The second example delays a selected request by 200 through 300 milliseconds. `delay` must be positive. `jitter`
+defaults to zero, must not be negative, and must not exceed `delay`. The worst-case value of `delay + jitter` must not
+exceed the server's `maximum-latency` limit. The run seed and matching invocation number determine the selected delay;
+effect sampling uses a separate deterministic stream from activation sampling. A latency reservation is released before
+the application handler runs, so application processing time does not consume chaos concurrency budget. If an artificial
+delay is interrupted, the request continues through routing with its thread interrupt status restored.
+
 Activation can also select a deterministic fraction of matching requests:
 
 ```json
@@ -216,6 +242,7 @@ curl --fail-with-body --request DELETE --user operator:test-only-password \
 | `maximum-run-duration` | `PT15M` |
 | `maximum-activations-per-disruption` | `10000` |
 | `maximum-concurrent-activations-per-disruption` | `64` |
+| `maximum-latency` | `PT30S` |
 | `maximum-synthetic-body-bytes` | `65536` |
 | `maximum-control-request-bytes` | `65536` |
 | `maximum-concurrent-control-requests` | `16` |
@@ -230,7 +257,8 @@ and stopping a run prevents new reservations while in-flight work drains.
 Runs are local to one Helidon server process, in memory, bounded, and not reconstructed after restart. A caller must create a run on each selected instance. Restart is an unconditional cleanup boundary.
 
 The current slice intentionally supports one stage, one inbound HTTP disruption, `always`, deterministic `probability`,
-or `periodic-burst` activation, exact or segment-aware prefix paths, and a synthetic 4xx/5xx HTTP response. Its public vocabulary includes `runs`, `stages`,
+or `periodic-burst` activation, exact or segment-aware prefix paths, a synthetic 4xx/5xx HTTP response, and latency before
+application routing. Its public vocabulary includes `runs`, `stages`,
 `disruptions`, `scope`, `activation`, `effect`, and `budget` so later additions can introduce other bounded local effects
 without adopting another project's API.
 

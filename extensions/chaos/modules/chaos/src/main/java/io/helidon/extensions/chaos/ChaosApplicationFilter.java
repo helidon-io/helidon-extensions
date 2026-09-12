@@ -44,23 +44,39 @@ final class ChaosApplicationFilter implements Filter {
             return;
         }
 
+        boolean proceed;
         try (ChaosRunEngine.Reservation reservation = candidate.orElseThrow()) {
-            ChaosSyntheticResponse effect = (ChaosSyntheticResponse) reservation.effect();
-            byte[] body = effect.body();
-            response.status(effect.status());
-            effect.headers().forEach(response::header);
-            effect.mediaType().ifPresent(mediaType -> response.header(HeaderNames.CONTENT_TYPE, mediaType.text()));
-            response.contentLength(body.length);
-            if (body.length == 0) {
-                response.send();
-            } else {
-                response.send(body);
+            proceed = switch (reservation.action()) {
+            case ChaosLatencyAction latency -> {
+                latency.apply();
+                yield true;
             }
+            case ChaosSyntheticResponse synthetic -> {
+                sendSyntheticResponse(response, synthetic);
+                yield false;
+            }
+            };
+        }
+        if (proceed) {
+            chain.proceed();
         }
     }
 
     @Override
     public void afterStop() {
         engine.close();
+    }
+
+    private static void sendSyntheticResponse(RoutingResponse response, ChaosSyntheticResponse effect) {
+        byte[] body = effect.body();
+        response.status(effect.status());
+        effect.headers().forEach(response::header);
+        effect.mediaType().ifPresent(mediaType -> response.header(HeaderNames.CONTENT_TYPE, mediaType.text()));
+        response.contentLength(body.length);
+        if (body.length == 0) {
+            response.send();
+        } else {
+            response.send(body);
+        }
     }
 }

@@ -64,6 +64,15 @@ interface ChaosLimitsConfigBlueprint {
     int maximumConcurrentActivationsPerDisruption();
 
     /**
+     * Maximum latency applied to one request, including jitter.
+     *
+     * @return maximum latency
+     */
+    @Option.Configured
+    @Option.Default("PT30S")
+    Duration maximumLatency();
+
+    /**
      * Maximum synthetic response body size in UTF-8 bytes.
      *
      * @return maximum body size

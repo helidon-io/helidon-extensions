@@ -110,6 +110,24 @@ class ChaosRunJsonTest {
     }
 
     @Test
+    void writesNormalizedLatencyEffect() {
+        ChaosRunPlan latencyPlan = plan(new ChaosLatency(Duration.ofMillis(250), Duration.ofMillis(50)));
+
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   latencyPlan));
+
+        JsonObject effect = json.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("effect").orElseThrow();
+        assertThat(effect.stringValue("type").orElseThrow(), is("latency"));
+        assertThat(effect.stringValue("delay").orElseThrow(), is("PT0.25S"));
+        assertThat(effect.stringValue("jitter").orElseThrow(), is("PT0.05S"));
+    }
+
+    @Test
     void writesTerminalFieldsAndRunList() {
         JsonObject terminal = ChaosRunJson.toJson(view(STOPPED,
                                                        Optional.of(CREATED.plusSeconds(4)),
@@ -259,9 +277,18 @@ class ChaosRunJsonTest {
                                                                       Map.of("Retry-After", "1"),
                                                                       Optional.of(MediaTypes.TEXT_PLAIN),
                                                                       "failure".getBytes(StandardCharsets.UTF_8));
+        return plan(activation, response);
+    }
+
+    private static ChaosRunPlan plan(ChaosEffect effect) {
+        return plan(ChaosActivation.always(), effect);
+    }
+
+    private static ChaosRunPlan plan(ChaosActivation activation, ChaosEffect effect) {
+        ChaosHttpScope scope = new ChaosHttpScope(Set.of("GET"), PREFIX, "/orders");
         ChaosBudget budget = new ChaosBudget(20, 2);
         ChaosRunPlan.ChaosDisruption disruption =
-                new ChaosRunPlan.ChaosDisruption("orders-503", scope, activation, response, budget);
+                new ChaosRunPlan.ChaosDisruption("orders-503", scope, activation, effect, budget);
         ChaosRunPlan.ChaosStage stage =
                 new ChaosRunPlan.ChaosStage("reject-orders", Duration.ofSeconds(10), disruption);
         return new ChaosRunPlan("orders-unavailable", Duration.ofSeconds(30), 148_894, stage);

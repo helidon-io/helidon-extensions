@@ -119,7 +119,17 @@ final class ChaosRunJson {
     }
 
     private static JsonObject effect(ChaosEffect effect) {
-        ChaosSyntheticResponse synthetic = (ChaosSyntheticResponse) effect;
+        return switch (effect) {
+        case ChaosLatency latency -> JsonObject.builder()
+                .set("type", "latency")
+                .set("delay", latency.delay().toString())
+                .set("jitter", latency.jitter().toString())
+                .build();
+        case ChaosSyntheticResponse synthetic -> syntheticResponse(synthetic);
+        };
+    }
+
+    private static JsonObject syntheticResponse(ChaosSyntheticResponse synthetic) {
         JsonObject.Builder headers = JsonObject.builder();
         synthetic.headers().forEach(headers::set);
         JsonObject.Builder result = JsonObject.builder()

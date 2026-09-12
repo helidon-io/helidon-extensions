@@ -40,6 +40,7 @@ class ChaosConfigTest {
         assertThat(config.limits().maximumRunDuration(), is(Duration.ofMinutes(15)));
         assertThat(config.limits().maximumActivationsPerDisruption(), is(10_000L));
         assertThat(config.limits().maximumConcurrentActivationsPerDisruption(), is(64));
+        assertThat(config.limits().maximumLatency(), is(Duration.ofSeconds(30)));
         assertThat(config.limits().maximumSyntheticBodyBytes(), is(65_536));
         assertThat(config.limits().maximumControlRequestBytes(), is(65_536L));
         assertThat(config.limits().maximumConcurrentControlRequests(), is(16));
@@ -142,6 +143,8 @@ class ChaosConfigTest {
         assertThrows(IllegalArgumentException.class,
                      () -> ChaosLimitsConfig.builder().maximumConcurrentActivationsPerDisruption(0).build());
         assertThrows(IllegalArgumentException.class,
+                     () -> ChaosLimitsConfig.builder().maximumLatency(Duration.ZERO).build());
+        assertThrows(IllegalArgumentException.class,
                      () -> ChaosLimitsConfig.builder().maximumSyntheticBodyBytes(0).build());
         assertThrows(IllegalArgumentException.class,
                      () -> ChaosLimitsConfig.builder().maximumControlRequestBytes(0).build());
@@ -159,6 +162,14 @@ class ChaosConfigTest {
                      () -> ChaosLimitsConfig.builder()
                              .maximumActiveRuns(2)
                              .maximumRetainedRuns(1)
+                             .build());
+    }
+
+    @Test
+    void maximumLatencyMustFitNanosecondPrecision() {
+        assertThrows(IllegalArgumentException.class,
+                     () -> ChaosLimitsConfig.builder()
+                             .maximumLatency(Duration.ofSeconds(Long.MAX_VALUE))
                              .build());
     }
 }

@@ -58,6 +58,86 @@ class ChaosRunPlanJsonTest {
     }
 
     @Test
+    void parsesFixedLatencyWithDefaultJitter() {
+        ChaosRunPlan plan = ChaosRunPlanJson.parse(json(withEffect("""
+                {
+                  "type": "latency",
+                  "delay": "PT0.25S"
+                }
+                """)), LIMITS);
+
+        ChaosLatency effect = (ChaosLatency) plan.stage().disruption().effect();
+        assertThat(effect.delay(), is(Duration.ofMillis(250)));
+        assertThat(effect.jitter(), is(Duration.ZERO));
+    }
+
+    @Test
+    void parsesLatencyJitter() {
+        ChaosRunPlan plan = ChaosRunPlanJson.parse(json(withEffect("""
+                {
+                  "type": "latency",
+                  "delay": "PT0.25S",
+                  "jitter": "PT0.05S"
+                }
+                """)), LIMITS);
+
+        ChaosLatency effect = (ChaosLatency) plan.stage().disruption().effect();
+        assertThat(effect.delay(), is(Duration.ofMillis(250)));
+        assertThat(effect.jitter(), is(Duration.ofMillis(50)));
+    }
+
+    @Test
+    void rejectsInvalidLatency() {
+        assertBadRequest(withEffect("""
+                {"type": "latency"}
+                """), "/stages/0/disruptions/0/effect/delay");
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "not-a-duration"}
+                """), "/stages/0/disruptions/0/effect/delay");
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "PT0S"}
+                """), "/stages/0/disruptions/0/effect/delay");
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "-PT0.001S"}
+                """), "/stages/0/disruptions/0/effect/delay");
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "PT0.25S", "jitter": "-PT0.001S"}
+                """), "/stages/0/disruptions/0/effect/jitter");
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "PT0.25S", "jitter": "PT0.251S"}
+                """), "/stages/0/disruptions/0/effect/jitter");
+
+        ChaosLimitsConfig limits = ChaosLimitsConfig.builder().maximumLatency(Duration.ofMillis(275)).build();
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "PT0.276S"}
+                """), limits, "/stages/0/disruptions/0/effect/delay");
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "PT0.25S", "jitter": "PT0.05S"}
+                """), limits, "/stages/0/disruptions/0/effect/jitter");
+    }
+
+    @Test
+    void keepsEffectPropertiesMutuallyExclusive() {
+        assertBadRequest(withEffect("""
+                {"type": "latency", "delay": "PT0.25S", "status": 503}
+                """), "/stages/0/disruptions/0/effect/status");
+        assertBadRequest(withEffect("""
+                {"type": "synthetic-http-response", "status": 503, "delay": "PT0.25S"}
+                """), "/stages/0/disruptions/0/effect/delay");
+    }
+
+    @Test
+    void enforcesLatencyInvariants() {
+        assertThrows(NullPointerException.class, () -> new ChaosLatency(null, Duration.ZERO));
+        assertThrows(NullPointerException.class, () -> new ChaosLatency(Duration.ofMillis(1), null));
+        assertThrows(IllegalArgumentException.class, () -> new ChaosLatency(Duration.ZERO, Duration.ZERO));
+        assertThrows(IllegalArgumentException.class,
+                     () -> new ChaosLatency(Duration.ofMillis(1), Duration.ofMillis(-1)));
+        assertThrows(IllegalArgumentException.class,
+                     () -> new ChaosLatency(Duration.ofMillis(1), Duration.ofMillis(2)));
+    }
+
+    @Test
     void parsesProbabilityActivation() {
         String input = validJson().replace("{\"type\": \"always\"}",
                                            "{\"type\": \"probability\", \"probability\": 0.25}");

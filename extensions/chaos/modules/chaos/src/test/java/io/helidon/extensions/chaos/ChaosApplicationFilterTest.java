@@ -45,6 +45,7 @@ import static org.hamcrest.Matchers.is;
 @ServerTest
 class ChaosApplicationFilterTest {
     private static final AtomicInteger APPLICATION_INVOCATIONS = new AtomicInteger();
+    private static final AtomicInteger OBSERVED_IN_FLIGHT = new AtomicInteger();
     private static final HeaderName APPLICATION_HEADER = HeaderNames.create("X-Application");
     private static ChaosRunEngine engine;
 
@@ -69,6 +70,7 @@ class ChaosApplicationFilterTest {
                 .filter(run -> run.state() == ChaosRunState.RUNNING)
                 .forEach(run -> engine.stop(run.id()));
         APPLICATION_INVOCATIONS.set(0);
+        OBSERVED_IN_FLIGHT.set(-1);
     }
 
     @Test
@@ -130,8 +132,41 @@ class ChaosApplicationFilterTest {
         assertThat(APPLICATION_INVOCATIONS.get(), is(1));
     }
 
+    @Test
+    void latencyDelaysBeforeInvokingApplication() {
+        ChaosLatency latency = new ChaosLatency(Duration.ofMillis(100), Duration.ZERO);
+        ChaosRunView created = engine.create(plan(PREFIX,
+                                                  "/orders",
+                                                  Set.of("GET"),
+                                                  20,
+                                                  2,
+                                                  latency,
+                                                  "latency"),
+                                             "alice");
+
+        long started = System.nanoTime();
+        ClientResponseTyped<String> response = client.get("/orders/42").request(String.class);
+        Duration elapsed = Duration.ofNanos(System.nanoTime() - started);
+
+        assertThat(response.status(), is(Status.OK_200));
+        assertThat(response.entity(), is("application"));
+        assertThat(response.headers().first(APPLICATION_HEADER).orElseThrow(), is("reached"));
+        response.close();
+        assertThat(elapsed.compareTo(Duration.ofMillis(90)) >= 0, is(true));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(1));
+        assertThat(OBSERVED_IN_FLIGHT.get(), is(0));
+        ChaosRunView view = engine.get(created.id()).orElseThrow();
+        assertThat(view.activated(), is(1L));
+        assertThat(view.completed(), is(1L));
+        assertThat(view.inFlight(), is(0L));
+    }
+
     private static void application(ServerRequest request, ServerResponse response) {
         APPLICATION_INVOCATIONS.incrementAndGet();
+        engine.list().stream()
+                .filter(run -> run.state() == ChaosRunState.RUNNING)
+                .findFirst()
+                .ifPresent(run -> OBSERVED_IN_FLIGHT.set((int) run.inFlight()));
         response.header(APPLICATION_HEADER, "reached");
         response.send("application");
     }

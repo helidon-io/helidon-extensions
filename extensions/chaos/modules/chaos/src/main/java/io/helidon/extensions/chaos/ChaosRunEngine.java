@@ -297,17 +297,17 @@ final class ChaosRunEngine implements AutoCloseable {
     static final class Reservation implements AutoCloseable {
         private final ChaosRunEngine engine;
         private final UUID runId;
-        private final ChaosEffect effect;
+        private final ChaosEffectAction action;
         private final AtomicBoolean closed = new AtomicBoolean();
 
         private Reservation(ChaosRunEngine engine, UUID runId, ChaosRun.Activation activation) {
             this.engine = engine;
             this.runId = runId;
-            this.effect = activation.effect();
+            this.action = activation.action();
         }
 
-        ChaosEffect effect() {
-            return effect;
+        ChaosEffectAction action() {
+            return action;
         }
 
         @Override

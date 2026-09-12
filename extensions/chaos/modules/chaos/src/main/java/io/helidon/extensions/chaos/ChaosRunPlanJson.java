@@ -213,13 +213,41 @@ final class ChaosRunPlanJson {
     }
 
     private static ChaosEffect effect(JsonObject json, String path, ChaosLimitsConfig limits) {
-        rejectUnknown(json, path, Set.of("type", "status", "headers", "mediaType", "body"));
+        rejectUnknown(json, path, Set.of("type", "status", "headers", "mediaType", "body", "delay", "jitter"));
         String type = requiredString(json, "type", path + "/type");
         return switch (type) {
+        case "latency" -> latency(json, path, limits);
         case "synthetic-http-response" -> syntheticResponse(json, path, limits);
         default -> throw invalid(path + "/type", "unsupported-type",
-                                 "Effect type must be synthetic-http-response.");
+                                 "Effect type must be latency or synthetic-http-response.");
         };
+    }
+
+    private static ChaosLatency latency(JsonObject json, String path, ChaosLimitsConfig limits) {
+        rejectUnknown(json, path, Set.of("type", "delay", "jitter"));
+        Duration delay = duration(json, "delay", path + "/delay");
+        requirePositive(delay, path + "/delay");
+        if (delay.compareTo(limits.maximumLatency()) > 0) {
+            throw invalid(path + "/delay", "latency-limit", "delay exceeds the server latency limit.");
+        }
+        Duration jitter = json.containsKey("jitter") ? duration(json, "jitter", path + "/jitter") : Duration.ZERO;
+        if (jitter.isNegative()) {
+            throw invalid(path + "/jitter", "invalid-jitter", "jitter must not be negative.");
+        }
+        if (jitter.compareTo(delay) > 0) {
+            throw invalid(path + "/jitter", "invalid-jitter", "jitter must not exceed delay.");
+        }
+        Duration maximumDelay;
+        try {
+            maximumDelay = delay.plus(jitter);
+        } catch (ArithmeticException exception) {
+            throw invalid(path + "/jitter", "latency-limit", "delay plus jitter is too large.", exception);
+        }
+        if (maximumDelay.compareTo(limits.maximumLatency()) > 0) {
+            throw invalid(path + "/jitter", "latency-limit",
+                          "delay plus jitter exceeds the server latency limit.");
+        }
+        return new ChaosLatency(delay, jitter);
     }
 
     private static ChaosSyntheticResponse syntheticResponse(JsonObject json, String path, ChaosLimitsConfig limits) {

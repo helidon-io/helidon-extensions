@@ -36,6 +36,8 @@ final class ChaosLimitsConfigSupport {
             requirePositive(builder.maximumActivationsPerDisruption(), "maximum-activations-per-disruption");
             requirePositive(builder.maximumConcurrentActivationsPerDisruption(),
                             "maximum-concurrent-activations-per-disruption");
+            requirePositive(builder.maximumLatency(), "maximum-latency");
+            requireNanosecondPrecision(builder.maximumLatency(), "maximum-latency");
             requirePositive(builder.maximumSyntheticBodyBytes(), "maximum-synthetic-body-bytes");
             requirePositive(builder.maximumControlRequestBytes(), "maximum-control-request-bytes");
             requirePositive(builder.maximumConcurrentControlRequests(), "maximum-concurrent-control-requests");
@@ -55,6 +57,14 @@ final class ChaosLimitsConfigSupport {
         private static void requirePositive(Duration value, String key) {
             if (value.isZero() || value.isNegative()) {
                 throw new IllegalArgumentException(key + " must be positive");
+            }
+        }
+
+        private static void requireNanosecondPrecision(Duration value, String key) {
+            try {
+                value.toNanos();
+            } catch (ArithmeticException exception) {
+                throw new IllegalArgumentException(key + " must fit nanosecond precision", exception);
             }
         }
     }
