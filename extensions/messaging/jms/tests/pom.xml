@@ -43,5 +43,6 @@
 
     <modules>
         <module>jms</module>
+        <module>jms-javax</module>
     </modules>
 </project>
