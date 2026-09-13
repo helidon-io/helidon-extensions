@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
+import io.helidon.http.HeaderNames;
 import io.helidon.http.Status;
 import io.helidon.json.JsonArray;
 import io.helidon.json.JsonObject;
@@ -68,6 +69,11 @@ class ChaosExtensionIT {
         }).get("/orders-old", (request, response) -> {
             APPLICATION_INVOCATIONS.incrementAndGet();
             response.send("legacy-order");
+        }).get("/order-redirect", (request, response) -> {
+            APPLICATION_INVOCATIONS.incrementAndGet();
+            response.status(Status.TEMPORARY_REDIRECT_307);
+            response.header(HeaderNames.LOCATION, "/orders/redirected");
+            response.send();
         });
     }
 
@@ -162,6 +168,47 @@ class ChaosExtensionIT {
         assertThat(response.entity(), is("order"));
         assertThat(elapsed.compareTo(Duration.ofMillis(90)) >= 0, is(true));
         assertThat(APPLICATION_INVOCATIONS.get(), is(1));
+    }
+
+    @Test
+    void executesOutboundWebClientLatencyThroughAutomaticDiscovery() {
+        var baseUri = application.prototype().baseUri().orElseThrow();
+        JsonObject created = postRun(control, outboundLatencyPlan(baseUri.scheme(), baseUri.host(), baseUri.port()));
+        String id = created.stringValue("id").orElseThrow();
+        JsonObject disruption = created.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject();
+        JsonObject scope = disruption.objectValue("scope").orElseThrow();
+        JsonObject effect = disruption.objectValue("effect").orElseThrow();
+        assertThat(scope.stringValue("type").orElseThrow(), is("outbound-http"));
+        assertThat(scope.stringValue("scheme").orElseThrow(), is(baseUri.scheme()));
+        assertThat(scope.stringValue("host").orElseThrow(), is(baseUri.host()));
+        assertThat(scope.longValue("port").orElseThrow(), is((long) baseUri.port()));
+        assertThat(scope.objectValue("path").orElseThrow().stringValue("value").orElseThrow(), is("/orders"));
+        assertThat(effect.stringValue("type").orElseThrow(), is("latency"));
+        assertThat(effect.stringValue("delay").orElseThrow(), is("PT0.1S"));
+        assertThat(effect.stringValue("jitter").orElseThrow(), is("PT0S"));
+
+        long started = System.nanoTime();
+        var response = application.get("/orders/42").request(String.class);
+        Duration elapsed = Duration.ofNanos(System.nanoTime() - started);
+        assertThat(response.status(), is(Status.OK_200));
+        assertThat(response.entity(), is("order"));
+        assertThat(elapsed.compareTo(Duration.ofMillis(90)) >= 0, is(true));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(1));
+        assertOutboundCounters(id, 1);
+
+        var nonMatch = application.get("/orders-old").request(String.class);
+        assertThat(nonMatch.status(), is(Status.OK_200));
+        assertThat(nonMatch.entity(), is("legacy-order"));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(2));
+        assertOutboundCounters(id, 1);
+
+        var redirected = application.get("/order-redirect").followRedirects(true).request(String.class);
+        assertThat(redirected.status(), is(Status.OK_200));
+        assertThat(redirected.entity(), is("order"));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(4));
+        assertOutboundCounters(id, 2);
     }
 
     @Test
@@ -287,6 +334,34 @@ class ChaosExtensionIT {
                 """.formatted(seed, stageName, disruptionName, activation, effect)).readJsonObject();
     }
 
+    private static JsonObject outboundLatencyPlan(String scheme, String host, int port) {
+        return JsonParser.create("""
+                {
+                  "name": "outbound-orders-latency",
+                  "maximumDuration": "PT30S",
+                  "seed": 42,
+                  "stages": [{
+                    "name": "outbound-latency",
+                    "duration": "PT10S",
+                    "disruptions": [{
+                      "name": "slow-outbound-orders",
+                      "scope": {
+                        "type": "outbound-http",
+                        "methods": ["GET"],
+                        "scheme": "%s",
+                        "host": "%s",
+                        "port": %d,
+                        "path": {"match": "prefix", "value": "/orders"}
+                      },
+                      "activation": {"type": "always"},
+                      "effect": {"type": "latency", "delay": "PT0.1S"},
+                      "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                    }]
+                  }]
+                }
+                """.formatted(scheme, host, port)).readJsonObject();
+    }
+
     private static JsonObject sequencePlan() {
         return JsonParser.create("""
                 {
@@ -369,5 +444,14 @@ class ChaosExtensionIT {
                 .submit(plan, JsonObject.class);
         assertThat(response.status(), is(Status.CREATED_201));
         return response.entity();
+    }
+
+    private void assertOutboundCounters(String id, long expected) {
+        JsonObject counters = control.get(RUNS + "/" + id).request(JsonObject.class).entity()
+                .objectValue("counters").orElseThrow();
+        assertThat(counters.longValue("matched").orElseThrow(), is(expected));
+        assertThat(counters.longValue("activated").orElseThrow(), is(expected));
+        assertThat(counters.longValue("completed").orElseThrow(), is(expected));
+        assertThat(counters.longValue("inFlight").orElseThrow(), is(0L));
     }
 }

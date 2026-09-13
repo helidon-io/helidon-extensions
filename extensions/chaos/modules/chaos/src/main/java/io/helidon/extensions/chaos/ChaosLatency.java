@@ -19,7 +19,7 @@ import java.time.Duration;
 import java.util.Objects;
 
 /**
- * Latency applied before application routing.
+ * Latency applied before inbound application routing or an outbound WebClient request.
  *
  * @param delay base delay
  * @param jitter maximum variation below or above the base delay

@@ -61,16 +61,16 @@ record ChaosRunPlan(String name, Duration maximumDuration, long seed, List<Chaos
     }
 
     /**
-     * Single inbound HTTP disruption.
+     * Single HTTP disruption.
      *
      * @param name diagnostic disruption name
-     * @param scope inbound request scope
+     * @param scope request scope
      * @param activation matched-invocation activation policy
      * @param effect disruption effect
      * @param budget cumulative and concurrent budget
      */
     record ChaosDisruption(String name,
-                           ChaosHttpScope scope,
+                           ChaosScope scope,
                            ChaosActivation activation,
                            ChaosEffect effect,
                            ChaosBudget budget) {

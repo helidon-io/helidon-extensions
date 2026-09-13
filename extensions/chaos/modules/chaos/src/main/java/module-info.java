@@ -41,9 +41,12 @@ module io.helidon.extensions.chaos {
 
     requires static io.helidon.common.features.api;
     requires static io.helidon.config.metadata;
+    requires static transitive io.helidon.webclient.api;
 
     exports io.helidon.extensions.chaos;
 
     provides io.helidon.webserver.spi.ServerFeatureProvider
             with io.helidon.extensions.chaos.ChaosServerFeatureProvider;
+    provides io.helidon.webclient.spi.WebClientServiceProvider
+            with io.helidon.extensions.chaos.ChaosWebClientServiceProvider;
 }

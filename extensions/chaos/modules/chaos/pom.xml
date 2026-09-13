@@ -85,6 +85,11 @@
             <groupId>io.helidon.webserver</groupId>
             <artifactId>helidon-webserver-security</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.helidon.webclient</groupId>
+            <artifactId>helidon-webclient-api</artifactId>
+            <optional>true</optional>
+        </dependency>
 
         <dependency>
             <groupId>io.helidon.config</groupId>

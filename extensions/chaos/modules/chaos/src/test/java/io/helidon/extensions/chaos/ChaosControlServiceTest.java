@@ -15,6 +15,7 @@
  */
 package io.helidon.extensions.chaos;
 
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
 
@@ -30,6 +31,7 @@ import io.helidon.webserver.http.HttpRouting;
 import io.helidon.webserver.testing.junit5.ServerTest;
 import io.helidon.webserver.testing.junit5.SetUpRoute;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -38,11 +40,14 @@ import static io.helidon.extensions.chaos.ChaosRunState.STOPPED;
 import static io.helidon.extensions.chaos.ChaosRunState.STOPPING;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @ServerTest
 class ChaosControlServiceTest {
     private static final String RUNS = "/chaos/v1/runs";
     private static ChaosRunEngine engine;
+    private static ChaosRuntimeRegistration registration;
+    private static ChaosControlService service;
     private static Semaphore capacity;
 
     private final WebClient client;
@@ -58,8 +63,10 @@ class ChaosControlServiceTest {
                 .build();
         ChaosConfig config = ChaosConfig.builder().limits(limits).buildPrototype();
         engine = ChaosRunEngine.create(limits);
+        registration = ChaosRuntimeBridge.register(engine);
         capacity = new Semaphore(limits.maximumConcurrentControlRequests(), true);
-        routing.register("/chaos/v1", new ChaosControlService(engine, config, true, capacity));
+        service = new ChaosControlService(registration, config, true, capacity);
+        routing.register("/chaos/v1", service);
     }
 
     @BeforeEach
@@ -67,6 +74,11 @@ class ChaosControlServiceTest {
         engine.list().stream()
                 .filter(run -> run.state() == RUNNING)
                 .forEach(run -> engine.stop(run.id()));
+    }
+
+    @AfterAll
+    static void closeService() {
+        service.afterStop();
     }
 
     @Test
@@ -119,7 +131,7 @@ class ChaosControlServiceTest {
         JsonObject second = secondCreated.entity();
         secondCreated.close();
         UUID secondId = UUID.fromString(second.stringValue("id").orElseThrow());
-        ChaosRunEngine.Reservation reservation = engine.reserve("GET", "/orders/42").orElseThrow();
+        ChaosRunEngine.Reservation reservation = engine.reserveInbound("GET", "/orders/42").orElseThrow();
         try {
             ClientResponseTyped<JsonObject> stopping =
                     client.delete(RUNS + "/" + secondId).request(JsonObject.class);
@@ -166,6 +178,19 @@ class ChaosControlServiceTest {
         } finally {
             capacity.release(acquired);
         }
+    }
+
+    @Test
+    void rejectsNullRuntimeRegistration() {
+        ChaosConfig config = ChaosConfig.builder().buildPrototype();
+
+        NullPointerException exception = assertThrows(NullPointerException.class,
+                                                       () -> new ChaosControlService(null,
+                                                                                     config,
+                                                                                     true,
+                                                                                     new Semaphore(1)));
+
+        assertThat(exception.getMessage(), is("registration is null"));
     }
 
     private static void assertProblem(ClientResponseTyped<String> response,

@@ -36,7 +36,6 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ChaosRunPlanJsonTest {
@@ -54,13 +53,122 @@ class ChaosRunPlanJsonTest {
         ChaosRunPlan.ChaosStage stage = plan.stages().getFirst();
         assertThat(stage.duration(), is(Duration.ofSeconds(10)));
         ChaosRunPlan.ChaosDisruption disruption = stage.disruption().orElseThrow();
-        assertThat(disruption.scope().methods(), contains("GET"));
+        assertThat(((ChaosHttpScope) disruption.scope()).methods(), contains("GET"));
         assertThat(disruption.activation(), is(ChaosActivation.always()));
         ChaosSyntheticResponse effect = (ChaosSyntheticResponse) disruption.effect();
         assertThat(effect.status(), is(503));
         assertThat(effect.headers(), hasEntry("Retry-After", "1"));
         assertThat(new String(effect.body(), StandardCharsets.UTF_8),
                    is("Synthetic service failure"));
+    }
+
+    @Test
+    void parsesAndNormalizesOutboundHttpScope() {
+        ChaosRunPlan plan = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """)), LIMITS);
+
+        ChaosOutboundHttpScope scope = (ChaosOutboundHttpScope) plan.stages().getFirst()
+                .disruption().orElseThrow().scope();
+        assertThat(scope.methods(), contains("GET"));
+        assertThat(scope.scheme(), is("https"));
+        assertThat(scope.host(), is("inventory.example.com"));
+        assertThat(scope.port(), is(443));
+        assertThat(scope.pathMatch(), is(ChaosHttpScope.PathMatch.PREFIX));
+        assertThat(scope.path(), is("/v1/items"));
+
+        ChaosRunPlan ipv6Plan = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("Inventory.Example.COM", "[2001:DB8::1]")), LIMITS);
+        ChaosOutboundHttpScope ipv6Scope = (ChaosOutboundHttpScope) ipv6Plan.stages().getFirst()
+                .disruption().orElseThrow().scope();
+        assertThat(ipv6Scope.host(), is("[2001:db8::1]"));
+    }
+
+    @Test
+    void acceptsOutboundLatencyAndLatencyOnlyWeightedChoice() {
+        ChaosRunPlan latency = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """)), LIMITS);
+        ChaosRunPlan weightedChoice = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 3, "effect": {"type": "latency", "delay": "PT0.25S"}},
+                    {"weight": 1, "effect": {"type": "latency", "delay": "PT0.1S"}}
+                  ]
+                }
+                """)), LIMITS);
+
+        assertThat(latency.stages().getFirst().disruption().orElseThrow().effect(), instanceOf(ChaosLatency.class));
+        assertThat(weightedChoice.stages().getFirst().disruption().orElseThrow().effect(),
+                   instanceOf(ChaosWeightedChoice.class));
+    }
+
+    @Test
+    void rejectsMalformedOutboundHttpScope() {
+        String scopePath = "/stages/0/disruptions/0/scope";
+        assertBadRequest(outboundPlanJsonWithout("type"), scopePath + "/type");
+        assertBadRequest(outboundPlanJsonWithout("methods"), scopePath + "/methods");
+        assertBadRequest(outboundPlanJsonWithout("scheme"), scopePath + "/scheme");
+        assertBadRequest(outboundPlanJsonWithout("host"), scopePath + "/host");
+        assertBadRequest(outboundPlanJsonWithout("port"), scopePath + "/port");
+        assertBadRequest(outboundPlanJsonWithout("path"), scopePath + "/path");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"port\": 443", "\"port\": \"443\""), scopePath + "/port");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"methods\": [\"get\"]", "\"methods\": \"get\""), scopePath + "/methods");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"type\": \"outbound-http\"", "\"type\": []"), scopePath + "/type");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"scheme\": \"HTTPS\"", "\"scheme\": []"), scopePath + "/scheme");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"host\": \"Inventory.Example.COM\"", "\"host\": []"), scopePath + "/host");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"path\": {\"match\": \"prefix\", \"value\": \"/v1/items\"}",
+                                "\"path\": []"), scopePath + "/path");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"port\": 443", "\"port\": 443, \"unexpected\": true"),
+                         scopePath + "/unexpected");
+    }
+
+    @Test
+    void rejectsInvalidOutboundHttpScope() {
+        String scopePath = "/stages/0/disruptions/0/scope";
+        assertInvalidPlan(outboundPlanJsonWithScope("\"scheme\": \" \""), scopePath + "/scheme");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"scheme\": \"1https\""), scopePath + "/scheme");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"host\": \" \""), scopePath + "/host");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"host\": \"user@inventory.example.com\""), scopePath + "/host");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"host\": \"inventory.example.com/path\""), scopePath + "/host");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"host\": \"inventory.example.com:443\""), scopePath + "/host");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"host\": \"inventory.example.com?debug=true\""), scopePath + "/host");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"host\": \"inventory.example.com#fragment\""), scopePath + "/host");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"port\": 0"), scopePath + "/port");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"port\": 65536"), scopePath + "/port");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"path\": {\"match\": \"prefix\", \"value\": \"orders\"}"),
+                          scopePath + "/path/value");
+    }
+
+    @Test
+    void rejectsOutboundSyntheticResponseEffects() {
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "synthetic-http-response", "status": 503}
+                """), "/stages/0/disruptions/0/effect/type");
+        assertInvalidPlan(outboundPlanJson("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "synthetic-http-response", "status": 503}}
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/effect/type");
     }
 
     @Test
@@ -81,7 +189,7 @@ class ChaosRunPlanJsonTest {
     void acceptsStageDurationTotalEqualToMaximumDuration() {
         String input = multiStageJson().replace("PT30S", "PT20S");
 
-        assertDoesNotThrow(() -> ChaosRunPlanJson.parse(json(input), LIMITS));
+        assertThat(ChaosRunPlanJson.parse(json(input), LIMITS).duration(), is(Duration.ofSeconds(20)));
     }
 
     @Test
@@ -178,7 +286,7 @@ class ChaosRunPlanJsonTest {
 
     @Test
     void parsesWeightedChoiceEffect() {
-        assertDoesNotThrow(() -> ChaosRunPlanJson.parse(json(withEffect("""
+        ChaosRunPlan plan = ChaosRunPlanJson.parse(json(withEffect("""
                 {
                   "type": "weighted-choice",
                   "outcomes": [
@@ -192,7 +300,10 @@ class ChaosRunPlanJsonTest {
                     }
                   ]
                 }
-                """)), LIMITS));
+                """)), LIMITS);
+
+        assertThat(plan.stages().getFirst().disruption().orElseThrow().effect(),
+                   instanceOf(ChaosWeightedChoice.class));
     }
 
     @Test
@@ -483,7 +594,7 @@ class ChaosRunPlanJsonTest {
 
     @Test
     void rejectsUnsupportedScopeActivationAndEffectTypes() {
-        assertInvalidPlan(validJson().replace("inbound-http", "outbound-http"), "/stages/0/disruptions/0/scope/type");
+        assertInvalidPlan(validJson().replace("inbound-http", "future-scope"), "/stages/0/disruptions/0/scope/type");
         assertInvalidPlan(validJson().replace("\"always\"", "\"invocation-cycle\""),
                           "/stages/0/disruptions/0/activation/type");
         assertInvalidPlan(validJson().replace("synthetic-http-response", "future-effect"),
@@ -495,6 +606,19 @@ class ChaosRunPlanJsonTest {
         String input = withActivation("{\"type\": \"future\", \"unexpected\": true}");
 
         assertBadRequest(input, "/stages/0/disruptions/0/activation/unexpected");
+    }
+
+    @Test
+    void rejectsUnknownScopePropertyBeforeUnsupportedType() {
+        String input = outboundPlanJson("{\"type\": \"latency\", \"delay\": \"PT0.25S\"}")
+                .replace("\"type\": \"outbound-http\"", "\"type\": \"future-scope\", \"unexpected\": true");
+
+        ChaosRequestException exception = assertThrows(ChaosRequestException.class,
+                                                        () -> ChaosRunPlanJson.parse(json(input), LIMITS));
+
+        assertThat(exception.status(), is(400));
+        assertThat(exception.violations().getFirst().path(), is("/stages/0/disruptions/0/scope/unexpected"));
+        assertThat(exception.violations().getFirst().code(), is("unknown-property"));
     }
 
     @Test
@@ -713,5 +837,77 @@ class ChaosRunPlanJsonTest {
                   }]
                 }
                 """.formatted(effect);
+    }
+
+    private static String outboundPlanJson(String effect) {
+        return """
+                {
+                  "name": "inventory-latency",
+                  "maximumDuration": "PT30S",
+                  "seed": 148894,
+                  "stages": [{
+                    "name": "slow-inventory",
+                    "duration": "PT10S",
+                    "disruptions": [{
+                      "name": "inventory-latency",
+                      "scope": {
+                        "type": "outbound-http",
+                        "methods": ["get"],
+                        "scheme": "HTTPS",
+                        "host": "Inventory.Example.COM",
+                        "port": 443,
+                        "path": {"match": "prefix", "value": "/v1/items"}
+                      },
+                      "activation": {"type": "always"},
+                      "effect": %s,
+                      "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                    }]
+                  }]
+                }
+                """.formatted(effect.strip());
+    }
+
+    private static String outboundPlanJsonWithout(String property) {
+        List<String> fields = List.of(
+                "\"type\": \"outbound-http\"",
+                "\"methods\": [\"get\"]",
+                "\"scheme\": \"HTTPS\"",
+                "\"host\": \"Inventory.Example.COM\"",
+                "\"port\": 443",
+                "\"path\": {\"match\": \"prefix\", \"value\": \"/v1/items\"}")
+                .stream()
+                .filter(field -> !field.startsWith("\"" + property + "\""))
+                .toList();
+        return """
+                {
+                  "name": "inventory-latency",
+                  "maximumDuration": "PT30S",
+                  "seed": 148894,
+                  "stages": [{
+                    "name": "slow-inventory",
+                    "duration": "PT10S",
+                    "disruptions": [{
+                      "name": "inventory-latency",
+                      "scope": {
+                        %s
+                      },
+                      "activation": {"type": "always"},
+                      "effect": {"type": "latency", "delay": "PT0.25S"},
+                      "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                    }]
+                  }]
+                }
+                """.formatted(String.join(",\n                        ", fields));
+    }
+
+    private static String outboundPlanJsonWithScope(String property) {
+        String original = switch (property.substring(1, property.indexOf('\"', 1))) {
+        case "scheme" -> "\"scheme\": \"HTTPS\"";
+        case "host" -> "\"host\": \"Inventory.Example.COM\"";
+        case "port" -> "\"port\": 443";
+        case "path" -> "\"path\": {\"match\": \"prefix\", \"value\": \"/v1/items\"}";
+        default -> throw new IllegalArgumentException("Unknown outbound scope property: " + property);
+        };
+        return outboundPlanJson("{\"type\": \"latency\", \"delay\": \"PT0.25S\"}").replace(original, property);
     }
 }

@@ -18,8 +18,10 @@ package io.helidon.extensions.chaos;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 import static io.helidon.extensions.chaos.ChaosRunState.COMPLETED;
 
@@ -81,7 +83,7 @@ final class ChaosRun {
         return sequence;
     }
 
-    List<ChaosHttpScope> scopes() {
+    List<ChaosScope> scopes() {
         return stages.stream()
                 .flatMap(stage -> stage.disruption.stream())
                 .map(disruption -> disruption.plan.scope())
@@ -106,51 +108,24 @@ final class ChaosRun {
         this.expirationTask = expirationTask;
     }
 
-    Optional<Activation> reserve(String method, String requestPath, Instant now) {
-        refresh(now);
-        if (!running()) {
-            return Optional.empty();
-        }
-        Optional<StageRuntime> current = currentStage(now);
-        if (current.isEmpty() || current.orElseThrow().disruption.isEmpty()) {
-            return Optional.empty();
-        }
-        StageRuntime stage = current.orElseThrow();
-        DisruptionRuntime disruption = stage.disruption.orElseThrow();
-        if (!disruption.plan.scope().matches(method, requestPath)) {
-            return Optional.empty();
-        }
-        disruption.matched++;
-        matched++;
-        if (!ChaosActivationDecider.activates(disruption.plan.activation(),
-                                              disruption.activationStreamSeed,
-                                              disruption.matched)) {
-            skippedActivation++;
-            return Optional.empty();
-        }
-        ChaosBudget budget = disruption.plan.budget();
-        if (disruption.inFlight >= budget.maximumConcurrent()) {
-            skippedConcurrent++;
-            return Optional.empty();
-        }
-        if (disruption.activated >= budget.maximumActivations()) {
-            skippedBudget++;
-            return Optional.empty();
-        }
-        ChaosEffectAction action = switch (disruption.plan.effect()) {
-        case ChaosLatency latency -> latency.resolve(ChaosRandom.sample(disruption.effectStreamSeed,
-                                                                        disruption.matched));
-        case ChaosSyntheticResponse synthetic -> synthetic;
-        case ChaosWeightedChoice choice -> choice.resolve(ChaosRandom.sample(disruption.choiceStreamSeed,
-                                                                             disruption.matched),
-                                                          ChaosRandom.sample(disruption.effectStreamSeed,
-                                                                             disruption.matched));
-        };
-        disruption.inFlight++;
-        disruption.activated++;
-        inFlight++;
-        activated++;
-        return Optional.of(new Activation(stage.index, action));
+    Optional<Activation> reserveInbound(String method, String requestPath, Instant now) {
+        Objects.requireNonNull(method, "method is null");
+        Objects.requireNonNull(requestPath, "requestPath is null");
+        return reserve(scope -> scope instanceof ChaosHttpScope httpScope && httpScope.matches(method, requestPath), now);
+    }
+
+    Optional<Activation> reserveOutbound(String method,
+                                         String scheme,
+                                         String host,
+                                         int port,
+                                         String requestPath,
+                                         Instant now) {
+        Objects.requireNonNull(method, "method is null");
+        Objects.requireNonNull(scheme, "scheme is null");
+        Objects.requireNonNull(host, "host is null");
+        Objects.requireNonNull(requestPath, "requestPath is null");
+        return reserve(scope -> scope instanceof ChaosOutboundHttpScope outboundScope
+                        && outboundScope.matches(method, scheme, host, port, requestPath), now);
     }
 
     void refresh(Instant now) {
@@ -209,6 +184,53 @@ final class ChaosRun {
                                 skippedBudget,
                                 inFlight,
                                 completed);
+    }
+
+    private Optional<Activation> reserve(Predicate<ChaosScope> matchesScope, Instant now) {
+        refresh(now);
+        if (!running()) {
+            return Optional.empty();
+        }
+        Optional<StageRuntime> current = currentStage(now);
+        if (current.isEmpty() || current.orElseThrow().disruption.isEmpty()) {
+            return Optional.empty();
+        }
+        StageRuntime stage = current.orElseThrow();
+        DisruptionRuntime disruption = stage.disruption.orElseThrow();
+        if (!matchesScope.test(disruption.plan.scope())) {
+            return Optional.empty();
+        }
+        disruption.matched++;
+        matched++;
+        if (!ChaosActivationDecider.activates(disruption.plan.activation(),
+                                              disruption.activationStreamSeed,
+                                              disruption.matched)) {
+            skippedActivation++;
+            return Optional.empty();
+        }
+        ChaosBudget budget = disruption.plan.budget();
+        if (disruption.inFlight >= budget.maximumConcurrent()) {
+            skippedConcurrent++;
+            return Optional.empty();
+        }
+        if (disruption.activated >= budget.maximumActivations()) {
+            skippedBudget++;
+            return Optional.empty();
+        }
+        ChaosEffectAction action = switch (disruption.plan.effect()) {
+        case ChaosLatency latency -> latency.resolve(ChaosRandom.sample(disruption.effectStreamSeed,
+                                                                        disruption.matched));
+        case ChaosSyntheticResponse synthetic -> synthetic;
+        case ChaosWeightedChoice choice -> choice.resolve(ChaosRandom.sample(disruption.choiceStreamSeed,
+                                                                             disruption.matched),
+                                                          ChaosRandom.sample(disruption.effectStreamSeed,
+                                                                             disruption.matched));
+        };
+        disruption.inFlight++;
+        disruption.activated++;
+        inFlight++;
+        activated++;
+        return Optional.of(new Activation(stage.index, action));
     }
 
     private Optional<StageRuntime> currentStage(Instant now) {

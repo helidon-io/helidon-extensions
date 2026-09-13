@@ -134,6 +134,31 @@ class ChaosRunJsonTest {
     }
 
     @Test
+    void writesNormalizedOutboundHttpScope() {
+        ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("get"),
+                                                                   "HTTPS",
+                                                                   "Inventory.Example.COM",
+                                                                   443,
+                                                                   PREFIX,
+                                                                   "/v1/items");
+        ChaosRunPlan plan = plan(scope, new ChaosLatency(Duration.ofMillis(250), Duration.ZERO));
+
+        JsonObject rendered = ChaosRunJson.toJson(view(RUNNING, Optional.empty(), Optional.empty(), plan));
+
+        JsonObject json = rendered.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("scope").orElseThrow();
+        assertThat(json.stringValue("type").orElseThrow(), is("outbound-http"));
+        assertThat(json.arrayValue("methods").orElseThrow().get(0).orElseThrow().asString().value(), is("GET"));
+        assertThat(json.stringValue("scheme").orElseThrow(), is("https"));
+        assertThat(json.stringValue("host").orElseThrow(), is("inventory.example.com"));
+        assertThat(json.intValue("port").orElseThrow(), is(443));
+        assertThat(json.objectValue("path").orElseThrow().stringValue("match").orElseThrow(), is("prefix"));
+        assertThat(json.objectValue("path").orElseThrow().stringValue("value").orElseThrow(), is("/v1/items"));
+    }
+
+    @Test
     void writesTerminalFieldsAndRunList() {
         JsonObject terminal = ChaosRunJson.toJson(view(STOPPED,
                                                        Optional.of(CREATED.plusSeconds(4)),
@@ -334,6 +359,14 @@ class ChaosRunJsonTest {
 
     private static ChaosRunPlan plan(ChaosActivation activation, ChaosEffect effect) {
         ChaosHttpScope scope = new ChaosHttpScope(Set.of("GET"), PREFIX, "/orders");
+        return plan(scope, activation, effect);
+    }
+
+    private static ChaosRunPlan plan(ChaosScope scope, ChaosEffect effect) {
+        return plan(scope, ChaosActivation.always(), effect);
+    }
+
+    private static ChaosRunPlan plan(ChaosScope scope, ChaosActivation activation, ChaosEffect effect) {
         ChaosBudget budget = new ChaosBudget(20, 2);
         ChaosRunPlan.ChaosDisruption disruption =
                 new ChaosRunPlan.ChaosDisruption("orders-503", scope, activation, effect, budget);

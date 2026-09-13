@@ -25,10 +25,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 import static io.helidon.extensions.chaos.ChaosRunState.COMPLETED;
@@ -96,7 +96,7 @@ final class ChaosRunEngine implements AutoCloseable {
             if (activeRuns.size() >= limits.maximumActiveRuns()) {
                 throw new ConflictException("The maximum number of active chaos runs has been reached");
             }
-            List<ChaosHttpScope> requestedScopes = scopes(plan);
+            List<ChaosScope> requestedScopes = scopes(plan);
             if (activeRuns.stream().anyMatch(run -> overlaps(run.scopes(), requestedScopes))) {
                 throw new ConflictException("The requested scope overlaps an active chaos disruption");
             }
@@ -129,25 +129,22 @@ final class ChaosRunEngine implements AutoCloseable {
         }
     }
 
-    Optional<Reservation> reserve(String method, String requestPath) {
-        lock.lock();
-        try {
-            Objects.requireNonNull(method);
-            Objects.requireNonNull(requestPath);
-            if (closed) {
-                return Optional.empty();
-            }
-            Instant now = clock.instant();
-            for (ChaosRun run : runs.values()) {
-                Optional<ChaosRun.Activation> activation = run.reserve(method, requestPath, now);
-                if (activation.isPresent()) {
-                    return Optional.of(new Reservation(this, run.id(), activation.orElseThrow()));
-                }
-            }
-            return Optional.empty();
-        } finally {
-            lock.unlock();
-        }
+    Optional<Reservation> reserveInbound(String method, String requestPath) {
+        Objects.requireNonNull(method);
+        Objects.requireNonNull(requestPath);
+        return reserve((run, now) -> run.reserveInbound(method, requestPath, now));
+    }
+
+    Optional<Reservation> reserveOutbound(String method,
+                                          String scheme,
+                                          String host,
+                                          int port,
+                                          String requestPath) {
+        Objects.requireNonNull(method);
+        Objects.requireNonNull(scheme);
+        Objects.requireNonNull(host);
+        Objects.requireNonNull(requestPath);
+        return reserve((run, now) -> run.reserveOutbound(method, scheme, host, port, requestPath, now));
     }
 
     Optional<ChaosRunView> get(UUID id) {
@@ -218,40 +215,36 @@ final class ChaosRunEngine implements AutoCloseable {
         }
     }
 
-    private static List<ChaosHttpScope> scopes(ChaosRunPlan plan) {
+    private static List<ChaosScope> scopes(ChaosRunPlan plan) {
         return plan.stages().stream()
                 .flatMap(stage -> stage.disruption().stream())
                 .map(ChaosRunPlan.ChaosDisruption::scope)
                 .toList();
     }
 
-    private static boolean overlaps(List<ChaosHttpScope> first, List<ChaosHttpScope> second) {
-        return first.stream().anyMatch(firstScope -> second.stream()
-                .anyMatch(secondScope -> overlaps(firstScope, secondScope)));
+    private static boolean overlaps(List<ChaosScope> first, List<ChaosScope> second) {
+        return first.stream()
+                .anyMatch(firstScope -> second.stream()
+                .anyMatch(firstScope::overlaps));
     }
 
-    private static boolean overlaps(ChaosHttpScope first, ChaosHttpScope second) {
-        if (!methodsOverlap(first.methods(), second.methods())) {
-            return false;
+    private Optional<Reservation> reserve(BiFunction<ChaosRun, Instant, Optional<ChaosRun.Activation>> reserve) {
+        lock.lock();
+        try {
+            if (closed) {
+                return Optional.empty();
+            }
+            Instant now = clock.instant();
+            for (ChaosRun run : runs.values()) {
+                Optional<ChaosRun.Activation> activation = reserve.apply(run, now);
+                if (activation.isPresent()) {
+                    return Optional.of(new Reservation(this, run.id(), activation.orElseThrow()));
+                }
+            }
+            return Optional.empty();
+        } finally {
+            lock.unlock();
         }
-        return switch (first.pathMatch()) {
-        case EXACT -> switch (second.pathMatch()) {
-            case EXACT -> first.path().equals(second.path());
-            case PREFIX -> prefixContains(second.path(), first.path());
-        };
-        case PREFIX -> switch (second.pathMatch()) {
-            case EXACT -> prefixContains(first.path(), second.path());
-            case PREFIX -> prefixContains(first.path(), second.path()) || prefixContains(second.path(), first.path());
-        };
-        };
-    }
-
-    private static boolean methodsOverlap(Set<String> first, Set<String> second) {
-        return first.stream().anyMatch(second::contains);
-    }
-
-    private static boolean prefixContains(String prefix, String path) {
-        return prefix.equals("/") || path.equals(prefix) || path.startsWith(prefix + "/");
     }
 
     private void terminate(UUID id, ChaosRunState state, String reason) {

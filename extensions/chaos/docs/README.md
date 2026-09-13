@@ -1,6 +1,6 @@
 # Helidon Chaos extension
 
-The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response or inbound latency.
+The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response or inbound latency, and matching Helidon WebClient calls can receive bounded outbound latency.
 
 This first slice targets Helidon 4.5.3 and is disabled by default.
 
@@ -37,7 +37,7 @@ Then add the extension when direct packaging is appropriate:
 </dependency>
 ```
 
-Helidon discovers the extension through `ServerFeatureProvider`; application code does not register `/chaos/v1` or install a filter.
+Helidon discovers the server feature through `ServerFeatureProvider`; application code does not register `/chaos/v1` or install a filter. Separately, when the Chaos module and Helidon WebClient are present, WebClient service providers are discovered automatically by default, so application code does not add or register the `chaos` service. Disabling `services-discover-services` prevents automatic installation; such a client participates only when the `chaos` service is otherwise explicitly configured.
 
 ## Configuration
 
@@ -162,6 +162,38 @@ Validation uses strict JSON. Request-shape errors return `400`; policy and limit
 }
 ```
 
+For bounded latency on an outbound Helidon WebClient call, create a run with an `outbound-http` scope:
+
+```json
+{
+  "name": "inventory-latency",
+  "maximumDuration": "PT30S",
+  "seed": 148894,
+  "stages": [
+    {
+      "name": "slow-inventory",
+      "duration": "PT10S",
+      "disruptions": [
+        {
+          "name": "inventory-latency",
+          "scope": {
+            "type": "outbound-http",
+            "methods": ["GET"],
+            "scheme": "https",
+            "host": "inventory.example.com",
+            "port": 443,
+            "path": {"match": "prefix", "value": "/v1/items"}
+          },
+          "activation": {"type": "always"},
+          "effect": {"type": "latency", "delay": "PT0.25S", "jitter": "PT0.05S"},
+          "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+        }
+      ]
+    }
+  ]
+}
+```
+
 Stages execute in declared order. A stage may contain one disruption or may use an empty `disruptions` array as a
 passive interval for observing recovery:
 
@@ -233,7 +265,9 @@ transition does not wait for in-flight work.
 
 An exact path matches only that path. A prefix is segment-aware: `/orders` matches `/orders` and `/orders/42`, but not `/orders-old`. The filter does not invoke application code after it reserves a synthetic response. Non-matching or budget-skipped traffic continues normally.
 
-For a fixed delay before application routing, use the `latency` effect:
+Only Helidon WebClient-backed outbound calls participate. An outbound scope matches the logical method, scheme, host, effective logical port, and decoded path before discovery or transport; resolved endpoints and addresses are ignored. Methods are compared in uppercase, scheme and host in lowercase, and host, scheme, and port match exactly. Paths use the same exact and segment-aware prefix matching described above. Query parameters, fragments, and headers are ignored. Each redirect is evaluated independently for its logical attempt.
+
+For a fixed delay, use the `latency` effect:
 
 ```json
 {
@@ -255,9 +289,13 @@ Add `jitter` for a uniformly selected delay below or above the base delay:
 The second example delays a selected request by 200 through 300 milliseconds. `delay` must be positive. `jitter`
 defaults to zero, must not be negative, and must not exceed `delay`. The worst-case value of `delay + jitter` must not
 exceed the server's `maximum-latency` limit. The run seed and matching invocation number determine the selected delay;
-effect sampling uses a separate deterministic stream from activation sampling. A latency reservation is released before
-the application handler runs, so application processing time does not consume chaos concurrency budget. If an artificial
-delay is interrupted, the request continues through routing with its thread interrupt status restored.
+effect sampling uses a separate deterministic stream from activation sampling. For inbound traffic, a latency reservation
+is released before the application handler runs, so application processing time does not consume chaos concurrency
+budget. For outbound traffic, the delay occurs in the application WebClient service layer before network I/O, so it is
+visible to wrappers around the whole invocation and can fall outside WebClient transport connect and read timeout clocks;
+it is not a transport fault. Its reservation closes before the downstream chain and network call, so
+`maximumConcurrent` bounds simultaneous artificial delays, not calls to the dependency. If an artificial delay is
+interrupted, the thread interrupt status is restored and the request proceeds.
 
 To select one of several effects for each accepted activation, use `weighted-choice`:
 
@@ -282,10 +320,13 @@ To select one of several effects for each accepted activation, use `weighted-cho
 ```
 
 Weights are positive integers and do not need to total 100. At least one outcome is required, and the total weight must
-not exceed `Long.MAX_VALUE`. An outcome must be a `latency` or `synthetic-http-response` leaf effect; nested weighted
-choices are rejected. Selection is deterministic for the run seed and matching invocation number, uses a separate random
-stream from activation and latency jitter, and preserves declared outcome order in normalized responses. The disruption's
-cumulative and concurrent budgets apply across all selected outcomes.
+not exceed `Long.MAX_VALUE`. Inbound scopes accept `synthetic-http-response`, `latency`, and weighted choices with valid
+leaf effects; nested weighted choices are rejected. Outbound scopes accept a direct `latency` effect or a weighted choice
+whose leaf outcomes are all `latency`. A `synthetic-http-response` anywhere in an outbound effect is rejected with `422`
+at the precise effect path, such as `/stages/0/disruptions/0/effect/type` or
+`/stages/0/disruptions/0/effect/outcomes/0/effect/type`. Selection is deterministic for the run seed and matching
+invocation number, uses a separate random stream from activation and latency jitter, and preserves declared outcome
+order in normalized responses. The disruption's cumulative and concurrent budgets apply across all selected outcomes.
 
 Activation can also select a deterministic fraction of matching requests:
 
@@ -348,18 +389,21 @@ curl --fail-with-body --request DELETE --user operator:test-only-password \
 | `terminal-run-retention` | `PT15M` |
 
 Request budgets may be lower than these ceilings but never higher. Concurrent and cumulative reservations are atomic,
-and stopping a run prevents new reservations while in-flight work drains.
+and stopping a run prevents new reservations while in-flight work drains. `maximum-latency` applies to both inbound and
+outbound latency effects.
 
 ## Runtime model and first-slice boundary
 
 Runs are local to one Helidon server process, in memory, bounded, and not reconstructed after restart. A caller must create a run on each selected instance. Restart is an unconditional cleanup boundary.
 
-The current slice intentionally supports bounded ordered stages with zero or one inbound HTTP disruption per stage,
-`always`, deterministic `probability`, or `periodic-burst` activation, exact or segment-aware prefix paths, a synthetic
-4xx/5xx HTTP response, latency before application routing, and deterministic weighted selection between those effects.
-Its public vocabulary includes `runs`, `stages`, `disruptions`, `scope`, `activation`, `effect`, and `budget` so later
-additions can introduce other bounded local effects without adopting another project's API.
+The current slice intentionally supports bounded ordered stages with zero or one HTTP disruption per stage, inbound or
+outbound as implemented; `always`, deterministic `probability`, or `periodic-burst` activation; exact or segment-aware
+prefix paths; inbound synthetic 4xx/5xx HTTP responses and latency; outbound Helidon WebClient latency; and deterministic
+weighted selection between valid effects. Its public vocabulary includes `runs`, `stages`, `disruptions`, `scope`,
+`activation`, `effect`, and `budget` so later additions can introduce other bounded local effects without adopting
+another project's API.
 
-Out of scope for this slice are timeout or connection-stall effects, bytecode injection, exception injection inside
-arbitrary methods, outbound client failures, CPU or memory pressure, network faults outside the process, distributed
-orchestration, persistent run recovery, and automatic enablement.
+Out of scope for this slice are outbound synthetic responses, non-Helidon clients, connection resets and other transport
+faults, timeout or connection-stall effects, bytecode injection, exception injection inside arbitrary methods, CPU or
+memory pressure, network faults outside the process, distributed orchestration, persistent run recovery, and automatic
+enablement.

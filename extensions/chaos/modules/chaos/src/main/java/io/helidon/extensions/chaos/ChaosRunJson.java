@@ -116,11 +116,33 @@ final class ChaosRunJson {
                 .build();
     }
 
-    private static JsonObject scope(ChaosHttpScope scope) {
+    private static JsonObject scope(ChaosScope scope) {
+        return switch (scope) {
+        case ChaosHttpScope inbound -> inboundHttpScope(inbound);
+        case ChaosOutboundHttpScope outbound -> outboundHttpScope(outbound);
+        };
+    }
+
+    private static JsonObject inboundHttpScope(ChaosHttpScope scope) {
         List<String> methods = new ArrayList<>(scope.methods());
         return JsonObject.builder()
                 .set("type", "inbound-http")
                 .set("methods", JsonArray.createStrings(methods))
+                .set("path", JsonObject.builder()
+                        .set("match", scope.pathMatch().name().toLowerCase(Locale.ROOT))
+                        .set("value", scope.path())
+                        .build())
+                .build();
+    }
+
+    private static JsonObject outboundHttpScope(ChaosOutboundHttpScope scope) {
+        List<String> methods = new ArrayList<>(scope.methods());
+        return JsonObject.builder()
+                .set("type", "outbound-http")
+                .set("methods", JsonArray.createStrings(methods))
+                .set("scheme", scope.scheme())
+                .set("host", scope.host())
+                .set("port", scope.port())
                 .set("path", JsonObject.builder()
                         .set("match", scope.pathMatch().name().toLowerCase(Locale.ROOT))
                         .set("value", scope.path())

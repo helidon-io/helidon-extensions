@@ -35,6 +35,7 @@ import io.helidon.webserver.http.ServerResponse;
 import io.helidon.webserver.testing.junit5.ServerTest;
 import io.helidon.webserver.testing.junit5.SetUpRoute;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -42,6 +43,7 @@ import static io.helidon.extensions.chaos.ChaosHttpScope.PathMatch.EXACT;
 import static io.helidon.extensions.chaos.ChaosHttpScope.PathMatch.PREFIX;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @ServerTest
 class ChaosApplicationFilterTest {
@@ -49,6 +51,7 @@ class ChaosApplicationFilterTest {
     private static final AtomicInteger OBSERVED_IN_FLIGHT = new AtomicInteger();
     private static final HeaderName APPLICATION_HEADER = HeaderNames.create("X-Application");
     private static ChaosRunEngine engine;
+    private static ChaosRuntimeRegistration registration;
 
     private final WebClient client;
 
@@ -59,7 +62,8 @@ class ChaosApplicationFilterTest {
     @SetUpRoute
     static void setUpRoute(HttpRouting.Builder routing) {
         engine = ChaosRunEngine.create(ChaosLimitsConfig.builder().build());
-        routing.addFilter(new ChaosApplicationFilter(engine))
+        registration = ChaosRuntimeBridge.register(engine);
+        routing.addFilter(new ChaosApplicationFilter(registration))
                 .get("/orders/42", ChaosApplicationFilterTest::application)
                 .get("/orders-old", ChaosApplicationFilterTest::application)
                 .post("/orders/42", ChaosApplicationFilterTest::application);
@@ -72,6 +76,11 @@ class ChaosApplicationFilterTest {
                 .forEach(run -> engine.stop(run.id()));
         APPLICATION_INVOCATIONS.set(0);
         OBSERVED_IN_FLIGHT.set(-1);
+    }
+
+    @AfterAll
+    static void closeRegistration() {
+        registration.close();
     }
 
     @Test
@@ -160,6 +169,13 @@ class ChaosApplicationFilterTest {
         assertThat(view.activated(), is(1L));
         assertThat(view.completed(), is(1L));
         assertThat(view.inFlight(), is(0L));
+    }
+
+    @Test
+    void rejectsNullRuntimeRegistration() {
+        NullPointerException exception = assertThrows(NullPointerException.class, () -> new ChaosApplicationFilter(null));
+
+        assertThat(exception.getMessage(), is("registration is null"));
     }
 
     private static void application(ServerRequest request, ServerResponse response) {
