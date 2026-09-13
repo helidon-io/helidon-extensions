@@ -218,6 +218,7 @@ final class ChaosRun {
             return Optional.empty();
         }
         ChaosEffectAction action = switch (disruption.plan.effect()) {
+        case ChaosConnectFailure connectFailure -> connectFailure;
         case ChaosLatency latency -> latency.resolve(ChaosRandom.sample(disruption.effectStreamSeed,
                                                                         disruption.matched));
         case ChaosSyntheticResponse synthetic -> synthetic;

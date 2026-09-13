@@ -61,6 +61,7 @@ final class ChaosWebClientService implements WebClientService {
                 if (reserved.isPresent()) {
                     try (ChaosRunEngine.Reservation reservation = reserved.orElseThrow()) {
                         switch (reservation.action()) {
+                        case ChaosConnectFailure connectFailure -> throw connectFailure.exception();
                         case ChaosLatencyAction latency -> latency.apply();
                         case ChaosSyntheticResponse syntheticResponse -> {
                             return ChaosWebClientSyntheticResponse.create(request, syntheticResponse);

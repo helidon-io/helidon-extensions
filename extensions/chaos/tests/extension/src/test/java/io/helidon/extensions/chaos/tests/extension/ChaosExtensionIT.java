@@ -15,6 +15,8 @@
  */
 package io.helidon.extensions.chaos.tests.extension;
 
+import java.io.UncheckedIOException;
+import java.net.ConnectException;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -38,7 +40,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @ServerTest
 class ChaosExtensionIT {
@@ -229,6 +233,22 @@ class ChaosExtensionIT {
     }
 
     @Test
+    void throwsOutboundConnectFailureWithoutInvokingDestination() {
+        var baseUri = application.prototype().baseUri().orElseThrow();
+        JsonObject created = postRun(control,
+                                     outboundConnectFailurePlan(baseUri.scheme(), baseUri.host(), baseUri.port()));
+        String id = created.stringValue("id").orElseThrow();
+
+        UncheckedIOException exception = assertThrows(UncheckedIOException.class,
+                                                      () -> application.get("/orders/42").request(String.class));
+
+        assertThat(exception.getCause(), instanceOf(ConnectException.class));
+        assertThat(exception.getCause().getMessage(), is("Connection refused by chaos disruption"));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(0));
+        assertOutboundCounters(id, 1);
+    }
+
+    @Test
     void executesDeterministicWeightedChoice() {
         JsonObject plan = runPlan(42,
                                   "stage",
@@ -406,6 +426,34 @@ class ChaosExtensionIT {
                         "mediaType": "application/problem+json",
                         "body": "Inventory unavailable"
                       },
+                      "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                    }]
+                  }]
+                }
+                """.formatted(scheme, host, port)).readJsonObject();
+    }
+
+    private static JsonObject outboundConnectFailurePlan(String scheme, String host, int port) {
+        return JsonParser.create("""
+                {
+                  "name": "outbound-inventory-connect-failure",
+                  "maximumDuration": "PT30S",
+                  "seed": 42,
+                  "stages": [{
+                    "name": "outbound-connect-failure",
+                    "duration": "PT10S",
+                    "disruptions": [{
+                      "name": "fail-outbound-orders-connect",
+                      "scope": {
+                        "type": "outbound-http",
+                        "methods": ["GET"],
+                        "scheme": "%s",
+                        "host": "%s",
+                        "port": %d,
+                        "path": {"match": "exact", "value": "/orders/42"}
+                      },
+                      "activation": {"type": "always"},
+                      "effect": {"type": "connect-failure"},
                       "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
                     }]
                   }]

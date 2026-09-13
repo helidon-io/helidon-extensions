@@ -123,6 +123,46 @@ class ChaosRunPlanJsonTest {
     }
 
     @Test
+    void acceptsOutboundConnectFailure() {
+        ChaosRunPlan direct = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "connect-failure"}
+                """)), LIMITS);
+        ChaosRunPlan weighted = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "connect-failure"}}
+                  ]
+                }
+                """)), LIMITS);
+
+        assertThat(direct.stages().getFirst().disruption().orElseThrow().effect(),
+                   instanceOf(ChaosConnectFailure.class));
+        ChaosWeightedChoice choice = (ChaosWeightedChoice) weighted.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        assertThat(choice.outcomes().getFirst().effect(), instanceOf(ChaosConnectFailure.class));
+    }
+
+    @Test
+    void rejectsInboundConnectFailureAtExactEffectPath() {
+        assertInvalidPlan(withEffect("""
+                {"type": "connect-failure"}
+                """),
+                          "/stages/0/disruptions/0/effect/type",
+                          "unsupported-inbound-effect");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "connect-failure"}}
+                  ]
+                }
+                """),
+                          "/stages/0/disruptions/0/effect/outcomes/0/effect/type",
+                          "unsupported-inbound-effect");
+    }
+
+    @Test
     void rejectsMalformedOutboundHttpScope() {
         String scopePath = "/stages/0/disruptions/0/scope";
         assertBadRequest(outboundPlanJsonWithout("type"), scopePath + "/type");
@@ -444,6 +484,9 @@ class ChaosRunPlanJsonTest {
                   ]
                 }
                 """), "/stages/0/disruptions/0/effect/status");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "connect-failure", "delay": "PT0.25S"}
+                """), "/stages/0/disruptions/0/effect/delay");
     }
 
     @Test

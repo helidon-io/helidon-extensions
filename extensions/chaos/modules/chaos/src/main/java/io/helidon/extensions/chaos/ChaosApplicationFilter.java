@@ -48,6 +48,8 @@ final class ChaosApplicationFilter implements Filter {
         boolean proceed;
         try (ChaosRunEngine.Reservation reservation = candidate.orElseThrow()) {
             proceed = switch (reservation.action()) {
+            case ChaosConnectFailure connectFailure -> throw new IllegalStateException(
+                    "Unsupported inbound effect action: " + connectFailure.getClass().getSimpleName());
             case ChaosLatencyAction latency -> {
                 latency.apply();
                 yield true;

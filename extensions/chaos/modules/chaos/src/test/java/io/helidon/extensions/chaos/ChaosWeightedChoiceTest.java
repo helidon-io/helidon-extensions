@@ -44,6 +44,15 @@ class ChaosWeightedChoiceTest {
     }
 
     @Test
+    void resolvesConnectFailureLeaf() {
+        ChaosConnectFailure failure = ChaosConnectFailure.instance();
+        ChaosWeightedChoice choice = new ChaosWeightedChoice(List.of(
+                new ChaosWeightedChoice.Outcome(1, failure)));
+
+        assertThat(choice.resolve(0, 0), sameInstance(failure));
+    }
+
+    @Test
     void protectsOutcomeInvariantsAndOrder() {
         assertThrows(NullPointerException.class, () -> new ChaosWeightedChoice(null));
         assertThrows(IllegalArgumentException.class, () -> new ChaosWeightedChoice(List.of()));

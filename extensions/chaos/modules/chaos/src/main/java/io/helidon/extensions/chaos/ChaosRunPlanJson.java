@@ -151,6 +151,7 @@ final class ChaosRunPlanJson {
         ChaosEffect effect = effect(requiredObject(json, "effect", path + "/effect"),
                                     path + "/effect",
                                     limits);
+        validateEffectForScope(scope, effect, path + "/effect");
         ChaosBudget budget = budget(requiredObject(json, "budget", path + "/budget"), path + "/budget", limits);
         return new ChaosRunPlan.ChaosDisruption(name, scope, activation, effect, budget);
     }
@@ -319,18 +320,24 @@ final class ChaosRunPlanJson {
                       Set.of("type", "status", "headers", "mediaType", "body", "delay", "jitter", "outcomes"));
         String type = requiredString(json, "type", path + "/type");
         return switch (type) {
+        case "connect-failure" -> connectFailure(json, path);
         case "latency" -> latency(json, path, limits);
         case "synthetic-http-response" -> syntheticResponse(json, path, limits);
         case "weighted-choice" -> {
             if (!weightedChoiceAllowed) {
                 throw invalid(path + "/type", "nested-weighted-choice",
-                              "weighted-choice outcomes must be latency or synthetic-http-response.");
+                              "weighted-choice outcomes must be latency, synthetic-http-response, or connect-failure.");
             }
             yield weightedChoice(json, path, limits);
         }
         default -> throw invalid(path + "/type", "unsupported-type",
-                                 "Effect type must be latency, synthetic-http-response, or weighted-choice.");
+                                 "Effect type must be connect-failure, latency, synthetic-http-response, or weighted-choice.");
         };
+    }
+
+    private static ChaosConnectFailure connectFailure(JsonObject json, String path) {
+        rejectUnknown(json, path, Set.of("type"));
+        return ChaosConnectFailure.instance();
     }
 
     private static ChaosWeightedChoice weightedChoice(JsonObject json,
@@ -363,6 +370,20 @@ final class ChaosRunPlanJson {
             outcomes.add(new ChaosWeightedChoice.Outcome(weight, outcomeEffect));
         }
         return new ChaosWeightedChoice(outcomes);
+    }
+
+    private static void validateEffectForScope(ChaosScope scope, ChaosEffect effect, String path) {
+        if (scope instanceof ChaosHttpScope && effect instanceof ChaosConnectFailure) {
+            throw invalid(path + "/type", "unsupported-inbound-effect",
+                          "connect-failure is supported only for outbound-http scopes.");
+        }
+        if (effect instanceof ChaosWeightedChoice choice) {
+            for (int index = 0; index < choice.outcomes().size(); index++) {
+                validateEffectForScope(scope,
+                                       choice.outcomes().get(index).effect(),
+                                       path + "/outcomes/" + index + "/effect");
+            }
+        }
     }
 
     private static ChaosLatency latency(JsonObject json, String path, ChaosLimitsConfig limits) {

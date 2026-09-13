@@ -134,6 +134,29 @@ class ChaosRunJsonTest {
     }
 
     @Test
+    void writesNormalizedConnectFailureEffect() {
+        ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("GET"),
+                                                                   "https",
+                                                                   "inventory.example.com",
+                                                                   443,
+                                                                   PREFIX,
+                                                                   "/v1/items");
+        ChaosRunPlan connectFailurePlan = plan(scope, ChaosConnectFailure.instance());
+
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   connectFailurePlan));
+
+        JsonObject effect = json.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("effect").orElseThrow();
+        assertThat(effect.toString(), is("{\"type\":\"connect-failure\"}"));
+        assertThat(effect.stringValue("type").orElseThrow(), is("connect-failure"));
+    }
+
+    @Test
     void writesNormalizedOutboundHttpScope() {
         ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("get"),
                                                                    "HTTPS",

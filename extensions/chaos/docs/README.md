@@ -1,6 +1,6 @@
 # Helidon Chaos extension
 
-The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response or inbound latency, and matching Helidon WebClient calls can receive bounded outbound latency or a synthetic HTTP error response.
+The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response or inbound latency, and matching Helidon WebClient calls can receive bounded outbound latency, a synthetic HTTP error response, or a simulated connection failure.
 
 This first slice targets Helidon 4.5.3 and is disabled by default.
 
@@ -232,6 +232,38 @@ The same outbound scope can return a complete synthetic response without contact
 }
 ```
 
+The outbound scope can instead fail before contacting the destination:
+
+```json
+{
+  "name": "inventory-connect-failure",
+  "maximumDuration": "PT30S",
+  "seed": 148894,
+  "stages": [
+    {
+      "name": "fail-inventory-connect",
+      "duration": "PT10S",
+      "disruptions": [
+        {
+          "name": "inventory-connect-failure",
+          "scope": {
+            "type": "outbound-http",
+            "methods": ["GET"],
+            "scheme": "https",
+            "host": "inventory.example.com",
+            "port": 443,
+            "path": {"match": "prefix", "value": "/v1/items"}
+          },
+          "activation": {"type": "always"},
+          "effect": {"type": "connect-failure"},
+          "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+        }
+      ]
+    }
+  ]
+}
+```
+
 Stages execute in declared order. A stage may contain one disruption or may use an empty `disruptions` array as a
 passive interval for observing recovery:
 
@@ -305,6 +337,11 @@ An exact path matches only that path. A prefix is segment-aware: `/orders` match
 
 Only Helidon WebClient-backed outbound calls participate. An outbound scope matches the logical method, scheme, host, effective logical port, and decoded path before discovery or transport; resolved endpoints and addresses are ignored. Methods are compared in uppercase, scheme and host in lowercase, and host, scheme, and port match exactly. Paths use the same exact and segment-aware prefix matching described above. Query parameters, fragments, and headers are ignored. Each redirect is evaluated independently for its logical attempt.
 
+The outbound-only `connect-failure` effect has no additional properties. A selected call does not continue through the
+WebClient chain and does not access the network. It throws `java.io.UncheckedIOException` with a
+`java.net.ConnectException` cause, matching the exception shape used by Helidon WebClient for connection failures. The
+reservation is released before the exception reaches the caller, so completed and in-flight counters remain accurate.
+
 For a fixed delay, use the `latency` effect:
 
 ```json
@@ -358,10 +395,11 @@ To select one of several effects for each accepted activation, use `weighted-cho
 ```
 
 Weights are positive integers and do not need to total 100. At least one outcome is required, and the total weight must
-not exceed `Long.MAX_VALUE`. Inbound and outbound scopes accept `synthetic-http-response`, `latency`, and weighted choices
-with valid leaf effects; nested weighted choices are rejected. Selection is deterministic for the run seed and matching
-invocation number, uses a separate random stream from activation and latency jitter, and preserves declared outcome
-order in normalized responses. The disruption's cumulative and concurrent budgets apply across all selected outcomes.
+not exceed `Long.MAX_VALUE`. Inbound and outbound scopes accept `synthetic-http-response` and `latency`; outbound scopes
+also accept `connect-failure`. A weighted choice may contain only leaf effects valid for its scope, and nested weighted
+choices are rejected. Selection is deterministic for the run seed and matching invocation number, uses a separate random
+stream from activation and latency jitter, and preserves declared outcome order in normalized responses. The
+disruption's cumulative and concurrent budgets apply across all selected outcomes.
 
 Activation can also select a deterministic fraction of matching requests:
 
@@ -434,11 +472,11 @@ Runs are local to one Helidon server process, in memory, bounded, and not recons
 The current slice intentionally supports bounded ordered stages with zero or one HTTP disruption per stage, inbound or
 outbound as implemented; `always`, deterministic `probability`, or `periodic-burst` activation; exact or segment-aware
 prefix paths; inbound synthetic 4xx/5xx HTTP responses and latency; outbound Helidon WebClient synthetic 4xx/5xx HTTP
-responses and latency; and deterministic weighted selection between valid effects. Its public vocabulary includes
+responses, latency, and simulated connection failures; and deterministic weighted selection between valid effects. Its public vocabulary includes
 `runs`, `stages`, `disruptions`, `scope`,
 `activation`, `effect`, and `budget` so later additions can introduce other bounded local effects without adopting
 another project's API.
 
-Out of scope for this slice are non-Helidon clients, connection resets and other transport faults, timeout or
-connection-stall effects, bytecode injection, exception injection inside arbitrary methods, CPU or memory pressure,
+Out of scope for this slice are non-Helidon clients, post-connect connection resets and other transport faults, timeout
+or connection-stall effects, bytecode injection, exception injection inside arbitrary methods, CPU or memory pressure,
 network faults outside the process, distributed orchestration, persistent run recovery, and automatic enablement.

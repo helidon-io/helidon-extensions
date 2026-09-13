@@ -152,6 +152,9 @@ final class ChaosRunJson {
 
     private static JsonObject effect(ChaosEffect effect) {
         return switch (effect) {
+        case ChaosConnectFailure connectFailure -> JsonObject.builder()
+                .set("type", connectFailure.type())
+                .build();
         case ChaosLatency latency -> JsonObject.builder()
                 .set("type", "latency")
                 .set("delay", latency.delay().toString())

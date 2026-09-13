@@ -16,7 +16,9 @@
 package io.helidon.extensions.chaos;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.lang.reflect.Proxy;
+import java.net.ConnectException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
@@ -306,6 +308,31 @@ class ChaosWebClientServiceTest {
 
             assertThat(response.status(), is(Status.BAD_GATEWAY_502));
             assertThat(proceeds.get(), is(0));
+        } finally {
+            registration.close();
+        }
+    }
+
+    @Test
+    void throwsConnectFailureWithoutProceedingAndReleasesReservation() {
+        ChaosRunEngine engine = engine();
+        ChaosRuntimeRegistration registration = ChaosRuntimeBridge.register(engine);
+        try {
+            var run = engine.create(plan(ChaosConnectFailure.instance(), 1), "test");
+            AtomicInteger proceeds = new AtomicInteger();
+
+            UncheckedIOException exception = assertThrows(UncheckedIOException.class,
+                                                          () -> new ChaosWebClientService("chaos")
+                                                                  .handle(chain(proceeds), inventoryRequest()));
+
+            assertThat(exception.getCause(), instanceOf(ConnectException.class));
+            assertThat(exception.getCause().getMessage(), is("Connection refused by chaos disruption"));
+            assertThat(proceeds.get(), is(0));
+            ChaosRunView view = engine.get(run.id()).orElseThrow();
+            assertThat(view.matched(), is(1L));
+            assertThat(view.activated(), is(1L));
+            assertThat(view.completed(), is(1L));
+            assertThat(view.inFlight(), is(0L));
         } finally {
             registration.close();
         }

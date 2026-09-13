@@ -18,5 +18,5 @@ package io.helidon.extensions.chaos;
 /**
  * Normalized effect in a Chaos run plan.
  */
-sealed interface ChaosEffect permits ChaosLatency, ChaosSyntheticResponse, ChaosWeightedChoice {
+sealed interface ChaosEffect permits ChaosConnectFailure, ChaosLatency, ChaosSyntheticResponse, ChaosWeightedChoice {
 }

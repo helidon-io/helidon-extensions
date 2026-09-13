@@ -52,6 +52,7 @@ final class ChaosWeightedChoice implements ChaosEffect {
     ChaosEffectAction resolve(long choiceSample, long effectSample) {
         ChaosEffect selected = select(choiceSample);
         return switch (selected) {
+        case ChaosConnectFailure connectFailure -> connectFailure;
         case ChaosLatency latency -> latency.resolve(effectSample);
         case ChaosSyntheticResponse synthetic -> synthetic;
         case ChaosWeightedChoice choice -> throw new IllegalStateException(
