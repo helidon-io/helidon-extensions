@@ -13,3 +13,8 @@ Helidon 27 no longer supports metric scopes. The legacy OCI metrics `scopes`
 configuration setting is ignored, and `OciMetricsSupport.Builder.scopes(String[])`
 is deprecated and has no effect. Use ordinary metric tags to attach categories to
 exported metrics.
+
+Metric descriptions populate OCI description metadata when enabled. Measurement
+values use the declared base unit for conversion to bytes or seconds; timer
+durations are exported in seconds. Timer and histogram observation counts are
+exported without unit conversion.

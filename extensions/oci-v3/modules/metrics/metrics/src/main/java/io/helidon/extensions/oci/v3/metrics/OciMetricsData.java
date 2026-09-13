@@ -85,15 +85,18 @@ class OciMetricsData {
     }
 
     private Stream<MetricDataDetails> forCounter(Meter.Id metricId, Counter counter) {
-        return Stream.of(metricDataDetails(counter, metricId, null, counter.count()));
+        double value = convertUnits(counter.baseUnit().orElse(null), counter.count());
+        return Stream.of(metricDataDetails(counter, metricId, null, value));
     }
 
     private Stream<MetricDataDetails> forFunctionalCounter(Meter.Id metricId, FunctionalCounter fCounter) {
-        return Stream.of(metricDataDetails(fCounter, metricId, null, fCounter.count()));
+        double value = convertUnits(fCounter.baseUnit().orElse(null), fCounter.count());
+        return Stream.of(metricDataDetails(fCounter, metricId, null, value));
     }
 
     private Stream<MetricDataDetails> forGauge(Meter.Id metricId, Gauge gauge) {
-        return Stream.of(metricDataDetails(gauge, metricId, null, gauge.value().doubleValue()));
+        double value = convertUnits(gauge.baseUnit().orElse(null), gauge.value().doubleValue());
+        return Stream.of(metricDataDetails(gauge, metricId, null, value));
     }
 
     private Stream<MetricDataDetails> forTimer(Meter.Id metricId, Timer timer) {
@@ -105,11 +108,11 @@ class OciMetricsData {
             result.add(metricDataDetails(timer,
                                          metricId,
                                          "mean_seconds",
-                                         snapshot.mean()));
+                                         convertUnits(Meter.BaseUnits.NANOSECONDS, snapshot.mean())));
             result.add(metricDataDetails(timer,
                                          metricId,
-                                        "max_seconds",
-                                         snapshot.max()));
+                                         "max_seconds",
+                                         convertUnits(Meter.BaseUnits.NANOSECONDS, snapshot.max())));
         }
         return result.build();
     }
@@ -126,11 +129,11 @@ class OciMetricsData {
             result.add(metricDataDetails(histogram,
                                          metricId,
                                          "mean" + unitsSuffix,
-                                         snapshot.mean()));
+                                         convertUnits(units, snapshot.mean())));
             result.add(metricDataDetails(histogram,
                                          metricId,
                                          "max" + unitsSuffix,
-                                         snapshot.max()));
+                                         convertUnits(units, snapshot.max())));
         }
         return result.build();
     }
@@ -146,14 +149,14 @@ class OciMetricsData {
             // OCI requires at least one dimension for each metric group.
             dimensions = Map.of("source", "helidon");
         }
-        List<Datapoint> datapoints = datapoints(metric.description().orElse(null), value);
+        List<Datapoint> datapoints = datapoints(value);
         String metricName = nameFormatter.format(metric, metricId, suffix, metric.baseUnit().orElse(null));
         return MetricDataDetails.builder()
                 .compartmentId(compartmentId)
                 .name(metricName)
                 .namespace(namespace)
                 .resourceGroup(resourceGroup)
-                .metadata(ociMetadata(metric.baseUnit().orElse(null)))
+                .metadata(ociMetadata(metric.description().orElse(null)))
                 .datapoints(datapoints)
                 .dimensions(dimensions)
                 .build();
@@ -168,9 +171,9 @@ class OciMetricsData {
         return value;
     }
 
-    private List<Datapoint> datapoints(String unit, double value) {
+    private List<Datapoint> datapoints(double value) {
         return Collections.singletonList(Datapoint.builder()
-                                                 .value(convertUnits(unit, value))
+                                                 .value(value)
                                                  .timestamp(new Date())
                                                  .build());
     }
