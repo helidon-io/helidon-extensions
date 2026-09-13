@@ -22,6 +22,10 @@ on:
         description: Branch or tag ref used to resolve extensions when called as a reusable workflow.
         required: false
         type: string
+    outputs:
+      snapshot-versions:
+        description: Helidon SNAPSHOT versions selected for priming.
+        value: ${{ jobs.resolve.outputs.versions }}
   pull_request:
   push:
     tags-ignore: [ '**' ]

@@ -71,7 +71,7 @@ jobs:
         run: ./etc/scripts/setup-gpg.sh
       - uses: ./.github/actions/common
         with:
-          build-cache: read-only
+          build-cache: ${{ needs.validate.outputs.snapshot-versions != '[]' && 'read-only' || '' }}
           artifact-name: io-helidon-extensions-${{ needs.create-tag.outputs.extension }}-artifacts
           artifact-path: staging
           run: |
