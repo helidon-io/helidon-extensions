@@ -44,7 +44,7 @@ class JmsJavaxConnectorIT {
     @Container
     private static final GenericContainer<?> JMS = new GenericContainer<>("apache/artemis:2.55.0")
             .withEnv("ARTEMIS_USER", "artemis")
-            .withEnv("ARTEMIS_PASSWORD", "artemis")
+            .withEnv("ARTEMIS_PASSWORD", "changeit")
             .withEnv("JAVA_ARGS_APPEND", "-Dbrokerconfig.minDiskFree=1073741824")
             .withExposedPorts(61616)
             .waitingFor(Wait.forLogMessage(".*AMQ221007:.*\n", 1));
@@ -54,8 +54,8 @@ class JmsJavaxConnectorIT {
     void forwardsJakartaToJavax() {
         String source = "source-" + UUID.randomUUID();
         String target = "target-" + UUID.randomUUID();
-        ConnectionFactory javaxFactory = new org.apache.activemq.ActiveMQConnectionFactory("artemis", "artemis", brokerUrl());
-        try (ActiveMQConnectionFactory jakartaFactory = new ActiveMQConnectionFactory(brokerUrl(), "artemis", "artemis");
+        ConnectionFactory javaxFactory = new org.apache.activemq.ActiveMQConnectionFactory("artemis", "changeit", brokerUrl());
+        try (ActiveMQConnectionFactory jakartaFactory = new ActiveMQConnectionFactory(brokerUrl(), "artemis", "changeit");
              jakarta.jms.JMSContext producer = jakartaFactory.createContext();
              JMSContext consumer = javaxFactory.createContext()) {
             var destination = consumer.createConsumer(consumer.createQueue(target));
@@ -80,8 +80,8 @@ class JmsJavaxConnectorIT {
     void forwardsJavaxToJakarta() {
         String source = "source-" + UUID.randomUUID();
         String target = "target-" + UUID.randomUUID();
-        ConnectionFactory javaxFactory = new org.apache.activemq.ActiveMQConnectionFactory("artemis", "artemis", brokerUrl());
-        try (ActiveMQConnectionFactory jakartaFactory = new ActiveMQConnectionFactory(brokerUrl(), "artemis", "artemis");
+        ConnectionFactory javaxFactory = new org.apache.activemq.ActiveMQConnectionFactory("artemis", "changeit", brokerUrl());
+        try (ActiveMQConnectionFactory jakartaFactory = new ActiveMQConnectionFactory(brokerUrl(), "artemis", "changeit");
              JMSContext producer = javaxFactory.createContext();
              jakarta.jms.JMSContext consumer = jakartaFactory.createContext()) {
             var destination = consumer.createConsumer(consumer.createQueue(target));
@@ -114,10 +114,10 @@ class JmsJavaxConnectorIT {
         Config config = Config.builder(ConfigSources.create(Map.of(
                         "messaging.connector.jakarta.type", "helidon-jms",
                         "messaging.connector.jakarta.username", "artemis",
-                        "messaging.connector.jakarta.password", "artemis",
+                        "messaging.connector.jakarta.password", "changeit",
                         "messaging.connector.javax.type", "helidon-jms-javax",
                         "messaging.connector.javax.username", "artemis",
-                        "messaging.connector.javax.password", "artemis",
+                        "messaging.connector.javax.password", "changeit",
                         "messaging.incoming.source.connector", incoming,
                         "messaging.incoming.source.destination", source,
                         "messaging.outgoing.target.connector", outgoing,

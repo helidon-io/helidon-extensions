@@ -50,7 +50,7 @@ messaging:
       type: helidon-jms
       connection-factory: artemis
       username: artemis
-      password: artemis
+      password: changeit
   incoming:
     messages-from-jms:
       connector: jms-1
@@ -79,7 +79,7 @@ connector:
     name: jms-1
     connection-factory: artemis
     username: artemis
-    password: artemis
+    password: changeit
 ```
 
 Incoming and outgoing channel names are the keys under their respective nodes.
@@ -110,7 +110,7 @@ java -jar target/helidon-extensions-messaging-jms-examples-se-declarative.jar
 ```
 
 The HTTP server listens on port 8080. The broker configuration is for local
-development, with username and password `artemis`. The broker listens on port
+development, with username `artemis` and password `changeit`. The broker listens on port
 61616 and its web console on port 8161. Only one copy of the supplied broker
 can bind those ports. Run one of the JMS examples at a time: consumers of the
 same queue share messages.

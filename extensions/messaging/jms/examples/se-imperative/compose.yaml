@@ -19,14 +19,14 @@ services:
     image: apache/artemis:2.55.0
     environment:
       ARTEMIS_USER: artemis
-      ARTEMIS_PASSWORD: artemis
+      ARTEMIS_PASSWORD: changeit
       # Reserve 1 GiB instead of blocking when the host filesystem reaches 90% usage.
       JAVA_ARGS_APPEND: "-Dbrokerconfig.minDiskFree=1073741824"
     ports:
       - "61616:61616"
       - "8161:8161"
     healthcheck:
-      test: ["CMD", "/var/lib/artemis-instance/bin/artemis", "check", "node", "--url", "tcp://localhost:61616", "--user", "artemis", "--password", "artemis"]
+      test: ["CMD", "/var/lib/artemis-instance/bin/artemis", "check", "node", "--url", "tcp://localhost:61616", "--user", "artemis", "--password", "changeit"]
       interval: 5s
       timeout: 5s
       retries: 30

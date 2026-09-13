@@ -45,7 +45,7 @@ class DeclarativeMessagingIT {
     private static final ArtemisContainer JMS = new ArtemisContainer(DockerImageName.parse("apache/artemis:2.55.0")
                                                                              .asCompatibleSubstituteFor("apache/activemq-artemis"))
             .withUser("artemis")
-            .withPassword("artemis")
+            .withPassword("changeit")
             .withEnv("JAVA_ARGS_APPEND", "-Dbrokerconfig.minDiskFree=1073741824");
 
     @Test

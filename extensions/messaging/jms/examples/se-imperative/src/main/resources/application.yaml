@@ -22,5 +22,5 @@ server:
 app:
   jms-broker-url: "tcp://localhost:61616"
   jms-username: "artemis"
-  jms-password: "artemis"
+  jms-password: "changeit"
   messages-destination: "http-messages"

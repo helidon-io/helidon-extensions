@@ -241,11 +241,11 @@ class JmsIncomingChannelTest {
     @Test
     void naturalRunCompletionUsesConfiguredCredentialsAndClosesConnection() throws Exception {
         JmsClient client = client();
-        when(client.factory.createConnection("scott", "tiger")).thenReturn(client.connection);
+        when(client.factory.createConnection("scott", "changeit")).thenReturn(client.connection);
         JmsRuntimeConfig credentialConfig = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .username("scott")
-                .password("tiger")
+                .password("changeit")
                 .build();
         IncomingChannel connector = JmsIncomingChannel.create(credentialConfig, ignored -> client.factory);
 
@@ -256,7 +256,7 @@ class JmsIncomingChannelTest {
             }
         });
 
-        verify(client.factory).createConnection("scott", "tiger");
+        verify(client.factory).createConnection("scott", "changeit");
         verify(client.connection, never()).start();
         verify(client.connection).close();
     }
@@ -675,7 +675,7 @@ class JmsIncomingChannelTest {
         JmsClient first = client();
         JmsClient second = client();
         ConnectionFactory factory = mock(ConnectionFactory.class);
-        when(factory.createConnection("orders-user", "secret"))
+        when(factory.createConnection("orders-user", "changeit"))
                 .thenReturn(first.connection, second.connection);
         when(first.consumer.receive(anyLong())).thenThrow(new JMSException("broker offline"));
         TextMessage delivered = textMessage("after-reconnect");
@@ -688,7 +688,7 @@ class JmsIncomingChannelTest {
         JmsRuntimeConfig config = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .username("orders-user")
-                .password("secret".toCharArray())
+                .password("changeit".toCharArray())
                 .build();
         IncomingChannel connector = JmsIncomingChannel.create(config, ignored -> factory);
         connectorReference.set(connector);
@@ -705,7 +705,7 @@ class JmsIncomingChannelTest {
         });
 
         assertThat(activationWaits.get(), is(1));
-        verify(factory, times(2)).createConnection("orders-user", "secret");
+        verify(factory, times(2)).createConnection("orders-user", "changeit");
         verify(first.connection).start();
         verify(first.connection).close();
         verify(second.connection).start();

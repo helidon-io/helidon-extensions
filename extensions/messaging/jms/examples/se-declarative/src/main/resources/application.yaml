@@ -27,7 +27,7 @@ messaging:
       type: "helidon-jms"
       connection-factory: "artemis"
       username: "artemis"
-      password: "artemis"
+      password: "changeit"
   incoming:
     messages-from-jms:
       connector: jms-1

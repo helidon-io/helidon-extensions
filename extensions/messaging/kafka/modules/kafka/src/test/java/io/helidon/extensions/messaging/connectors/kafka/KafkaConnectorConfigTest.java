@@ -174,7 +174,7 @@ class KafkaConnectorConfigTest {
 
     @Test
     void testAdditionalPropertiesAreConfidential() {
-        String password = "super-secret-password";
+        String password = "changeit";
         String jaasConfig = "org.apache.kafka.common.security.plain.PlainLoginModule required "
                 + "username=\"client\" password=\"" + password + "\";";
         KafkaConnectorConfig.Builder builder = builder()

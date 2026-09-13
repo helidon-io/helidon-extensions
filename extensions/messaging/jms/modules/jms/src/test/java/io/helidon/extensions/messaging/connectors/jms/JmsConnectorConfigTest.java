@@ -97,7 +97,7 @@ class JmsConnectorConfigTest {
         Session session = mock(Session.class);
         Queue queue = mock(Queue.class);
         MessageProducer producer = mock(MessageProducer.class);
-        when(factory.createConnection("orders-user", "secret")).thenReturn(connection);
+        when(factory.createConnection("orders-user", "changeit")).thenReturn(connection);
         when(connection.createSession(false, Session.AUTO_ACKNOWLEDGE)).thenReturn(session);
         when(session.createQueue("audit")).thenReturn(queue);
         when(session.createProducer(queue)).thenReturn(producer);
@@ -106,7 +106,7 @@ class JmsConnectorConfigTest {
                 .name("orders-jms")
                 .connectionFactory(factory)
                 .username("orders-user")
-                .password("secret")
+                .password("changeit")
                 .transacted(true)
                 .destination("default-queue")
                 .build();
@@ -118,7 +118,7 @@ class JmsConnectorConfigTest {
                                                              .build()).orElseThrow();
         try {
             outgoing.start();
-            verify(factory).createConnection("orders-user", "secret");
+            verify(factory).createConnection("orders-user", "changeit");
             verify(connection).createSession(false, Session.AUTO_ACKNOWLEDGE);
             verify(session).createQueue("audit");
         } finally {
@@ -194,7 +194,7 @@ class JmsConnectorConfigTest {
 
     @Test
     void testPasswordIsDefensivelyCopiedAndConfidentialInPublicBlueprints() {
-        char[] password = "secret".toCharArray();
+        char[] password = "changeit".toCharArray();
         JmsConnector connector = JmsConnector.builder()
                 .name("orders-jms")
                 .username("orders-user")
@@ -202,20 +202,20 @@ class JmsConnectorConfigTest {
                 .build();
         Arrays.fill(password, 'x');
 
-        assertThat(new String(connector.prototype().password().orElseThrow()), is("secret"));
+        assertThat(new String(connector.prototype().password().orElseThrow()), is("changeit"));
         char[] returned = connector.prototype().password().orElseThrow();
         Arrays.fill(returned, 'x');
-        assertThat(new String(connector.prototype().password().orElseThrow()), is("secret"));
-        assertThat(connector.prototype().toString().contains("secret"), is(false));
+        assertThat(new String(connector.prototype().password().orElseThrow()), is("changeit"));
+        assertThat(connector.prototype().toString().contains("changeit"), is(false));
 
         JmsIncomingConfig channel = JmsIncomingConfig.builder()
                 .connector("orders-jms")
                 .channelName("orders")
                 .username("orders-user")
-                .password("channel-secret")
+                .password("changeit")
                 .build();
-        assertThat(new String(channel.password().orElseThrow()), is("channel-secret"));
-        assertThat(channel.toString().contains("channel-secret"), is(false));
+        assertThat(new String(channel.password().orElseThrow()), is("changeit"));
+        assertThat(channel.toString().contains("changeit"), is(false));
     }
 
     @Test

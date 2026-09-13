@@ -68,7 +68,7 @@ class JmsRuntimeConfigTest {
         assertThrows(IllegalArgumentException.class,
                      () -> incomingBuilder().username("orders-user").build());
         assertThrows(IllegalArgumentException.class,
-                     () -> incomingBuilder().password("secret".toCharArray()).build());
+                     () -> incomingBuilder().password("changeit".toCharArray()).build());
     }
 
     @Test
@@ -109,35 +109,35 @@ class JmsRuntimeConfigTest {
     void testPasswordIsConfidential() {
         JmsRuntimeConfig config = incomingBuilder()
                 .username("orders-user")
-                .password("secret".toCharArray())
+                .password("changeit".toCharArray())
                 .build();
 
-        assertThat(new String(config.password().orElseThrow()), is("secret"));
-        assertThat(config.toString().contains("secret"), is(false));
+        assertThat(new String(config.password().orElseThrow()), is("changeit"));
+        assertThat(config.toString().contains("changeit"), is(false));
     }
 
     @Test
     void testPasswordIsDefensivelyCopiedAcrossBuilderAndPrototypeBoundaries() {
-        char[] supplied = "secret".toCharArray();
+        char[] supplied = "changeit".toCharArray();
         JmsRuntimeConfig.Builder builder = incomingBuilder()
                 .username("orders-user")
                 .password(supplied);
         Arrays.fill(supplied, 'x');
 
         char[] builderCopy = builder.passwordSource().get().orElseThrow();
-        assertThat(new String(builderCopy), is("secret"));
+        assertThat(new String(builderCopy), is("changeit"));
         Arrays.fill(builderCopy, 'x');
 
         JmsRuntimeConfig config = builder.build();
         char[] configCopy = config.password().orElseThrow();
-        assertThat(new String(configCopy), is("secret"));
+        assertThat(new String(configCopy), is("changeit"));
         Arrays.fill(configCopy, 'x');
         char[] sourceCopy = config.passwordSource().get().orElseThrow();
         Arrays.fill(sourceCopy, 'x');
-        assertThat(new String(config.password().orElseThrow()), is("secret"));
+        assertThat(new String(config.password().orElseThrow()), is("changeit"));
 
         JmsRuntimeConfig copied = JmsRuntimeConfig.builder().from(config).build();
-        assertThat(new String(copied.password().orElseThrow()), is("secret"));
+        assertThat(new String(copied.password().orElseThrow()), is("changeit"));
     }
 
     @Test
@@ -146,17 +146,17 @@ class JmsRuntimeConfigTest {
                 Map.entry("channel-name", "orders"),
                 Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
                 Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
-                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
+                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "changeit"))));
         JmsRuntimeConfig.Builder builder = JmsRuntimeConfig.builder().config(configSource);
-        assertThat(builder.configuredPassword().orElseThrow(), is("secret"));
+        assertThat(builder.configuredPassword().orElseThrow(), is("changeit"));
 
         JmsRuntimeConfig config = builder.build();
 
         assertThat(config.configuredPassword().isEmpty(), is(true));
         char[] password = config.password().orElseThrow();
-        assertThat(new String(password), is("secret"));
+        assertThat(new String(password), is("changeit"));
         Arrays.fill(password, 'x');
-        assertThat(new String(config.password().orElseThrow()), is("secret"));
+        assertThat(new String(config.password().orElseThrow()), is("changeit"));
     }
 
     @Test
@@ -165,17 +165,17 @@ class JmsRuntimeConfigTest {
                 Map.entry("channel-name", "orders"),
                 Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
                 Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
-                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
+                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "changeit-old"))));
         JmsRuntimeConfig.Builder replacing = JmsRuntimeConfig.builder().config(configSource);
-        assertThat(replacing.configuredPassword().orElseThrow(), is("secret"));
+        assertThat(replacing.configuredPassword().orElseThrow(), is("changeit-old"));
 
-        JmsRuntimeConfig replaced = replacing.password("replacement").build();
+        JmsRuntimeConfig replaced = replacing.password("changeit").build();
 
         assertThat(replacing.configuredPassword().isEmpty(), is(true));
-        assertThat(new String(replaced.password().orElseThrow()), is("replacement"));
+        assertThat(new String(replaced.password().orElseThrow()), is("changeit"));
 
         JmsRuntimeConfig.Builder clearing = JmsRuntimeConfig.builder().config(configSource);
-        assertThat(clearing.configuredPassword().orElseThrow(), is("secret"));
+        assertThat(clearing.configuredPassword().orElseThrow(), is("changeit-old"));
         clearing.clearPassword();
 
         assertThat(clearing.configuredPassword().isEmpty(), is(true));
@@ -188,26 +188,26 @@ class JmsRuntimeConfigTest {
                 Map.entry("channel-name", "orders"),
                 Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
                 Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
-                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "secret"))));
+                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "changeit"))));
         JmsRuntimeConfig.Builder source = JmsRuntimeConfig.builder().config(configSource);
         JmsRuntimeConfig.Builder copy = JmsRuntimeConfig.builder().from(source);
 
         JmsRuntimeConfig copiedConfig = copy.build();
-        assertThat(source.configuredPassword().orElseThrow(), is("secret"));
+        assertThat(source.configuredPassword().orElseThrow(), is("changeit"));
         JmsRuntimeConfig sourceConfig = source.build();
 
-        assertThat(new String(copiedConfig.password().orElseThrow()), is("secret"));
-        assertThat(new String(sourceConfig.password().orElseThrow()), is("secret"));
+        assertThat(new String(copiedConfig.password().orElseThrow()), is("changeit"));
+        assertThat(new String(sourceConfig.password().orElseThrow()), is("changeit"));
 
         JmsRuntimeConfig.Builder reverseSource = JmsRuntimeConfig.builder().config(configSource);
         JmsRuntimeConfig.Builder reverseCopy = JmsRuntimeConfig.builder().from(reverseSource);
 
         JmsRuntimeConfig reverseSourceConfig = reverseSource.build();
-        assertThat(reverseCopy.configuredPassword().orElseThrow(), is("secret"));
+        assertThat(reverseCopy.configuredPassword().orElseThrow(), is("changeit"));
         JmsRuntimeConfig reverseCopiedConfig = reverseCopy.build();
 
-        assertThat(new String(reverseSourceConfig.password().orElseThrow()), is("secret"));
-        assertThat(new String(reverseCopiedConfig.password().orElseThrow()), is("secret"));
+        assertThat(new String(reverseSourceConfig.password().orElseThrow()), is("changeit"));
+        assertThat(new String(reverseCopiedConfig.password().orElseThrow()), is("changeit"));
     }
 
     @Test
@@ -216,21 +216,21 @@ class JmsRuntimeConfigTest {
                 Map.entry("channel-name", "orders"),
                 Map.entry(JmsConnectorConfig.DESTINATION_PROPERTY, "orders"),
                 Map.entry(JmsConnectorConfig.USERNAME_PROPERTY, "orders-user"),
-                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "stale-secret"))));
+                Map.entry(JmsConnectorConfig.PASSWORD_PROPERTY, "changeit-old"))));
         JmsRuntimeConfig prototype = incomingBuilder()
                 .username("orders-user")
-                .password("prototype-secret")
+                .password("changeit")
                 .build();
         JmsRuntimeConfig.Builder target = JmsRuntimeConfig.builder().config(configSource);
 
         JmsRuntimeConfig copied = target.from(prototype).build();
 
-        assertThat(new String(copied.password().orElseThrow()), is("prototype-secret"));
+        assertThat(new String(copied.password().orElseThrow()), is("changeit"));
     }
 
     @Test
     void testJndiEnvironmentIsConfidential() {
-        String credential = "jndi-secret";
+        String credential = "changeit";
         JmsRuntimeConfig.Builder builder = incomingBuilder()
                 .putJndiEnvironmentProperty("java.naming.security.credentials", credential);
 

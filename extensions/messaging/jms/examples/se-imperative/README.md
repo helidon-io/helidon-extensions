@@ -38,7 +38,7 @@ JmsConnector jms = JmsConnector.builder()
         .name("jms-1")
         .connectionFactory(connectionFactory)
         .username("artemis")
-        .password("artemis")
+        .password("changeit")
         .build();
 
 MessagingChannel<String> incoming = MessagingChannel.create("messages-from-jms", String.class);
@@ -108,7 +108,7 @@ java -jar target/helidon-extensions-messaging-jms-examples-se-imperative.jar
 ```
 
 The HTTP server listens on port 8080. The broker configuration is for local
-development, using username and password `artemis`. Artemis automatically
+development, using username `artemis` and password `changeit`. Artemis automatically
 creates the queue. Only one copy of the supplied broker can bind ports 61616
 and 8161. The broker console is available at http://localhost:8161/console.
 Run one example at a time: JMS queues distribute messages among consumers.

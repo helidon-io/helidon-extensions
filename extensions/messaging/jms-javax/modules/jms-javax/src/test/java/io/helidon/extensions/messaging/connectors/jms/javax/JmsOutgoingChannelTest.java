@@ -532,12 +532,12 @@ class JmsOutgoingChannelTest {
         JmsClient first = client();
         JmsClient second = client();
         ConnectionFactory factory = mock(ConnectionFactory.class);
-        when(factory.createConnection("orders-user", "secret"))
+        when(factory.createConnection("orders-user", "changeit"))
                 .thenReturn(first.connection, second.connection);
-        when(factory.createConnection("orders-user", "xxxxxx"))
+        when(factory.createConnection("orders-user", "xxxxxxxx"))
                 .thenThrow(new AssertionError("connector observed a mutated password"));
         doThrow(new JMSException("temporarily unavailable")).when(first.connection).start();
-        char[] mutablePassword = "secret".toCharArray();
+        char[] mutablePassword = "changeit".toCharArray();
         JmsRuntimeConfig config = JmsRuntimeConfig.builder()
                 .from(config(false))
                 .username("orders-user")
@@ -549,7 +549,7 @@ class JmsOutgoingChannelTest {
 
         connector.start();
 
-        verify(factory, times(2)).createConnection("orders-user", "secret");
+        verify(factory, times(2)).createConnection("orders-user", "changeit");
         connector.close();
     }
 

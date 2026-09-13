@@ -56,7 +56,7 @@ class JmsConnectionSupportTest {
         assertThrows(IllegalStateException.class, support::createConnection);
         assertThat(resolved.get(), is(false));
         assertThat(source.username().orElseThrow(), is("scott"));
-        assertThat(source.password().orElseThrow(), is("tiger".toCharArray()));
+        assertThat(source.password().orElseThrow(), is("changeit".toCharArray()));
     }
 
     @Test
@@ -106,7 +106,7 @@ class JmsConnectionSupportTest {
                 .channelName("orders")
                 .destination("orders")
                 .username("scott")
-                .password("tiger")
+                .password("changeit")
                 .build();
     }
 
