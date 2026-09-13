@@ -37,6 +37,7 @@ import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
 
 import jakarta.jms.JMSException;
+import jakarta.jms.Message;
 
 final class JmsMessageImpl<T> implements JmsMessage<T> {
     static final String JMSX_GROUP_ID = "JMSXGroupID";
@@ -121,7 +122,7 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
 
     static <T> JmsMessage<T> incoming(T entity,
                                       Map<String, Object> properties,
-                                      jakarta.jms.Message message,
+                                      Message message,
                                       boolean snapshotSerializable) throws JMSException {
         return new JmsMessageImpl<>(entity,
                                     properties,
@@ -138,7 +139,7 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
     }
 
     static JmsMessage<Object> metadataOnly(Map<String, Object> properties,
-                                           jakarta.jms.Message message) throws JMSException {
+                                           Message message) throws JMSException {
         return new JmsMessageImpl<>(UnavailableBody.INSTANCE,
                                     properties,
                                     Optional.ofNullable(message.getJMSMessageID()),

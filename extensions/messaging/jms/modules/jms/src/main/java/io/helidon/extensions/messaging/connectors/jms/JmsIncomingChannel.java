@@ -48,6 +48,7 @@ import jakarta.jms.Connection;
 import jakarta.jms.Destination;
 import jakarta.jms.JMSException;
 import jakarta.jms.JMSRuntimeException;
+import jakarta.jms.Message;
 import jakarta.jms.MessageConsumer;
 import jakarta.jms.Session;
 import jakarta.jms.Topic;
@@ -359,7 +360,7 @@ final class JmsIncomingChannel {
                     return DeliveryResult.RECONNECT;
                 }
 
-                jakarta.jms.Message nativeMessage;
+                Message nativeMessage;
                 try {
                     nativeMessage = resources.consumer().receive(receiveTimeoutMillis(config.receiveTimeout()));
                 } catch (JMSException | JMSRuntimeException e) {
@@ -501,7 +502,7 @@ final class JmsIncomingChannel {
             }
         }
 
-        private MessageBatch<?> failedMappingBatch(jakarta.jms.Message nativeMessage,
+        private MessageBatch<?> failedMappingBatch(Message nativeMessage,
                                                    RuntimeException mappingFailure) {
             io.helidon.messaging.Message<?> rejectedMessage;
             try {
@@ -763,7 +764,7 @@ final class JmsIncomingChannel {
             }
         }
 
-        private void settle(Resources resources, jakarta.jms.Message message) throws JMSException {
+        private void settle(Resources resources, Message message) throws JMSException {
             if (config.transacted()) {
                 resources.session().commit();
             } else {

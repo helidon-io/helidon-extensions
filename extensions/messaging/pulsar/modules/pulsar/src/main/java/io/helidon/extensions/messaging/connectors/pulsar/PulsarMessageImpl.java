@@ -29,6 +29,8 @@ import java.util.OptionalLong;
 import io.helidon.messaging.MessageHeaders;
 import io.helidon.messaging.MessagingException;
 
+import org.apache.pulsar.client.api.Message;
+
 final class PulsarMessageImpl<T> implements PulsarMessage<T> {
     private final T entity;
     private final boolean entityAvailable;
@@ -116,11 +118,11 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
                                        null);
     }
 
-    static <T> PulsarMessage<T> incoming(T entity, org.apache.pulsar.client.api.Message<?> message) {
+    static <T> PulsarMessage<T> incoming(T entity, Message<?> message) {
         return incoming(entity, message, true);
     }
 
-    static PulsarMessage<Object> rejected(org.apache.pulsar.client.api.Message<?> message) {
+    static PulsarMessage<Object> rejected(Message<?> message) {
         return incoming(UnavailableEntity.INSTANCE, message, false);
     }
 
@@ -246,8 +248,8 @@ final class PulsarMessageImpl<T> implements PulsarMessage<T> {
     }
 
     private static <T> PulsarMessage<T> incoming(T entity,
-                                                  org.apache.pulsar.client.api.Message<?> message,
-                                                  boolean entityAvailable) {
+                                              Message<?> message,
+                                              boolean entityAvailable) {
         Objects.requireNonNull(message);
         boolean hasKey = message.hasKey();
         long eventTime = message.getEventTime();

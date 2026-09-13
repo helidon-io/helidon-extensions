@@ -41,39 +41,73 @@ public enum PulsarSchemaType {
      * outgoing messages.
      */
     AUTO,
-    /** UTF-8 {@link String} payloads. */
+    /**
+     * UTF-8 {@link String} payloads.
+     */
     STRING,
-    /** Binary {@code byte[]} payloads. */
+    /**
+     * Binary {@code byte[]} payloads.
+     */
     BYTES,
-    /** {@link ByteBuffer} payloads. */
+    /**
+     * {@link ByteBuffer} payloads.
+     */
     BYTEBUFFER,
-    /** {@link Boolean} payloads. */
+    /**
+     * {@link Boolean} payloads.
+     */
     BOOLEAN,
-    /** Signed 8-bit {@link Byte} payloads. */
+    /**
+     * Signed 8-bit {@link Byte} payloads.
+     */
     INT8,
-    /** Signed 16-bit {@link Short} payloads. */
+    /**
+     * Signed 16-bit {@link Short} payloads.
+     */
     INT16,
-    /** Signed 32-bit {@link Integer} payloads. */
+    /**
+     * Signed 32-bit {@link Integer} payloads.
+     */
     INT32,
-    /** Signed 64-bit {@link Long} payloads. */
+    /**
+     * Signed 64-bit {@link Long} payloads.
+     */
     INT64,
-    /** 32-bit {@link Float} payloads. */
+    /**
+     * 32-bit {@link Float} payloads.
+     */
     FLOAT,
-    /** 64-bit {@link Double} payloads. */
+    /**
+     * 64-bit {@link Double} payloads.
+     */
     DOUBLE,
-    /** {@link Date} payloads. */
+    /**
+     * {@link Date} payloads.
+     */
     DATE,
-    /** {@link Time} payloads. */
+    /**
+     * {@link Time} payloads.
+     */
     TIME,
-    /** {@link Timestamp} payloads. */
+    /**
+     * {@link Timestamp} payloads.
+     */
     TIMESTAMP,
-    /** {@link Instant} payloads. */
+    /**
+     * {@link Instant} payloads.
+     */
     INSTANT,
-    /** {@link LocalDate} payloads. */
+    /**
+     * {@link LocalDate} payloads.
+     */
     LOCAL_DATE,
-    /** {@link LocalTime} payloads. */
+    /**
+     * {@link LocalTime} payloads.
+     */
     LOCAL_TIME,
-    /** {@link LocalDateTime} payloads. */
+    /**
+     * {@link LocalDateTime} payloads.
+     */
     LOCAL_DATE_TIME;
 
     @SuppressWarnings("unchecked")

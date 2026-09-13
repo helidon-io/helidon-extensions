@@ -41,6 +41,7 @@ import io.helidon.messaging.MessagingRejectedException;
 import io.helidon.messaging.spi.IncomingChannel;
 
 import org.apache.pulsar.client.api.Consumer;
+import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.PulsarClientException;
 
@@ -286,7 +287,7 @@ final class PulsarIncomingChannel {
                     if (stopping()) {
                         return;
                     }
-                    org.apache.pulsar.client.api.Message<Object> nativeMessage = receive(consumer);
+                    Message<Object> nativeMessage = receive(consumer);
                     if (nativeMessage == null) {
                         continue;
                     }
@@ -299,7 +300,7 @@ final class PulsarIncomingChannel {
             }
         }
 
-        private org.apache.pulsar.client.api.Message<Object> receive(Consumer<Object> consumer) {
+        private Message<Object> receive(Consumer<Object> consumer) {
             consumer.resume();
             try {
                 return consumer.receive(PulsarConnectorConfigSupport.receiveTimeoutMillis(config),
@@ -315,7 +316,7 @@ final class PulsarIncomingChannel {
         }
 
         private void deliver(Consumer<Object> consumer,
-                             org.apache.pulsar.client.api.Message<Object> nativeMessage,
+                             Message<Object> nativeMessage,
                              ConnectorDeliveryReservation reservation) {
             MessageBatch<?> batch;
             RuntimeException mappingFailure = null;
@@ -452,7 +453,7 @@ final class PulsarIncomingChannel {
         }
 
         private void acknowledge(Consumer<Object> consumer,
-                                 org.apache.pulsar.client.api.Message<?> nativeMessage) {
+                                 Message<?> nativeMessage) {
             CompletableFuture<Void> acknowledgement;
             try {
                 acknowledgement = consumer.acknowledgeAsync(nativeMessage);
@@ -475,7 +476,7 @@ final class PulsarIncomingChannel {
         }
 
         private void negativeAcknowledge(Consumer<Object> consumer,
-                                         org.apache.pulsar.client.api.Message<?> nativeMessage,
+                                         Message<?> nativeMessage,
                                          Throwable primaryFailure) {
             try {
                 consumer.negativeAcknowledge(nativeMessage);

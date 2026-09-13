@@ -27,6 +27,7 @@ import javax.jms.Connection;
 import javax.jms.Destination;
 import javax.jms.JMSException;
 import javax.jms.JMSRuntimeException;
+import javax.jms.Message;
 import javax.jms.MessageProducer;
 import javax.jms.Session;
 import javax.jms.TransactionRolledBackException;
@@ -643,7 +644,7 @@ final class JmsOutgoingChannel {
         private void sendPerMessage(Resources current, MessageBatch<?> batch) {
             List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
             for (int i = 0; i < batch.size(); i++) {
-                javax.jms.Message message;
+                Message message;
                 try {
                     message = JmsMessageMapper.toJmsMessage(current.session,
                                                             batch.get(i),
@@ -695,7 +696,7 @@ final class JmsOutgoingChannel {
         }
 
         private void sendTransacted(Resources current, MessageBatch<?> batch) {
-            List<javax.jms.Message> messages = new ArrayList<>(batch.size());
+            List<Message> messages = new ArrayList<>(batch.size());
             for (int i = 0; i < batch.size(); i++) {
                 try {
                     messages.add(JmsMessageMapper.toJmsMessage(current.session,
@@ -713,7 +714,7 @@ final class JmsOutgoingChannel {
             }
 
             try {
-                for (javax.jms.Message message : messages) {
+                for (Message message : messages) {
                     executeProviderCall("transactional message send", () -> current.producer.send(message));
                 }
             } catch (ProviderCallAbandonedException e) {

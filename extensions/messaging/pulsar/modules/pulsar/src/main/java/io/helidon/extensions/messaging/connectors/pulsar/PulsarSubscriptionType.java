@@ -25,13 +25,21 @@ import org.apache.pulsar.client.api.SubscriptionType;
  */
 @Api.Incubating
 public enum PulsarSubscriptionType {
-    /** One consumer owns the subscription. */
+    /**
+     * One consumer owns the subscription.
+     */
     EXCLUSIVE,
-    /** One active consumer with failover consumers. */
+    /**
+     * One active consumer with failover consumers.
+     */
     FAILOVER,
-    /** Messages are shared across consumers. */
+    /**
+     * Messages are shared across consumers.
+     */
     SHARED,
-    /** Messages are shared while retaining per-key ordering. */
+    /**
+     * Messages are shared while retaining per-key ordering.
+     */
     KEY_SHARED;
 
     SubscriptionType nativeType() {

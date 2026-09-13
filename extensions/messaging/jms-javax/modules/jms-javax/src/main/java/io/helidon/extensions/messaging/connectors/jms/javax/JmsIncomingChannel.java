@@ -35,6 +35,7 @@ import javax.jms.Connection;
 import javax.jms.Destination;
 import javax.jms.JMSException;
 import javax.jms.JMSRuntimeException;
+import javax.jms.Message;
 import javax.jms.MessageConsumer;
 import javax.jms.Session;
 import javax.jms.Topic;
@@ -359,7 +360,7 @@ final class JmsIncomingChannel {
                     return DeliveryResult.RECONNECT;
                 }
 
-                javax.jms.Message nativeMessage;
+                Message nativeMessage;
                 try {
                     nativeMessage = resources.consumer().receive(receiveTimeoutMillis(config.receiveTimeout()));
                 } catch (JMSException | JMSRuntimeException e) {
@@ -501,7 +502,7 @@ final class JmsIncomingChannel {
             }
         }
 
-        private MessageBatch<?> failedMappingBatch(javax.jms.Message nativeMessage,
+        private MessageBatch<?> failedMappingBatch(Message nativeMessage,
                                                    RuntimeException mappingFailure) {
             io.helidon.messaging.Message<?> rejectedMessage;
             try {
@@ -763,7 +764,7 @@ final class JmsIncomingChannel {
             }
         }
 
-        private void settle(Resources resources, javax.jms.Message message) throws JMSException {
+        private void settle(Resources resources, Message message) throws JMSException {
             if (config.transacted()) {
                 resources.session().commit();
             } else {

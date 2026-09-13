@@ -36,80 +36,130 @@ import org.apache.pulsar.client.api.SubscriptionMode;
  * Support methods and constants for {@link PulsarConnectorConfig}.
  */
 final class PulsarConnectorConfigSupport {
-    /** Pulsar connector name. */
+    /**
+     * Pulsar connector name.
+     */
     @Prototype.Constant
     static final String CONNECTOR_NAME = PulsarConnector.CONNECTOR_TYPE;
-    /** Service URL configuration property. */
+    /**
+     * Service URL configuration property.
+     */
     @Prototype.Constant
     static final String SERVICE_URL_PROPERTY = "service-url";
-    /** Topic configuration property. */
+    /**
+     * Topic configuration property.
+     */
     @Prototype.Constant
     static final String TOPIC_PROPERTY = "topic";
-    /** Schema configuration property. */
+    /**
+     * Schema configuration property.
+     */
     @Prototype.Constant
     static final String SCHEMA_PROPERTY = "schema";
-    /** Custom schema provider configuration property. */
+    /**
+     * Custom schema provider configuration property.
+     */
     @Prototype.Constant
     static final String SCHEMA_PROVIDER_PROPERTY = "schema-provider";
-    /** Subscription name configuration property. */
+    /**
+     * Subscription name configuration property.
+     */
     @Prototype.Constant
     static final String SUBSCRIPTION_NAME_PROPERTY = "subscription-name";
-    /** Subscription type configuration property. */
+    /**
+     * Subscription type configuration property.
+     */
     @Prototype.Constant
     static final String SUBSCRIPTION_TYPE_PROPERTY = "subscription-type";
-    /** Subscription initial position configuration property. */
+    /**
+     * Subscription initial position configuration property.
+     */
     @Prototype.Constant
     static final String SUBSCRIPTION_INITIAL_POSITION_PROPERTY = "subscription-initial-position";
-    /** Batch-index acknowledgement configuration property. */
+    /**
+     * Batch-index acknowledgement configuration property.
+     */
     @Prototype.Constant
     static final String BATCH_INDEX_ACKNOWLEDGMENT_ENABLED_PROPERTY = "batch-index-acknowledgment-enabled";
-    /** Receiver queue size configuration property. */
+    /**
+     * Receiver queue size configuration property.
+     */
     @Prototype.Constant
     static final String RECEIVER_QUEUE_SIZE_PROPERTY = "receiver-queue-size";
-    /** Maximum message size configuration property. */
+    /**
+     * Maximum message size configuration property.
+     */
     @Prototype.Constant
     static final String MAX_MESSAGE_BYTES_PROPERTY = "max-message-bytes";
-    /** Receive timeout configuration property. */
+    /**
+     * Receive timeout configuration property.
+     */
     @Prototype.Constant
     static final String RECEIVE_TIMEOUT_PROPERTY = "receive-timeout";
-    /** Negative acknowledgement redelivery delay configuration property. */
+    /**
+     * Negative acknowledgement redelivery delay configuration property.
+     */
     @Prototype.Constant
     static final String NEGATIVE_ACK_REDELIVERY_DELAY_PROPERTY = "negative-ack-redelivery-delay";
-    /** Send timeout configuration property. */
+    /**
+     * Send timeout configuration property.
+     */
     @Prototype.Constant
     static final String SEND_TIMEOUT_PROPERTY = "send-timeout";
-    /** Settlement timeout configuration property. */
+    /**
+     * Settlement timeout configuration property.
+     */
     @Prototype.Constant
     static final String SETTLEMENT_TIMEOUT_PROPERTY = "settlement-timeout";
-    /** Close timeout configuration property. */
+    /**
+     * Close timeout configuration property.
+     */
     @Prototype.Constant
     static final String CLOSE_TIMEOUT_PROPERTY = "close-timeout";
-    /** Client properties configuration property. */
+    /**
+     * Client properties configuration property.
+     */
     @Prototype.Constant
     static final String CLIENT_PROPERTIES_PROPERTY = "client-properties";
-    /** Consumer properties configuration property. */
+    /**
+     * Consumer properties configuration property.
+     */
     @Prototype.Constant
     static final String CONSUMER_PROPERTIES_PROPERTY = "consumer-properties";
-    /** Producer properties configuration property. */
+    /**
+     * Producer properties configuration property.
+     */
     @Prototype.Constant
     static final String PRODUCER_PROPERTIES_PROPERTY = "producer-properties";
 
-    /** Default receive timeout. */
+    /**
+     * Default receive timeout.
+     */
     @Prototype.Constant
     static final String DEFAULT_RECEIVE_TIMEOUT = "PT0.1S";
-    /** Default negative acknowledgement redelivery delay. */
+    /**
+     * Default negative acknowledgement redelivery delay.
+     */
     @Prototype.Constant
     static final String DEFAULT_NEGATIVE_ACK_REDELIVERY_DELAY = "PT1S";
-    /** Default send timeout. */
+    /**
+     * Default send timeout.
+     */
     @Prototype.Constant
     static final String DEFAULT_SEND_TIMEOUT = "PT30S";
-    /** Default settlement timeout. */
+    /**
+     * Default settlement timeout.
+     */
     @Prototype.Constant
     static final String DEFAULT_SETTLEMENT_TIMEOUT = "PT30S";
-    /** Default close timeout. */
+    /**
+     * Default close timeout.
+     */
     @Prototype.Constant
     static final String DEFAULT_CLOSE_TIMEOUT = "PT10S";
-    /** Default maximum incoming message size. */
+    /**
+     * Default maximum incoming message size.
+     */
     @Prototype.Constant
     static final int DEFAULT_MAX_MESSAGE_BYTES = 10 * 1024 * 1024;
 

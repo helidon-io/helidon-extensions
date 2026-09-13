@@ -37,6 +37,7 @@ import io.helidon.messaging.spi.IncomingChannel;
 
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.ConsumerBuilder;
+import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionMode;
@@ -650,7 +651,7 @@ class PulsarIncomingChannelTest {
     }
 
     private static final class FakeSource {
-        private final AtomicReference<org.apache.pulsar.client.api.Message<Object>> next;
+        private final AtomicReference<Message<Object>> next;
         private final AtomicBoolean reserved;
         private final AtomicBoolean receivedAfterReservation = new AtomicBoolean();
         private final AtomicBoolean durable = new AtomicBoolean();
@@ -669,7 +670,7 @@ class PulsarIncomingChannelTest {
         private final ConsumerBuilder<Object> consumerBuilder = consumerBuilder();
         private final PulsarClient client = clientProxy();
 
-        private FakeSource(org.apache.pulsar.client.api.Message<Object> message, AtomicBoolean reserved) {
+        private FakeSource(Message<Object> message, AtomicBoolean reserved) {
             this.next = new AtomicReference<>(message);
             this.reserved = reserved;
         }

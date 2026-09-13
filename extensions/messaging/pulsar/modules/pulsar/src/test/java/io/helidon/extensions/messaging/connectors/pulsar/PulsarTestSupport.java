@@ -26,20 +26,21 @@ import java.util.function.Supplier;
 
 import io.helidon.messaging.ConnectorDelivery;
 
+import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessageId;
 
 final class PulsarTestSupport {
     private PulsarTestSupport() {
     }
 
-    static org.apache.pulsar.client.api.Message<Object> nativeMessage(Object value, int size) {
+    static Message<Object> nativeMessage(Object value, int size) {
         return nativeMessage(value, size, Map.of("trace-id", "pulsar-trace"));
     }
 
     @SuppressWarnings("unchecked")
-    static org.apache.pulsar.client.api.Message<Object> nativeMessage(Object value,
-                                                                     int size,
-                                                                     Map<String, String> properties) {
+    static Message<Object> nativeMessage(Object value,
+                                         int size,
+                                         Map<String, String> properties) {
         return nativeMessage(value,
                              size,
                              properties,
@@ -47,18 +48,18 @@ final class PulsarTestSupport {
     }
 
     @SuppressWarnings("unchecked")
-    static org.apache.pulsar.client.api.Message<Object> nativeMessage(Object value,
-                                                                     int size,
-                                                                     Map<String, String> properties,
-                                                                     Supplier<byte[]> dataSupplier) {
+    static Message<Object> nativeMessage(Object value,
+                                         int size,
+                                         Map<String, String> properties,
+                                         Supplier<byte[]> dataSupplier) {
         return nativeMessage(value, size, () -> properties, dataSupplier);
     }
 
     @SuppressWarnings("unchecked")
-    static org.apache.pulsar.client.api.Message<Object> nativeMessage(Object value,
-                                                                     int size,
-                                                                     Supplier<Map<String, String>> propertiesSupplier,
-                                                                     Supplier<byte[]> dataSupplier) {
+    static Message<Object> nativeMessage(Object value,
+                                         int size,
+                                         Supplier<Map<String, String>> propertiesSupplier,
+                                         Supplier<byte[]> dataSupplier) {
         byte[] messageId = {1, 2, 3};
         MessageId id = proxy(MessageId.class, (ignored, method, args) -> switch (method.getName()) {
         case "toByteArray" -> messageId.clone();
@@ -66,7 +67,7 @@ final class PulsarTestSupport {
         case "toString" -> "1:2:3";
         default -> defaultValue(method);
         });
-        return proxy(org.apache.pulsar.client.api.Message.class, (ignored, method, args) -> switch (method.getName()) {
+        return proxy(Message.class, (ignored, method, args) -> switch (method.getName()) {
         case "getValue" -> value;
         case "getData" -> dataSupplier.get();
         case "size" -> size;

@@ -38,6 +38,7 @@ import jakarta.jms.Connection;
 import jakarta.jms.Destination;
 import jakarta.jms.JMSException;
 import jakarta.jms.JMSRuntimeException;
+import jakarta.jms.Message;
 import jakarta.jms.MessageProducer;
 import jakarta.jms.Session;
 import jakarta.jms.TransactionRolledBackException;
@@ -643,7 +644,7 @@ final class JmsOutgoingChannel {
         private void sendPerMessage(Resources current, MessageBatch<?> batch) {
             List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
             for (int i = 0; i < batch.size(); i++) {
-                jakarta.jms.Message message;
+                Message message;
                 try {
                     message = JmsMessageMapper.toJmsMessage(current.session,
                                                             batch.get(i),
@@ -695,7 +696,7 @@ final class JmsOutgoingChannel {
         }
 
         private void sendTransacted(Resources current, MessageBatch<?> batch) {
-            List<jakarta.jms.Message> messages = new ArrayList<>(batch.size());
+            List<Message> messages = new ArrayList<>(batch.size());
             for (int i = 0; i < batch.size(); i++) {
                 try {
                     messages.add(JmsMessageMapper.toJmsMessage(current.session,
@@ -713,7 +714,7 @@ final class JmsOutgoingChannel {
             }
 
             try {
-                for (jakarta.jms.Message message : messages) {
+                for (Message message : messages) {
                     executeProviderCall("transactional message send", () -> current.producer.send(message));
                 }
             } catch (ProviderCallAbandonedException e) {

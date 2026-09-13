@@ -33,6 +33,7 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 
 import javax.jms.JMSException;
+import javax.jms.Message;
 
 import io.helidon.messaging.MessageHeaderValue;
 import io.helidon.messaging.MessageHeaders;
@@ -121,7 +122,7 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
 
     static <T> JmsMessage<T> incoming(T entity,
                                       Map<String, Object> properties,
-                                      javax.jms.Message message,
+                                      Message message,
                                       boolean snapshotSerializable) throws JMSException {
         return new JmsMessageImpl<>(entity,
                                     properties,
@@ -138,7 +139,7 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
     }
 
     static JmsMessage<Object> metadataOnly(Map<String, Object> properties,
-                                           javax.jms.Message message) throws JMSException {
+                                           Message message) throws JMSException {
         return new JmsMessageImpl<>(UnavailableBody.INSTANCE,
                                     properties,
                                     Optional.ofNullable(message.getJMSMessageID()),

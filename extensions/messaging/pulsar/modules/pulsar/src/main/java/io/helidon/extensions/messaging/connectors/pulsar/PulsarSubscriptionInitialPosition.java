@@ -25,9 +25,13 @@ import org.apache.pulsar.client.api.SubscriptionInitialPosition;
  */
 @Api.Incubating
 public enum PulsarSubscriptionInitialPosition {
-    /** Start after messages which already exist. */
+    /**
+     * Start after messages which already exist.
+     */
     LATEST,
-    /** Start at the oldest retained message. */
+    /**
+     * Start at the oldest retained message.
+     */
     EARLIEST;
 
     SubscriptionInitialPosition nativePosition() {

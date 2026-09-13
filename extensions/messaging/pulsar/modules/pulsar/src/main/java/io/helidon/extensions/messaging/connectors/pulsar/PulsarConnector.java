@@ -34,19 +34,33 @@ import io.helidon.messaging.spi.OutgoingChannel;
  */
 @Api.Incubating
 public final class PulsarConnector implements MessagingConnector, RuntimeType.Api<PulsarConnectorConfig> {
-    /** Connector type used in messaging configuration. */
+    /**
+     * Connector type used in messaging configuration.
+     */
     public static final String CONNECTOR_TYPE = "helidon-pulsar";
-    /** Dead-letter property containing the original Pulsar topic. */
+    /**
+     * Dead-letter property containing the original Pulsar topic.
+     */
     public static final String DLQ_ORIGINAL_TOPIC_HEADER = "dlq-orig-topic";
-    /** Dead-letter property containing the base64-encoded original message ID. */
+    /**
+     * Dead-letter property containing the base64-encoded original message ID.
+     */
     public static final String DLQ_ORIGINAL_MESSAGE_ID_HEADER = "dlq-orig-message-id";
-    /** Dead-letter property containing the original publication time. */
+    /**
+     * Dead-letter property containing the original publication time.
+     */
     public static final String DLQ_ORIGINAL_PUBLISH_TIME_HEADER = "dlq-orig-publish-time";
-    /** Dead-letter property containing the original producer name. */
+    /**
+     * Dead-letter property containing the original producer name.
+     */
     public static final String DLQ_ORIGINAL_PRODUCER_NAME_HEADER = "dlq-orig-producer-name";
-    /** Dead-letter property containing the original sequence ID. */
+    /**
+     * Dead-letter property containing the original sequence ID.
+     */
     public static final String DLQ_ORIGINAL_SEQUENCE_ID_HEADER = "dlq-orig-sequence-id";
-    /** Dead-letter property containing the original redelivery count. */
+    /**
+     * Dead-letter property containing the original redelivery count.
+     */
     public static final String DLQ_ORIGINAL_REDELIVERY_COUNT_HEADER = "dlq-orig-redelivery-count";
 
     private final PulsarConnectorConfig config;
