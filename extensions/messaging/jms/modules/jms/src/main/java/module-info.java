@@ -24,7 +24,7 @@ import io.helidon.common.features.api.HelidonFlavor;
 @Features.Description("Jakarta Messaging (JMS) connector for declarative messaging")
 @Features.Flavor(HelidonFlavor.SE)
 @Features.Path({"Messaging", "Connectors", "JMS"})
-@Features.Preview
+@Features.Incubating
 module io.helidon.extensions.messaging.connectors.jms {
     requires transitive io.helidon.builder.api;
     requires transitive io.helidon.config;

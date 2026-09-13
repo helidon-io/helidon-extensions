@@ -37,7 +37,7 @@ import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 /**
  * Sends HTTP messages through JMS and exposes the latest received message.
  */
-@SuppressWarnings(Api.SUPPRESS_PREVIEW)
+@SuppressWarnings({Api.SUPPRESS_PREVIEW, Api.SUPPRESS_INCUBATING})
 final class JmsService implements HttpService {
     private final AtomicReference<String> latestMessage = new AtomicReference<>("No messages received");
     private final ActiveMQConnectionFactory connectionFactory;

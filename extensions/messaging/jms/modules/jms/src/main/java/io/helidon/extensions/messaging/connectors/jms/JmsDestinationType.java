@@ -21,7 +21,7 @@ import io.helidon.common.Api;
 /**
  * JMS destination type.
  */
-@Api.Preview
+@Api.Incubating
 public enum JmsDestinationType {
     /**
      * Point-to-point queue.

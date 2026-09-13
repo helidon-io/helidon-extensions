@@ -30,6 +30,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 
 class KafkaFeatureMetadataTest {
     private static final String FEATURE_RESOURCE =
@@ -38,7 +39,7 @@ class KafkaFeatureMetadataTest {
             "META-INF/helidon/io.helidon.extensions.messaging.connectors.kafka/service-registry.json";
 
     @Test
-    void declaresPreviewFeature() throws IOException {
+    void declaresFeatureWithoutPreviewWarning() throws IOException {
         var registry = MetadataDiscovery.create(MetadataDiscovery.Mode.RESOURCES)
                 .list(MetadataConstants.FEATURE_REGISTRY_FILE)
                 .stream()
@@ -52,7 +53,8 @@ class KafkaFeatureMetadataTest {
             assertThat(json, containsString("\"name\":\"Kafka\""));
             assertThat(json, containsString("\"path\":[\"Messaging\",\"Connectors\",\"Kafka\"]"));
             assertThat(json, containsString("\"flavor\":[\"SE\"]"));
-            assertThat(json, containsString("\"status\":\"PREVIEW\""));
+            // Production is the default feature status and is omitted from the metadata.
+            assertThat(json, not(containsString("\"status\"")));
         }
     }
 

@@ -36,7 +36,7 @@ import io.helidon.webserver.http.HttpService;
 /**
  * Sends HTTP messages through Pulsar and exposes the latest received message.
  */
-@SuppressWarnings(Api.SUPPRESS_PREVIEW)
+@SuppressWarnings({Api.SUPPRESS_PREVIEW, Api.SUPPRESS_INCUBATING})
 final class PulsarService implements HttpService {
     private final AtomicReference<String> latestMessage = new AtomicReference<>("No messages received");
     private final MessagingGraph graph;

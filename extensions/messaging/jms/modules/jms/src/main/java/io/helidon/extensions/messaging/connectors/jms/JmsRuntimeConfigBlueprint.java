@@ -28,7 +28,7 @@ import io.helidon.common.Api;
 /**
  * JMS connector configuration.
  */
-@Api.Preview
+@Api.Incubating
 @Prototype.Blueprint(isPublic = false, decorator = JmsRuntimeConfigSupport.BuilderDecorator.class)
 @Prototype.Sealed
 @Prototype.Configured

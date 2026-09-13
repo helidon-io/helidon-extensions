@@ -28,7 +28,7 @@ import io.helidon.messaging.spi.MessagingOutgoingConfig;
 /**
  * Apache Pulsar outgoing channel overrides. Omitted options inherit the connector defaults.
  */
-@Api.Preview
+@Api.Incubating
 @Prototype.Blueprint(decorator = PulsarConnectorConfigSupport.OutgoingBuilderDecorator.class)
 @Prototype.Sealed
 @Prototype.Configured

@@ -36,6 +36,15 @@
     <modules>
         <module>kafka</module>
         <module>jms</module>
+        <module>jms-javax</module>
         <module>pulsar</module>
     </modules>
+    <profiles>
+        <profile>
+            <id>tests</id>
+            <modules>
+                <module>tests</module>
+            </modules>
+        </profile>
+    </profiles>
 </project>

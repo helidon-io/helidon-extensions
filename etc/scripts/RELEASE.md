@@ -24,8 +24,9 @@ has its own version and declares `helidon.version` in its root POM. A grouping
 POM only aggregates extensions; it is not their Maven parent or a release unit.
 
 For example, Messaging connectors live in `extensions/messaging/kafka`,
-`extensions/messaging/jms`, and `extensions/messaging/pulsar`. Each uses the
-normal `bom`, `modules`, `tests`, and optional `examples` layout. The extension
+`extensions/messaging/jms`, `extensions/messaging/jms-javax`, and
+`extensions/messaging/pulsar`. Each uses the normal `bom` and `modules` layout,
+with optional `tests` and `examples` directories. The extension
 ID is its path relative to `extensions/`; no registration file is needed.
 
 Release Kafka independently with:
@@ -38,11 +39,20 @@ git push origin messaging/kafka/release-27.0.1
 ```
 
 This produces tag `messaging/kafka/27.0.1` and releases Kafka's project, BOM,
-and connector, plus shared repository parents when required. JMS and Pulsar
+and connector, plus shared repository parents when required. JMS, javax JMS, and Pulsar
 keep their own versions. The BOM version property follows the directory ID
 with dots: `messaging.kafka.extension.version`. Maven project coordinates
 follow the same convention: group `io.helidon.extensions.messaging.kafka`,
 artifact `helidon-extensions-messaging-kafka-project`.
+
+The two JMS APIs are separate release units: `messaging/jms` releases the Jakarta
+connector and `messaging/jms-javax` releases the javax connector. Each has its own
+BOM and version property (`messaging.jms.extension.version` and
+`messaging.jms-javax.extension.version`). Releasing either does not release the other.
+Their shared interoperability tests live under `extensions/messaging/tests/jms-interop`
+and run in the grouped Messaging build with `-Ptests`.
+CI uses `etc/scripts/test-jms-interop.sh`, which reads each connector root's version
+independently, including on release tags.
 
 Validation selects one connector for a connector branch or a change inside
 that connector directory, and all connectors for changes to their grouping

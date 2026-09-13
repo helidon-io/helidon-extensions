@@ -23,7 +23,7 @@ import org.apache.pulsar.client.api.SubscriptionInitialPosition;
 /**
  * Initial position used when Pulsar creates a subscription.
  */
-@Api.Preview
+@Api.Incubating
 public enum PulsarSubscriptionInitialPosition {
     /** Start after messages which already exist. */
     LATEST,

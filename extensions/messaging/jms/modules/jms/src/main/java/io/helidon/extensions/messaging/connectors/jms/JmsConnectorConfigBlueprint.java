@@ -29,7 +29,7 @@ import io.helidon.messaging.spi.MessagingConnectorProviderConfig;
  * Configuration of a named JMS connector and defaults shared by its channels.
  * Resource lookup and connection creation are deferred until a channel starts.
  */
-@Api.Preview
+@Api.Incubating
 @Prototype.Blueprint(decorator = JmsConnectorConfigSupport.BuilderDecorator.class)
 @Prototype.Sealed
 @Prototype.CustomMethods(JmsConnectorConfigSupport.class)

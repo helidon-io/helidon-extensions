@@ -32,7 +32,7 @@ import org.apache.pulsar.client.api.Schema;
  * The Service Registry owns the provider lifecycle. The connector retains the returned schema for the binding lifecycle
  * but does not close the provider or schema.
  */
-@Api.Preview
+@Api.Incubating
 @Service.Contract
 public interface PulsarSchemaProvider {
     /**

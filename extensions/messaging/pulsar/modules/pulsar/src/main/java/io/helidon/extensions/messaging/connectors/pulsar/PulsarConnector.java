@@ -32,7 +32,7 @@ import io.helidon.messaging.spi.OutgoingChannel;
 /**
  * Configured Apache Pulsar connector that creates incoming and outgoing channels.
  */
-@Api.Preview
+@Api.Incubating
 public final class PulsarConnector implements MessagingConnector, RuntimeType.Api<PulsarConnectorConfig> {
     /** Connector type used in messaging configuration. */
     public static final String CONNECTOR_TYPE = "helidon-pulsar";

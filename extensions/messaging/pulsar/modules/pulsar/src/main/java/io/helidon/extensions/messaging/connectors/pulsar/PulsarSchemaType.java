@@ -34,7 +34,7 @@ import org.apache.pulsar.client.api.schema.GenericRecord;
 /**
  * Built-in Pulsar payload schema.
  */
-@Api.Preview
+@Api.Incubating
 public enum PulsarSchemaType {
     /**
      * Broker-schema discovery, using {@link GenericRecord} for incoming messages and encoded {@code byte[]} for

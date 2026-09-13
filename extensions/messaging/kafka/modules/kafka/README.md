@@ -3,6 +3,9 @@
 The Kafka connector connects Helidon declarative messaging channels to Apache Kafka topics with runtime-owned delivery
 settlement and Kafka consumer-group maintenance.
 
+The connector's Java APIs are preview APIs. Kafka does not declare a module-level preview feature,
+so it does not add a Kafka-specific preview warning at startup.
+
 ## Dependency
 
 ```xml

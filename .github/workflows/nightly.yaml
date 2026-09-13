@@ -89,3 +89,8 @@ jobs:
               -Dsurefire.reportNameSuffix=latest-java \
               -Ptests \
               verify
+            if [[ "${{ matrix.extension.id }}" == messaging/jms || "${{ matrix.extension.id }}" == messaging/jms-javax ]]; then
+              etc/scripts/test-jms-interop.sh \
+                -Dorg.slf4j.simpleLogger.showThreadName=true \
+                -Dsurefire.reportNameSuffix=latest-java
+            fi

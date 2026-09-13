@@ -22,6 +22,7 @@ See README for individual extensions.
 * [gson](extensions/gson/docs/README.md)
 * [toml](extensions/toml/docs/README.md)
 * [Chaos](extensions/chaos/docs/README.md)
+* [Messaging connectors](extensions/messaging/README.md)
 
 ## Examples
 

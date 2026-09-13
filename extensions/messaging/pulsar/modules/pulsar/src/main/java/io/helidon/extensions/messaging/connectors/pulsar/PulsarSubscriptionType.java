@@ -23,7 +23,7 @@ import org.apache.pulsar.client.api.SubscriptionType;
 /**
  * Pulsar subscription dispatch type.
  */
-@Api.Preview
+@Api.Incubating
 public enum PulsarSubscriptionType {
     /** One consumer owns the subscription. */
     EXCLUSIVE,

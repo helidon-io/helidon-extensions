@@ -56,7 +56,7 @@ import io.helidon.messaging.Message;
  *
  * @param <T> payload type
  */
-@Api.Preview
+@Api.Incubating
 public interface JmsMessage<T> extends Message<T> {
     /**
      * Create an outgoing JMS message builder.
@@ -215,7 +215,7 @@ public interface JmsMessage<T> extends Message<T> {
      *
      * @param <T> payload type
      */
-    @Api.Preview
+    @Api.Incubating
     final class Builder<T> implements io.helidon.common.Builder<Builder<T>, JmsMessage<T>> {
         private final T entity;
         private final Map<String, Object> properties = new LinkedHashMap<>();

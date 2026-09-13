@@ -3,7 +3,10 @@
 The JMS connector connects Helidon declarative messaging channels to Jakarta Messaging 3.1 queues and topics. It is
 provider-neutral: your application supplies a JMS provider and a `jakarta.jms.ConnectionFactory`.
 
-For providers using `javax.jms`, use the sibling [jms-javax connector](../jms-javax/README.md).
+This connector is an incubating feature.
+
+For providers using `javax.jms`, use the independently released
+[jms-javax connector](../../../jms-javax/modules/jms-javax/README.md).
 Both variants can run in one messaging graph using connector types `helidon-jms` and
 `helidon-jms-javax`, with a matching factory for each API. Provider client jars must
 also be compatible on the same classpath; the two Artemis client variants contain
@@ -15,6 +18,11 @@ For complete HTTP-to-JMS round-trip applications using Apache Artemis, see the
 [declarative example](../../examples/se-declarative/README.md).
 
 ## Dependency
+
+Import `io.helidon.extensions.messaging.jms:helidon-extensions-messaging-jms-bom` to manage this dependency.
+Applications using both JMS APIs also import
+`io.helidon.extensions.messaging.jms-javax:helidon-extensions-messaging-jms-javax-bom`;
+the two extensions have independent versions.
 
 ```xml
 <dependency>

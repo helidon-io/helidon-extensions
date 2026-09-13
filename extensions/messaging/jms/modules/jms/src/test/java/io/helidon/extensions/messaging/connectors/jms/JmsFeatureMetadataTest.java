@@ -38,7 +38,7 @@ class JmsFeatureMetadataTest {
             "META-INF/helidon/io.helidon.extensions.messaging.connectors.jms/service-registry.json";
 
     @Test
-    void declaresPreviewFeature() throws IOException {
+    void declaresIncubatingFeature() throws IOException {
         var registry = MetadataDiscovery.create(MetadataDiscovery.Mode.RESOURCES)
                 .list(MetadataConstants.FEATURE_REGISTRY_FILE)
                 .stream()
@@ -52,7 +52,7 @@ class JmsFeatureMetadataTest {
             assertThat(json, containsString("\"name\":\"JMS\""));
             assertThat(json, containsString("\"path\":[\"Messaging\",\"Connectors\",\"JMS\"]"));
             assertThat(json, containsString("\"flavor\":[\"SE\"]"));
-            assertThat(json, containsString("\"status\":\"PREVIEW\""));
+            assertThat(json, containsString("\"status\":\"INCUBATING\""));
         }
     }
 

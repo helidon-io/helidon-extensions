@@ -19,21 +19,30 @@ limitations under the License.
 Each connector is an independently versioned extension under this grouping directory:
 
 * [Kafka](kafka/modules/kafka/README.md), including [runnable examples](kafka/examples/README.md)
-* [JMS](jms/modules/jms/README.md) and [javax JMS](jms/modules/jms-javax/README.md),
+* [Jakarta JMS](jms/modules/jms/README.md),
   including [runnable Jakarta JMS examples](jms/examples/README.md)
+* [javax JMS](jms-javax/modules/jms-javax/README.md)
 * [Pulsar](pulsar/modules/pulsar/README.md), including [runnable examples](pulsar/examples/README.md)
+
+Kafka's Java APIs are preview APIs; Jakarta JMS, javax JMS, and Pulsar are incubating connectors.
 
 Build all connectors with `mvn -f extensions/messaging/pom.xml install`, or build one
 with `mvn -f extensions/messaging/kafka/pom.xml install`. Add `-Ptests` to include
-its integration tests and `-Pexamples` to include the Kafka, JMS, and Pulsar examples.
+integration tests and `-Pexamples` to include the Kafka, JMS, and Pulsar examples.
+The grouped build with `-Ptests` also includes the [JMS interoperability tests](tests/jms-interop)
+that use both JMS connectors.
+Run `etc/scripts/test-jms-interop.sh` to test interoperability using the current
+version from each connector root, including when their versions differ.
 
-Each connector has its own `bom`, `modules`, and `tests` directories. Import
+Each connector has its own `bom` and `modules` directories. Import
 `io.helidon.extensions.messaging.kafka:helidon-extensions-messaging-kafka-bom` for
-Kafka, or replace `kafka` with `jms` or `pulsar` for the other connectors. Connector
+Kafka, or replace `kafka` with `jms`, `jms-javax`, or `pulsar` for the other connectors. Connector
 JAR coordinates remain under `io.helidon.extensions.messaging.connectors`.
+Applications using both JMS APIs import both JMS BOMs; their versions are independent.
 
 Release IDs are the directory paths relative to `extensions`, such as
-`messaging/kafka`. See the [release instructions](../../etc/scripts/RELEASE.md).
+`messaging/kafka`, `messaging/jms`, and `messaging/jms-javax`.
+See the [release instructions](../../etc/scripts/RELEASE.md).
 
 Third-party attributions for the connectors are in
 [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt).

@@ -37,7 +37,7 @@ import io.helidon.messaging.MessageHeaders;
  *
  * @param <T> payload type
  */
-@Api.Preview
+@Api.Incubating
 public interface PulsarMessage<T> extends Message<T> {
     /**
      * Create an outgoing Pulsar message builder.
@@ -177,7 +177,7 @@ public interface PulsarMessage<T> extends Message<T> {
      *
      * @param <T> payload type
      */
-    @Api.Preview
+    @Api.Incubating
     final class Builder<T> implements io.helidon.common.Builder<Builder<T>, PulsarMessage<T>> {
         private final MessageHeaders.Builder headers = MessageHeaders.builder();
         private T entity;

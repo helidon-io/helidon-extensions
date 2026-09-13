@@ -24,7 +24,6 @@ import io.helidon.common.features.api.HelidonFlavor;
 @Features.Description("Kafka connector for declarative messaging")
 @Features.Flavor(HelidonFlavor.SE)
 @Features.Path({"Messaging", "Connectors", "Kafka"})
-@Features.Preview
 @SuppressWarnings("requires-automatic")
 module io.helidon.extensions.messaging.connectors.kafka {
     requires transitive io.helidon.builder.api;

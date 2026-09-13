@@ -34,7 +34,7 @@ import io.helidon.service.registry.GlobalServiceRegistry;
 /**
  * Configured JMS connector that creates incoming and outgoing channel connections.
  */
-@Api.Preview
+@Api.Incubating
 public final class JmsConnector implements MessagingConnector, RuntimeType.Api<JmsConnectorConfig> {
     /**
      * JMS connector type used in messaging configuration.

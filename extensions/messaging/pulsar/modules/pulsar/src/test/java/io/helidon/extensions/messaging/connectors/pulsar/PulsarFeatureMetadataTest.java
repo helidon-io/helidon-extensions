@@ -41,7 +41,7 @@ class PulsarFeatureMetadataTest {
             "META-INF/helidon/unnamed/io.helidon.extensions.messaging.connectors.pulsar/service-registry.json";
 
     @Test
-    void declaresPreviewFeature() throws IOException {
+    void declaresIncubatingFeature() throws IOException {
         var registry = MetadataDiscovery.create(MetadataDiscovery.Mode.RESOURCES)
                 .list(MetadataConstants.FEATURE_REGISTRY_FILE)
                 .stream()
@@ -58,7 +58,7 @@ class PulsarFeatureMetadataTest {
             assertThat(feature.name(), is("Pulsar"));
             assertThat(feature.path(), is(List.of("Messaging", "Connectors", "Pulsar")));
             assertThat(feature.flavors(), is(List.of(Flavor.SE)));
-            assertThat(feature.status(), is(FeatureStatus.PREVIEW));
+            assertThat(feature.status(), is(FeatureStatus.INCUBATING));
         }
     }
 

@@ -30,7 +30,7 @@ import io.helidon.messaging.spi.MessagingConnectorProviderConfig;
 /**
  * Shared Apache Pulsar connector configuration.
  */
-@Api.Preview
+@Api.Incubating
 @Prototype.Blueprint(decorator = PulsarConnectorConfigSupport.BuilderDecorator.class)
 @Prototype.Sealed
 @Prototype.Configured(value = PulsarConnector.CONNECTOR_TYPE, root = false)

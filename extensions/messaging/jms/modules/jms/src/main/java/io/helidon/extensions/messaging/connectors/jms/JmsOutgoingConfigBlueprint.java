@@ -26,7 +26,7 @@ import io.helidon.messaging.spi.MessagingOutgoingConfig;
 /**
  * Outgoing JMS channel configuration. Absent options inherit the connector's defaults.
  */
-@Api.Preview
+@Api.Incubating
 @Prototype.Blueprint(decorator = JmsChannelConfigSupport.Outgoing.BuilderDecorator.class)
 @Prototype.Sealed
 @Prototype.Configured
