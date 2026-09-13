@@ -598,6 +598,53 @@ class KafkaIncomingChannelTest {
 
     @Test
     @Timeout(value = 5)
+    void testCompletedDeliveryCommitsWithoutBlockingMaintenancePoll() {
+        CountDownLatch deliveryWaitStarted = new CountDownLatch(1);
+        TrackingMockConsumer consumer = new TrackingMockConsumer() {
+            @Override
+            public ConsumerRecords<Object, Object> poll(Duration timeout) {
+                if (!paused().isEmpty()) {
+                    assertThat("pending delivery must not wait for the Kafka poll timeout", timeout, is(Duration.ZERO));
+                }
+                return super.poll(timeout);
+            }
+        };
+        scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
+        RecordingContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            protected ConnectorDelivery createDelivery(MessageBatch<?> batch) {
+                return new RuntimeDelivery(batch, () -> {
+                    awaitLatch(deliveryWaitStarted);
+                    processBatch(batch);
+                }) {
+                    @Override
+                    public boolean await(Duration timeout) {
+                        deliveryWaitStarted.countDown();
+                        return super.await(timeout);
+                    }
+                };
+            }
+        };
+        IncomingConnectorHarness connector = new IncomingConnectorHarness(_ -> consumer);
+        consumer.afterCommit(() -> {
+            if (consumer.commitCount() == 1) {
+                scheduleRecords(consumer, record(1, "second", new RecordHeaders()));
+            } else {
+                connector.close();
+            }
+        });
+
+        connector.createIncomingChannel(config()).run(context);
+
+        assertThat(deliveryWaitStarted.getCount(), is(0L));
+        assertThat(context.messages().stream().map(Message::entity).toList(), is(List.of("first", "second")));
+        assertThat(consumer.commitCount(), is(2));
+        assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(2L));
+        assertThat(consumer.closed(), is(true));
+    }
+
+    @Test
+    @Timeout(value = 5)
     void testKeepsPollingWhileRuntimeDeliveryIsBlockedAndCommitsOnlyAfterSettlement() throws InterruptedException {
         TrackingMockConsumer consumer = trackingConsumer();
         scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
@@ -973,6 +1020,7 @@ class KafkaIncomingChannelTest {
     @Timeout(value = 5)
     void testUnsettledRuntimeFailureCommitsOnlyContiguousPartitionPrefixes() {
         TrackingMockConsumer consumer = trackingConsumer();
+        CountDownLatch deliveryWaitStarted = new CountDownLatch(1);
         scheduleRecords(consumer,
                         record(TOPIC_PARTITION, 4, "p0-first", new RecordHeaders(), 14),
                         record(TOPIC_PARTITION, 5, "p0-failed", new RecordHeaders(), 15),
@@ -981,6 +1029,20 @@ class KafkaIncomingChannelTest {
                         record(SECOND_TOPIC_PARTITION, 10, "p1-failed", new RecordHeaders(), 20));
         IllegalStateException itemFailure = new IllegalStateException("runtime delivery failed");
         IncomingConnectorContext context = new RecordingContext(new ArrayList<>()) {
+            @Override
+            protected ConnectorDelivery createDelivery(MessageBatch<?> batch) {
+                return new RuntimeDelivery(batch, () -> {
+                    awaitLatch(deliveryWaitStarted);
+                    processBatch(batch);
+                }) {
+                    @Override
+                    public boolean await(Duration timeout) {
+                        deliveryWaitStarted.countDown();
+                        return super.await(timeout);
+                    }
+                };
+            }
+
             @Override
             protected void processBatch(MessageBatch<?> batch) {
                 List<BatchItemOutcome> outcomes = new ArrayList<>(batch.size());
@@ -1001,6 +1063,7 @@ class KafkaIncomingChannelTest {
                 () -> connector.createIncomingChannel(config()).run(context));
 
         assertThat(failure.getCause(), sameInstance(itemFailure));
+        assertThat(deliveryWaitStarted.getCount(), is(0L));
         assertThat(failure.batch().size(), is(5));
         assertThat(consumer.committedOffsets().get(TOPIC_PARTITION).offset(), is(5L));
         assertThat(consumer.committedOffsets().get(SECOND_TOPIC_PARTITION).offset(), is(10L));
@@ -2696,7 +2759,7 @@ class KafkaIncomingChannelTest {
         }
     }
 
-    private static final class RuntimeDelivery implements ConnectorDelivery {
+    private static class RuntimeDelivery implements ConnectorDelivery {
         private final MessageBatch<?> batch;
         private final AtomicReference<Throwable> failure = new AtomicReference<>();
         private final CountDownLatch completion = new CountDownLatch(1);

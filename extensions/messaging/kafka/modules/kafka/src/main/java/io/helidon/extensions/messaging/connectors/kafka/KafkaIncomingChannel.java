@@ -631,7 +631,7 @@ final class KafkaIncomingChannel {
                         recoverStalePoll(consumer, pendingPoll);
                         return true;
                     }
-                    maintenancePoll(consumer);
+                    awaitDeliveryCompletion(consumer, deliveryTask, maintenancePollTimeout);
                 }
                 if (closed.get()) {
                     return false;
@@ -937,6 +937,24 @@ final class KafkaIncomingChannel {
             }
         }
 
+        private void awaitDeliveryCompletion(Consumer<Object, Object> consumer,
+                                             ActiveDelivery deliveryTask,
+                                             Duration timeout) {
+            maintenancePoll(consumer, Duration.ZERO);
+            if (closed.get() || deliveryTask.isDone()) {
+                return;
+            }
+            try {
+                // Completion ends this wait immediately; its timeout keeps transport maintenance progressing.
+                deliveryTask.await(timeout);
+            } catch (RuntimeException | Error e) {
+                if (!deliveryTask.isDone() || interruptedWait(e)) {
+                    throw e;
+                }
+                // Process terminal failures through awaitDeliveryResult so partial settlement is preserved.
+            }
+        }
+
         private void recoverStalePoll(Consumer<Object, Object> consumer, PendingPoll pendingPoll) {
             Set<TopicPartition> assignment = consumer.assignment();
             for (Map.Entry<TopicPartition, Long> entry : pendingPoll.firstOffsets().entrySet()) {
@@ -962,7 +980,7 @@ final class KafkaIncomingChannel {
                 }
                 Duration timeout = Duration.ofNanos(Math.min(remainingNanos, maintenancePollTimeout.toNanos()));
                 long pollStarted = System.nanoTime();
-                maintenancePoll(consumer, timeout);
+                awaitDeliveryCompletion(consumer, deliveryTask, timeout);
                 remainingNanos -= System.nanoTime() - pollStarted;
             }
         }
