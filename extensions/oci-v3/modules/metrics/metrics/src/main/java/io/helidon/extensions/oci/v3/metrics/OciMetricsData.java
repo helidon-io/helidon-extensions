@@ -21,7 +21,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.stream.Stream;
 
 import io.helidon.metrics.api.Counter;
@@ -42,7 +41,6 @@ class OciMetricsData {
     private static final UnitConverter TIME_UNIT_CONVERTER = UnitConverter.timeUnitConverter();
     private static final List<UnitConverter> UNIT_CONVERTERS = List.of(STORAGE_UNIT_CONVERTER, TIME_UNIT_CONVERTER);
 
-    private final Set<String> scopes;
     private final OciMetricsSupport.NameFormatter nameFormatter;
     private final String compartmentId;
     private final String namespace;
@@ -50,7 +48,6 @@ class OciMetricsData {
     private final boolean descriptionEnabled;
 
     OciMetricsData(
-            Set<String> scopes,
             OciMetricsSupport.NameFormatter nameFormatter,
             String compartmentId,
             String namespace,
@@ -61,21 +58,14 @@ class OciMetricsData {
         this.namespace = namespace;
         this.resourceGroup = resourceGroup;
         this.descriptionEnabled = descriptionEnabled;
-        this.scopes = scopes;
     }
 
     List<MetricDataDetails> getMetricDataDetails() {
-        boolean hasWildcardScope = scopes.contains("*");
         List<MetricDataDetails> allMetricDataDetails = new ArrayList<>();
-        meterRegistry().meters().stream()
-                .filter(meter -> hasWildcardScope || (meter.scope().isPresent() && scopes.contains(meter.scope().get())))
-                    .flatMap(this::metricDataDetails)
-                    .forEach(allMetricDataDetails::add);
+        Services.get(MeterRegistry.class).meters().stream()
+                .flatMap(this::metricDataDetails)
+                .forEach(allMetricDataDetails::add);
         return allMetricDataDetails;
-    }
-
-    private MeterRegistry meterRegistry() {
-        return Services.get(MeterRegistry.class);
     }
 
     Stream<MetricDataDetails> metricDataDetails(Meter metric) {
@@ -151,7 +141,11 @@ class OciMetricsData {
             return null;
         }
 
-        Map<String, String> dimensions = dimensions(metric);
+        Map<String, String> dimensions = metric.id().tagsMap();
+        if (dimensions.isEmpty()) {
+            // OCI requires at least one dimension for each metric group.
+            dimensions = Map.of("source", "helidon");
+        }
         List<Datapoint> datapoints = datapoints(metric.description().orElse(null), value);
         String metricName = nameFormatter.format(metric, metricId, suffix, metric.baseUnit().orElse(null));
         return MetricDataDetails.builder()
@@ -163,12 +157,6 @@ class OciMetricsData {
                 .datapoints(datapoints)
                 .dimensions(dimensions)
                 .build();
-    }
-
-    private Map<String, String> dimensions(Meter metric) {
-        Map<String, String> result = metric.id().tagsMap();
-        result.put("scope", metric.scope().orElse(Meter.Scope.VENDOR));
-        return result;
     }
 
     private double convertUnits(String metricUnits, double value) {

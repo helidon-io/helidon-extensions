@@ -15,71 +15,57 @@
  */
 package io.helidon.extensions.oci.v3.metrics;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.*;
-import static org.junit.jupiter.api.Assertions.fail;
-
 import java.time.Duration;
-import java.time.temporal.ChronoUnit;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import io.helidon.metrics.api.Counter;
-import io.helidon.metrics.api.Meter;
 import io.helidon.metrics.api.MeterRegistry;
 import io.helidon.metrics.api.Tag;
-import io.helidon.metrics.api.Timer;
 import io.helidon.service.registry.Services;
 
 import com.oracle.bmc.monitoring.model.MetricDataDetails;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.is;
 
 class OciMetricsDataTest {
     private final OciMetricsSupport.NameFormatter nameFormatter = new OciMetricsSupport.NameFormatter() { };
-    private final String dimensionScopeName = "scope";
-
     private final MeterRegistry meterRegistry = Services.get(MeterRegistry.class);
 
-
-
     @BeforeEach
+    @AfterEach
     void clearAllRegistry() {
-        List<Meter> meters = meterRegistry.meters();
-        meters.forEach(meterRegistry::remove);
+        meterRegistry.meters().forEach(meterRegistry::remove);
     }
 
     @Test
-    void testMetricRegistries() {
+    void testUnscopedMetersAreExported() {
         String counterName = "DummyCounter";
         String timerName = "DummyTimer";
 
-        meterRegistry.getOrCreate(Counter.builder(counterName)
-                                          .scope(Meter.Scope.BASE))
+        meterRegistry.getOrCreate(meterRegistry.metricsFactory().counterBuilder(counterName))
                 .increment();
-        int counterMetricCount = 1;
-        meterRegistry.getOrCreate(Timer.builder(timerName)
-                                          .scope(Meter.Scope.APPLICATION))
-                .record(Duration.of(100, ChronoUnit.MILLIS));
-        int timerMetricCount = 3;
-        int totalMetricCount = counterMetricCount + timerMetricCount;
+        meterRegistry.getOrCreate(meterRegistry.metricsFactory().timerBuilder(timerName))
+                .record(Duration.ofMillis(100));
         OciMetricsData ociMetricsData = new OciMetricsData(
-                Meter.Scope.BUILT_IN_SCOPES, nameFormatter, "compartmentId", "namespace", "resourceGroup", false);
+                nameFormatter, "compartmentId", "namespace", "resourceGroup", false);
         List<MetricDataDetails> allMetricDataDetails = ociMetricsData.getMetricDataDetails();
-        allMetricDataDetails.stream().forEach((c) -> {
-            if (c.getName().contains(counterName)) {
-                assertThat(c.getDimensions().get(dimensionScopeName), is(equalTo(Meter.Scope.BASE)));
-            } else if (c.getName().contains(timerName)) {
-                assertThat(c.getDimensions().get(dimensionScopeName), is(equalTo(Meter.Scope.APPLICATION)));
-            }
-            else {
-                fail("Unknown metric: " + c.getName());
-            }
-        });
-        assertThat(allMetricDataDetails.size(), is(equalTo(totalMetricCount)));
+        assertThat("Counter and timer metric data", allMetricDataDetails, hasSize(4));
+        assertThat("Counter metric data", allMetricDataDetails.stream()
+                .filter(metric -> metric.getName().startsWith(counterName))
+                .toList(), hasSize(1));
+        assertThat("Timer metric data", allMetricDataDetails.stream()
+                .filter(metric -> metric.getName().startsWith(timerName))
+                .toList(), hasSize(3));
+        allMetricDataDetails.forEach(metric ->
+                assertThat("Fallback dimensions for " + metric.getName(),
+                           metric.getDimensions(),
+                           is(Map.of("source", "helidon"))));
     }
 
     @Test
@@ -88,17 +74,17 @@ class OciMetricsDataTest {
         String namespace = "dummy-namespace";
         String resourceGroup = "dummy_resourceGroup";
 
-        meterRegistry.getOrCreate(Counter.builder("dummy.counter")
-                                          .scope(Meter.Scope.BASE))
+        meterRegistry.getOrCreate(meterRegistry.metricsFactory().counterBuilder("dummy.counter"))
                 .increment();
 
         OciMetricsData ociMetricsData = new OciMetricsData(
-                Set.of(Meter.Scope.BASE), nameFormatter, compartmentId, namespace, resourceGroup, false);
+                nameFormatter, compartmentId, namespace, resourceGroup, false);
         List<MetricDataDetails> allMetricDataDetails = ociMetricsData.getMetricDataDetails();
-        MetricDataDetails metricDataDetails = allMetricDataDetails.get(0);
-        assertThat(metricDataDetails.getCompartmentId(), is(equalTo(compartmentId)));
-        assertThat(metricDataDetails.getNamespace(), is(equalTo(namespace)));
-        assertThat(metricDataDetails.getResourceGroup(), is(equalTo(resourceGroup)));
+        assertThat("Exported counter", allMetricDataDetails, hasSize(1));
+        MetricDataDetails metricDataDetails = allMetricDataDetails.getFirst();
+        assertThat(metricDataDetails.getCompartmentId(), is(compartmentId));
+        assertThat(metricDataDetails.getNamespace(), is(namespace));
+        assertThat(metricDataDetails.getResourceGroup(), is(resourceGroup));
     }
 
     @Test
@@ -106,16 +92,26 @@ class OciMetricsDataTest {
         String dummyTagName = "DummyTag";
         String dummyTagValue = "DummyValue";
 
-        meterRegistry.getOrCreate(Counter.builder("dummy.counter")
-                                          .scope(Meter.Scope.BASE)
+        meterRegistry.getOrCreate(meterRegistry.metricsFactory().counterBuilder("dummy.counter")
                                           .tags(Set.of(Tag.create(dummyTagName, dummyTagValue))))
-                        .increment();
+                .increment();
         OciMetricsData ociMetricsData = new OciMetricsData(
-                Set.of(Meter.Scope.BASE), nameFormatter, "compartmentId", "namespace", "resourceGroup", false);
+                nameFormatter, "compartmentId", "namespace", "resourceGroup", false);
         List<MetricDataDetails> allMetricDataDetails = ociMetricsData.getMetricDataDetails();
-        MetricDataDetails metricDataDetails = allMetricDataDetails.get(0);
-        Map<String, String> dimensions = metricDataDetails.getDimensions();
-        assertThat(dimensions.get(dimensionScopeName), is(equalTo(Meter.Scope.BASE)));
-        assertThat(dimensions.get(dummyTagName), is(equalTo(dummyTagValue)));
+        assertThat("Exported tagged counter", allMetricDataDetails, hasSize(1));
+        assertThat(allMetricDataDetails.getFirst().getDimensions(), is(Map.of(dummyTagName, dummyTagValue)));
+    }
+
+    @Test
+    void testCallerProvidedScopeTagIsPreserved() {
+        meterRegistry.getOrCreate(meterRegistry.metricsFactory().counterBuilder("dummy.counter")
+                                          .tags(Set.of(Tag.create("scope", "custom"), Tag.create("region", "west"))))
+                .increment();
+        OciMetricsData ociMetricsData = new OciMetricsData(
+                nameFormatter, "compartmentId", "namespace", "resourceGroup", false);
+        List<MetricDataDetails> allMetricDataDetails = ociMetricsData.getMetricDataDetails();
+
+        assertThat("Exported counter with a caller-provided scope tag", allMetricDataDetails, hasSize(1));
+        assertThat(allMetricDataDetails.getFirst().getDimensions(), is(Map.of("scope", "custom", "region", "west")));
     }
 }

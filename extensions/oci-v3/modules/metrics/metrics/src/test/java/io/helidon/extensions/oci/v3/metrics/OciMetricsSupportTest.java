@@ -21,12 +21,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
+import java.util.stream.IntStream;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.metrics.api.Counter;
-import io.helidon.metrics.api.Meter;
 import io.helidon.metrics.api.MeterRegistry;
 import io.helidon.service.registry.Services;
 import io.helidon.webserver.WebServer;
@@ -40,6 +39,8 @@ import com.oracle.bmc.monitoring.responses.PostMetricDataResponse;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
@@ -83,8 +84,7 @@ class OciMetricsSupportTest {
 
     @Test
     void testMetricUpdate() throws InterruptedException {
-        Counter counter = meterRegistry.getOrCreate(Counter.builder("DummyCounter")
-                                                            .scope(Meter.Scope.BASE));
+        Counter counter = meterRegistry.getOrCreate(meterRegistry.metricsFactory().counterBuilder("DummyCounter"));
 
         CountDownLatch countDownLatch = new CountDownLatch(1);
         noOfExecutions = 0;
@@ -140,12 +140,7 @@ class OciMetricsSupportTest {
     void testEndpoint() throws InterruptedException {
         String originalEndPoint = endPoint;
 
-        meterRegistry.getOrCreate(Counter.builder("baseDummyCounter1")
-                                          .scope(Meter.Scope.BASE)).increment();
-        meterRegistry.getOrCreate(Counter.builder("vendorDummyCounter1")
-                                          .scope(Meter.Scope.VENDOR)).increment();
-        meterRegistry.getOrCreate(Counter.builder("appDummyCounter1")
-                                          .scope(Meter.Scope.APPLICATION)).increment();;
+        meterRegistry.getOrCreate(meterRegistry.metricsFactory().counterBuilder("DummyCounter")).increment();
 
         CountDownLatch countDownLatch = new CountDownLatch(1);
         noOfExecutions = 0;
@@ -203,32 +198,12 @@ class OciMetricsSupportTest {
 
     @Test
     void testBatchSize() throws InterruptedException {
-        Stream.of("baseDummyCounter1",
-                  "baseDummyCounter2",
-                  "baseDummyCounter3")
-                .forEach(name -> meterRegistry.getOrCreate(Counter.builder(name)
-                                                                   .scope(Meter.Scope.BASE)).increment());
-        Stream.of("vendorDummyCounter1",
-                  "vendorDummyCounter2",
-                  "vendorDummyCounter3")
-                .forEach(name -> meterRegistry.getOrCreate(Counter.builder(name)
-                                                                   .scope(Meter.Scope.VENDOR)).increment());
-        Stream.of("appDummyCounter1",
-                  "appDummyCounter2",
-                  "appDummyCounter3",
-                  "appDummyCounter4")
-                .forEach(name -> meterRegistry.getOrCreate(Counter.builder(name)
-                                                                   .scope(Meter.Scope.APPLICATION)).increment());
-
-        Stream.of("appDummyCounter1",
-                  "appDummyCounter2",
-                  "appDummyCounter3",
-                  "appDummyCounter4")
-                        .forEach(name -> meterRegistry.getOrCreate(Counter.builder(name)
-                                                                           .scope(Meter.Scope.APPLICATION)).increment());
+        IntStream.rangeClosed(1, 10)
+                .forEach(index -> meterRegistry.getOrCreate(meterRegistry.metricsFactory()
+                                                                   .counterBuilder("DummyCounter" + index)).increment());
 
         // Should be 10 metrics
-        int totalMetrics = meterRegistry.meters().size(); // gets all scopes
+        int totalMetrics = meterRegistry.meters().size();
 
         int batchSize = 3;
         long batchDelay = 100L;
@@ -292,67 +267,29 @@ class OciMetricsSupportTest {
         webServer.stop();
     }
 
-    @Test
-    void testConfigSources() {
-        meterRegistry.getOrCreate(Counter.builder("baseDummyCounter1")
-                                          .scope(Meter.Scope.BASE)).increment();
+    @ParameterizedTest
+    @ValueSource(strings = {"", "base", "vendor", "application", "base, vendor, application", "*", "custom"})
+    void testLegacyConfigScopesAreIgnored(String scopes) throws InterruptedException {
+        IntStream.rangeClosed(1, 6)
+                .forEach(index -> meterRegistry.getOrCreate(meterRegistry.metricsFactory()
+                                                                   .counterBuilder("DummyCounter" + index)).increment());
 
-        Stream.of("vendorDummyCounter1",
-                  "vendorDummyCounter2")
-                .forEach(name -> meterRegistry.getOrCreate(Counter.builder(name)
-                                                                   .scope(Meter.Scope.VENDOR)).increment());
-        Stream.of("appDummyCounter1",
-                  "appDummyCounter2",
-                  "appDummyCounter3")
-                .forEach(name -> meterRegistry.getOrCreate(Counter.builder(name)
-                                                                   .scope(Meter.Scope.APPLICATION)).increment());
-
-        validateMetricCount("base, vendor, application", 6);
-        validateMetricCount("base", 1);
-        validateMetricCount("vendor", 2);
-        validateMetricCount("application", 3);
-        validateMetricCount("base, vendor", 3);
+        validateMetricCount(scopes, 6);
     }
 
-    @Test
-    void testMetricScope() {
-        meterRegistry.getOrCreate(Counter.builder("baseDummyCounter1")
-                                          .scope(Meter.Scope.BASE))
-                .increment();
+    @ParameterizedTest
+    @ValueSource(strings = {"", "base", "vendor", "application", "base,vendor,application", "*", "custom"})
+    void testLegacyBuilderScopesAreIgnored(String scopes) throws InterruptedException {
+        IntStream.rangeClosed(1, 6)
+                .forEach(index -> meterRegistry.getOrCreate(meterRegistry.metricsFactory()
+                                                                   .counterBuilder("DummyCounter" + index)).increment());
 
-        Stream.of("vendorDummyCounter1",
-                  "vendorDummyCounter2")
-                .forEach(name -> meterRegistry.getOrCreate(Counter.builder(name)
-                                                                   .scope(Meter.Scope.VENDOR))
-                        .increment());
-
-        Stream.of("appDummyCounter1",
-                  "appDummyCounter2",
-                  "appDummyCounter3")
-                .forEach(name -> meterRegistry.getOrCreate(Counter.builder(name)
-                                                                   .scope(Meter.Scope.APPLICATION))
-                        .increment());
-
-
-        validateMetricCount(new String[] {}, 6);
-        validateMetricCount(new String[] {Meter.Scope.BASE, Meter.Scope.VENDOR, Meter.Scope.APPLICATION}, 6);
-        validateMetricCount(new String[] {Meter.Scope.BASE}, 1);
-        validateMetricCount(new String[] {Meter.Scope.VENDOR}, 2);
-        validateMetricCount(new String[] {Meter.Scope.APPLICATION}, 3);
-        validateMetricCount(new String[] {"base", "vendor", "application"}, 6);
-        validateMetricCount(new String[] {"base"}, 1);
-        validateMetricCount(new String[] {"vendor"}, 2);
-        validateMetricCount(new String[] {"application"}, 3);
+        validateMetricCount(scopes.isEmpty() ? new String[0] : scopes.split(","), 6);
     }
 
     @Test
     void testDisableMetrics() {
-        meterRegistry.getOrCreate(Counter.builder("baseDummyCounter1")
-                                          .scope(Meter.Scope.BASE)).increment();
-        meterRegistry.getOrCreate(Counter.builder("vendorDummyCounter1")
-                                          .scope(Meter.Scope.VENDOR)).increment();
-        meterRegistry.getOrCreate(Counter.builder("appDummyCounter1")
-                                          .scope(Meter.Scope.APPLICATION)).increment();
+        meterRegistry.getOrCreate(meterRegistry.metricsFactory().counterBuilder("DummyCounter")).increment();
 
         OciMetricsSupport.Builder ociMetricsSupportBuilder = OciMetricsSupport.builder()
                 .namespace("namespace")
@@ -406,7 +343,7 @@ class OciMetricsSupportTest {
                 .register(ociMetricsSupportBuilder);
     }
 
-    private void validateMetricCount(String scopesList, int expectedMetricCount) {
+    private void validateMetricCount(String scopesList, int expectedMetricCount) throws InterruptedException {
         Config config = Config.just(ConfigSources.create(Map.of(
                 "compartmentId", "compartmentId",
                 "namespace", "namespace",
@@ -423,7 +360,8 @@ class OciMetricsSupportTest {
         validateMetricCount(ociMetricsSupportBuilder, expectedMetricCount);
     }
 
-    private void validateMetricCount(String[] scopes, int expectedMetricCount) {
+    @SuppressWarnings("removal")
+    private void validateMetricCount(String[] scopes, int expectedMetricCount) throws InterruptedException {
         OciMetricsSupport.Builder ociMetricsSupportBuilder = OciMetricsSupport.builder()
                 .namespace("namespace")
                 .compartmentId("compartmentId")
@@ -438,7 +376,8 @@ class OciMetricsSupportTest {
         validateMetricCount(ociMetricsSupportBuilder, expectedMetricCount);
     }
 
-    private void validateMetricCount(OciMetricsSupport.Builder ociMetricsSupportBuilder, int expectedMetricCount) {
+    private void validateMetricCount(OciMetricsSupport.Builder ociMetricsSupportBuilder, int expectedMetricCount)
+            throws InterruptedException {
         testMetricCount = 0;
         CountDownLatch countDownLatch = new CountDownLatch(1);
         mockPostMetricDataAndGetTestMetricCount(countDownLatch);
@@ -448,11 +387,10 @@ class OciMetricsSupportTest {
         try {
             // Wait for signal from metric update that testMetricCount has been retrieved
             countDownLatchWait(countDownLatch);
-        } catch (InterruptedException e) {
-            fail("Error while waiting for testMetricCount: " + e.getMessage());
+            assertThat("Number of exported unscoped counters", testMetricCount, is(expectedMetricCount));
+        } finally {
+            webServer.stop();
         }
-        webServer.stop();
-        assertThat(testMetricCount, is(equalTo(expectedMetricCount)));
     }
 
     private void countDownLatchWait(CountDownLatch countDownLatch) throws InterruptedException {
