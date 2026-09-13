@@ -2,7 +2,7 @@
 
 The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response.
 
-This first slice targets Helidon 4.5.3 and is disabled by default.
+This first slice targets Helidon 4.5.4 and is disabled by default.
 
 ## Versioning
 

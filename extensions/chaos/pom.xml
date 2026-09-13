@@ -40,7 +40,7 @@
     </modules>
 
     <properties>
-        <helidon.version>4.5.3</helidon.version>
+        <helidon.version>4.5.4</helidon.version>
         <version.java>21</version.java>
     </properties>
 
