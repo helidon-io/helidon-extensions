@@ -272,7 +272,7 @@ versions_json() {
   json='['
   separator=""
   while IFS= read -r helidon_version; do
-    if [ -n "${helidon_version}" ] ; then
+    if [[ "${helidon_version}" == *-SNAPSHOT ]] ; then
       json="${json}${separator}\"$(json_escape "${helidon_version}")\""
       separator=","
     fi

@@ -41,6 +41,7 @@ jobs:
           etc/scripts/resolve.sh >> "${GITHUB_OUTPUT}"
   prime-build:
     needs: resolve
+    if: ${{ needs.resolve.outputs.versions != '[]' }}
     timeout-minutes: 30
     runs-on: ubuntu-22.04
     strategy:
@@ -61,6 +62,9 @@ jobs:
             etc/scripts/prime-build.sh --version ${{ matrix.version }}
   build:
     needs: [ resolve, prime-build ]
+    if: >-
+      ${{ !cancelled() && needs.resolve.result == 'success'
+          && (needs.prime-build.result == 'success' || needs.prime-build.result == 'skipped') }}
     timeout-minutes: 30
     runs-on: ubuntu-22.04
     strategy:
@@ -71,7 +75,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/common
         with:
-          build-cache: read-only
+          build-cache: ${{ endsWith(matrix.extension.helidon_version, '-SNAPSHOT') && 'read-only' || '' }}
           build-cache-id: ${{ matrix.extension.helidon_version }}
           maven-cache: read-only
           setup-latest-java: true

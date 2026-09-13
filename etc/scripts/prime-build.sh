@@ -122,14 +122,14 @@ HELIDON_VERSION="${VERSION_INPUT}"
 readonly HELIDON_VERSION
 echo "HELIDON_VERSION=${HELIDON_VERSION}"
 
-# add a marker file for the build cache
-mkdir -p "${WS_DIR}/.m2/repository/io/helidon/.primed"
-printf '%s\n' "${HELIDON_VERSION}" > "${WS_DIR}/.m2/repository/io/helidon/.primed/${HELIDON_VERSION}"
-
 if [[ ! ${HELIDON_VERSION} == *-SNAPSHOT ]]; then
   echo "Helidon version ${HELIDON_VERSION} is not a SNAPSHOT version. Skipping priming build."
   exit 0
 fi
+
+# add a marker file for the build cache
+mkdir -p "${WS_DIR}/.m2/repository/io/helidon/.primed"
+printf '%s\n' "${HELIDON_VERSION}" > "${WS_DIR}/.m2/repository/io/helidon/.primed/${HELIDON_VERSION}"
 
 HELIDON_BRANCH=$(branch "${HELIDON_VERSION}")
 readonly HELIDON_BRANCH

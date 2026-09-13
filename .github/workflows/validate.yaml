@@ -63,6 +63,7 @@ jobs:
             >> "${GITHUB_OUTPUT}"
   prime-build:
     needs: resolve
+    if: ${{ needs.resolve.outputs.versions != '[]' }}
     timeout-minutes: 30
     runs-on: ubuntu-22.04
     strategy:
@@ -119,6 +120,9 @@ jobs:
           run: etc/scripts/shellcheck.sh
   build:
     needs: [ resolve, prime-build ]
+    if: >-
+      ${{ !cancelled() && needs.resolve.result == 'success'
+          && (needs.prime-build.result == 'success' || needs.prime-build.result == 'skipped') }}
     timeout-minutes: 30
     strategy:
       matrix:
@@ -136,7 +140,7 @@ jobs:
           ref: ${{ inputs.ref }}
       - uses: ./.github/actions/common
         with:
-          build-cache: read-only
+          build-cache: ${{ endsWith(matrix.extension.helidon_version, '-SNAPSHOT') && 'read-only' || '' }}
           build-cache-id: ${{ matrix.extension.helidon_version }}
           maven-cache: read-only
           test-artifact-name: ${{ matrix.extension.id }}-${{ matrix.platform.name }}
@@ -152,6 +156,11 @@ jobs:
   gate:
     runs-on: ubuntu-22.04
     needs: [ resolve, prime-build, copyright, checkstyle, shellcheck, build ]
+    if: >-
+      ${{ !cancelled() && needs.resolve.result == 'success'
+          && (needs.prime-build.result == 'success' || needs.prime-build.result == 'skipped')
+          && needs.copyright.result == 'success' && needs.checkstyle.result == 'success'
+          && needs.shellcheck.result == 'success' && needs.build.result == 'success' }}
     steps:
       - shell: bash
         run: |
