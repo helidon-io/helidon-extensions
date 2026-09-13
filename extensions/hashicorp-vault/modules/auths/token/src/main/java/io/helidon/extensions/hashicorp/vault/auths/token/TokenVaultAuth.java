@@ -93,6 +93,8 @@ public class TokenVaultAuth implements VaultAuth {
                     Optional.ofNullable(baseNamespace)
                             .or(vaultConfig::baseNamespace)
                             .ifPresent(ns -> builder.addHeader(VAULT_NAMESPACE_HEADER_NAME, ns));
+                    builder.addRedirectSensitiveHeader(VAULT_TOKEN_HEADER_NAME)
+                            .addRedirectSensitiveHeader(VAULT_NAMESPACE_HEADER_NAME);
                 })
                 .faultTolerance(vaultConfig.faultTolerance())
                 .build();
