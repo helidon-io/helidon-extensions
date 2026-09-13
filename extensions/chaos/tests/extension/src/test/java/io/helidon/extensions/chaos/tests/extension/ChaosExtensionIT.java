@@ -212,6 +212,23 @@ class ChaosExtensionIT {
     }
 
     @Test
+    void returnsOutboundSyntheticResponseWithoutInvokingDestination() {
+        var baseUri = application.prototype().baseUri().orElseThrow();
+        JsonObject created = postRun(control,
+                                     outboundSyntheticResponsePlan(baseUri.scheme(), baseUri.host(), baseUri.port()));
+        String id = created.stringValue("id").orElseThrow();
+
+        var response = application.get("/orders/42").request(String.class);
+
+        assertThat(response.status(), is(Status.SERVICE_UNAVAILABLE_503));
+        assertThat(response.headers().first(HeaderNames.RETRY_AFTER).orElseThrow(), is("3"));
+        assertThat(response.headers().contentType().orElseThrow().mediaType().text(), is("application/problem+json"));
+        assertThat(response.entity(), is("Inventory unavailable"));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(0));
+        assertOutboundCounters(id, 1);
+    }
+
+    @Test
     void executesDeterministicWeightedChoice() {
         JsonObject plan = runPlan(42,
                                   "stage",
@@ -355,6 +372,40 @@ class ChaosExtensionIT {
                       },
                       "activation": {"type": "always"},
                       "effect": {"type": "latency", "delay": "PT0.1S"},
+                      "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                    }]
+                  }]
+                }
+                """.formatted(scheme, host, port)).readJsonObject();
+    }
+
+    private static JsonObject outboundSyntheticResponsePlan(String scheme, String host, int port) {
+        return JsonParser.create("""
+                {
+                  "name": "outbound-inventory-unavailable",
+                  "maximumDuration": "PT30S",
+                  "seed": 42,
+                  "stages": [{
+                    "name": "outbound-unavailable",
+                    "duration": "PT10S",
+                    "disruptions": [{
+                      "name": "reject-outbound-orders",
+                      "scope": {
+                        "type": "outbound-http",
+                        "methods": ["GET"],
+                        "scheme": "%s",
+                        "host": "%s",
+                        "port": %d,
+                        "path": {"match": "exact", "value": "/orders/42"}
+                      },
+                      "activation": {"type": "always"},
+                      "effect": {
+                        "type": "synthetic-http-response",
+                        "status": 503,
+                        "headers": {"Retry-After": "3"},
+                        "mediaType": "application/problem+json",
+                        "body": "Inventory unavailable"
+                      },
                       "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
                     }]
                   }]

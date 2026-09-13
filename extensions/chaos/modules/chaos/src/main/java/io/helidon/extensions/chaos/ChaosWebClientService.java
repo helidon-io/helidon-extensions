@@ -62,9 +62,9 @@ final class ChaosWebClientService implements WebClientService {
                     try (ChaosRunEngine.Reservation reservation = reserved.orElseThrow()) {
                         switch (reservation.action()) {
                         case ChaosLatencyAction latency -> latency.apply();
-                        case ChaosSyntheticResponse syntheticResponse -> throw new IllegalStateException(
-                                "Outbound chaos reservation resolved a synthetic response with status "
-                                        + syntheticResponse.status());
+                        case ChaosSyntheticResponse syntheticResponse -> {
+                            return ChaosWebClientSyntheticResponse.create(request, syntheticResponse);
+                        }
                         }
                     }
                 }

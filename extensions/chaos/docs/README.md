@@ -1,6 +1,6 @@
 # Helidon Chaos extension
 
-The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response or inbound latency, and matching Helidon WebClient calls can receive bounded outbound latency.
+The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response or inbound latency, and matching Helidon WebClient calls can receive bounded outbound latency or a synthetic HTTP error response.
 
 This first slice targets Helidon 4.5.3 and is disabled by default.
 
@@ -194,6 +194,44 @@ For bounded latency on an outbound Helidon WebClient call, create a run with an 
 }
 ```
 
+The same outbound scope can return a complete synthetic response without contacting the destination:
+
+```json
+{
+  "name": "inventory-unavailable",
+  "maximumDuration": "PT30S",
+  "seed": 148894,
+  "stages": [
+    {
+      "name": "reject-inventory",
+      "duration": "PT10S",
+      "disruptions": [
+        {
+          "name": "inventory-503",
+          "scope": {
+            "type": "outbound-http",
+            "methods": ["GET"],
+            "scheme": "https",
+            "host": "inventory.example.com",
+            "port": 443,
+            "path": {"match": "prefix", "value": "/v1/items"}
+          },
+          "activation": {"type": "always"},
+          "effect": {
+            "type": "synthetic-http-response",
+            "status": 503,
+            "headers": {"Retry-After": "3"},
+            "mediaType": "application/problem+json",
+            "body": "{\"title\":\"Inventory unavailable\",\"status\":503}"
+          },
+          "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+        }
+      ]
+    }
+  ]
+}
+```
+
 Stages execute in declared order. A stage may contain one disruption or may use an empty `disruptions` array as a
 passive interval for observing recovery:
 
@@ -320,11 +358,8 @@ To select one of several effects for each accepted activation, use `weighted-cho
 ```
 
 Weights are positive integers and do not need to total 100. At least one outcome is required, and the total weight must
-not exceed `Long.MAX_VALUE`. Inbound scopes accept `synthetic-http-response`, `latency`, and weighted choices with valid
-leaf effects; nested weighted choices are rejected. Outbound scopes accept a direct `latency` effect or a weighted choice
-whose leaf outcomes are all `latency`. A `synthetic-http-response` anywhere in an outbound effect is rejected with `422`
-at the precise effect path, such as `/stages/0/disruptions/0/effect/type` or
-`/stages/0/disruptions/0/effect/outcomes/0/effect/type`. Selection is deterministic for the run seed and matching
+not exceed `Long.MAX_VALUE`. Inbound and outbound scopes accept `synthetic-http-response`, `latency`, and weighted choices
+with valid leaf effects; nested weighted choices are rejected. Selection is deterministic for the run seed and matching
 invocation number, uses a separate random stream from activation and latency jitter, and preserves declared outcome
 order in normalized responses. The disruption's cumulative and concurrent budgets apply across all selected outcomes.
 
@@ -390,7 +425,7 @@ curl --fail-with-body --request DELETE --user operator:test-only-password \
 
 Request budgets may be lower than these ceilings but never higher. Concurrent and cumulative reservations are atomic,
 and stopping a run prevents new reservations while in-flight work drains. `maximum-latency` applies to both inbound and
-outbound latency effects.
+outbound latency effects. `maximum-synthetic-body-bytes` applies to both inbound and outbound synthetic responses.
 
 ## Runtime model and first-slice boundary
 
@@ -398,12 +433,12 @@ Runs are local to one Helidon server process, in memory, bounded, and not recons
 
 The current slice intentionally supports bounded ordered stages with zero or one HTTP disruption per stage, inbound or
 outbound as implemented; `always`, deterministic `probability`, or `periodic-burst` activation; exact or segment-aware
-prefix paths; inbound synthetic 4xx/5xx HTTP responses and latency; outbound Helidon WebClient latency; and deterministic
-weighted selection between valid effects. Its public vocabulary includes `runs`, `stages`, `disruptions`, `scope`,
+prefix paths; inbound synthetic 4xx/5xx HTTP responses and latency; outbound Helidon WebClient synthetic 4xx/5xx HTTP
+responses and latency; and deterministic weighted selection between valid effects. Its public vocabulary includes
+`runs`, `stages`, `disruptions`, `scope`,
 `activation`, `effect`, and `budget` so later additions can introduce other bounded local effects without adopting
 another project's API.
 
-Out of scope for this slice are outbound synthetic responses, non-Helidon clients, connection resets and other transport
-faults, timeout or connection-stall effects, bytecode injection, exception injection inside arbitrary methods, CPU or
-memory pressure, network faults outside the process, distributed orchestration, persistent run recovery, and automatic
-enablement.
+Out of scope for this slice are non-Helidon clients, connection resets and other transport faults, timeout or
+connection-stall effects, bytecode injection, exception injection inside arbitrary methods, CPU or memory pressure,
+network faults outside the process, distributed orchestration, persistent run recovery, and automatic enablement.

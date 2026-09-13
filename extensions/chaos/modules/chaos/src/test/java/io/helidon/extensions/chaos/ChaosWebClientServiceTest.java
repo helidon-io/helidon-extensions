@@ -15,7 +15,9 @@
  */
 package io.helidon.extensions.chaos;
 
+import java.io.IOException;
 import java.lang.reflect.Proxy;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -25,7 +27,10 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import io.helidon.common.media.type.MediaTypes;
+import io.helidon.http.HeaderNames;
 import io.helidon.http.Method;
+import io.helidon.http.Status;
 import io.helidon.webclient.api.ClientUri;
 import io.helidon.webclient.api.WebClientServiceRequest;
 import io.helidon.webclient.api.WebClientServiceResponse;
@@ -234,23 +239,72 @@ class ChaosWebClientServiceTest {
     }
 
     @Test
-    void usesLogicalRequestUriAndRejectsSyntheticOutboundAction() {
+    void returnsCompleteSyntheticResponseWithoutProceeding() throws IOException {
         ChaosRunEngine engine = engine();
         ChaosRuntimeRegistration registration = ChaosRuntimeBridge.register(engine);
         try {
-            engine.create(plan(new ChaosSyntheticResponse(503, Map.of(), Optional.empty(), new byte[0]), 1), "test");
+            byte[] body = "{\"title\":\"Inventory unavailable\"}".getBytes(StandardCharsets.UTF_8);
+            engine.create(plan(new ChaosSyntheticResponse(503,
+                                                          Map.of("Retry-After", "3"),
+                                                          Optional.of(MediaTypes.APPLICATION_JSON),
+                                                          body),
+                               1),
+                          "test");
             AtomicInteger proceeds = new AtomicInteger();
 
-            IllegalStateException exception = assertThrows(IllegalStateException.class,
-                                                            () -> new ChaosWebClientService("chaos").handle(chain(proceeds),
-                                                                                                               request(Method.GET,
-                                                                                                                       "https",
-                                                                                                                       "inventory.example.com",
-                                                                                                                       443,
-                                                                                                                       "/v1/items")));
+            WebClientServiceResponse response = new ChaosWebClientService("chaos").handle(chain(proceeds),
+                                                                                            inventoryRequest());
 
-            assertThat(exception.getMessage(),
-                       is("Outbound chaos reservation resolved a synthetic response with status 503"));
+            assertThat(response.status(), is(Status.SERVICE_UNAVAILABLE_503));
+            assertThat(response.headers().first(HeaderNames.RETRY_AFTER).orElseThrow(), is("3"));
+            assertThat(response.headers().contentType().orElseThrow().mediaType(), is(MediaTypes.APPLICATION_JSON));
+            assertThat(response.headers().contentLength().orElseThrow(), is((long) body.length));
+            assertThat(response.inputStream().orElseThrow().readAllBytes(), is(body));
+            assertThat(response.serviceRequest().uri().host(), is("inventory.example.com"));
+            assertThat(proceeds.get(), is(0));
+        } finally {
+            registration.close();
+        }
+    }
+
+    @Test
+    void returnsEmptySyntheticResponseWithoutProceeding() {
+        ChaosRunEngine engine = engine();
+        ChaosRuntimeRegistration registration = ChaosRuntimeBridge.register(engine);
+        try {
+            engine.create(plan(new ChaosSyntheticResponse(429, Map.of(), Optional.empty(), new byte[0]), 1), "test");
+            AtomicInteger proceeds = new AtomicInteger();
+
+            WebClientServiceResponse response = new ChaosWebClientService("chaos").handle(chain(proceeds),
+                                                                                            inventoryRequest());
+
+            assertThat(response.status(), is(Status.TOO_MANY_REQUESTS_429));
+            assertThat(response.headers().contentLength().orElseThrow(), is(0L));
+            assertThat(response.inputStream(), is(Optional.empty()));
+            assertThat(proceeds.get(), is(0));
+        } finally {
+            registration.close();
+        }
+    }
+
+    @Test
+    void returnsSyntheticResponseSelectedByWeightedChoice() {
+        ChaosRunEngine engine = engine();
+        ChaosRuntimeRegistration registration = ChaosRuntimeBridge.register(engine);
+        try {
+            ChaosSyntheticResponse synthetic = new ChaosSyntheticResponse(502,
+                                                                           Map.of(),
+                                                                           Optional.empty(),
+                                                                           new byte[0]);
+            ChaosWeightedChoice effect = new ChaosWeightedChoice(List.of(
+                    new ChaosWeightedChoice.Outcome(1, synthetic)));
+            engine.create(plan(effect, 1), "test");
+            AtomicInteger proceeds = new AtomicInteger();
+
+            WebClientServiceResponse response = new ChaosWebClientService("chaos").handle(chain(proceeds),
+                                                                                            inventoryRequest());
+
+            assertThat(response.status(), is(Status.BAD_GATEWAY_502));
             assertThat(proceeds.get(), is(0));
         } finally {
             registration.close();
@@ -270,6 +324,10 @@ class ChaosWebClientServiceTest {
             proceeds.incrementAndGet();
             return RESPONSE;
         };
+    }
+
+    private static WebClientServiceRequest inventoryRequest() {
+        return request(Method.GET, "https", "inventory.example.com", 443, "/v1/items");
     }
 
     private static WebClientServiceRequest request(Method method, String scheme, String host, int port, String path) {

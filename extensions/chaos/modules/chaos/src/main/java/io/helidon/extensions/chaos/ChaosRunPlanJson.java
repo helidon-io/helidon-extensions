@@ -150,8 +150,7 @@ final class ChaosRunPlanJson {
                                                   path + "/activation");
         ChaosEffect effect = effect(requiredObject(json, "effect", path + "/effect"),
                                     path + "/effect",
-                                    limits,
-                                    !(scope instanceof ChaosOutboundHttpScope));
+                                    limits);
         ChaosBudget budget = budget(requiredObject(json, "budget", path + "/budget"), path + "/budget", limits);
         return new ChaosRunPlan.ChaosDisruption(name, scope, activation, effect, budget);
     }
@@ -308,34 +307,26 @@ final class ChaosRunPlanJson {
 
     private static ChaosEffect effect(JsonObject json,
                                       String path,
-                                      ChaosLimitsConfig limits,
-                                      boolean syntheticResponseAllowed) {
-        return effect(json, path, limits, true, syntheticResponseAllowed);
+                                      ChaosLimitsConfig limits) {
+        return effect(json, path, limits, true);
     }
 
     private static ChaosEffect effect(JsonObject json,
                                       String path,
                                       ChaosLimitsConfig limits,
-                                      boolean weightedChoiceAllowed,
-                                      boolean syntheticResponseAllowed) {
+                                      boolean weightedChoiceAllowed) {
         rejectUnknown(json, path,
                       Set.of("type", "status", "headers", "mediaType", "body", "delay", "jitter", "outcomes"));
         String type = requiredString(json, "type", path + "/type");
         return switch (type) {
         case "latency" -> latency(json, path, limits);
-        case "synthetic-http-response" -> {
-            if (!syntheticResponseAllowed) {
-                throw invalid(path + "/type", "unsupported-outbound-effect",
-                              "outbound-http supports latency effects only.");
-            }
-            yield syntheticResponse(json, path, limits);
-        }
+        case "synthetic-http-response" -> syntheticResponse(json, path, limits);
         case "weighted-choice" -> {
             if (!weightedChoiceAllowed) {
                 throw invalid(path + "/type", "nested-weighted-choice",
                               "weighted-choice outcomes must be latency or synthetic-http-response.");
             }
-            yield weightedChoice(json, path, limits, syntheticResponseAllowed);
+            yield weightedChoice(json, path, limits);
         }
         default -> throw invalid(path + "/type", "unsupported-type",
                                  "Effect type must be latency, synthetic-http-response, or weighted-choice.");
@@ -344,8 +335,7 @@ final class ChaosRunPlanJson {
 
     private static ChaosWeightedChoice weightedChoice(JsonObject json,
                                                        String path,
-                                                       ChaosLimitsConfig limits,
-                                                       boolean syntheticResponseAllowed) {
+                                                       ChaosLimitsConfig limits) {
         rejectUnknown(json, path, Set.of("type", "outcomes"));
         JsonArray values = requiredArray(json, "outcomes", path + "/outcomes");
         if (values.size() == 0) {
@@ -369,8 +359,7 @@ final class ChaosRunPlanJson {
             ChaosEffect outcomeEffect = effect(requiredObject(value, "effect", outcomePath + "/effect"),
                                                  outcomePath + "/effect",
                                                  limits,
-                                                 false,
-                                                 syntheticResponseAllowed);
+                                                 false);
             outcomes.add(new ChaosWeightedChoice.Outcome(weight, outcomeEffect));
         }
         return new ChaosWeightedChoice(outcomes);

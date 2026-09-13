@@ -86,23 +86,40 @@ class ChaosRunPlanJsonTest {
     }
 
     @Test
-    void acceptsOutboundLatencyAndLatencyOnlyWeightedChoice() {
+    void acceptsOutboundLatencySyntheticResponseAndWeightedChoice() {
         ChaosRunPlan latency = ChaosRunPlanJson.parse(json(outboundPlanJson("""
                 {"type": "latency", "delay": "PT0.25S"}
+                """)), LIMITS);
+        ChaosRunPlan synthetic = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {
+                  "type": "synthetic-http-response",
+                  "status": 503,
+                  "headers": {"Retry-After": "3"},
+                  "mediaType": "application/problem+json",
+                  "body": "Inventory unavailable"
+                }
                 """)), LIMITS);
         ChaosRunPlan weightedChoice = ChaosRunPlanJson.parse(json(outboundPlanJson("""
                 {
                   "type": "weighted-choice",
                   "outcomes": [
                     {"weight": 3, "effect": {"type": "latency", "delay": "PT0.25S"}},
-                    {"weight": 1, "effect": {"type": "latency", "delay": "PT0.1S"}}
+                    {"weight": 1, "effect": {"type": "synthetic-http-response", "status": 502}}
                   ]
                 }
                 """)), LIMITS);
 
         assertThat(latency.stages().getFirst().disruption().orElseThrow().effect(), instanceOf(ChaosLatency.class));
-        assertThat(weightedChoice.stages().getFirst().disruption().orElseThrow().effect(),
-                   instanceOf(ChaosWeightedChoice.class));
+        ChaosSyntheticResponse syntheticEffect = (ChaosSyntheticResponse) synthetic.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        assertThat(syntheticEffect.status(), is(503));
+        assertThat(syntheticEffect.headers(), hasEntry("Retry-After", "3"));
+        assertThat(syntheticEffect.mediaType().orElseThrow().text(), is("application/problem+json"));
+        assertThat(new String(syntheticEffect.body(), StandardCharsets.UTF_8), is("Inventory unavailable"));
+        ChaosWeightedChoice weightedEffect = (ChaosWeightedChoice) weightedChoice.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        assertThat(weightedEffect.outcomes().getFirst().effect(), instanceOf(ChaosLatency.class));
+        assertThat(weightedEffect.outcomes().getLast().effect(), instanceOf(ChaosSyntheticResponse.class));
     }
 
     @Test
@@ -154,21 +171,6 @@ class ChaosRunPlanJsonTest {
         assertInvalidPlan(outboundPlanJsonWithScope("\"port\": 65536"), scopePath + "/port");
         assertInvalidPlan(outboundPlanJsonWithScope("\"path\": {\"match\": \"prefix\", \"value\": \"orders\"}"),
                           scopePath + "/path/value");
-    }
-
-    @Test
-    void rejectsOutboundSyntheticResponseEffects() {
-        assertInvalidPlan(outboundPlanJson("""
-                {"type": "synthetic-http-response", "status": 503}
-                """), "/stages/0/disruptions/0/effect/type");
-        assertInvalidPlan(outboundPlanJson("""
-                {
-                  "type": "weighted-choice",
-                  "outcomes": [
-                    {"weight": 1, "effect": {"type": "synthetic-http-response", "status": 503}}
-                  ]
-                }
-                """), "/stages/0/disruptions/0/effect/outcomes/0/effect/type");
     }
 
     @Test
