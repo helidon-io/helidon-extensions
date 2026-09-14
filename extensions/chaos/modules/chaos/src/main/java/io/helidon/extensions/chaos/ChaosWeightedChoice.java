@@ -57,6 +57,7 @@ final class ChaosWeightedChoice implements ChaosEffect {
         case ChaosLatency latency -> latency.resolve(effectSample);
         case ChaosResponseTimeout timeout -> timeout.resolve(effectSample);
         case ChaosSyntheticResponse synthetic -> synthetic;
+        case ChaosTlsHandshakeFailure tlsFailure -> tlsFailure;
         case ChaosWeightedChoice choice -> throw new IllegalStateException(
                 "Nested weighted choice with " + choice.outcomes().size() + " outcomes");
         };

@@ -68,6 +68,7 @@ final class ChaosWebClientService implements WebClientService {
                         case ChaosSyntheticResponse syntheticResponse -> {
                             return ChaosWebClientSyntheticResponse.create(request, syntheticResponse);
                         }
+                        case ChaosTlsHandshakeFailure tlsFailure -> throw tlsFailure.exception();
                         }
                     }
                 }

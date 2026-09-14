@@ -21,6 +21,8 @@ import java.net.SocketTimeoutException;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import javax.net.ssl.SSLHandshakeException;
+
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
@@ -260,6 +262,26 @@ class ChaosExtensionIT {
                                                            () -> application.get("/orders/42").request(String.class));
 
         assertThat(exception.getMessage(), is("Failed to get address for host " + baseUri.host()));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(0));
+        assertOutboundCounters(id, 1);
+    }
+
+    @Test
+    void throwsOutboundTlsHandshakeFailureWithoutInvokingDestination() {
+        var baseUri = application.prototype().baseUri().orElseThrow();
+        JsonObject created = postRun(control,
+                                     outboundTlsHandshakeFailurePlan(baseUri.host(), baseUri.port()));
+        String id = created.stringValue("id").orElseThrow();
+        Http1Client httpsClient = Http1Client.builder()
+                .baseUri("https://" + baseUri.host() + ":" + baseUri.port())
+                .build();
+
+        UncheckedIOException exception = assertThrows(UncheckedIOException.class,
+                                                      () -> httpsClient.get("/orders/42").request(String.class));
+
+        assertThat(exception.getMessage(), is("Failed to execute SSL handshake"));
+        assertThat(exception.getCause(), instanceOf(SSLHandshakeException.class));
+        assertThat(exception.getCause().getMessage(), is("TLS handshake failed due to chaos disruption"));
         assertThat(APPLICATION_INVOCATIONS.get(), is(0));
         assertOutboundCounters(id, 1);
     }
@@ -553,6 +575,34 @@ class ChaosExtensionIT {
                   }]
                 }
                 """.formatted(scheme, host, port)).readJsonObject();
+    }
+
+    private static JsonObject outboundTlsHandshakeFailurePlan(String host, int port) {
+        return JsonParser.create("""
+                {
+                  "name": "outbound-inventory-tls-handshake-failure",
+                  "maximumDuration": "PT30S",
+                  "seed": 42,
+                  "stages": [{
+                    "name": "outbound-tls-handshake-failure",
+                    "duration": "PT10S",
+                    "disruptions": [{
+                      "name": "fail-outbound-orders-tls-handshake",
+                      "scope": {
+                        "type": "outbound-http",
+                        "methods": ["GET"],
+                        "scheme": "https",
+                        "host": "%s",
+                        "port": %d,
+                        "path": {"match": "exact", "value": "/orders/42"}
+                      },
+                      "activation": {"type": "always"},
+                      "effect": {"type": "tls-handshake-failure"},
+                      "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                    }]
+                  }]
+                }
+                """.formatted(host, port)).readJsonObject();
     }
 
     private static JsonObject outboundResponseTimeoutPlan(String scheme,

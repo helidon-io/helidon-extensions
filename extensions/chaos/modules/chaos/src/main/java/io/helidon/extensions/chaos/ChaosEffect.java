@@ -23,5 +23,6 @@ sealed interface ChaosEffect permits ChaosConnectFailure,
         ChaosLatency,
         ChaosResponseTimeout,
         ChaosSyntheticResponse,
+        ChaosTlsHandshakeFailure,
         ChaosWeightedChoice {
 }

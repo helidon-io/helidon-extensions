@@ -179,6 +179,28 @@ class ChaosRunJsonTest {
     }
 
     @Test
+    void writesNormalizedTlsHandshakeFailureEffect() {
+        ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("GET"),
+                                                                   "https",
+                                                                   "inventory.example.com",
+                                                                   443,
+                                                                   PREFIX,
+                                                                   "/v1/items");
+        ChaosRunPlan tlsFailurePlan = plan(scope, ChaosTlsHandshakeFailure.instance());
+
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   tlsFailurePlan));
+
+        JsonObject effect = json.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("effect").orElseThrow();
+        assertThat(effect.toString(), is("{\"type\":\"tls-handshake-failure\"}"));
+    }
+
+    @Test
     void writesNormalizedResponseTimeoutEffect() {
         ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("GET"),
                                                                    "https",

@@ -1,6 +1,6 @@
 # Helidon Chaos extension
 
-The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response or inbound latency, and matching Helidon WebClient calls can receive bounded outbound latency, a synthetic HTTP error response, a simulated connection or DNS failure, or a simulated response timeout.
+The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response or inbound latency, and matching Helidon WebClient calls can receive bounded outbound latency, a synthetic HTTP error response, a simulated connection, DNS, or TLS handshake failure, or a simulated response timeout.
 
 This first slice targets Helidon 4.5.3 and is disabled by default.
 
@@ -354,6 +354,20 @@ default DNS resolver when address resolution fails. Existing activation rules de
 the effect remains deterministic even when the operating system or JVM has cached an address. It simulates the
 application-visible failure and does not exercise DNS infrastructure, caching, or fallback behavior.
 
+The outbound-only `tls-handshake-failure` effect is valid only for a scope whose scheme is `https` and has no additional
+properties:
+
+```json
+{"type": "tls-handshake-failure"}
+```
+
+A selected call does not continue through the WebClient chain or access DNS or the network. It throws
+`java.io.UncheckedIOException` with message `Failed to execute SSL handshake` and a
+`javax.net.ssl.SSLHandshakeException` cause, matching Helidon WebClient's application-visible handshake failure
+envelope. Existing activation rules and budgets determine which calls are selected and bound their occurrence. This
+effect does not perform a TLS handshake or exercise certificate validation, trust stores, server-name verification,
+mutual TLS, protocol negotiation, or transport cleanup.
+
 For an outbound response timeout after a fixed duration, use `response-timeout`:
 
 ```json
@@ -436,10 +450,11 @@ To select one of several effects for each accepted activation, use `weighted-cho
 
 Weights are positive integers and do not need to total 100. At least one outcome is required, and the total weight must
 not exceed `Long.MAX_VALUE`. Inbound and outbound scopes accept `synthetic-http-response` and `latency`; outbound scopes
-also accept `connect-failure`, `dns-failure`, and `response-timeout`. A weighted choice may contain only leaf effects valid
-for its scope, and nested weighted choices are rejected. Selection is deterministic for the run seed and matching
-invocation number, uses a separate random stream from activation and effect jitter, and preserves declared outcome order
-in normalized responses. The disruption's cumulative and concurrent budgets apply across all selected outcomes.
+also accept `connect-failure`, `dns-failure`, `response-timeout`, and `tls-handshake-failure`. A weighted choice may contain
+only leaf effects valid for its scope, and nested weighted choices are rejected. Selection is deterministic for the run
+seed and matching invocation number, uses a separate random stream from activation and effect jitter, and preserves
+declared outcome order in normalized responses. The disruption's cumulative and concurrent budgets apply across all
+selected outcomes.
 
 Activation can also select a deterministic fraction of matching requests:
 
@@ -514,13 +529,13 @@ Runs are local to one Helidon server process, in memory, bounded, and not recons
 The current slice intentionally supports bounded ordered stages with zero or one HTTP disruption per stage, inbound or
 outbound as implemented; `always`, deterministic `probability`, or `periodic-burst` activation; exact or segment-aware
 prefix paths; inbound synthetic 4xx/5xx HTTP responses and latency; outbound Helidon WebClient synthetic 4xx/5xx HTTP
-responses, latency, simulated connection and DNS failures, and simulated response timeouts; and deterministic weighted
-selection between valid effects. Its public vocabulary includes
+responses, latency, simulated connection, DNS, and TLS handshake failures, and simulated response timeouts; and
+deterministic weighted selection between valid effects. Its public vocabulary includes
 `runs`, `stages`, `disruptions`, `scope`,
 `activation`, `effect`, and `budget` so later additions can introduce other bounded local effects without adopting
 another project's API.
 
 Out of scope for this slice are non-Helidon clients, post-connect connection resets, actual transport connection stalls,
-actual DNS and other network faults outside the process, and other transport faults; bytecode injection; exception
+actual DNS, TLS, and other network faults outside the process, and other transport faults; bytecode injection; exception
 injection inside arbitrary methods; CPU or memory pressure; distributed orchestration; persistent run recovery; and
 automatic enablement.

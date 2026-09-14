@@ -165,6 +165,27 @@ class ChaosRunPlanJsonTest {
     }
 
     @Test
+    void acceptsOutboundTlsHandshakeFailure() {
+        ChaosRunPlan direct = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "tls-handshake-failure"}
+                """)), LIMITS);
+        ChaosRunPlan weighted = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "tls-handshake-failure"}}
+                  ]
+                }
+                """)), LIMITS);
+
+        assertThat(direct.stages().getFirst().disruption().orElseThrow().effect(),
+                   instanceOf(ChaosTlsHandshakeFailure.class));
+        ChaosWeightedChoice choice = (ChaosWeightedChoice) weighted.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        assertThat(choice.outcomes().getFirst().effect(), instanceOf(ChaosTlsHandshakeFailure.class));
+    }
+
+    @Test
     void acceptsOutboundResponseTimeout() {
         ChaosRunPlan direct = ChaosRunPlanJson.parse(json(outboundPlanJson("""
                 {"type": "response-timeout", "duration": "PT0.25S"}
@@ -232,6 +253,47 @@ class ChaosRunPlanJsonTest {
                 """),
                           "/stages/0/disruptions/0/effect/outcomes/0/effect/type",
                           "unsupported-inbound-effect");
+    }
+
+    @Test
+    void rejectsInboundTlsHandshakeFailureAtExactEffectPath() {
+        assertInvalidPlan(withEffect("""
+                {"type": "tls-handshake-failure"}
+                """),
+                          "/stages/0/disruptions/0/effect/type",
+                          "unsupported-inbound-effect");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "tls-handshake-failure"}}
+                  ]
+                }
+                """),
+                          "/stages/0/disruptions/0/effect/outcomes/0/effect/type",
+                          "unsupported-inbound-effect");
+    }
+
+    @Test
+    void rejectsTlsHandshakeFailureForNonHttpsOutboundScope() {
+        String direct = outboundPlanJson("""
+                {"type": "tls-handshake-failure"}
+                """).replace("\"scheme\": \"HTTPS\"", "\"scheme\": \"http\"");
+        String weighted = outboundPlanJson("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "tls-handshake-failure"}}
+                  ]
+                }
+                """).replace("\"scheme\": \"HTTPS\"", "\"scheme\": \"http\"");
+
+        assertInvalidPlan(direct,
+                          "/stages/0/disruptions/0/effect/type",
+                          "unsupported-outbound-effect");
+        assertInvalidPlan(weighted,
+                          "/stages/0/disruptions/0/effect/outcomes/0/effect/type",
+                          "unsupported-outbound-effect");
     }
 
     @Test
@@ -615,6 +677,9 @@ class ChaosRunPlanJsonTest {
                 """), "/stages/0/disruptions/0/effect/delay");
         assertBadRequest(outboundPlanJson("""
                 {"type": "dns-failure", "duration": "PT0.25S"}
+                """), "/stages/0/disruptions/0/effect/duration");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "tls-handshake-failure", "duration": "PT0.25S"}
                 """), "/stages/0/disruptions/0/effect/duration");
         assertBadRequest(outboundPlanJson("""
                 {"type": "response-timeout", "duration": "PT0.25S", "status": 503}

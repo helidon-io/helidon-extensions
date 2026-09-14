@@ -169,6 +169,9 @@ final class ChaosRunJson {
                 .set("jitter", timeout.jitter().toString())
                 .build();
         case ChaosSyntheticResponse synthetic -> syntheticResponse(synthetic);
+        case ChaosTlsHandshakeFailure tlsFailure -> JsonObject.builder()
+                .set("type", tlsFailure.type())
+                .build();
         case ChaosWeightedChoice choice -> weightedChoice(choice);
         };
     }

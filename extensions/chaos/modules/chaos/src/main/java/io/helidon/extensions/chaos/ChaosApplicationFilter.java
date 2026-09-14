@@ -62,6 +62,8 @@ final class ChaosApplicationFilter implements Filter {
                 sendSyntheticResponse(response, synthetic);
                 yield false;
             }
+            case ChaosTlsHandshakeFailure tlsFailure -> throw new IllegalStateException(
+                    "Unsupported inbound effect action: " + tlsFailure.getClass().getSimpleName());
             };
         }
         if (proceed) {

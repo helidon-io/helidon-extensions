@@ -225,6 +225,7 @@ final class ChaosRun {
         case ChaosResponseTimeout timeout -> timeout.resolve(ChaosRandom.sample(disruption.effectStreamSeed,
                                                                                  disruption.matched));
         case ChaosSyntheticResponse synthetic -> synthetic;
+        case ChaosTlsHandshakeFailure tlsFailure -> tlsFailure;
         case ChaosWeightedChoice choice -> choice.resolve(ChaosRandom.sample(disruption.choiceStreamSeed,
                                                                              disruption.matched),
                                                           ChaosRandom.sample(disruption.effectStreamSeed,

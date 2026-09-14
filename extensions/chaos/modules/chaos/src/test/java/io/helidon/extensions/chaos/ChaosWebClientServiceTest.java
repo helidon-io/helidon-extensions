@@ -35,6 +35,8 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import javax.net.ssl.SSLHandshakeException;
+
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.http.HeaderNames;
 import io.helidon.http.Method;
@@ -357,6 +359,32 @@ class ChaosWebClientServiceTest {
                                                                        .handle(chain(proceeds), inventoryRequest()));
 
             assertThat(exception.getMessage(), is("Failed to get address for host inventory.example.com"));
+            assertThat(proceeds.get(), is(0));
+            ChaosRunView view = engine.get(run.id()).orElseThrow();
+            assertThat(view.matched(), is(1L));
+            assertThat(view.activated(), is(1L));
+            assertThat(view.completed(), is(1L));
+            assertThat(view.inFlight(), is(0L));
+        } finally {
+            registration.close();
+        }
+    }
+
+    @Test
+    void throwsTlsHandshakeFailureWithoutProceedingAndReleasesReservation() {
+        ChaosRunEngine engine = engine();
+        ChaosRuntimeRegistration registration = ChaosRuntimeBridge.register(engine);
+        try {
+            var run = engine.create(plan(ChaosTlsHandshakeFailure.instance(), 1), "test");
+            AtomicInteger proceeds = new AtomicInteger();
+
+            UncheckedIOException exception = assertThrows(UncheckedIOException.class,
+                                                          () -> new ChaosWebClientService("chaos")
+                                                                  .handle(chain(proceeds), inventoryRequest()));
+
+            assertThat(exception.getMessage(), is("Failed to execute SSL handshake"));
+            assertThat(exception.getCause(), instanceOf(SSLHandshakeException.class));
+            assertThat(exception.getCause().getMessage(), is("TLS handshake failed due to chaos disruption"));
             assertThat(proceeds.get(), is(0));
             ChaosRunView view = engine.get(run.id()).orElseThrow();
             assertThat(view.matched(), is(1L));

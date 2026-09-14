@@ -325,17 +325,18 @@ final class ChaosRunPlanJson {
         case "latency" -> latency(json, path, limits);
         case "response-timeout" -> responseTimeout(json, path, limits);
         case "synthetic-http-response" -> syntheticResponse(json, path, limits);
+        case "tls-handshake-failure" -> tlsHandshakeFailure(json, path);
         case "weighted-choice" -> {
             if (!weightedChoiceAllowed) {
                 throw invalid(path + "/type", "nested-weighted-choice",
                               "weighted-choice outcomes must be connect-failure, dns-failure, latency, response-timeout, "
-                                      + "or synthetic-http-response.");
+                                      + "synthetic-http-response, or tls-handshake-failure.");
             }
             yield weightedChoice(json, path, limits);
         }
         default -> throw invalid(path + "/type", "unsupported-type",
                                  "Effect type must be connect-failure, dns-failure, latency, response-timeout, "
-                                         + "synthetic-http-response, or weighted-choice.");
+                                         + "synthetic-http-response, tls-handshake-failure, or weighted-choice.");
         };
     }
 
@@ -347,6 +348,11 @@ final class ChaosRunPlanJson {
     private static ChaosDnsFailure dnsFailure(JsonObject json, String path) {
         rejectUnknown(json, path, Set.of("type"));
         return ChaosDnsFailure.instance();
+    }
+
+    private static ChaosTlsHandshakeFailure tlsHandshakeFailure(JsonObject json, String path) {
+        rejectUnknown(json, path, Set.of("type"));
+        return ChaosTlsHandshakeFailure.instance();
     }
 
     private static ChaosWeightedChoice weightedChoice(JsonObject json,
@@ -393,6 +399,16 @@ final class ChaosRunPlanJson {
         if (scope instanceof ChaosHttpScope && effect instanceof ChaosResponseTimeout) {
             throw invalid(path + "/type", "unsupported-inbound-effect",
                           "response-timeout is supported only for outbound-http scopes.");
+        }
+        if (scope instanceof ChaosHttpScope && effect instanceof ChaosTlsHandshakeFailure) {
+            throw invalid(path + "/type", "unsupported-inbound-effect",
+                          "tls-handshake-failure is supported only for outbound-http scopes using https.");
+        }
+        if (scope instanceof ChaosOutboundHttpScope outbound
+                && effect instanceof ChaosTlsHandshakeFailure
+                && !"https".equals(outbound.scheme())) {
+            throw invalid(path + "/type", "unsupported-outbound-effect",
+                          "tls-handshake-failure requires an outbound-http scope using https.");
         }
         if (effect instanceof ChaosWeightedChoice choice) {
             for (int index = 0; index < choice.outcomes().size(); index++) {

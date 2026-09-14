@@ -22,5 +22,6 @@ sealed interface ChaosEffectAction permits ChaosConnectFailure,
         ChaosDnsFailure,
         ChaosLatencyAction,
         ChaosResponseTimeoutAction,
-        ChaosSyntheticResponse {
+        ChaosSyntheticResponse,
+        ChaosTlsHandshakeFailure {
 }
