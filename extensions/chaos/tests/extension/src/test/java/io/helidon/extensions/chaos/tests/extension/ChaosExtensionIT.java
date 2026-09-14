@@ -17,6 +17,7 @@ package io.helidon.extensions.chaos.tests.extension;
 
 import java.io.UncheckedIOException;
 import java.net.ConnectException;
+import java.net.SocketTimeoutException;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -249,6 +250,56 @@ class ChaosExtensionIT {
     }
 
     @Test
+    void throwsOutboundResponseTimeoutWithoutInvokingDestination() {
+        var baseUri = application.prototype().baseUri().orElseThrow();
+        JsonObject created = postRun(control,
+                                     outboundResponseTimeoutPlan(baseUri.scheme(),
+                                                                 baseUri.host(),
+                                                                 baseUri.port(),
+                                                                 "PT0.1S"));
+        String id = created.stringValue("id").orElseThrow();
+        JsonObject effect = created.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("effect").orElseThrow();
+        assertThat(effect.stringValue("type").orElseThrow(), is("response-timeout"));
+        assertThat(effect.stringValue("duration").orElseThrow(), is("PT0.1S"));
+        assertThat(effect.stringValue("jitter").orElseThrow(), is("PT0S"));
+        long started = System.nanoTime();
+
+        UncheckedIOException exception = assertThrows(UncheckedIOException.class,
+                                                      () -> application.get("/orders/42").request(String.class));
+        Duration elapsed = Duration.ofNanos(System.nanoTime() - started);
+
+        assertThat(exception.getCause(), instanceOf(SocketTimeoutException.class));
+        assertThat(exception.getCause().getMessage(), is("Response timed out due to chaos disruption"));
+        assertThat(elapsed.compareTo(Duration.ofMillis(90)) >= 0, is(true));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(0));
+        assertOutboundCounters(id, 1);
+    }
+
+    @Test
+    void enforcesConfiguredMaximumResponseTimeout() {
+        var baseUri = application.prototype().baseUri().orElseThrow();
+        JsonObject plan = outboundResponseTimeoutPlan(baseUri.scheme(),
+                                                      baseUri.host(),
+                                                      baseUri.port(),
+                                                      "PT0.151S");
+
+        var response = control.post(RUNS)
+                .contentType(MediaTypes.APPLICATION_JSON)
+                .submit(plan, String.class);
+
+        assertThat(response.status(), is(Status.UNPROCESSABLE_CONTENT_422));
+        JsonObject violation = JsonParser.create(response.entity()).readJsonObject()
+                .arrayValue("violations").orElseThrow()
+                .get(0).orElseThrow().asObject();
+        assertThat(violation.stringValue("path").orElseThrow(),
+                   is("/stages/0/disruptions/0/effect/duration"));
+        assertThat(violation.stringValue("code").orElseThrow(), is("response-timeout-limit"));
+    }
+
+    @Test
     void executesDeterministicWeightedChoice() {
         JsonObject plan = runPlan(42,
                                   "stage",
@@ -459,6 +510,37 @@ class ChaosExtensionIT {
                   }]
                 }
                 """.formatted(scheme, host, port)).readJsonObject();
+    }
+
+    private static JsonObject outboundResponseTimeoutPlan(String scheme,
+                                                          String host,
+                                                          int port,
+                                                          String duration) {
+        return JsonParser.create("""
+                {
+                  "name": "outbound-inventory-response-timeout",
+                  "maximumDuration": "PT30S",
+                  "seed": 42,
+                  "stages": [{
+                    "name": "outbound-response-timeout",
+                    "duration": "PT10S",
+                    "disruptions": [{
+                      "name": "timeout-outbound-orders-response",
+                      "scope": {
+                        "type": "outbound-http",
+                        "methods": ["GET"],
+                        "scheme": "%s",
+                        "host": "%s",
+                        "port": %d,
+                        "path": {"match": "exact", "value": "/orders/42"}
+                      },
+                      "activation": {"type": "always"},
+                      "effect": {"type": "response-timeout", "duration": "%s"},
+                      "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                    }]
+                  }]
+                }
+                """.formatted(scheme, host, port, duration)).readJsonObject();
     }
 
     private static JsonObject sequencePlan() {

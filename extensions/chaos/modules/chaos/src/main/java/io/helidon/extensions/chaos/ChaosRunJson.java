@@ -160,6 +160,11 @@ final class ChaosRunJson {
                 .set("delay", latency.delay().toString())
                 .set("jitter", latency.jitter().toString())
                 .build();
+        case ChaosResponseTimeout timeout -> JsonObject.builder()
+                .set("type", "response-timeout")
+                .set("duration", timeout.duration().toString())
+                .set("jitter", timeout.jitter().toString())
+                .build();
         case ChaosSyntheticResponse synthetic -> syntheticResponse(synthetic);
         case ChaosWeightedChoice choice -> weightedChoice(choice);
         };

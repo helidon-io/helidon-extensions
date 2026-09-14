@@ -82,6 +82,15 @@ interface ChaosLimitsConfigBlueprint {
     Duration maximumLatency();
 
     /**
+     * Maximum simulated response timeout duration, including jitter.
+     *
+     * @return maximum response timeout
+     */
+    @Option.Configured
+    @Option.Default("PT30S")
+    Duration maximumResponseTimeout();
+
+    /**
      * Maximum synthetic response body size in UTF-8 bytes.
      *
      * @return maximum body size

@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.reflect.Proxy;
 import java.net.ConnectException;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
@@ -26,6 +27,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -339,6 +345,86 @@ class ChaosWebClientServiceTest {
     }
 
     @Test
+    void throwsResponseTimeoutWithoutProceedingAndReleasesReservation() {
+        ChaosRunEngine engine = engine();
+        ChaosRuntimeRegistration registration = ChaosRuntimeBridge.register(engine);
+        try {
+            var run = engine.create(plan(new ChaosResponseTimeout(Duration.ofMillis(50), Duration.ZERO), 1), "test");
+            AtomicInteger proceeds = new AtomicInteger();
+            long started = System.nanoTime();
+
+            UncheckedIOException exception = assertThrows(UncheckedIOException.class,
+                                                          () -> new ChaosWebClientService("chaos")
+                                                                  .handle(chain(proceeds), inventoryRequest()));
+            Duration elapsed = Duration.ofNanos(System.nanoTime() - started);
+
+            assertThat(exception.getCause(), instanceOf(SocketTimeoutException.class));
+            assertThat(exception.getCause().getMessage(), is("Response timed out due to chaos disruption"));
+            assertThat(elapsed.compareTo(Duration.ofMillis(40)) >= 0, is(true));
+            assertThat(proceeds.get(), is(0));
+            ChaosRunView view = engine.get(run.id()).orElseThrow();
+            assertThat(view.matched(), is(1L));
+            assertThat(view.activated(), is(1L));
+            assertThat(view.completed(), is(1L));
+            assertThat(view.inFlight(), is(0L));
+        } finally {
+            registration.close();
+        }
+    }
+
+    @Test
+    void interruptedResponseTimeoutRestoresInterruptWithoutProceeding() {
+        ChaosRunEngine engine = engine();
+        ChaosRuntimeRegistration registration = ChaosRuntimeBridge.register(engine);
+        try {
+            var run = engine.create(plan(new ChaosResponseTimeout(Duration.ofSeconds(1), Duration.ZERO), 1), "test");
+            AtomicInteger proceeds = new AtomicInteger();
+            Thread.currentThread().interrupt();
+
+            UncheckedIOException exception = assertThrows(UncheckedIOException.class,
+                                                          () -> new ChaosWebClientService("chaos")
+                                                                  .handle(chain(proceeds), inventoryRequest()));
+
+            assertThat(exception.getCause(), instanceOf(SocketTimeoutException.class));
+            assertThat(Thread.currentThread().isInterrupted(), is(true));
+            assertThat(proceeds.get(), is(0));
+            assertThat(engine.get(run.id()).orElseThrow().completed(), is(1L));
+        } finally {
+            Thread.interrupted();
+            registration.close();
+        }
+    }
+
+    @Test
+    void responseTimeoutHoldsConcurrencyReservationWhileWaiting()
+            throws InterruptedException, ExecutionException, TimeoutException {
+        ChaosRunEngine engine = engine();
+        ChaosRuntimeRegistration registration = ChaosRuntimeBridge.register(engine);
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var run = engine.create(plan(new ChaosResponseTimeout(Duration.ofMillis(250), Duration.ZERO), 1), "test");
+            AtomicInteger proceeds = new AtomicInteger();
+            ChaosWebClientService service = new ChaosWebClientService("chaos");
+            Future<UncheckedIOException> first = executor.submit(() -> assertThrows(UncheckedIOException.class,
+                                                                                     () -> service.handle(chain(proceeds),
+                                                                                                          inventoryRequest())));
+            awaitInFlight(engine, run.id());
+
+            assertThat(service.handle(chain(proceeds), inventoryRequest()), sameInstance(RESPONSE));
+            assertThat(first.get(2, TimeUnit.SECONDS).getCause(), instanceOf(SocketTimeoutException.class));
+
+            ChaosRunView view = engine.get(run.id()).orElseThrow();
+            assertThat(view.matched(), is(2L));
+            assertThat(view.activated(), is(1L));
+            assertThat(view.skippedConcurrent(), is(1L));
+            assertThat(view.completed(), is(1L));
+            assertThat(view.inFlight(), is(0L));
+            assertThat(proceeds.get(), is(1));
+        } finally {
+            registration.close();
+        }
+    }
+
+    @Test
     void rejectsNullChainAndRequest() {
         ChaosWebClientService service = new ChaosWebClientService("chaos");
 
@@ -378,6 +464,17 @@ class ChaosWebClientServiceTest {
     private static ChaosRunEngine engine() {
         TestChaosScheduler scheduler = new TestChaosScheduler();
         return ChaosRunEngine.create(ChaosLimitsConfig.builder().build(), scheduler.clock(), scheduler, UUID::randomUUID);
+    }
+
+    private static void awaitInFlight(ChaosRunEngine engine, UUID id) throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
+        do {
+            if (engine.get(id).orElseThrow().inFlight() == 1) {
+                return;
+            }
+            Thread.sleep(1);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("Response timeout did not enter the in-flight state");
     }
 
     private static ChaosLatency latency() {

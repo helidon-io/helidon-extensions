@@ -221,6 +221,8 @@ final class ChaosRun {
         case ChaosConnectFailure connectFailure -> connectFailure;
         case ChaosLatency latency -> latency.resolve(ChaosRandom.sample(disruption.effectStreamSeed,
                                                                         disruption.matched));
+        case ChaosResponseTimeout timeout -> timeout.resolve(ChaosRandom.sample(disruption.effectStreamSeed,
+                                                                                 disruption.matched));
         case ChaosSyntheticResponse synthetic -> synthetic;
         case ChaosWeightedChoice choice -> choice.resolve(ChaosRandom.sample(disruption.choiceStreamSeed,
                                                                              disruption.matched),

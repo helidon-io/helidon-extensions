@@ -39,6 +39,8 @@ final class ChaosLimitsConfigSupport {
                             "maximum-concurrent-activations-per-disruption");
             requirePositive(builder.maximumLatency(), "maximum-latency");
             requireNanosecondPrecision(builder.maximumLatency(), "maximum-latency");
+            requirePositive(builder.maximumResponseTimeout(), "maximum-response-timeout");
+            requireNanosecondPrecision(builder.maximumResponseTimeout(), "maximum-response-timeout");
             requirePositive(builder.maximumSyntheticBodyBytes(), "maximum-synthetic-body-bytes");
             requirePositive(builder.maximumControlRequestBytes(), "maximum-control-request-bytes");
             requirePositive(builder.maximumConcurrentControlRequests(), "maximum-concurrent-control-requests");

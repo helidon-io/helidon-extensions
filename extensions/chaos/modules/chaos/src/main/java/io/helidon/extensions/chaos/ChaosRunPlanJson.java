@@ -317,21 +317,24 @@ final class ChaosRunPlanJson {
                                       ChaosLimitsConfig limits,
                                       boolean weightedChoiceAllowed) {
         rejectUnknown(json, path,
-                      Set.of("type", "status", "headers", "mediaType", "body", "delay", "jitter", "outcomes"));
+                      Set.of("type", "status", "headers", "mediaType", "body", "delay", "duration", "jitter", "outcomes"));
         String type = requiredString(json, "type", path + "/type");
         return switch (type) {
         case "connect-failure" -> connectFailure(json, path);
         case "latency" -> latency(json, path, limits);
+        case "response-timeout" -> responseTimeout(json, path, limits);
         case "synthetic-http-response" -> syntheticResponse(json, path, limits);
         case "weighted-choice" -> {
             if (!weightedChoiceAllowed) {
                 throw invalid(path + "/type", "nested-weighted-choice",
-                              "weighted-choice outcomes must be latency, synthetic-http-response, or connect-failure.");
+                              "weighted-choice outcomes must be connect-failure, latency, response-timeout, "
+                                      + "or synthetic-http-response.");
             }
             yield weightedChoice(json, path, limits);
         }
         default -> throw invalid(path + "/type", "unsupported-type",
-                                 "Effect type must be connect-failure, latency, synthetic-http-response, or weighted-choice.");
+                                 "Effect type must be connect-failure, latency, response-timeout, "
+                                         + "synthetic-http-response, or weighted-choice.");
         };
     }
 
@@ -377,6 +380,10 @@ final class ChaosRunPlanJson {
             throw invalid(path + "/type", "unsupported-inbound-effect",
                           "connect-failure is supported only for outbound-http scopes.");
         }
+        if (scope instanceof ChaosHttpScope && effect instanceof ChaosResponseTimeout) {
+            throw invalid(path + "/type", "unsupported-inbound-effect",
+                          "response-timeout is supported only for outbound-http scopes.");
+        }
         if (effect instanceof ChaosWeightedChoice choice) {
             for (int index = 0; index < choice.outcomes().size(); index++) {
                 validateEffectForScope(scope,
@@ -411,6 +418,37 @@ final class ChaosRunPlanJson {
                           "delay plus jitter exceeds the server latency limit.");
         }
         return new ChaosLatency(delay, jitter);
+    }
+
+    private static ChaosResponseTimeout responseTimeout(JsonObject json,
+                                                        String path,
+                                                        ChaosLimitsConfig limits) {
+        rejectUnknown(json, path, Set.of("type", "duration", "jitter"));
+        Duration duration = duration(json, "duration", path + "/duration");
+        requirePositive(duration, path + "/duration");
+        if (duration.compareTo(limits.maximumResponseTimeout()) > 0) {
+            throw invalid(path + "/duration", "response-timeout-limit",
+                          "duration exceeds the server response timeout limit.");
+        }
+        Duration jitter = json.containsKey("jitter") ? duration(json, "jitter", path + "/jitter") : Duration.ZERO;
+        if (jitter.isNegative()) {
+            throw invalid(path + "/jitter", "invalid-jitter", "jitter must not be negative.");
+        }
+        if (jitter.compareTo(duration) > 0) {
+            throw invalid(path + "/jitter", "invalid-jitter", "jitter must not exceed duration.");
+        }
+        Duration maximumDuration;
+        try {
+            maximumDuration = duration.plus(jitter);
+        } catch (ArithmeticException exception) {
+            throw invalid(path + "/jitter", "response-timeout-limit",
+                          "duration plus jitter is too large.", exception);
+        }
+        if (maximumDuration.compareTo(limits.maximumResponseTimeout()) > 0) {
+            throw invalid(path + "/jitter", "response-timeout-limit",
+                          "duration plus jitter exceeds the server response timeout limit.");
+        }
+        return new ChaosResponseTimeout(duration, jitter);
     }
 
     private static ChaosSyntheticResponse syntheticResponse(JsonObject json, String path, ChaosLimitsConfig limits) {

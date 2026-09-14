@@ -157,6 +157,32 @@ class ChaosRunJsonTest {
     }
 
     @Test
+    void writesNormalizedResponseTimeoutEffect() {
+        ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("GET"),
+                                                                   "https",
+                                                                   "inventory.example.com",
+                                                                   443,
+                                                                   PREFIX,
+                                                                   "/v1/items");
+        ChaosRunPlan timeoutPlan = plan(scope,
+                                        new ChaosResponseTimeout(Duration.ofMillis(250),
+                                                                 Duration.ofMillis(50)));
+
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   timeoutPlan));
+
+        JsonObject effect = json.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("effect").orElseThrow();
+        assertThat(effect.stringValue("type").orElseThrow(), is("response-timeout"));
+        assertThat(effect.stringValue("duration").orElseThrow(), is("PT0.25S"));
+        assertThat(effect.stringValue("jitter").orElseThrow(), is("PT0.05S"));
+    }
+
+    @Test
     void writesNormalizedOutboundHttpScope() {
         ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("get"),
                                                                    "HTTPS",

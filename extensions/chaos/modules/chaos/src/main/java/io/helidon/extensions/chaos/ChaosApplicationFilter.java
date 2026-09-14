@@ -54,6 +54,8 @@ final class ChaosApplicationFilter implements Filter {
                 latency.apply();
                 yield true;
             }
+            case ChaosResponseTimeoutAction timeout -> throw new IllegalStateException(
+                    "Unsupported inbound effect action: " + timeout.getClass().getSimpleName());
             case ChaosSyntheticResponse synthetic -> {
                 sendSyntheticResponse(response, synthetic);
                 yield false;

@@ -63,6 +63,7 @@ final class ChaosWebClientService implements WebClientService {
                         switch (reservation.action()) {
                         case ChaosConnectFailure connectFailure -> throw connectFailure.exception();
                         case ChaosLatencyAction latency -> latency.apply();
+                        case ChaosResponseTimeoutAction timeout -> timeout.apply();
                         case ChaosSyntheticResponse syntheticResponse -> {
                             return ChaosWebClientSyntheticResponse.create(request, syntheticResponse);
                         }

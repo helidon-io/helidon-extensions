@@ -144,6 +144,38 @@ class ChaosRunPlanJsonTest {
     }
 
     @Test
+    void acceptsOutboundResponseTimeout() {
+        ChaosRunPlan direct = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0.25S"}
+                """)), LIMITS);
+        ChaosRunPlan weighted = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {
+                      "weight": 1,
+                      "effect": {
+                        "type": "response-timeout",
+                        "duration": "PT0.25S",
+                        "jitter": "PT0.05S"
+                      }
+                    }
+                  ]
+                }
+                """)), LIMITS);
+
+        ChaosResponseTimeout timeout = (ChaosResponseTimeout) direct.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        assertThat(timeout.duration(), is(Duration.ofMillis(250)));
+        assertThat(timeout.jitter(), is(Duration.ZERO));
+        ChaosWeightedChoice choice = (ChaosWeightedChoice) weighted.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        ChaosResponseTimeout weightedTimeout = (ChaosResponseTimeout) choice.outcomes().getFirst().effect();
+        assertThat(weightedTimeout.duration(), is(Duration.ofMillis(250)));
+        assertThat(weightedTimeout.jitter(), is(Duration.ofMillis(50)));
+    }
+
+    @Test
     void rejectsInboundConnectFailureAtExactEffectPath() {
         assertInvalidPlan(withEffect("""
                 {"type": "connect-failure"}
@@ -155,6 +187,28 @@ class ChaosRunPlanJsonTest {
                   "type": "weighted-choice",
                   "outcomes": [
                     {"weight": 1, "effect": {"type": "connect-failure"}}
+                  ]
+                }
+                """),
+                          "/stages/0/disruptions/0/effect/outcomes/0/effect/type",
+                          "unsupported-inbound-effect");
+    }
+
+    @Test
+    void rejectsInboundResponseTimeoutAtExactEffectPath() {
+        assertInvalidPlan(withEffect("""
+                {"type": "response-timeout", "duration": "PT0.25S"}
+                """),
+                          "/stages/0/disruptions/0/effect/type",
+                          "unsupported-inbound-effect");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {
+                      "weight": 1,
+                      "effect": {"type": "response-timeout", "duration": "PT0.25S"}
+                    }
                   ]
                 }
                 """),
@@ -379,6 +433,38 @@ class ChaosRunPlanJsonTest {
     }
 
     @Test
+    void rejectsInvalidResponseTimeout() {
+        assertBadRequest(outboundPlanJson("""
+                {"type": "response-timeout"}
+                """), "/stages/0/disruptions/0/effect/duration");
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "not-a-duration"}
+                """), "/stages/0/disruptions/0/effect/duration");
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0S"}
+                """), "/stages/0/disruptions/0/effect/duration");
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "-PT0.001S"}
+                """), "/stages/0/disruptions/0/effect/duration");
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0.25S", "jitter": "-PT0.001S"}
+                """), "/stages/0/disruptions/0/effect/jitter");
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0.25S", "jitter": "PT0.251S"}
+                """), "/stages/0/disruptions/0/effect/jitter");
+
+        ChaosLimitsConfig limits = ChaosLimitsConfig.builder()
+                .maximumResponseTimeout(Duration.ofMillis(275))
+                .build();
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0.276S"}
+                """), limits, "/stages/0/disruptions/0/effect/duration");
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0.25S", "jitter": "PT0.05S"}
+                """), limits, "/stages/0/disruptions/0/effect/jitter");
+    }
+
+    @Test
     void rejectsMalformedWeightedChoiceEffects() {
         assertBadRequest(withEffect("""
                 {"type": "weighted-choice"}
@@ -487,6 +573,9 @@ class ChaosRunPlanJsonTest {
         assertBadRequest(outboundPlanJson("""
                 {"type": "connect-failure", "delay": "PT0.25S"}
                 """), "/stages/0/disruptions/0/effect/delay");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0.25S", "status": 503}
+                """), "/stages/0/disruptions/0/effect/status");
     }
 
     @Test

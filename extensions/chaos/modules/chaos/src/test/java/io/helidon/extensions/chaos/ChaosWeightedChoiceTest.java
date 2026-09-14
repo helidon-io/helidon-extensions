@@ -53,6 +53,17 @@ class ChaosWeightedChoiceTest {
     }
 
     @Test
+    void resolvesResponseTimeoutLeaf() {
+        ChaosResponseTimeout timeout = new ChaosResponseTimeout(Duration.ofMillis(250), Duration.ofMillis(50));
+        ChaosWeightedChoice choice = new ChaosWeightedChoice(List.of(
+                new ChaosWeightedChoice.Outcome(1, timeout)));
+
+        ChaosResponseTimeoutAction action = (ChaosResponseTimeoutAction) choice.resolve(0, 100_000_000);
+
+        assertThat(action.duration(), is(Duration.ofMillis(250)));
+    }
+
+    @Test
     void protectsOutcomeInvariantsAndOrder() {
         assertThrows(NullPointerException.class, () -> new ChaosWeightedChoice(null));
         assertThrows(IllegalArgumentException.class, () -> new ChaosWeightedChoice(List.of()));

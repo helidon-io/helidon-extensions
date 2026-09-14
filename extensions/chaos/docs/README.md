@@ -1,6 +1,6 @@
 # Helidon Chaos extension
 
-The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response or inbound latency, and matching Helidon WebClient calls can receive bounded outbound latency, a synthetic HTTP error response, or a simulated connection failure.
+The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response or inbound latency, and matching Helidon WebClient calls can receive bounded outbound latency, a synthetic HTTP error response, a simulated connection failure, or a simulated response timeout.
 
 This first slice targets Helidon 4.5.3 and is disabled by default.
 
@@ -342,6 +342,34 @@ WebClient chain and does not access the network. It throws `java.io.UncheckedIOE
 `java.net.ConnectException` cause, matching the exception shape used by Helidon WebClient for connection failures. The
 reservation is released before the exception reaches the caller, so completed and in-flight counters remain accurate.
 
+For an outbound response timeout after a fixed duration, use `response-timeout`:
+
+```json
+{
+  "type": "response-timeout",
+  "duration": "PT2S"
+}
+```
+
+An optional `jitter` selects a deterministic duration below or above the base duration:
+
+```json
+{
+  "type": "response-timeout",
+  "duration": "PT2S",
+  "jitter": "PT0.25S"
+}
+```
+
+The second example waits from 1.75 through 2.25 seconds. `duration` must be positive. `jitter` defaults to zero, must
+not be negative, and must not exceed `duration`. The worst-case value of `duration + jitter` must not exceed the
+server's `maximum-response-timeout` limit. The run seed and matching invocation number determine the selected duration.
+A selected call does not continue through the WebClient chain or access the network. After waiting, it throws
+`java.io.UncheckedIOException` with a `java.net.SocketTimeoutException` cause. This is a client-visible simulated
+response timeout, not a transport-level stalled connection. The reservation remains in flight for the wait, so
+`maximumConcurrent` bounds simultaneous timeout effects. If the wait is interrupted, the interrupt status is restored
+and the timeout is thrown immediately.
+
 For a fixed delay, use the `latency` effect:
 
 ```json
@@ -396,10 +424,10 @@ To select one of several effects for each accepted activation, use `weighted-cho
 
 Weights are positive integers and do not need to total 100. At least one outcome is required, and the total weight must
 not exceed `Long.MAX_VALUE`. Inbound and outbound scopes accept `synthetic-http-response` and `latency`; outbound scopes
-also accept `connect-failure`. A weighted choice may contain only leaf effects valid for its scope, and nested weighted
-choices are rejected. Selection is deterministic for the run seed and matching invocation number, uses a separate random
-stream from activation and latency jitter, and preserves declared outcome order in normalized responses. The
-disruption's cumulative and concurrent budgets apply across all selected outcomes.
+also accept `connect-failure` and `response-timeout`. A weighted choice may contain only leaf effects valid for its scope,
+and nested weighted choices are rejected. Selection is deterministic for the run seed and matching invocation number,
+uses a separate random stream from activation and effect jitter, and preserves declared outcome order in normalized
+responses. The disruption's cumulative and concurrent budgets apply across all selected outcomes.
 
 Activation can also select a deterministic fraction of matching requests:
 
@@ -455,6 +483,7 @@ curl --fail-with-body --request DELETE --user operator:test-only-password \
 | `maximum-activations-per-disruption` | `10000` |
 | `maximum-concurrent-activations-per-disruption` | `64` |
 | `maximum-latency` | `PT30S` |
+| `maximum-response-timeout` | `PT30S` |
 | `maximum-synthetic-body-bytes` | `65536` |
 | `maximum-control-request-bytes` | `65536` |
 | `maximum-concurrent-control-requests` | `16` |
@@ -463,7 +492,8 @@ curl --fail-with-body --request DELETE --user operator:test-only-password \
 
 Request budgets may be lower than these ceilings but never higher. Concurrent and cumulative reservations are atomic,
 and stopping a run prevents new reservations while in-flight work drains. `maximum-latency` applies to both inbound and
-outbound latency effects. `maximum-synthetic-body-bytes` applies to both inbound and outbound synthetic responses.
+outbound latency effects. `maximum-response-timeout` applies to outbound response timeout effects.
+`maximum-synthetic-body-bytes` applies to both inbound and outbound synthetic responses.
 
 ## Runtime model and first-slice boundary
 
@@ -472,11 +502,12 @@ Runs are local to one Helidon server process, in memory, bounded, and not recons
 The current slice intentionally supports bounded ordered stages with zero or one HTTP disruption per stage, inbound or
 outbound as implemented; `always`, deterministic `probability`, or `periodic-burst` activation; exact or segment-aware
 prefix paths; inbound synthetic 4xx/5xx HTTP responses and latency; outbound Helidon WebClient synthetic 4xx/5xx HTTP
-responses, latency, and simulated connection failures; and deterministic weighted selection between valid effects. Its public vocabulary includes
+responses, latency, simulated connection failures, and simulated response timeouts; and deterministic weighted selection
+between valid effects. Its public vocabulary includes
 `runs`, `stages`, `disruptions`, `scope`,
 `activation`, `effect`, and `budget` so later additions can introduce other bounded local effects without adopting
 another project's API.
 
-Out of scope for this slice are non-Helidon clients, post-connect connection resets and other transport faults, timeout
-or connection-stall effects, bytecode injection, exception injection inside arbitrary methods, CPU or memory pressure,
-network faults outside the process, distributed orchestration, persistent run recovery, and automatic enablement.
+Out of scope for this slice are non-Helidon clients, post-connect connection resets, actual transport connection stalls,
+and other transport faults; bytecode injection; exception injection inside arbitrary methods; CPU or memory pressure;
+network faults outside the process; distributed orchestration; persistent run recovery; and automatic enablement.
