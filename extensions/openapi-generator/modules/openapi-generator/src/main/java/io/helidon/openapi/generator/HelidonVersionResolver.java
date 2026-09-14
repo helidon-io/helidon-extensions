@@ -53,32 +53,19 @@ final class HelidonVersionResolver {
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new IOException("HTTP " + response.statusCode());
             }
-            return parseResolvedHelidonVersion(requestedVersion, requestUri, response.body());
+            String resolvedVersion = response.body() == null ? "" : response.body().trim();
+            if (resolvedVersion.isEmpty()) {
+                throw new IOException("Helidon version service returned an empty response body");
+            }
+            return resolvedVersion;
         } catch (Exception e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            throw new IllegalArgumentException(helidonVersionResolutionFailure(requestedVersion, requestUri, e.getMessage()));
+            throw new RuntimeException(String.format(
+                    "Failed to resolve Helidon version '%s' from %s: %s. "
+                            + "Set helidonVersion to a specific Helidon release instead of a version shorthand.",
+                    requestedVersion, requestUri, e.getMessage()), e);
         }
-    }
-
-    private static String parseResolvedHelidonVersion(String shorthand, URI requestUri, String body) {
-        String resolvedVersion = body == null ? "" : body.trim();
-        if (resolvedVersion.isEmpty()) {
-            throw new IllegalArgumentException(
-                    helidonVersionResolutionFailure(
-                            shorthand, requestUri, "Helidon version service returned an empty response body"));
-        }
-        return resolvedVersion;
-    }
-
-    private static String helidonVersionResolutionFailure(
-            String shorthand,
-            URI requestUri,
-            String reason) {
-        return String.format(
-                "Failed to resolve Helidon version '%s' from %s: %s. "
-                        + "Set helidonVersion to a specific Helidon release instead of a version shorthand.",
-                shorthand, requestUri, reason);
     }
 }

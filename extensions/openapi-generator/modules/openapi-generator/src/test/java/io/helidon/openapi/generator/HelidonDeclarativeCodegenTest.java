@@ -32,6 +32,7 @@ import org.openapitools.codegen.CodegenType;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -300,24 +301,26 @@ class HelidonDeclarativeCodegenTest {
     @Test
     void resolveHelidonVersionRejectsBlankResponse() throws Exception {
         try (TestHttpEndpoint endpoint = TestHttpEndpoint.responding(200, "\n")) {
-            IllegalArgumentException exception = assertThrows(
-                    IllegalArgumentException.class,
+            RuntimeException exception = assertThrows(
+                    RuntimeException.class,
                     () -> HelidonVersionResolver.resolve("v4", endpoint.baseUri()));
 
             assertThat(exception.getMessage(), containsString("Failed to resolve Helidon version 'v4'"));
             assertThat(exception.getMessage(), containsString("Set helidonVersion to a specific Helidon release"));
+            assertThat(exception.getCause(), is(notNullValue()));
         }
     }
 
     @Test
     void resolveHelidonVersionFailsClearlyOnHttpError() throws Exception {
         try (TestHttpEndpoint endpoint = TestHttpEndpoint.responding(404, "not found")) {
-            IllegalArgumentException exception = assertThrows(
-                    IllegalArgumentException.class,
+            RuntimeException exception = assertThrows(
+                    RuntimeException.class,
                     () -> HelidonVersionResolver.resolve("v4", endpoint.baseUri()));
 
             assertThat(exception.getMessage(), containsString("Failed to resolve Helidon version 'v4'"));
             assertThat(exception.getMessage(), containsString("Set helidonVersion to a specific Helidon release"));
+            assertThat(exception.getCause(), is(notNullValue()));
         }
     }
 
