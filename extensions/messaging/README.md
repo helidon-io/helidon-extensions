@@ -21,14 +21,15 @@ Each connector is an independently versioned extension under this grouping direc
 * [Kafka](kafka/modules/kafka/README.md), including [runnable examples](kafka/examples/README.md)
 * [Jakarta JMS](jms/modules/jms/README.md),
   including [runnable Jakarta JMS examples](jms/examples/README.md)
-* [javax JMS](jms-javax/modules/jms-javax/README.md)
+* [javax JMS](jms-javax/modules/jms-javax/README.md),
+  including [runnable javax JMS examples](jms-javax/examples/README.md)
 * [Pulsar](pulsar/modules/pulsar/README.md), including [runnable examples](pulsar/examples/README.md)
 
 Kafka's Java APIs are preview APIs; Jakarta JMS, javax JMS, and Pulsar are incubating connectors.
 
 Build all connectors with `mvn -f extensions/messaging/pom.xml install`, or build one
 with `mvn -f extensions/messaging/kafka/pom.xml install`. Add `-Ptests` to include
-integration tests and `-Pexamples` to include the Kafka, JMS, and Pulsar examples.
+integration tests and `-Pexamples` to include the Kafka, Jakarta JMS, javax JMS, and Pulsar examples.
 
 Each connector has its own `bom` and `modules` directories. Import
 `io.helidon.extensions.messaging.kafka:helidon-extensions-messaging-kafka-bom` for

@@ -9,10 +9,9 @@ This module requires a JMS 2.0 provider; JMS 1.1 providers are not supported. It
 [Jakarta JMS connector](../../../jms/modules/jms/README.md), with the same configuration and delivery behavior, using the
 `io.helidon.extensions.messaging.connectors.jms.javax` package and the `helidon-jms-javax` connector type.
 
-For complete HTTP-to-JMS round-trip applications using the Jakarta API and Apache Artemis, see the
-[imperative example](../../../jms/examples/se-imperative/README.md) and
-[declarative example](../../../jms/examples/se-declarative/README.md). To adapt them, use this module's classes, a JMS 2.0
-provider, a `javax.jms.ConnectionFactory`, and the `helidon-jms-javax` connector type.
+For complete HTTP-to-JMS round-trip applications using the javax API and Apache Artemis, see the
+[imperative example](../../examples/se-imperative/README.md) and
+[declarative example](../../examples/se-declarative/README.md).
 
 ## Dependency
 
