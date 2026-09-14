@@ -45,11 +45,17 @@
     <properties>
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
         <version.java>26</version.java>
+        <version.lib.awaitility>4.3.0</version.lib.awaitility>
         <version.lib.jakarta.jms-api>2.0.3</version.lib.jakarta.jms-api>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.awaitility</groupId>
+                <artifactId>awaitility</artifactId>
+                <version>${version.lib.awaitility}</version>
+            </dependency>
             <dependency>
                 <groupId>jakarta.jms</groupId>
                 <artifactId>jakarta.jms-api</artifactId>

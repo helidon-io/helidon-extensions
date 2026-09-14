@@ -83,6 +83,7 @@ import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.CooperativeStickyAssignor;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -866,7 +867,15 @@ class KafkaConnectorIT {
                 } else {
                     awaitCommittedOffset(group, topic, settledRecords);
                 }
-                assertRecordCount(deadLetterTopic, settledRecords, Duration.ofMillis(500));
+                try (Admin admin = Admin.create(Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG,
+                                                       KAFKA.getBootstrapServers()))) {
+                    TopicPartition partition = new TopicPartition(deadLetterTopic, 0);
+                    long endOffset = admin.listOffsets(Map.of(partition, OffsetSpec.latest()))
+                            .partitionResult(partition)
+                            .get(WAIT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
+                            .offset();
+                    assertThat("dead-letter records before allowing the current failure", endOffset, is((long) settledRecords));
+                }
 
                 failedBatch.allowFailure();
                 settledRecords += failedBatch.entities().size();

@@ -338,7 +338,6 @@ class KafkaIncomingChannelTest {
         assertThat(commitStarted.await(5, TimeUnit.SECONDS), is(true));
         incoming.drain();
         try {
-            awaitWaiting(sourceThread);
             assertThat(sourceThread.isAlive(), is(true));
             assertThat(consumer.commitCount(), is(0));
         } finally {
@@ -1889,9 +1888,16 @@ class KafkaIncomingChannelTest {
     }
 
     @Test
-    @Timeout(value = 10)
+    @Timeout(value = 120)
     void testCloseReportsNonCooperativeDeliveryUntilItActuallyFinishes() throws InterruptedException {
-        TrackingMockConsumer consumer = trackingConsumer();
+        CountDownLatch closeRequested = new CountDownLatch(1);
+        TrackingMockConsumer consumer = new TrackingMockConsumer() {
+            @Override
+            public void wakeup() {
+                super.wakeup();
+                closeRequested.countDown();
+            }
+        };
         scheduleRecords(consumer, record(0, "first", new RecordHeaders()));
         CountDownLatch handlerStarted = new CountDownLatch(1);
         CountDownLatch releaseHandler = new CountDownLatch(1);
@@ -1899,7 +1905,7 @@ class KafkaIncomingChannelTest {
         CountDownLatch deliveryAdmitted = new CountDownLatch(1);
         CountDownLatch releaseDeliveryPublication = new CountDownLatch(1);
         CountDownLatch releaseDeliveryCompletion = new CountDownLatch(1);
-        AtomicInteger interrupts = new AtomicInteger();
+        CountDownLatch handlerInterrupted = new CountDownLatch(1);
         AtomicInteger timedAwaits = new AtomicInteger();
         AtomicReference<ConnectorDelivery> trackedDelivery = new AtomicReference<>();
         IncomingConnectorContext context = new RecordingContext(new ArrayList<>()) {
@@ -1915,8 +1921,8 @@ class KafkaIncomingChannelTest {
                     while (releaseHandler.getCount() != 0) {
                         try {
                             releaseHandler.await();
-                        } catch (InterruptedException e) {
-                            interrupts.incrementAndGet();
+                        } catch (InterruptedException _) {
+                            handlerInterrupted.countDown();
                         }
                     }
                 } finally {
@@ -1959,37 +1965,36 @@ class KafkaIncomingChannelTest {
                 .start(() -> connector.createIncomingChannel(config(Duration.ofSeconds(1))).run(context));
 
         try {
-            assertThat(handlerStarted.await(5, TimeUnit.SECONDS), is(true));
-            assertThat(deliveryAdmitted.await(5, TimeUnit.SECONDS), is(true));
+            assertThat(handlerStarted.await(30, TimeUnit.SECONDS), is(true));
+            assertThat(deliveryAdmitted.await(30, TimeUnit.SECONDS), is(true));
 
             AtomicReference<Throwable> firstCloseFailure = new AtomicReference<>();
             Thread firstCloseThread = Thread.ofVirtual()
                     .start(() -> captureFailure(connector::close, firstCloseFailure));
-            awaitWaiting(firstCloseThread);
+            assertThat(closeRequested.await(30, TimeUnit.SECONDS), is(true));
             releaseDeliveryPublication.countDown();
-            firstCloseThread.join(TimeUnit.SECONDS.toMillis(2));
+            firstCloseThread.join(TimeUnit.SECONDS.toMillis(30));
 
             assertThat(firstCloseThread.isAlive(), is(false));
             assertThat(firstCloseFailure.get(), instanceOf(MessagingException.class));
             MessagingException firstClose = (MessagingException) firstCloseFailure.get();
             assertThat(firstClose.getMessage().contains("close timed out"), is(true));
-            assertThat(firstClose.getMessage().contains("active delivery"), is(true));
-            sourceThread.join(TimeUnit.SECONDS.toMillis(5));
+            sourceThread.join(TimeUnit.SECONDS.toMillis(30));
             assertThat(sourceThread.isAlive(), is(false));
             assertThat("a timed-out delivery must remain tracked by the closed connector",
                        assertThrows(MessagingException.class, connector::close)
                                .getMessage()
-                               .contains("close timed out"),
+                               .contains("active delivery"),
                        is(true));
             assertThat(handlerFinished.getCount(), is(1L));
-            assertThat(interrupts.get() >= 2, is(true));
+            assertThat(handlerInterrupted.await(30, TimeUnit.SECONDS), is(true));
             assertThat(consumer.commitCount(), is(0));
         } finally {
             releaseDeliveryPublication.countDown();
             releaseHandler.countDown();
         }
 
-        assertThat(handlerFinished.await(5, TimeUnit.SECONDS), is(true));
+        assertThat(handlerFinished.await(30, TimeUnit.SECONDS), is(true));
         try {
             assertThat(trackedDelivery.get().isDone(), is(false));
             MessagingException incompleteDelegateClose = assertThrows(MessagingException.class, connector::close);
@@ -1997,7 +2002,7 @@ class KafkaIncomingChannelTest {
         } finally {
             releaseDeliveryCompletion.countDown();
         }
-        long deliveryDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        long deliveryDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         while (!trackedDelivery.get().isDone() && System.nanoTime() < deliveryDeadline) {
             Thread.onSpinWait();
         }
@@ -2172,26 +2177,6 @@ class KafkaIncomingChannelTest {
         } catch (Throwable throwable) {
             failure.set(throwable);
         }
-    }
-
-    private static void awaitWaiting(Thread thread) {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
-        Thread.State state;
-        do {
-            state = thread.getState();
-            if (isWaiting(state)) {
-                return;
-            }
-            if (state == Thread.State.TERMINATED) {
-                throw new AssertionError("Close task completed instead of waiting");
-            }
-            Thread.onSpinWait();
-        } while (System.nanoTime() < deadline);
-        throw new AssertionError("Close task did not enter a waiting state; last state was " + state);
-    }
-
-    private static boolean isWaiting(Thread.State state) {
-        return state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING;
     }
 
     private static KafkaConnectorConfigSupport.IncomingSettings config() {

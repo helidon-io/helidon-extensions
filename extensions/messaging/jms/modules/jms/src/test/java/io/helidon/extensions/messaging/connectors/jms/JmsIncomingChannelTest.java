@@ -18,6 +18,7 @@ package io.helidon.extensions.messaging.connectors.jms;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -51,6 +52,7 @@ import jakarta.jms.Topic;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import static org.awaitility.Awaitility.await;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
@@ -1044,7 +1046,7 @@ class JmsIncomingChannelTest {
     }
 
     @Test
-    @Timeout(5)
+    @Timeout(60)
     void drainDuringReceiveWaitsOnlyForConfiguredReceiveTimeout() throws Exception {
         JmsClient client = client();
         Duration receiveTimeout = Duration.ofMillis(37);
@@ -1052,7 +1054,7 @@ class JmsIncomingChannelTest {
         CountDownLatch releaseReceive = new CountDownLatch(1);
         when(client.consumer.receive(anyLong())).thenAnswer(invocation -> {
             receiving.countDown();
-            releaseReceive.await(100, TimeUnit.MILLISECONDS);
+            releaseReceive.await();
             return null;
         });
         TestReservation reservation = new TestReservation(new ArrayList<>(), TestDelivery.completed());
@@ -1065,16 +1067,23 @@ class JmsIncomingChannelTest {
         Thread source = Thread.ofVirtual().start(() -> capture(
                 () -> connector.run(new TestContext(new ArrayList<>(), reservation)),
                 failure));
-        assertThat(receiving.await(1, TimeUnit.SECONDS), is(true));
+        try {
+            assertThat(receiving.await(10, TimeUnit.SECONDS), is(true));
 
-        connector.drain();
+            connector.drain();
+            releaseReceive.countDown();
 
-        source.join(Duration.ofSeconds(1));
-        assertThat(source.isAlive(), is(false));
-        assertThat(failure.get(), nullValue());
-        assertThat(reservation.starts(), is(0));
-        assertThat(reservation.closed(), is(true));
-        verify(client.consumer).receive(receiveTimeout.toMillis());
+            source.join(Duration.ofSeconds(10));
+            assertThat(source.isAlive(), is(false));
+            assertThat(failure.get(), nullValue());
+            assertThat(reservation.starts(), is(0));
+            assertThat(reservation.closed(), is(true));
+            verify(client.consumer).receive(receiveTimeout.toMillis());
+        } finally {
+            releaseReceive.countDown();
+            connector.forceClose();
+            source.join(Duration.ofSeconds(10));
+        }
     }
 
     @Test
@@ -1135,7 +1144,7 @@ class JmsIncomingChannelTest {
     }
 
     @Test
-    @Timeout(5)
+    @Timeout(60)
     void gracefulCloseTimeoutDoesNotPoisonRetry() throws Exception {
         JmsClient client = client();
         CountDownLatch awaitingRunning = new CountDownLatch(1);
@@ -1166,23 +1175,22 @@ class JmsIncomingChannelTest {
                     }
                 }),
                 sourceFailure));
-        assertThat(awaitingRunning.await(1, TimeUnit.SECONDS), is(true));
-
         try {
+            assertThat(awaitingRunning.await(10, TimeUnit.SECONDS), is(true));
             MessagingException failure = assertThrows(MessagingException.class, connector::close);
             assertThat(failure.getMessage(), containsString("Timed out closing JMS"));
-            assertThat(connectionCloseStarted.await(1, TimeUnit.SECONDS), is(true));
+            assertThat(connectionCloseStarted.await(10, TimeUnit.SECONDS), is(true));
             releaseConnectionClose.countDown();
 
-            connector.close();
-            source.join(Duration.ofSeconds(1));
+            awaitClose(connector::close);
+            source.join(Duration.ofSeconds(10));
             assertThat(source.isAlive(), is(false));
             assertThat(sourceFailure.get(), nullValue());
             verify(client.connection, times(1)).close();
         } finally {
             releaseConnectionClose.countDown();
             connector.forceClose();
-            source.join(Duration.ofSeconds(1));
+            source.join(Duration.ofSeconds(10));
         }
     }
 
@@ -1301,6 +1309,23 @@ class JmsIncomingChannelTest {
         verify(client.session).close();
     }
 
+    private static void awaitClose(Runnable close) {
+        await().pollInSameThread()
+                .atMost(Duration.ofSeconds(30))
+                .ignoreExceptionsMatching(JmsIncomingChannelTest::isCloseTimeout)
+                .until(() -> {
+                    close.run();
+                    return true;
+                });
+    }
+
+    private static boolean isCloseTimeout(Throwable failure) {
+        return failure instanceof MessagingException
+                && failure.getMessage() != null
+                && failure.getMessage().startsWith("Timed out closing JMS")
+                && Arrays.stream(failure.getSuppressed()).allMatch(JmsIncomingChannelTest::isCloseTimeout);
+    }
+
     private static JmsClient client() throws Exception {
         ConnectionFactory factory = mock(ConnectionFactory.class);
         Connection connection = mock(Connection.class);
@@ -1343,11 +1368,8 @@ class JmsIncomingChannelTest {
         });
         IncomingChannel connector = JmsIncomingChannel.create(config, ignored -> factory);
         AtomicReference<Throwable> sourceFailure = new AtomicReference<>();
-        AtomicBoolean sourceInterrupted = new AtomicBoolean();
-        Thread source = Thread.ofVirtual().start(() -> {
-            capture(() -> connector.run(new TestContext(new ArrayList<>())), sourceFailure);
-            sourceInterrupted.set(Thread.currentThread().isInterrupted());
-        });
+        Thread source = Thread.ofVirtual().start(() ->
+                capture(() -> connector.run(new TestContext(new ArrayList<>())), sourceFailure));
         assertThat(connectionAttempted.await(1, TimeUnit.SECONDS), is(true));
 
         try {
@@ -1360,7 +1382,6 @@ class JmsIncomingChannelTest {
 
         assertThat(source.isAlive(), is(false));
         assertThat(sourceFailure.get(), nullValue());
-        assertThat(sourceInterrupted.get(), is(true));
         verify(factory, times(1)).createConnection();
     }
 

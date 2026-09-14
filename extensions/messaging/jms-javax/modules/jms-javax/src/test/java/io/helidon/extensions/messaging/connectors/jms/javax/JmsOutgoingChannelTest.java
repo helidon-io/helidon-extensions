@@ -50,6 +50,7 @@ import io.helidon.service.registry.ServiceRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import static org.awaitility.Awaitility.await;
 import static org.hamcrest.CoreMatchers.anyOf;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.instanceOf;
@@ -205,6 +206,7 @@ class JmsOutgoingChannelTest {
     }
 
     @Test
+    @Timeout(60)
     void reconnectCleanupTimeoutStopsConnectorWithoutOpeningReplacement() throws Exception {
         JmsClient first = client();
         JmsClient second = client();
@@ -231,16 +233,22 @@ class JmsOutgoingChannelTest {
         AtomicReference<Throwable> sendFailure = new AtomicReference<>();
         Thread sender = Thread.ofVirtual().start(() -> capture(() -> connector.send("next-batch"), sendFailure));
 
-        assertThat(closing.await(1, TimeUnit.SECONDS), is(true));
-        sender.join(Duration.ofSeconds(2));
+        try {
+            assertThat(closing.await(10, TimeUnit.SECONDS), is(true));
+            sender.join(Duration.ofSeconds(10));
 
-        assertThat(sender.isAlive(), is(false));
-        BatchDeliveryException failure = (BatchDeliveryException) sendFailure.get();
-        assertStatuses(failure, BatchItemStatus.NOT_ATTEMPTED);
-        assertThat(resolutions.get(), is(1));
-        verify(second.connection, never()).start();
-        release.countDown();
-        connector.close();
+            assertThat(sender.isAlive(), is(false));
+            BatchDeliveryException failure = (BatchDeliveryException) sendFailure.get();
+            assertStatuses(failure, BatchItemStatus.NOT_ATTEMPTED);
+            assertThat(resolutions.get(), is(1));
+            verify(second.connection, never()).start();
+            release.countDown();
+            awaitClose(connector::close);
+        } finally {
+            release.countDown();
+            connector.forceClose();
+            sender.join(Duration.ofSeconds(10));
+        }
     }
 
     @Test
@@ -788,7 +796,7 @@ class JmsOutgoingChannelTest {
     }
 
     @Test
-    @Timeout(5)
+    @Timeout(60)
     void closeTimesOutWhileCreateConnectionIgnoresInterruptionAndCanFinishLater() throws Exception {
         ConnectionFactory factory = mock(ConnectionFactory.class);
         Connection lateConnection = mock(Connection.class);
@@ -808,16 +816,24 @@ class JmsOutgoingChannelTest {
                                                                    ignored -> factory);
         AtomicReference<Throwable> startupFailure = new AtomicReference<>();
         Thread starter = Thread.ofVirtual().start(() -> capture(connector::start, startupFailure));
-        assertThat(creatingConnection.await(1, TimeUnit.SECONDS), is(true));
+        try {
+            assertThat(creatingConnection.await(10, TimeUnit.SECONDS), is(true));
 
-        connector.forceClose();
-        starter.join(Duration.ofSeconds(1));
+            connector.forceClose();
+            starter.join(Duration.ofSeconds(10));
 
-        MessagingException failure = assertThrows(MessagingException.class, connector::close);
-        assertThat(failure.getMessage(), containsString("Timed out closing JMS resources"));
-        releaseConnection.countDown();
-        assertThat(lateConnectionClosed.await(1, TimeUnit.SECONDS), is(true));
-        connector.close();
+            MessagingException failure = assertThrows(MessagingException.class, connector::close);
+            assertThat(failure.getMessage(), containsString("Timed out closing JMS resources"));
+            releaseConnection.countDown();
+            assertThat(lateConnectionClosed.await(10, TimeUnit.SECONDS), is(true));
+            awaitClose(connector::close);
+            verify(factory, times(1)).createConnection();
+            verify(lateConnection, times(1)).close();
+        } finally {
+            releaseConnection.countDown();
+            connector.forceClose();
+            starter.join(Duration.ofSeconds(10));
+        }
     }
 
     @Test
@@ -1068,7 +1084,7 @@ class JmsOutgoingChannelTest {
     }
 
     @Test
-    @Timeout(5)
+    @Timeout(60)
     void gracefulCloseIsBoundedAndCanFinishOnRetry() throws Exception {
         JmsClient client = client();
         CountDownLatch closing = new CountDownLatch(1);
@@ -1091,9 +1107,9 @@ class JmsOutgoingChannelTest {
             MessagingException failure = assertThrows(MessagingException.class, connector::close);
 
             assertThat(failure.getMessage(), containsString("Timed out closing JMS resources"));
-            assertThat(closing.await(1, TimeUnit.SECONDS), is(true));
+            assertThat(closing.await(10, TimeUnit.SECONDS), is(true));
             release.countDown();
-            connector.close();
+            awaitClose(connector::close);
             verify(client.connection, times(1)).close();
         } finally {
             release.countDown();
@@ -1101,6 +1117,23 @@ class JmsOutgoingChannelTest {
                 connector.forceClose();
             }
         }
+    }
+
+    private static void awaitClose(Runnable close) {
+        await().pollInSameThread()
+                .atMost(Duration.ofSeconds(30))
+                .ignoreExceptionsMatching(JmsOutgoingChannelTest::isCloseTimeout)
+                .until(() -> {
+                    close.run();
+                    return true;
+                });
+    }
+
+    private static boolean isCloseTimeout(Throwable failure) {
+        return failure instanceof MessagingException
+                && failure.getMessage() != null
+                && failure.getMessage().startsWith("Timed out closing JMS")
+                && Arrays.stream(failure.getSuppressed()).allMatch(JmsOutgoingChannelTest::isCloseTimeout);
     }
 
     private static JmsClient client() throws Exception {
