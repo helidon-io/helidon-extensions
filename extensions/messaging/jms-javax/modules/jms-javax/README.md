@@ -49,7 +49,8 @@ Import both `io.helidon.extensions.messaging.jms:helidon-extensions-messaging-jm
 `io.helidon.extensions.messaging.jms-javax:helidon-extensions-messaging-jms-javax-bom`,
 using the desired version of each extension, and add both connector dependencies.
 
-For a classpath application using both connectors, supply the javax API under its original coordinates:
+For a classpath application using both connectors, explicitly supply both APIs, with the javax API under its
+original coordinates:
 
 ```xml
 <dependency>
@@ -57,9 +58,14 @@ For a classpath application using both connectors, supply the javax API under it
     <artifactId>javax.jms-api</artifactId>
     <version>2.0.1</version>
 </dependency>
+<dependency>
+    <groupId>jakarta.jms</groupId>
+    <artifactId>jakarta.jms-api</artifactId>
+    <version>3.1.0</version>
+</dependency>
 ```
 
-This lets the Jakarta connector use `jakarta.jms:jakarta.jms-api:3.1.0` alongside it. Maven selects one version per
+Both connectors use provided scope for their JMS APIs. Maven selects one version per
 artifact, so using `jakarta.jms-api:2.0.3` and `3.1.0` together would replace one API with the other.
 The `javax.jms-api:2.0.1` substitution is for the classpath; its `javax.jms.api` module name does not satisfy the
 connector's `jakarta.jms.api` requirement on the module path.

@@ -35,6 +35,11 @@
             <groupId>io.helidon.extensions.messaging.connectors</groupId>
             <artifactId>helidon-extensions-messaging-connectors-jms</artifactId>
         </dependency>
+        <!-- The generated test application needs the JMS API on its runtime module path. -->
+        <dependency>
+            <groupId>jakarta.jms</groupId>
+            <artifactId>jakarta.jms-api</artifactId>
+        </dependency>
         <dependency>
             <groupId>io.helidon.messaging</groupId>
             <artifactId>helidon-messaging</artifactId>

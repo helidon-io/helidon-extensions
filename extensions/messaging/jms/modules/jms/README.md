@@ -10,8 +10,7 @@ For providers using `javax.jms`, use the independently released
 Both variants can run in one messaging graph using connector types `helidon-jms` and
 `helidon-jms-javax`, with a matching factory for each API. Provider client jars must
 also be compatible on the same classpath; the two Artemis client variants contain
-overlapping implementation classes. The mixed-API integration test uses an Artemis
-Jakarta client and an ActiveMQ Classic javax client instead.
+overlapping implementation classes.
 
 For complete HTTP-to-JMS round-trip applications using Apache Artemis, see the
 [imperative example](../../examples/se-imperative/README.md) and
@@ -31,8 +30,19 @@ the two extensions have independent versions.
 </dependency>
 ```
 
-Add your JMS provider client separately. The connector depends on no JMS implementation and does not select a broker
-implementation.
+The connector declares `jakarta.jms:jakarta.jms-api:3.1.0` with Maven `provided` scope. Your application must
+supply the JMS API and a compatible provider client. Add the API explicitly:
+
+```xml
+<dependency>
+    <groupId>jakarta.jms</groupId>
+    <artifactId>jakarta.jms-api</artifactId>
+    <version>3.1.0</version>
+</dependency>
+```
+
+On the module path, this API supplies the required `jakarta.messaging` module.
+The connector depends on no JMS implementation and does not select a broker implementation.
 
 ## Connection factory
 
