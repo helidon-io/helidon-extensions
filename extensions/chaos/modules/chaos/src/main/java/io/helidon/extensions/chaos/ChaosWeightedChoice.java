@@ -53,6 +53,7 @@ final class ChaosWeightedChoice implements ChaosEffect {
         ChaosEffect selected = select(choiceSample);
         return switch (selected) {
         case ChaosConnectFailure connectFailure -> connectFailure;
+        case ChaosDnsFailure dnsFailure -> dnsFailure;
         case ChaosLatency latency -> latency.resolve(effectSample);
         case ChaosResponseTimeout timeout -> timeout.resolve(effectSample);
         case ChaosSyntheticResponse synthetic -> synthetic;

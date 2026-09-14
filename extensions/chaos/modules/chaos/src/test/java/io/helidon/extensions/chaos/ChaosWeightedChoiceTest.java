@@ -53,6 +53,15 @@ class ChaosWeightedChoiceTest {
     }
 
     @Test
+    void resolvesDnsFailureLeaf() {
+        ChaosDnsFailure failure = ChaosDnsFailure.instance();
+        ChaosWeightedChoice choice = new ChaosWeightedChoice(List.of(
+                new ChaosWeightedChoice.Outcome(1, failure)));
+
+        assertThat(choice.resolve(0, 0), sameInstance(failure));
+    }
+
+    @Test
     void resolvesResponseTimeoutLeaf() {
         ChaosResponseTimeout timeout = new ChaosResponseTimeout(Duration.ofMillis(250), Duration.ofMillis(50));
         ChaosWeightedChoice choice = new ChaosWeightedChoice(List.of(

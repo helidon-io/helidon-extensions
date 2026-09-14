@@ -50,6 +50,8 @@ final class ChaosApplicationFilter implements Filter {
             proceed = switch (reservation.action()) {
             case ChaosConnectFailure connectFailure -> throw new IllegalStateException(
                     "Unsupported inbound effect action: " + connectFailure.getClass().getSimpleName());
+            case ChaosDnsFailure dnsFailure -> throw new IllegalStateException(
+                    "Unsupported inbound effect action: " + dnsFailure.getClass().getSimpleName());
             case ChaosLatencyAction latency -> {
                 latency.apply();
                 yield true;

@@ -219,6 +219,7 @@ final class ChaosRun {
         }
         ChaosEffectAction action = switch (disruption.plan.effect()) {
         case ChaosConnectFailure connectFailure -> connectFailure;
+        case ChaosDnsFailure dnsFailure -> dnsFailure;
         case ChaosLatency latency -> latency.resolve(ChaosRandom.sample(disruption.effectStreamSeed,
                                                                         disruption.matched));
         case ChaosResponseTimeout timeout -> timeout.resolve(ChaosRandom.sample(disruption.effectStreamSeed,

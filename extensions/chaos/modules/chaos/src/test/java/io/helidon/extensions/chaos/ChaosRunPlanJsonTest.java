@@ -144,6 +144,27 @@ class ChaosRunPlanJsonTest {
     }
 
     @Test
+    void acceptsOutboundDnsFailure() {
+        ChaosRunPlan direct = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "dns-failure"}
+                """)), LIMITS);
+        ChaosRunPlan weighted = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "dns-failure"}}
+                  ]
+                }
+                """)), LIMITS);
+
+        assertThat(direct.stages().getFirst().disruption().orElseThrow().effect(),
+                   instanceOf(ChaosDnsFailure.class));
+        ChaosWeightedChoice choice = (ChaosWeightedChoice) weighted.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        assertThat(choice.outcomes().getFirst().effect(), instanceOf(ChaosDnsFailure.class));
+    }
+
+    @Test
     void acceptsOutboundResponseTimeout() {
         ChaosRunPlan direct = ChaosRunPlanJson.parse(json(outboundPlanJson("""
                 {"type": "response-timeout", "duration": "PT0.25S"}
@@ -187,6 +208,25 @@ class ChaosRunPlanJsonTest {
                   "type": "weighted-choice",
                   "outcomes": [
                     {"weight": 1, "effect": {"type": "connect-failure"}}
+                  ]
+                }
+                """),
+                          "/stages/0/disruptions/0/effect/outcomes/0/effect/type",
+                          "unsupported-inbound-effect");
+    }
+
+    @Test
+    void rejectsInboundDnsFailureAtExactEffectPath() {
+        assertInvalidPlan(withEffect("""
+                {"type": "dns-failure"}
+                """),
+                          "/stages/0/disruptions/0/effect/type",
+                          "unsupported-inbound-effect");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "dns-failure"}}
                   ]
                 }
                 """),
@@ -573,6 +613,9 @@ class ChaosRunPlanJsonTest {
         assertBadRequest(outboundPlanJson("""
                 {"type": "connect-failure", "delay": "PT0.25S"}
                 """), "/stages/0/disruptions/0/effect/delay");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "dns-failure", "duration": "PT0.25S"}
+                """), "/stages/0/disruptions/0/effect/duration");
         assertBadRequest(outboundPlanJson("""
                 {"type": "response-timeout", "duration": "PT0.25S", "status": 503}
                 """), "/stages/0/disruptions/0/effect/status");

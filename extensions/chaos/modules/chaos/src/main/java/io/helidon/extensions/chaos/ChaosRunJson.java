@@ -155,6 +155,9 @@ final class ChaosRunJson {
         case ChaosConnectFailure connectFailure -> JsonObject.builder()
                 .set("type", connectFailure.type())
                 .build();
+        case ChaosDnsFailure dnsFailure -> JsonObject.builder()
+                .set("type", dnsFailure.type())
+                .build();
         case ChaosLatency latency -> JsonObject.builder()
                 .set("type", "latency")
                 .set("delay", latency.delay().toString())

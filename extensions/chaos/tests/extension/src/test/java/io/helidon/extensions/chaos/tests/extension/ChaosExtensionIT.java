@@ -250,6 +250,21 @@ class ChaosExtensionIT {
     }
 
     @Test
+    void throwsOutboundDnsFailureWithoutInvokingDestination() {
+        var baseUri = application.prototype().baseUri().orElseThrow();
+        JsonObject created = postRun(control,
+                                     outboundDnsFailurePlan(baseUri.scheme(), baseUri.host(), baseUri.port()));
+        String id = created.stringValue("id").orElseThrow();
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                                                           () -> application.get("/orders/42").request(String.class));
+
+        assertThat(exception.getMessage(), is("Failed to get address for host " + baseUri.host()));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(0));
+        assertOutboundCounters(id, 1);
+    }
+
+    @Test
     void throwsOutboundResponseTimeoutWithoutInvokingDestination() {
         var baseUri = application.prototype().baseUri().orElseThrow();
         JsonObject created = postRun(control,
@@ -505,6 +520,34 @@ class ChaosExtensionIT {
                       },
                       "activation": {"type": "always"},
                       "effect": {"type": "connect-failure"},
+                      "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                    }]
+                  }]
+                }
+                """.formatted(scheme, host, port)).readJsonObject();
+    }
+
+    private static JsonObject outboundDnsFailurePlan(String scheme, String host, int port) {
+        return JsonParser.create("""
+                {
+                  "name": "outbound-inventory-dns-failure",
+                  "maximumDuration": "PT30S",
+                  "seed": 42,
+                  "stages": [{
+                    "name": "outbound-dns-failure",
+                    "duration": "PT10S",
+                    "disruptions": [{
+                      "name": "fail-outbound-orders-dns",
+                      "scope": {
+                        "type": "outbound-http",
+                        "methods": ["GET"],
+                        "scheme": "%s",
+                        "host": "%s",
+                        "port": %d,
+                        "path": {"match": "exact", "value": "/orders/42"}
+                      },
+                      "activation": {"type": "always"},
+                      "effect": {"type": "dns-failure"},
                       "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
                     }]
                   }]

@@ -15,13 +15,28 @@
  */
 package io.helidon.extensions.chaos;
 
+import java.util.Objects;
+
 /**
- * Normalized effect in a Chaos run plan.
+ * Simulates an outbound DNS failure before address resolution.
  */
-sealed interface ChaosEffect permits ChaosConnectFailure,
-        ChaosDnsFailure,
-        ChaosLatency,
-        ChaosResponseTimeout,
-        ChaosSyntheticResponse,
-        ChaosWeightedChoice {
+final class ChaosDnsFailure implements ChaosEffect, ChaosEffectAction {
+    private static final ChaosDnsFailure INSTANCE = new ChaosDnsFailure();
+    private static final String TYPE = "dns-failure";
+
+    private ChaosDnsFailure() {
+    }
+
+    static ChaosDnsFailure instance() {
+        return INSTANCE;
+    }
+
+    String type() {
+        return TYPE;
+    }
+
+    IllegalArgumentException exception(String host) {
+        Objects.requireNonNull(host, "host is null");
+        return new IllegalArgumentException("Failed to get address for host " + host);
+    }
 }

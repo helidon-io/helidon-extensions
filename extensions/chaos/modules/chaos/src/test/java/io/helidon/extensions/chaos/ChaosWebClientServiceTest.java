@@ -345,6 +345,30 @@ class ChaosWebClientServiceTest {
     }
 
     @Test
+    void throwsDnsFailureWithoutProceedingAndReleasesReservation() {
+        ChaosRunEngine engine = engine();
+        ChaosRuntimeRegistration registration = ChaosRuntimeBridge.register(engine);
+        try {
+            var run = engine.create(plan(ChaosDnsFailure.instance(), 1), "test");
+            AtomicInteger proceeds = new AtomicInteger();
+
+            IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                                                               () -> new ChaosWebClientService("chaos")
+                                                                       .handle(chain(proceeds), inventoryRequest()));
+
+            assertThat(exception.getMessage(), is("Failed to get address for host inventory.example.com"));
+            assertThat(proceeds.get(), is(0));
+            ChaosRunView view = engine.get(run.id()).orElseThrow();
+            assertThat(view.matched(), is(1L));
+            assertThat(view.activated(), is(1L));
+            assertThat(view.completed(), is(1L));
+            assertThat(view.inFlight(), is(0L));
+        } finally {
+            registration.close();
+        }
+    }
+
+    @Test
     void throwsResponseTimeoutWithoutProceedingAndReleasesReservation() {
         ChaosRunEngine engine = engine();
         ChaosRuntimeRegistration registration = ChaosRuntimeBridge.register(engine);

@@ -19,6 +19,7 @@ package io.helidon.extensions.chaos;
  * Effect resolved for one accepted activation.
  */
 sealed interface ChaosEffectAction permits ChaosConnectFailure,
+        ChaosDnsFailure,
         ChaosLatencyAction,
         ChaosResponseTimeoutAction,
         ChaosSyntheticResponse {

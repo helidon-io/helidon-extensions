@@ -321,19 +321,20 @@ final class ChaosRunPlanJson {
         String type = requiredString(json, "type", path + "/type");
         return switch (type) {
         case "connect-failure" -> connectFailure(json, path);
+        case "dns-failure" -> dnsFailure(json, path);
         case "latency" -> latency(json, path, limits);
         case "response-timeout" -> responseTimeout(json, path, limits);
         case "synthetic-http-response" -> syntheticResponse(json, path, limits);
         case "weighted-choice" -> {
             if (!weightedChoiceAllowed) {
                 throw invalid(path + "/type", "nested-weighted-choice",
-                              "weighted-choice outcomes must be connect-failure, latency, response-timeout, "
+                              "weighted-choice outcomes must be connect-failure, dns-failure, latency, response-timeout, "
                                       + "or synthetic-http-response.");
             }
             yield weightedChoice(json, path, limits);
         }
         default -> throw invalid(path + "/type", "unsupported-type",
-                                 "Effect type must be connect-failure, latency, response-timeout, "
+                                 "Effect type must be connect-failure, dns-failure, latency, response-timeout, "
                                          + "synthetic-http-response, or weighted-choice.");
         };
     }
@@ -341,6 +342,11 @@ final class ChaosRunPlanJson {
     private static ChaosConnectFailure connectFailure(JsonObject json, String path) {
         rejectUnknown(json, path, Set.of("type"));
         return ChaosConnectFailure.instance();
+    }
+
+    private static ChaosDnsFailure dnsFailure(JsonObject json, String path) {
+        rejectUnknown(json, path, Set.of("type"));
+        return ChaosDnsFailure.instance();
     }
 
     private static ChaosWeightedChoice weightedChoice(JsonObject json,
@@ -379,6 +385,10 @@ final class ChaosRunPlanJson {
         if (scope instanceof ChaosHttpScope && effect instanceof ChaosConnectFailure) {
             throw invalid(path + "/type", "unsupported-inbound-effect",
                           "connect-failure is supported only for outbound-http scopes.");
+        }
+        if (scope instanceof ChaosHttpScope && effect instanceof ChaosDnsFailure) {
+            throw invalid(path + "/type", "unsupported-inbound-effect",
+                          "dns-failure is supported only for outbound-http scopes.");
         }
         if (scope instanceof ChaosHttpScope && effect instanceof ChaosResponseTimeout) {
             throw invalid(path + "/type", "unsupported-inbound-effect",

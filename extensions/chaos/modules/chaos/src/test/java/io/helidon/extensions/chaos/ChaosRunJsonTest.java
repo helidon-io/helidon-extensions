@@ -157,6 +157,28 @@ class ChaosRunJsonTest {
     }
 
     @Test
+    void writesNormalizedDnsFailureEffect() {
+        ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("GET"),
+                                                                   "https",
+                                                                   "inventory.example.com",
+                                                                   443,
+                                                                   PREFIX,
+                                                                   "/v1/items");
+        ChaosRunPlan dnsFailurePlan = plan(scope, ChaosDnsFailure.instance());
+
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   dnsFailurePlan));
+
+        JsonObject effect = json.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("effect").orElseThrow();
+        assertThat(effect.toString(), is("{\"type\":\"dns-failure\"}"));
+    }
+
+    @Test
     void writesNormalizedResponseTimeoutEffect() {
         ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("GET"),
                                                                    "https",
