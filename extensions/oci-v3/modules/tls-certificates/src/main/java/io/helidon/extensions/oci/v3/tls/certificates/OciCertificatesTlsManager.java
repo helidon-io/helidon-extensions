@@ -26,6 +26,14 @@ import io.helidon.config.Config;
  * The OCI Certificates contract of {@link io.helidon.common.tls.TlsManager}. The implementation should load/create
  * {@link io.helidon.common.tls.Tls} instances from integrating to the certificates stored remotely in OCI's
  * Certificates Service, and then allow for a scheduled update check of the Tls instance for changes.
+ * <p>
+ * Configuration is fixed when the manager is created. TLS material is refreshed from OCI on its configured schedule;
+ * external calls to {@link #reload(io.helidon.common.tls.Tls)} or
+ * {@link #reload(io.helidon.common.tls.TlsMaterial)} throw {@link java.lang.UnsupportedOperationException}.
+ * <p>
+ * New TLS engines and sockets use the latest complete identity and trust material with fresh session caches after rotation.
+ * Existing connections retain their TLS state. Listening {@link javax.net.ssl.SSLServerSocket} instances use the latest
+ * material for each newly accepted connection; the Helidon WebServer creates engines per connection.
  */
 public interface OciCertificatesTlsManager extends TlsManager, RuntimeType.Api<OciCertificatesTlsManagerConfig> {
 

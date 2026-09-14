@@ -22,11 +22,14 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Optional;
+import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import io.helidon.common.tls.TlsManager;
+import io.helidon.common.tls.spi.TlsManagerProvider;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 
@@ -35,8 +38,8 @@ import org.junit.jupiter.api.Test;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
+import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class OciCertificatesTlsManagerConfigTest {
@@ -67,11 +70,11 @@ class OciCertificatesTlsManagerConfigTest {
     void generatedBuilderRetainsVaultOptionSetters() throws NoSuchMethodException {
         Class<?> builderType = OciCertificatesTlsManagerConfig.BuilderBase.class;
 
-        assertNotNull(builderType.getMethod("vaultCryptoEndpoint", URI.class));
-        assertNotNull(builderType.getMethod("keyOcid", String.class));
-        assertNotNull(builderType.getMethod("keyPassword", Supplier.class));
-        assertNotNull(builderType.getMethod("keyPassword", String.class));
-        assertNotNull(builderType.getMethod("keyPassword", char[].class));
+        assertThat(builderType.getMethod("vaultCryptoEndpoint", URI.class), notNullValue());
+        assertThat(builderType.getMethod("keyOcid", String.class), notNullValue());
+        assertThat(builderType.getMethod("keyPassword", Supplier.class), notNullValue());
+        assertThat(builderType.getMethod("keyPassword", String.class), notNullValue());
+        assertThat(builderType.getMethod("keyPassword", char[].class), notNullValue());
     }
 
     @Test
@@ -107,8 +110,11 @@ class OciCertificatesTlsManagerConfigTest {
     void generatedMetadataDescribesModeDependentOptionsAsOptional() throws IOException {
         try (InputStream input = OciCertificatesTlsManagerConfig.class.getResourceAsStream(
                 "/META-INF/helidon/config-metadata.json")) {
-            assertNotNull(input);
+            assertThat(input, notNullValue());
             String metadata = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+
+            assertThat(metadata, containsString("\"prefix\":\"oci-certificates-tls-manager\""));
+            assertThat(metadata, containsString("\"provides\":[\"" + TlsManager.class.getName() + "\"]"));
 
             String alwaysReload = metadataOption(metadata, "always-reload");
             assertThat(alwaysReload, containsString("\"type\":\"java.lang.Boolean\""));
@@ -126,6 +132,18 @@ class OciCertificatesTlsManagerConfigTest {
             assertThat(metadataOption(metadata, "ca-ocid"), containsString("\"required\":true"));
             assertThat(metadataOption(metadata, "cert-ocid"), containsString("\"required\":true"));
         }
+    }
+
+    @Test
+    void providerRetainsItsKeyAndIsServiceLoadedOnce() {
+        TlsManagerProvider provider = new DefaultOciCertificatesTlsManagerProvider();
+        assertThat(provider.configKey(), is("oci-certificates-tls-manager"));
+
+        long providerCount = ServiceLoader.load(TlsManagerProvider.class)
+                .stream()
+                .filter(service -> service.type().equals(DefaultOciCertificatesTlsManagerProvider.class))
+                .count();
+        assertThat(providerCount, is(1L));
     }
 
     @Test

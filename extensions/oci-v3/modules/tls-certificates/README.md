@@ -19,6 +19,21 @@ Add the module to the application:
 </dependency>
 ```
 
+The OCI SDK also requires an HTTP client provider in the application. For example, add the Jersey 3 provider:
+
+```xml
+<dependency>
+    <groupId>com.oracle.oci.sdk</groupId>
+    <artifactId>oci-java-sdk-common-httpclient-jersey3</artifactId>
+</dependency>
+```
+
+A named application module using this provider must also declare:
+
+```java
+requires oci.java.sdk.common.httpclient.jersey3;
+```
+
 ## OCI-managed certificate bundle
 
 Use an OCI-issued certificate whose private key is stored by OCI Certificates. An imported or externally managed
@@ -38,9 +53,12 @@ server:
             cert-ocid: ${SERVER_CERT_OCID}
 ```
 
-The manager requests the `CURRENT` bundle as `CERTIFICATE_CONTENT_WITH_PRIVATE_KEY`. It verifies that the returned
-private key matches the leaf certificate before installing the identity. Both RSA and EC PKCS#8 keys are supported,
-including passphrase-protected keys; an OCI-provided passphrase is used only while decoding that bundle.
+The manager first requests the `CURRENT` bundle as `CERTIFICATE_CONTENT_PUBLIC_ONLY` to check its version. It downloads
+`CERTIFICATE_CONTENT_WITH_PRIVATE_KEY` on initial load and when the identity version changes. CA-only changes and
+`always-reload: true` reuse the installed private material when the identity version is unchanged. It verifies that the
+public and private downloads identify the same version and that the private key matches the leaf certificate before
+installing the identity. Both RSA and EC PKCS#8 keys are supported, including passphrase-protected keys; an OCI-provided
+passphrase is used only while decoding that bundle.
 
 By default, polling this mode does not reload TLS when both the certificate version and CA certificate are unchanged.
 A newer identity version or independently rotated CA is installed as one complete TLS update. If download, parsing,
@@ -50,12 +68,17 @@ retried on a later poll.
 The leaf private key is materialized in application JVM memory. This mode does not provide non-exportable HSM-backed
 TLS signing; the CA signing key can remain separately HSM protected.
 
-The workload needs permission to read the private leaf bundle and the configured CA bundle. Restrict the leaf permission
-to private bundle retrieval where practical, for example:
+The workload needs permission to read both leaf bundle types requested by the manager and the configured CA bundle.
+The public-only permission is required for the version probe, and the private-key permission is required when loading
+the TLS identity. Restrict both permissions to the intended leaf certificate where practical, for example:
 
 ```text
 Allow dynamic-group <dynamic-group> to read leaf-certificate-bundles in compartment <compartment>
-  where target.leaf-certificate.bundle-type = 'CERTIFICATE_CONTENT_WITH_PRIVATE_KEY'
+  where all {target.leaf-certificate.id = '<leaf-certificate-ocid>',
+             target.leaf-certificate.bundle-type = 'CERTIFICATE_CONTENT_PUBLIC_ONLY'}
+Allow dynamic-group <dynamic-group> to read leaf-certificate-bundles in compartment <compartment>
+  where all {target.leaf-certificate.id = '<leaf-certificate-ocid>',
+             target.leaf-certificate.bundle-type = 'CERTIFICATE_CONTENT_WITH_PRIVATE_KEY'}
 Allow dynamic-group <dynamic-group> to read certificate-authority-bundles in compartment <compartment>
 ```
 
@@ -92,11 +115,23 @@ Do not combine `certificate-bundle` with `key-ocid`, `key-password`, `vault-cryp
 ## Reload policy
 
 `always-reload` controls whether TLS rebuilding continues when the downloaded identity and CA material are unchanged.
-Every scheduled poll downloads both the identity bundle and independently versioned CA bundle so either kind of rotation
-can be detected. When the option is absent, its effective default depends on the private-key source:
+Every scheduled poll downloads both the public identity bundle and independently versioned CA bundle so either kind of
+rotation can be detected. When the option is absent, its effective default depends on the private-key source:
 
 - `vault`: `true`, preserving the original behavior for existing configurations;
 - `certificate-bundle`: `false`, avoiding a TLS reload until OCI publishes a new current identity or CA certificate.
 
 Set `always-reload: false` to opt Vault mode into version-gated reloads, or `always-reload: true` to force managed bundle
 reloads on every poll.
+
+
+A successful reload publishes the identity, trust anchor, and fresh client and server TLS session caches together.
+New TLS sockets and engines use the new material, including connections accepted by an already-open `SSLServerSocket`.
+Existing connections retain their current TLS generation.
+
+Polling uses Helidon's managed scheduling lifecycle. Reusing a shared manager after `TaskManager.shutdown()` restarts
+its polling task. The manager's configuration is fixed when it is created; config-source changes do not replace its
+OCIDs, reload policy, or schedule. Shared uses of the manager must have compatible outer TLS settings.
+
+External reload through `Tls.reload(Tls)` or `Tls.reload(TlsMaterial)` is unsupported and throws
+`UnsupportedOperationException`. Certificate and CA updates are applied through scheduled OCI polling.

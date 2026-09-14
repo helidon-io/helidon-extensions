@@ -23,6 +23,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.common.Weight;
 import io.helidon.common.Weighted;
@@ -35,13 +36,12 @@ import io.helidon.service.registry.Service;
 @Service.Singleton
 @Weight(Weighted.DEFAULT_WEIGHT + 1)
 class TestOciPrivateKeyDownloader implements OciPrivateKeyDownloader {
-
-    static volatile int callCount;
+    private final AtomicInteger calls = new AtomicInteger();
 
     @Override
     public PrivateKey loadKey(String keyOcid,
                               URI vaultCryptoEndpoint) {
-        callCount++;
+        calls.incrementAndGet();
 
         try {
             Objects.requireNonNull(keyOcid);
@@ -66,6 +66,10 @@ class TestOciPrivateKeyDownloader implements OciPrivateKeyDownloader {
             System.getLogger(getClass().getName()).log(System.Logger.Level.ERROR, e.getMessage(), e);
             throw e;
         }
+    }
+
+    int calls() {
+        return calls.get();
     }
 
 }

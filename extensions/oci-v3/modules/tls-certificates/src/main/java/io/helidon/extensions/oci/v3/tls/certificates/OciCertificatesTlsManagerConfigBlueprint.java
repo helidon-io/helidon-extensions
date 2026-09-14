@@ -22,20 +22,21 @@ import java.util.function.Supplier;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
+import io.helidon.common.tls.spi.TlsManagerProvider;
 
 /**
  * Blueprint configuration for {@link OciCertificatesTlsManager}.
  */
 @Prototype.Blueprint(decorator = OciCertificatesTlsManagerConfigSupport.BuilderDecorator.class,
                      createEmptyPublic = false)
-@Prototype.Configured
+@Prototype.Configured(value = "oci-certificates-tls-manager", root = false)
+@Prototype.Provides(TlsManagerProvider.class)
 @Prototype.CustomMethods(OciCertificatesTlsManagerConfigSupport.CustomMethods.class)
 @Prototype.IncludeDefaultMethods({"privateKeySource", "alwaysReload"})
 interface OciCertificatesTlsManagerConfigBlueprint extends Prototype.Factory<OciCertificatesTlsManager> {
 
     /**
-     * The schedule for trigger a reload check, testing whether there is a new {@link io.helidon.common.tls.Tls} instance
-     * available.
+     * The schedule for checking whether OCI has newer TLS material.
      *
      * @return the schedule for reload
      */
@@ -58,6 +59,8 @@ interface OciCertificatesTlsManagerConfigBlueprint extends Prototype.Factory<Oci
      * The CA certificate is retrieved on every scheduled poll. When this option is {@code false}, rebuilding is skipped
      * only when both the identity certificate version and the CA certificate are unchanged. When not configured, Vault
      * mode preserves its existing always-reload behavior, while certificate-bundle mode uses this change detection.
+     * Certificate-bundle mode reuses installed private material when the identity version is unchanged, including
+     * when this option is {@code true} or only the CA certificate changes.
      *
      * @return whether unchanged certificate material should still be reloaded, if explicitly configured
      */

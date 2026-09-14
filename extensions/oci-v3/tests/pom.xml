@@ -43,5 +43,6 @@
 
     <modules>
         <module>authentication</module>
+        <module>tls-certificates-native-image</module>
     </modules>
 </project>
