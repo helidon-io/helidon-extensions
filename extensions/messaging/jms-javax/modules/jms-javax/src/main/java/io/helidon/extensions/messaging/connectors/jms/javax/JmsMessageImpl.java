@@ -32,6 +32,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
+import javax.jms.BytesMessage;
 import javax.jms.JMSException;
 import javax.jms.Message;
 
@@ -85,7 +86,8 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
             validateSerializedBody(serializedEntity, serializedEntityType);
             this.entity = null;
         } else {
-            this.entity = snapshotBody(actualEntity, snapshotSerializable);
+            // Factories supply exclusively owned byte arrays.
+            this.entity = actualEntity instanceof byte[] ? actualEntity : snapshotBody(actualEntity, snapshotSerializable);
             this.serializedEntity = null;
             this.serializedEntityType = null;
         }
@@ -106,7 +108,8 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
                                       String correlationId,
                                       String type,
                                       Map<String, Object> properties) {
-        return new JmsMessageImpl<>(entity,
+        T ownedEntity = entity instanceof byte[] ? snapshotBody(entity, false) : entity;
+        return new JmsMessageImpl<>(ownedEntity,
                                     properties,
                                     Optional.empty(),
                                     Optional.ofNullable(correlationId),
@@ -120,11 +123,15 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
                                     false);
     }
 
+    /**
+     * Creates an incoming snapshot, taking ownership of byte arrays assembled from a BytesMessage by the mapper.
+     */
     static <T> JmsMessage<T> incoming(T entity,
                                       Map<String, Object> properties,
                                       Message message,
                                       boolean snapshotSerializable) throws JMSException {
-        return new JmsMessageImpl<>(entity,
+        T ownedEntity = entity instanceof byte[] && !(message instanceof BytesMessage) ? snapshotBody(entity, false) : entity;
+        return new JmsMessageImpl<>(ownedEntity,
                                     properties,
                                     Optional.ofNullable(message.getJMSMessageID()),
                                     Optional.ofNullable(message.getJMSCorrelationID()),
@@ -244,7 +251,8 @@ final class JmsMessageImpl<T> implements JmsMessage<T> {
     T entityForMapping(boolean allowObjectMessages) {
         requireBodyAvailable();
         if (serializedEntity == null) {
-            return snapshotBody(entity, allowObjectMessages);
+            // The mapper copies byte bodies once, at the provider boundary.
+            return entity instanceof byte[] ? entity : snapshotBody(entity, allowObjectMessages);
         }
         if (!allowObjectMessages) {
             throw new MessagingException("JMS ObjectMessage is disabled; set allow-object-messages=true only for "

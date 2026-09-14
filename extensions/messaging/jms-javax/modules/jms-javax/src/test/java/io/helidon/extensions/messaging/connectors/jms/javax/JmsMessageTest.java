@@ -22,6 +22,7 @@ import java.io.ObjectOutputStream;
 import java.io.Serial;
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -35,6 +36,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import javax.jms.BytesMessage;
 import javax.jms.MapMessage;
@@ -58,10 +60,12 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -344,33 +348,112 @@ class JmsMessageTest {
         when(session.createBytesMessage()).thenReturn(nativeMessage);
         byte[] body = {1, 2};
 
-        JmsMessageMapper.toJmsMessage(session, JmsMessage.builder(body).build(), false);
+        JmsMessage<byte[]> message = JmsMessage.builder(body).build();
         body[0] = 9;
+        message.entity()[1] = 8;
+        JmsMessageMapper.toJmsMessage(session, message, false);
 
         verify(nativeMessage).writeBytes(new byte[]{1, 2});
     }
 
     @Test
     void testChunkedBytesMessageIsReadWithoutOverwritingEarlierChunks() throws Exception {
+        byte[] body = new byte[2 * 8192 + 7];
+        for (int i = 0; i < body.length; i++) {
+            body[i] = (byte) i;
+        }
         BytesMessage nativeMessage = mock(BytesMessage.class);
-        when(nativeMessage.getBodyLength()).thenReturn(4L);
+        when(nativeMessage.getBodyLength()).thenReturn((long) body.length);
         when(nativeMessage.getPropertyNames()).thenReturn(Collections.emptyEnumeration());
+        AtomicInteger offset = new AtomicInteger();
+        AtomicReference<byte[]> providerBuffer = new AtomicReference<>();
         when(nativeMessage.readBytes(any(byte[].class), anyInt()))
                 .thenAnswer(invocation -> {
                     byte[] chunk = invocation.getArgument(0);
-                    chunk[0] = 1;
-                    chunk[1] = 2;
-                    return 2;
-                })
-                .thenAnswer(invocation -> {
-                    byte[] chunk = invocation.getArgument(0);
-                    chunk[0] = 3;
-                    chunk[1] = 4;
-                    return 2;
+                    int requested = invocation.getArgument(1);
+                    assertThat(requested, lessThanOrEqualTo(body.length - offset.get()));
+                    int read = Math.min(requested, 5003);
+                    System.arraycopy(body, offset.getAndAdd(read), chunk, 0, read);
+                    providerBuffer.set(chunk);
+                    return read;
                 });
 
-        assertThat((byte[]) JmsMessageMapper.fromJmsMessage(nativeMessage, false, 4).entity(),
-                   is(new byte[]{1, 2, 3, 4}));
+        JmsMessage<?> message = JmsMessageMapper.fromJmsMessage(nativeMessage, false, body.length);
+        assertThat((byte[]) message.entity(), is(body));
+
+        Arrays.fill(providerBuffer.get(), (byte) -1);
+        byte[] returned = (byte[]) message.entity();
+        returned[0] = -1;
+
+        assertThat((byte[]) message.entity(), is(body));
+    }
+
+    @Test
+    void testBytesMessageRejectsNoProgress() throws Exception {
+        BytesMessage nativeMessage = mock(BytesMessage.class);
+        when(nativeMessage.getBodyLength()).thenReturn(4L);
+        when(nativeMessage.readBytes(any(byte[].class), anyInt())).thenReturn(0);
+
+        MessagingException failure = assertThrows(MessagingException.class,
+                () -> JmsMessageMapper.fromJmsMessage(nativeMessage, false, 4));
+
+        assertThat(failure.getMessage(), is("JMS bytes message made no progress while reading its body"));
+    }
+
+    @Test
+    void testBytesMessageRejectsPrematureEnd() throws Exception {
+        BytesMessage nativeMessage = mock(BytesMessage.class);
+        when(nativeMessage.getBodyLength()).thenReturn(4L);
+        when(nativeMessage.readBytes(any(byte[].class), anyInt())).thenReturn(2, -1);
+
+        MessagingException failure = assertThrows(MessagingException.class,
+                () -> JmsMessageMapper.fromJmsMessage(nativeMessage, false, 4));
+
+        assertThat(failure.getMessage(), is("JMS bytes message ended before its declared body length"));
+    }
+
+    @Test
+    void testBytesMessageRejectsReadBeyondRemainingBody() throws Exception {
+        BytesMessage nativeMessage = mock(BytesMessage.class);
+        when(nativeMessage.getBodyLength()).thenReturn(4L);
+        when(nativeMessage.readBytes(any(byte[].class), anyInt())).thenReturn(2, 3);
+
+        MessagingException failure = assertThrows(MessagingException.class,
+                () -> JmsMessageMapper.fromJmsMessage(nativeMessage, false, 4));
+
+        assertThat(failure.getMessage(), is("JMS bytes message returned more data than requested"));
+    }
+
+    @Test
+    void testEmptyBytesMessageDoesNotReadBody() throws Exception {
+        BytesMessage nativeMessage = mock(BytesMessage.class);
+        when(nativeMessage.getBodyLength()).thenReturn(0L);
+        when(nativeMessage.getPropertyNames()).thenReturn(Collections.emptyEnumeration());
+
+        assertThat((byte[]) JmsMessageMapper.fromJmsMessage(nativeMessage, false, 4).entity(), is(new byte[0]));
+        verify(nativeMessage, never()).readBytes(any(byte[].class), anyInt());
+    }
+
+    @Test
+    void testJmsBytesMessageIsIsolatedFromProvider() throws Exception {
+        byte[] body = {1, 2};
+        assertOutgoingBytesAreIsolatedFromProvider(JmsMessage.create(body), body);
+    }
+
+    @Test
+    void testPortableBytesMessageIsIsolatedFromProvider() throws Exception {
+        byte[] body = {1, 2};
+        assertOutgoingBytesAreIsolatedFromProvider(io.helidon.messaging.Message.create(body), body);
+    }
+
+    @Test
+    void testJmsDeadLetterBytesMessageIsIsolatedFromProvider() throws Exception {
+        byte[] body = {1, 2};
+        DeadLetterMessage<byte[]> message = DeadLetterMessage.create(JmsMessage.create(body),
+                                                                   "orders",
+                                                                   2,
+                                                                   new MessagingException("failed"));
+        assertOutgoingBytesAreIsolatedFromProvider(message, body);
     }
 
     @Test
@@ -711,6 +794,21 @@ class JmsMessageTest {
     }
 
     @Test
+    void testIncomingObjectMessageCopiesProviderOwnedBytes() throws Exception {
+        byte[] body = {1, 2};
+        ObjectMessage incoming = mock(ObjectMessage.class);
+        when(incoming.getObject()).thenReturn(body);
+        when(incoming.getPropertyNames()).thenReturn(Collections.emptyEnumeration());
+
+        JmsMessage<?> message = JmsMessageMapper.fromJmsMessage(incoming, true, 1024);
+        body[0] = 9;
+        byte[] returned = (byte[]) message.entity();
+        returned[1] = 8;
+
+        assertThat((byte[]) message.entity(), is(new byte[]{1, 2}));
+    }
+
+    @Test
     void testIncomingObjectMessageSupportsConcurrentStableEntityReads() throws Exception {
         ReadTrackingPayload.reset();
         ReadTrackingPayload payload = new ReadTrackingPayload("trusted");
@@ -774,6 +872,28 @@ class JmsMessageTest {
 
         verify(session).createTextMessage("text");
         verify(session, never()).createObjectMessage(any(Serializable.class));
+    }
+
+    private static void assertOutgoingBytesAreIsolatedFromProvider(io.helidon.messaging.Message<byte[]> message,
+                                                                  byte[] body) throws Exception {
+        Session session = mock(Session.class);
+        BytesMessage nativeMessage = mock(BytesMessage.class);
+        when(session.createBytesMessage()).thenReturn(nativeMessage);
+        AtomicReference<byte[]> retained = new AtomicReference<>();
+        doAnswer(invocation -> {
+            byte[] bytes = invocation.getArgument(0);
+            assertThat(bytes, is(new byte[]{1, 2}));
+            retained.set(bytes);
+            bytes[0] = 9;
+            return null;
+        }).when(nativeMessage).writeBytes(any(byte[].class));
+
+        JmsMessageMapper.toJmsMessage(session, message, false);
+        assertThat(message.entity(), is(new byte[]{1, 2}));
+        retained.get()[1] = 8;
+
+        assertThat(message.entity(), is(new byte[]{1, 2}));
+        assertThat(body, is(new byte[]{1, 2}));
     }
 
     private static <T> JmsMessage<T> genericMessage(T entity) {

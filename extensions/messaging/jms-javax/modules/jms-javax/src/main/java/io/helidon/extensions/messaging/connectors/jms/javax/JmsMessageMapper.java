@@ -200,17 +200,18 @@ final class JmsMessageMapper {
             }
             byte[] body = new byte[(int) bodyLength];
             bytesMessage.reset();
+            byte[] chunk = new byte[Math.min(8192, body.length)];
             int offset = 0;
             while (offset < body.length) {
-                byte[] chunk = new byte[Math.min(8192, body.length - offset)];
-                int read = bytesMessage.readBytes(chunk, chunk.length);
+                int requested = Math.min(chunk.length, body.length - offset);
+                int read = bytesMessage.readBytes(chunk, requested);
                 if (read < 0) {
                     break;
                 }
                 if (read == 0) {
                     throw new MessagingException("JMS bytes message made no progress while reading its body");
                 }
-                if (read > chunk.length) {
+                if (read > requested) {
                     throw new MessagingException("JMS bytes message returned more data than requested");
                 }
                 System.arraycopy(chunk, 0, body, offset, read);
