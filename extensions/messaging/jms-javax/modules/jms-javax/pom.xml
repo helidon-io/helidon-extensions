@@ -71,9 +71,9 @@
             <artifactId>helidon-service-registry</artifactId>
         </dependency>
         <dependency>
-            <groupId>javax.jms</groupId>
-            <artifactId>javax.jms-api</artifactId>
-            <!-- Keep the API transitive, matching the Jakarta connector's drop-in dependency behavior. -->
+            <groupId>jakarta.jms</groupId>
+            <artifactId>jakarta.jms-api</artifactId>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

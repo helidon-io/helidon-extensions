@@ -45,15 +45,15 @@
     <properties>
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
         <version.java>26</version.java>
-        <version.lib.javax.jms-api>2.0.1</version.lib.javax.jms-api>
+        <version.lib.jakarta.jms-api>2.0.3</version.lib.jakarta.jms-api>
     </properties>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>javax.jms</groupId>
-                <artifactId>javax.jms-api</artifactId>
-                <version>${version.lib.javax.jms-api}</version>
+                <groupId>jakarta.jms</groupId>
+                <artifactId>jakarta.jms-api</artifactId>
+                <version>${version.lib.jakarta.jms-api}</version>
             </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.messaging.jms-javax</groupId>

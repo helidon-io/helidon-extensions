@@ -28,6 +28,7 @@
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
+    <groupId>io.helidon.extensions.messaging</groupId>
     <artifactId>helidon-extensions-messaging-project</artifactId>
     <packaging>pom</packaging>
 
@@ -39,12 +40,4 @@
         <module>jms-javax</module>
         <module>pulsar</module>
     </modules>
-    <profiles>
-        <profile>
-            <id>tests</id>
-            <modules>
-                <module>tests</module>
-            </modules>
-        </profile>
-    </profiles>
 </project>

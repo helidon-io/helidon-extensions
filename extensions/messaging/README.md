@@ -29,10 +29,6 @@ Kafka's Java APIs are preview APIs; Jakarta JMS, javax JMS, and Pulsar are incub
 Build all connectors with `mvn -f extensions/messaging/pom.xml install`, or build one
 with `mvn -f extensions/messaging/kafka/pom.xml install`. Add `-Ptests` to include
 integration tests and `-Pexamples` to include the Kafka, JMS, and Pulsar examples.
-The grouped build with `-Ptests` also includes the [JMS interoperability tests](tests/jms-interop)
-that use both JMS connectors.
-Run `etc/scripts/test-jms-interop.sh` to test interoperability using the current
-version from each connector root, including when their versions differ.
 
 Each connector has its own `bom` and `modules` directories. Import
 `io.helidon.extensions.messaging.kafka:helidon-extensions-messaging-kafka-bom` for

@@ -26,8 +26,22 @@ to manage this dependency. This extension is released independently as `messagin
 </dependency>
 ```
 
-Add your JMS provider client separately. The connector depends on no JMS implementation and does not select a broker
-implementation.
+The connector compiles against `jakarta.jms:jakarta.jms-api:2.0.3` with Maven `provided` scope. This is the latest
+Jakarta-coordinate release that still contains the `javax.jms` packages. Your application must supply the JMS API
+and a compatible provider client. Add the API explicitly:
+
+```xml
+<dependency>
+    <groupId>jakarta.jms</groupId>
+    <artifactId>jakarta.jms-api</artifactId>
+    <version>2.0.3</version>
+</dependency>
+```
+
+Keep only one API JAR containing `javax.jms`, including dependencies brought in by provider clients.
+On the module path, use `jakarta.jms-api:2.0.3`, which supplies the required `jakarta.jms.api` module.
+
+The connector depends on no JMS implementation and does not select a broker implementation.
 
 ## Using both JMS APIs
 
@@ -35,7 +49,22 @@ Import both `io.helidon.extensions.messaging.jms:helidon-extensions-messaging-jm
 `io.helidon.extensions.messaging.jms-javax:helidon-extensions-messaging-jms-javax-bom`,
 using the desired version of each extension, and add both connector dependencies.
 
-Both connector modules can run in the same application. The APIs use distinct packages, factories resolve by their
+For a classpath application using both connectors, supply the javax API under its original coordinates:
+
+```xml
+<dependency>
+    <groupId>javax.jms</groupId>
+    <artifactId>javax.jms-api</artifactId>
+    <version>2.0.1</version>
+</dependency>
+```
+
+This lets the Jakarta connector use `jakarta.jms:jakarta.jms-api:3.1.0` alongside it. Maven selects one version per
+artifact, so using `jakarta.jms-api:2.0.3` and `3.1.0` together would replace one API with the other.
+The `javax.jms-api:2.0.1` substitution is for the classpath; its `javax.jms.api` module name does not satisfy the
+connector's `jakarta.jms.api` requirement on the module path.
+
+Both connector modules can run in the same classpath application. The APIs use distinct packages, factories resolve by their
 respective `ConnectionFactory` contracts, and the configured connector types are different:
 
 ```yaml

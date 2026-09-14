@@ -49,10 +49,6 @@ The two JMS APIs are separate release units: `messaging/jms` releases the Jakart
 connector and `messaging/jms-javax` releases the javax connector. Each has its own
 BOM and version property (`messaging.jms.extension.version` and
 `messaging.jms-javax.extension.version`). Releasing either does not release the other.
-Their shared interoperability tests live under `extensions/messaging/tests/jms-interop`
-and run in the grouped Messaging build with `-Ptests`.
-CI uses `etc/scripts/test-jms-interop.sh`, which reads each connector root's version
-independently, including on release tags.
 
 Validation selects one connector for a connector branch or a change inside
 that connector directory, and all connectors for changes to their grouping

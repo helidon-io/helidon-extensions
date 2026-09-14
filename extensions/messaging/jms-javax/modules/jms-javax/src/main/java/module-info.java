@@ -29,7 +29,7 @@ module io.helidon.extensions.messaging.connectors.jms.javax {
     requires transitive io.helidon.builder.api;
     requires transitive io.helidon.config;
     requires transitive io.helidon.messaging;
-    requires transitive javax.jms.api;
+    requires transitive jakarta.jms.api;
 
     requires io.helidon.common;
     requires io.helidon.faulttolerance;
