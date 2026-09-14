@@ -31,16 +31,22 @@ import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 @Service.Named("artemis")
 @Service.ExternalContracts(ConnectionFactory.class)
 class ConnectionFactoryProvider implements Supplier<ConnectionFactory> {
-    private final ActiveMQConnectionFactory connectionFactory;
+    private final Config config;
+    private ActiveMQConnectionFactory connectionFactory;
 
     @Service.Inject
     ConnectionFactoryProvider(Config config) {
-        connectionFactory = new ActiveMQConnectionFactory(config.get("app.jms-broker-url").asString().get());
+        this.config = config;
     }
 
     @Override
     public ConnectionFactory get() {
         return connectionFactory;
+    }
+
+    @Service.PostConstruct
+    void initialize() {
+        connectionFactory = new ActiveMQConnectionFactory(config.get("app.jms-broker-url").asString().get());
     }
 
     @Service.PreDestroy
