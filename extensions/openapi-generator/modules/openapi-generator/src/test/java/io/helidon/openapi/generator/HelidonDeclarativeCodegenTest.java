@@ -224,6 +224,7 @@ class HelidonDeclarativeCodegenTest {
 
     @Test
     void processOptsRejectsNonIntegerJavaVersion() {
+        codegen.additionalProperties().put("helidonVersion", "4.5.0");
         codegen.additionalProperties().put("javaVersion", "1.8");
 
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
@@ -235,6 +236,7 @@ class HelidonDeclarativeCodegenTest {
     @Test
     void processOptsExposesIntegerJavaVersion() {
         codegen.additionalProperties().put("javaVersion", "17");
+        codegen.additionalProperties().put("helidonVersion", "4.5.0");
 
         codegen.processOpts();
 

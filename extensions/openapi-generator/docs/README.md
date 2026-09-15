@@ -58,7 +58,8 @@ The module is packaged as a thin jar. Runtime dependencies are copied to
 
 In the examples below, `4.0.0-SNAPSHOT` is the version of this extension artifact.
 The separate `helidonVersion` option controls which Helidon version is written
-into generated Maven and Gradle projects, and its current default is `4.5.4`.
+into generated Maven and Gradle projects.
+
 The `javaVersion` option controls the generated Maven compiler source and target
 values and the generated Gradle Java toolchain version, and its current default is
 `21`.
@@ -157,7 +158,7 @@ Set these under Maven `<configOptions>` or CLI `--additional-properties`.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `helidonVersion` | `4.5.4` | Helidon version written into generated Maven and Gradle builds |
+| `helidonVersion` | `v4` | Helidon version written into generated Maven and Gradle builds; values starting with `v` are resolved to latest version of that major. |
 | `javaVersion` | `21` | Java version written into generated Maven compiler source/target and Gradle toolchain builds |
 | `apiPackage` | `io.helidon.example.api` | Package for generated API, endpoint, client, and error classes |
 | `modelPackage` | `io.helidon.example.model` | Package for generated model classes |
@@ -179,6 +180,11 @@ The schema extension `x-helidon-discriminator-representation` accepts `metadata`
 `readOnlyProperty` and takes precedence over the global option. Without either setting,
 an explicitly declared discriminator property becomes a derived read-only accessor;
 a discriminator used only for polymorphic routing remains metadata-only.
+
+If `helidonVersion` starts with a `v` it is assumed to identify a major version of Helidon, and 
+it will resolve to the latest release of that major version. For example, `v4` resolves to the latest version
+of Helidon 4.X.X. For repeatability it is recommended to use a specific version of Helidon and not
+rely on this shorthand.
 
 ## What Gets Generated
 
