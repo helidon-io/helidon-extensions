@@ -16,13 +16,15 @@
 package io.helidon.extensions.chaos;
 
 /**
- * Normalized effect in a Chaos run plan.
+ * A normalized disruption scope.
  */
-sealed interface ChaosEffect permits ChaosConnectFailure,
-        ChaosDnsFailure,
-        ChaosLatency,
-        ChaosResponseTimeout,
-        ChaosSyntheticResponse,
-        ChaosTlsHandshakeFailure,
-        ChaosWeightedChoice {
+sealed interface ChaosScope permits ChaosHttpScope, ChaosOutboundHttpScope {
+
+    /**
+     * Whether this scope and another scope can match the same request.
+     *
+     * @param other other scope
+     * @return whether the scopes overlap
+     */
+    boolean overlaps(ChaosScope other);
 }

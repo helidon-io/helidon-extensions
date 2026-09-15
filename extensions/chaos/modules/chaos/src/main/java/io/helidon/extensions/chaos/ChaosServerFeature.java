@@ -82,15 +82,22 @@ public final class ChaosServerFeature implements RuntimeType.Api<ChaosConfig>, S
         }
         ChaosSocketPolicy.Result policy = ChaosSocketPolicy.validate(prototype, context);
         ChaosRunEngine engine = ChaosRunEngine.create(prototype.limits());
+        ChaosRuntimeRegistration registration;
+        try {
+            registration = ChaosRuntimeBridge.register(engine);
+        } catch (RuntimeException exception) {
+            engine.close();
+            throw exception;
+        }
         try {
             context.socket(policy.controlSocket())
                     .httpRouting()
-                    .register("/chaos/v1", new ChaosControlService(engine, prototype, policy.anonymousLocal()));
+                    .register("/chaos/v1", new ChaosControlService(registration, prototype, policy.anonymousLocal()));
             policy.applicationSockets().forEach(socket -> context.socket(socket)
                     .httpRouting()
-                    .addFilter(new ChaosApplicationFilter(engine)));
+                    .addFilter(new ChaosApplicationFilter(registration)));
         } catch (RuntimeException exception) {
-            engine.close();
+            registration.close();
             throw exception;
         }
     }
