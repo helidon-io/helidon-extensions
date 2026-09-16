@@ -34,7 +34,7 @@ module io.helidon.extensions.crac {
 
     requires io.helidon.common.resumable;
 
-    provides io.helidon.common.resumable.ResumableSupport with io.helidon.extensions.crac.CracSupport;
-
     exports io.helidon.extensions.crac;
+
+    provides io.helidon.common.resumable.ResumableSupport with io.helidon.extensions.crac.CracSupport;
 }
