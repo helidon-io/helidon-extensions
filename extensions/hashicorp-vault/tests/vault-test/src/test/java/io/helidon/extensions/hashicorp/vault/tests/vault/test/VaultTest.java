@@ -94,7 +94,7 @@ class VaultTest {
     private static final String TRANSIT_HMAC_KEY = "hmac-key";
     private static final String APPROLE_POLICY_NAME = "approle_policy";
     private static final String APPROLE_ROLE_NAME = "approle_role";
-    private static final DockerImageName MYSQL_IMAGE = DockerImageName.parse("mysql:8.0.36");
+    private static final DockerImageName MYSQL_IMAGE = DockerImageName.parse("mysql:8.0.40");
     private static final DockerImageName HCP_VAULT_IMAGE = DockerImageName.parse("vault:1.11.3");
 
     private static final Network NETWORK = Network.newNetwork();
