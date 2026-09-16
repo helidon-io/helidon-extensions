@@ -44,7 +44,7 @@
 
     <properties>
         <helidon.version>27.0.0-SNAPSHOT</helidon.version>
-        <version.java>26</version.java>
+        <version.java>27</version.java>
     </properties>
 
     <dependencyManagement>

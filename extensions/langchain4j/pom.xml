@@ -45,7 +45,7 @@
     </modules>
 
     <properties>
-        <version.java>26</version.java>
+        <version.java>27</version.java>
         <!--
         When changing Helidon base version:
         - change it here to version manage Helidon dependencies
