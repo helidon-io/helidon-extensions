@@ -170,7 +170,7 @@ end-to-end testing:
 
 2. In the Neo4j browser, run `:play movies` to open the Movies guide, then execute the guide's sample-data Cypher
    statements to import the Movies graph.
-3. Using JDK 26, build one of the example applications from the repository root, for example:
+3. Using JDK 27, build one of the example applications from the repository root, for example:
 
    ```shell
    mvn -Pexamples -pl extensions/neo4j/examples/se-imperative -am package
