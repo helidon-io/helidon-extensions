@@ -25,19 +25,19 @@
     <parent>
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-parent</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
+        <version>1.0.6</version>
         <relativePath>../../../parent/pom.xml</relativePath>
     </parent>
 
     <groupId>io.helidon.extensions.oci.v3</groupId>
     <artifactId>helidon-extensions-oci-v3-bom</artifactId>
-    <version>27.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
 
     <packaging>pom</packaging>
     <name>Helidon Extensions OCI SDK v3 BOM</name>
 
     <properties>
-        <oci-v3.extension.version>27.0.0-SNAPSHOT</oci-v3.extension.version>
+        <oci-v3.extension.version>27.0.0</oci-v3.extension.version>
     </properties>
 
     <dependencyManagement>

@@ -30,13 +30,13 @@
 
     <groupId>io.helidon.extensions.oci.v3.examples</groupId>
     <artifactId>helidon-extensions-oci-v3-examples-se-declarative</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
     <name>Helidon Extensions OCI SDK v3 Example SE Declarative</name>
     <description>Example for Helidon SE using the OCI SDK v3 extension with declarative APIs.</description>
 
     <properties>
         <mainClass>io.helidon.extensions.oci.v3.examples.declarative.Main</mainClass>
-        <oci-v3.extension.version>27.0.0-SNAPSHOT</oci-v3.extension.version>
+        <oci-v3.extension.version>27.0.0</oci-v3.extension.version>
         <version.lib.oci>3.78.1</version.lib.oci>
     </properties>
 
