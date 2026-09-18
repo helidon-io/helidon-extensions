@@ -34,7 +34,7 @@ If you want explicit version alignment, import the BOM:
 
 ```xml
 <properties>
-    <helidon.extensions.gson.version>27.0.0-SNAPSHOT</helidon.extensions.gson.version>
+    <helidon.extensions.gson.version>27.0.0</helidon.extensions.gson.version>
 </properties>
 
 <dependencyManagement>

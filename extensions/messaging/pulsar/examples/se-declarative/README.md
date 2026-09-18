@@ -85,7 +85,7 @@ For example, replace the shared broker service URL with
 ## Build and run
 
 Use JDK 27 or later, Maven, and Docker. This example targets Helidon
-`27.0.0-SNAPSHOT` and the matching messaging extension snapshot. The example
+`27.0.0` and the matching messaging extension snapshot. The example
 runs on the classpath because the Pulsar client dependencies contain split packages.
 
 Run these commands from this example's directory. Start the local Pulsar broker:
