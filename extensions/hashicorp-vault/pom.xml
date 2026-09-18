@@ -25,13 +25,13 @@
     <parent>
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-project</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
+        <version>1.0.6</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <groupId>io.helidon.extensions.hashicorp.vault</groupId>
     <artifactId>helidon-extensions-hashicorp-vault-project</artifactId>
-    <version>27.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
 
     <packaging>pom</packaging>
 
@@ -44,7 +44,7 @@
     </modules>
 
     <properties>
-        <hashicorp-vault.extension.version>27.0.0-SNAPSHOT</hashicorp-vault.extension.version>
+        <hashicorp-vault.extension.version>27.0.0</hashicorp-vault.extension.version>
         <!--
         When changing Helidon base version:
         - change it here to version manage Helidon dependencies
