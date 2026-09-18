@@ -43,6 +43,7 @@
     </modules>
 
     <properties>
+        <messaging.jms-javax.extension.version>27.0.0-SNAPSHOT</messaging.jms-javax.extension.version>
         <helidon.version>27.0.0</helidon.version>
         <version.java>27</version.java>
         <version.lib.awaitility>4.3.0</version.lib.awaitility>
@@ -72,7 +73,7 @@
             <dependency>
                 <groupId>io.helidon.extensions.messaging.jms-javax</groupId>
                 <artifactId>helidon-extensions-messaging-jms-javax-bom</artifactId>
-                <version>${project.version}</version>
+                <version>${messaging.jms-javax.extension.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

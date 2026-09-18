@@ -30,6 +30,7 @@
 
     <groupId>io.helidon.extensions.gson.examples</groupId>
     <artifactId>helidon-extensions-gson-examples-project</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
     <name>Helidon Extensions Gson Examples</name>
 
     <properties>

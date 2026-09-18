@@ -30,13 +30,13 @@
 
     <groupId>io.helidon.extensions.gson.examples</groupId>
     <artifactId>helidon-extensions-gson-examples-se-imperative</artifactId>
-    <version>27.0.0-SNAPSHOT</version>
+    <version>1.0.0-SNAPSHOT</version>
     <name>Helidon Extensions Gson Example SE (Imperative)</name>
     <description>Example for Helidon SE WebServer with Gson media support using programmatic APIs.</description>
 
     <properties>
         <mainClass>io.helidon.extensions.gson.examples.imperative.Main</mainClass>
-        <helidon.extension.gson.version>27.0.0-SNAPSHOT</helidon.extension.gson.version>
+        <gson.extension.version>27.0.0-SNAPSHOT</gson.extension.version>
     </properties>
 
     <dependencies>
@@ -79,7 +79,7 @@
             <dependency>
                 <groupId>io.helidon.extensions.gson</groupId>
                 <artifactId>helidon-extensions-gson-bom</artifactId>
-                <version>${helidon.extension.gson.version}</version>
+                <version>${gson.extension.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

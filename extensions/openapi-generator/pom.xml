@@ -42,6 +42,7 @@
     </modules>
 
     <properties>
+        <openapi-generator.extension.version>4.0.0-SNAPSHOT</openapi-generator.extension.version>
         <!-- Compatibility baseline for building the generator -->
         <helidon.version>4.5.0</helidon.version>
         <version.java>21</version.java>
@@ -111,7 +112,7 @@
             <dependency>
                 <groupId>io.helidon.extensions.openapi-generator</groupId>
                 <artifactId>helidon-extensions-openapi-generator-bom</artifactId>
-                <version>${project.version}</version>
+                <version>${openapi-generator.extension.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

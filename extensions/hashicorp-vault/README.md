@@ -5,7 +5,7 @@ Integration with Hashicorp Vault and with vaults compatible with its API.
 
 # Usage
 
-To use this extension, add the following dependency management to your project (and fill the `vault.version` property with
+To use this extension, add the following dependency management to your project (and fill the `hashicorp-vault.extension.version` property with
 the version you want to use):
 
 ```xml
@@ -15,7 +15,7 @@ the version you want to use):
         <dependency>
             <groupId>io.helidon.extensions.hashicorp.vault</groupId>
             <artifactId>helidon-extensions-hashicorp-vault-bom</artifactId>
-            <version>${vault.version}</version>
+            <version>${hashicorp-vault.extension.version}</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>

@@ -34,7 +34,7 @@ If you use more than one Neo4j extension artifact, declare the version property 
 
 ```xml
 <properties>
-    <helidon.extensions.neo4j.version>27.0.0</helidon.extensions.neo4j.version>
+    <neo4j.extension.version>27.0.0</neo4j.extension.version>
 </properties>
 
 <dependencyManagement>
@@ -42,7 +42,7 @@ If you use more than one Neo4j extension artifact, declare the version property 
         <dependency>
             <groupId>io.helidon.extensions.neo4j</groupId>
             <artifactId>helidon-extensions-neo4j-bom</artifactId>
-            <version>${helidon.extensions.neo4j.version}</version>
+            <version>${neo4j.extension.version}</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>

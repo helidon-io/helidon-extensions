@@ -42,6 +42,7 @@
     </modules>
 
     <properties>
+        <toml.extension.version>27.0.0-SNAPSHOT</toml.extension.version>
         <!--
         When changing Helidon base version:
         - change it here to version manage Helidon dependencies
@@ -55,7 +56,7 @@
             <dependency>
                 <groupId>io.helidon.extensions.toml</groupId>
                 <artifactId>helidon-extensions-toml-bom</artifactId>
-                <version>${project.version}</version>
+                <version>${toml.extension.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

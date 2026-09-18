@@ -30,6 +30,7 @@
 
     <groupId>io.helidon.extensions.openapi-ui.examples</groupId>
     <artifactId>helidon-extensions-openapi-ui-examples-project</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
     <name>Helidon Extensions Openapi-Ui Examples</name>
 
     <properties>

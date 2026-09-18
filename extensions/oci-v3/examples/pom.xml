@@ -30,6 +30,7 @@
 
     <groupId>io.helidon.extensions.oci.v3.examples</groupId>
     <artifactId>helidon-extensions-oci-v3-examples-project</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
     <name>Helidon Extensions OCI SDK v3 Examples</name>
 
     <properties>

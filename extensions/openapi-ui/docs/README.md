@@ -42,7 +42,7 @@ If you want explicit version alignment for the extension artifact, import the BO
 
 ```xml
 <properties>
-    <helidon.extensions.openapi-ui.version>27.0.0</helidon.extensions.openapi-ui.version>
+    <openapi-ui.extension.version>27.0.0</openapi-ui.extension.version>
 </properties>
 
 <dependencyManagement>
@@ -50,7 +50,7 @@ If you want explicit version alignment for the extension artifact, import the BO
         <dependency>
             <groupId>io.helidon.extensions.openapi-ui</groupId>
             <artifactId>helidon-extensions-openapi-ui-bom</artifactId>
-            <version>${helidon.extensions.openapi-ui.version}</version>
+            <version>${openapi-ui.extension.version}</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>

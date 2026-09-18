@@ -29,6 +29,7 @@
 
     <groupId>io.helidon.extensions.hashicorp.vault.examples</groupId>
     <artifactId>helidon-extensions-hashicorp-vault-examples-project</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
     <name>Helidon Extensions Hashicorp Vault Examples Project</name>
 
     <properties>
