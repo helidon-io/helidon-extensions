@@ -20,7 +20,7 @@
         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <parent>
         <artifactId>helidon-extensions-hashicorp-vault-sys-project</artifactId>
-        <groupId>io.helidon.extensions.hashicorp.vault.sys</groupId>
+        <groupId>io.helidon.extensions.hashicorp-vault.sys</groupId>
         <version>27.0.0-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
@@ -31,11 +31,11 @@
 
     <dependencies>
         <dependency>
-            <groupId>io.helidon.extensions.hashicorp.vault</groupId>
+            <groupId>io.helidon.extensions.hashicorp-vault</groupId>
             <artifactId>helidon-extensions-hashicorp-vault</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.extensions.hashicorp.vault.auths</groupId>
+            <groupId>io.helidon.extensions.hashicorp-vault.auths</groupId>
             <artifactId>helidon-extensions-hashicorp-vault-auths-common</artifactId>
         </dependency>
         <dependency>

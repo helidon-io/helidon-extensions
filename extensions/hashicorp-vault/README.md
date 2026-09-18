@@ -13,7 +13,7 @@ the version you want to use):
 <dependencyManagement>
     <dependencies>
         <dependency>
-            <groupId>io.helidon.extensions.hashicorp.vault</groupId>
+            <groupId>io.helidon.extensions.hashicorp-vault</groupId>
             <artifactId>helidon-extensions-hashicorp-vault-bom</artifactId>
             <version>${hashicorp-vault.extension.version}</version>
             <type>pom</type>
