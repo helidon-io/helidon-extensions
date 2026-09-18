@@ -29,13 +29,13 @@
 
     <groupId>io.helidon.extensions.messaging.jms-javax.examples</groupId>
     <artifactId>helidon-extensions-messaging-jms-javax-examples-se-declarative</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
     <name>Helidon Extensions Messaging JMS Javax Example SE Declarative</name>
 
     <properties>
         <maven.deploy.skip>true</maven.deploy.skip>
         <mainClass>io.helidon.extensions.messaging.jms.javax.examples.declarative.Main</mainClass>
-        <messaging.jms-javax.extension.version>27.0.0-SNAPSHOT</messaging.jms-javax.extension.version>
+        <messaging.jms-javax.extension.version>27.0.0</messaging.jms-javax.extension.version>
         <version.lib.artemis>2.55.0</version.lib.artemis>
         <version.lib.jakarta.jms-api>2.0.3</version.lib.jakarta.jms-api>
         <version.lib.awaitility>4.3.0</version.lib.awaitility>
