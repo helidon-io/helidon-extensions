@@ -43,7 +43,7 @@
     </modules>
 
     <properties>
-        <helidon.version>27.0.0-SNAPSHOT</helidon.version>
+        <helidon.version>27.0.0</helidon.version>
         <version.java>27</version.java>
         <version.lib.pulsar>4.0.13</version.lib.pulsar>
     </properties>

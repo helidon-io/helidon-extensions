@@ -89,7 +89,7 @@ For example, replace the first shared bootstrap server with
 ## Build and run
 
 Use JDK 27 or later, Maven, and Docker. This example targets Helidon
-`27.0.0-SNAPSHOT` and the matching messaging extension snapshot.
+`27.0.0` and the matching messaging extension snapshot.
 
 Run these commands from this example's directory. Start the local Kafka broker:
 
