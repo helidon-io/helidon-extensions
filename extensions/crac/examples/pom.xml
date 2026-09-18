@@ -30,6 +30,7 @@
 
     <groupId>io.helidon.extensions.crac.examples</groupId>
     <artifactId>helidon-extensions-crac-examples-project</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
     <name>Helidon Extensions Crac Examples</name>
 
     <properties>

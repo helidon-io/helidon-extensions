@@ -44,6 +44,7 @@
     </modules>
 
     <properties>
+        <hashicorp-vault.extension.version>27.0.0-SNAPSHOT</hashicorp-vault.extension.version>
         <!--
         When changing Helidon base version:
         - change it here to version manage Helidon dependencies
@@ -57,7 +58,7 @@
             <dependency>
                 <groupId>io.helidon.extensions.hashicorp.vault</groupId>
                 <artifactId>helidon-extensions-hashicorp-vault-bom</artifactId>
-                <version>${project.version}</version>
+                <version>${hashicorp-vault.extension.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

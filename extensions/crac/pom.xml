@@ -42,6 +42,7 @@
     </modules>
 
     <properties>
+        <crac.extension.version>27.0.0-SNAPSHOT</crac.extension.version>
         <!--
         When changing Helidon base version:
         - change it here to version manage Helidon dependencies
@@ -61,7 +62,7 @@
             <dependency>
                 <groupId>io.helidon.extensions.crac</groupId>
                 <artifactId>helidon-extensions-crac-bom</artifactId>
-                <version>${project.version}</version>
+                <version>${crac.extension.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

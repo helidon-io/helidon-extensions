@@ -43,6 +43,7 @@
     </modules>
 
     <properties>
+        <messaging.pulsar.extension.version>27.0.0-SNAPSHOT</messaging.pulsar.extension.version>
         <helidon.version>27.0.0</helidon.version>
         <version.java>27</version.java>
         <version.lib.pulsar>4.0.13</version.lib.pulsar>
@@ -78,7 +79,7 @@
             <dependency>
                 <groupId>io.helidon.extensions.messaging.pulsar</groupId>
                 <artifactId>helidon-extensions-messaging-pulsar-bom</artifactId>
-                <version>${project.version}</version>
+                <version>${messaging.pulsar.extension.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

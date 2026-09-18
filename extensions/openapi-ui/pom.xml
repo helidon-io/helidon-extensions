@@ -42,6 +42,7 @@
     </modules>
 
     <properties>
+        <openapi-ui.extension.version>27.0.0-SNAPSHOT</openapi-ui.extension.version>
         <!--
         When changing Helidon base version:
         - change it here to version manage Helidon dependencies
@@ -62,7 +63,7 @@
             <dependency>
                 <groupId>io.helidon.extensions.openapi-ui</groupId>
                 <artifactId>helidon-extensions-openapi-ui-bom</artifactId>
-                <version>${project.version}</version>
+                <version>${openapi-ui.extension.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

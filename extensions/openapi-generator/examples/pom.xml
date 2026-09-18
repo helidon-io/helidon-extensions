@@ -30,6 +30,7 @@
 
     <groupId>io.helidon.extensions.openapi-generator.examples</groupId>
     <artifactId>helidon-extensions-openapi-generator-examples-project</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
     <name>Helidon Extensions Openapi-Generator Examples</name>
 
     <properties>

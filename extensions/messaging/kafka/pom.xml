@@ -43,6 +43,7 @@
     </modules>
 
     <properties>
+        <messaging.kafka.extension.version>27.0.0-SNAPSHOT</messaging.kafka.extension.version>
         <helidon.version>27.0.0</helidon.version>
         <version.java>27</version.java>
     </properties>
@@ -67,7 +68,7 @@
             <dependency>
                 <groupId>io.helidon.extensions.messaging.kafka</groupId>
                 <artifactId>helidon-extensions-messaging-kafka-bom</artifactId>
-                <version>${project.version}</version>
+                <version>${messaging.kafka.extension.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

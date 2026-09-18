@@ -32,7 +32,7 @@ Import the TOML extension BOM:
 
 ```xml
 <properties>
-    <helidon.extensions.toml.version>27.0.0</helidon.extensions.toml.version>
+    <toml.extension.version>27.0.0</toml.extension.version>
 </properties>
 
 <dependencyManagement>
@@ -40,7 +40,7 @@ Import the TOML extension BOM:
         <dependency>
             <groupId>io.helidon.extensions.toml</groupId>
             <artifactId>helidon-extensions-toml-bom</artifactId>
-            <version>${helidon.extensions.toml.version}</version>
+            <version>${toml.extension.version}</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>

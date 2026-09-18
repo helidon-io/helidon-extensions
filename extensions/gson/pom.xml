@@ -42,6 +42,7 @@
     </modules>
 
     <properties>
+        <gson.extension.version>27.0.0-SNAPSHOT</gson.extension.version>
         <!--
         When changing Helidon base version:
         - change it here to version manage Helidon dependencies
@@ -62,7 +63,7 @@
             <dependency>
                 <groupId>io.helidon.extensions.gson</groupId>
                 <artifactId>helidon-extensions-gson-bom</artifactId>
-                <version>${project.version}</version>
+                <version>${gson.extension.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
