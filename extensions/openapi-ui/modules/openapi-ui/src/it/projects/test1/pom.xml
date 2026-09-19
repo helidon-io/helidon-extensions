@@ -21,7 +21,7 @@
 
     <groupId>io.helidon.extensions.openapi-ui.it</groupId>
     <artifactId>test-1</artifactId>
-    <version>@project.version@</version>
+    <version>27.0.0</version>
     <name>Test Project for OpenAPI UI module export</name>
 
     <properties>

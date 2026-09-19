@@ -24,13 +24,13 @@
     <parent>
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-project</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
+        <version>1.0.8</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <groupId>io.helidon.extensions.openapi-ui</groupId>
     <artifactId>helidon-extensions-openapi-ui-project</artifactId>
-    <version>27.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
 
     <packaging>pom</packaging>
 
@@ -42,7 +42,7 @@
     </modules>
 
     <properties>
-        <openapi-ui.extension.version>27.0.0-SNAPSHOT</openapi-ui.extension.version>
+        <openapi-ui.extension.version>27.0.0</openapi-ui.extension.version>
         <!--
         When changing Helidon base version:
         - change it here to version manage Helidon dependencies
