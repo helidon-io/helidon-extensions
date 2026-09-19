@@ -24,7 +24,7 @@
     <parent>
         <groupId>io.helidon.extensions.eureka</groupId>
         <artifactId>helidon-extensions-eureka-modules-project</artifactId>
-        <version>27.0.0-SNAPSHOT</version>
+        <version>27.0.0</version>
     </parent>
 
     <artifactId>helidon-extensions-eureka-discovery</artifactId>
