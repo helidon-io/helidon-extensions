@@ -344,7 +344,7 @@ resolve_pom_release_version() {
 
     # get the checksums
     projection_md5=$(checksum "${projection}")
-    remote_md5=$(remote_md5 "${group_id}" "${artifact_id}" "${version}")
+    remote_md5=$(remote_md5 "${group_id}" "${artifact_id}" "${latest_version}")
 
     if [ "${projection_md5}" = "${remote_md5}" ] ; then
       # projection matches latest release
