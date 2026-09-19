@@ -30,13 +30,13 @@
 
     <groupId>io.helidon.extensions.toml.examples</groupId>
     <artifactId>helidon-extensions-toml-examples-webserver</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
     <name>Helidon Extensions TOML WebServer Example</name>
     <description>Example for Helidon SE WebServer configured from application.toml.</description>
 
     <properties>
         <mainClass>io.helidon.extensions.toml.examples.webserver.Main</mainClass>
-        <toml.extension.version>27.0.0-SNAPSHOT</toml.extension.version>
+        <toml.extension.version>27.0.0</toml.extension.version>
     </properties>
 
     <dependencies>
