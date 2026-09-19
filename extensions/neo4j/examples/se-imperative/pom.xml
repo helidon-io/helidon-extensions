@@ -30,12 +30,12 @@
 
     <groupId>io.helidon.extensions.neo4j.examples</groupId>
     <artifactId>helidon-extensions-neo4j-examples-se-imperative</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
     <name>Helidon Extension Neo4j Examples SE Imperative</name>
 
     <properties>
         <mainClass>io.helidon.extensions.neo4j.examples.imperative.Main</mainClass>
-        <neo4j.extension.version>27.0.0-SNAPSHOT</neo4j.extension.version>
+        <neo4j.extension.version>27.0.0</neo4j.extension.version>
         <neo4j-harness.version>5.26.22</neo4j-harness.version>
         <version.lib.neo4j>6.0.2</version.lib.neo4j>
     </properties>
