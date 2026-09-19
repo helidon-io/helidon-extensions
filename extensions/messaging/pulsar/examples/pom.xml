@@ -23,13 +23,13 @@
     <parent>
         <groupId>io.helidon.extensions.messaging.pulsar</groupId>
         <artifactId>helidon-extensions-messaging-pulsar-project</artifactId>
-        <version>27.0.0-SNAPSHOT</version>
+        <version>27.0.0</version>
     </parent>
     <packaging>pom</packaging>
 
     <groupId>io.helidon.extensions.messaging.pulsar.examples</groupId>
     <artifactId>helidon-extensions-messaging-pulsar-examples-project</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
     <name>Helidon Extensions Messaging Pulsar Examples</name>
 
     <properties>
