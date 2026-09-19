@@ -25,18 +25,18 @@
     <parent>
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-parent</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
+        <version>1.0.8</version>
         <relativePath>../../../parent/pom.xml</relativePath>
     </parent>
 
     <groupId>io.helidon.extensions.gson</groupId>
     <artifactId>helidon-extensions-gson-bom</artifactId>
-    <version>27.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
     <packaging>pom</packaging>
     <name>Helidon Extensions Gson BOM POM</name>
 
     <properties>
-        <gson.extension.version>27.0.0-SNAPSHOT</gson.extension.version>
+        <gson.extension.version>27.0.0</gson.extension.version>
     </properties>
 
     <dependencyManagement>

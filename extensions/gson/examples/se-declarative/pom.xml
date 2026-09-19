@@ -29,13 +29,13 @@
 
     <groupId>io.helidon.extensions.gson.examples</groupId>
     <artifactId>helidon-extensions-gson-examples-se-declarative</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
     <name>Helidon Extensions Gson Example SE Declarative</name>
     <description>Example for Helidon SE WebServer with Gson media support using declarative APIs.</description>
 
     <properties>
         <mainClass>io.helidon.extensions.gson.examples.declarative.Main</mainClass>
-        <gson.extension.version>27.0.0-SNAPSHOT</gson.extension.version>
+        <gson.extension.version>27.0.0</gson.extension.version>
     </properties>
 
     <dependencies>

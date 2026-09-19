@@ -24,13 +24,13 @@
     <parent>
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-project</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
+        <version>1.0.8</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <groupId>io.helidon.extensions.gson</groupId>
     <artifactId>helidon-extensions-gson-project</artifactId>
-    <version>27.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
 
     <packaging>pom</packaging>
 
@@ -42,7 +42,7 @@
     </modules>
 
     <properties>
-        <gson.extension.version>27.0.0-SNAPSHOT</gson.extension.version>
+        <gson.extension.version>27.0.0</gson.extension.version>
         <!--
         When changing Helidon base version:
         - change it here to version manage Helidon dependencies
