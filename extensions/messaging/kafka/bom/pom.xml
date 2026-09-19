@@ -23,20 +23,20 @@
     <parent>
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-parent</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
+        <version>1.0.8</version>
         <relativePath>../../../../parent/pom.xml</relativePath>
     </parent>
 
     <groupId>io.helidon.extensions.messaging.kafka</groupId>
     <artifactId>helidon-extensions-messaging-kafka-bom</artifactId>
-    <version>27.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
 
     <packaging>pom</packaging>
 
     <name>Helidon Extensions Messaging Kafka BOM</name>
 
     <properties>
-        <messaging.kafka.extension.version>27.0.0-SNAPSHOT</messaging.kafka.extension.version>
+        <messaging.kafka.extension.version>27.0.0</messaging.kafka.extension.version>
         <version.lib.kafka>4.3.1</version.lib.kafka>
     </properties>
 
