@@ -23,7 +23,7 @@
     <parent>
         <groupId>io.helidon.extensions.messaging.jms</groupId>
         <artifactId>helidon-extensions-messaging-jms-project</artifactId>
-        <version>27.0.0-SNAPSHOT</version>
+        <version>27.0.0</version>
     </parent>
 
     <artifactId>helidon-extensions-messaging-jms-tests-project</artifactId>

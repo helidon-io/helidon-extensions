@@ -24,13 +24,13 @@
     <parent>
         <groupId>io.helidon.extensions</groupId>
         <artifactId>helidon-extensions-project</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
+        <version>1.0.8</version>
         <relativePath>../../../pom.xml</relativePath>
     </parent>
 
     <groupId>io.helidon.extensions.messaging.jms</groupId>
     <artifactId>helidon-extensions-messaging-jms-project</artifactId>
-    <version>27.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
 
     <packaging>pom</packaging>
 
@@ -43,7 +43,7 @@
     </modules>
 
     <properties>
-        <messaging.jms.extension.version>27.0.0-SNAPSHOT</messaging.jms.extension.version>
+        <messaging.jms.extension.version>27.0.0</messaging.jms.extension.version>
         <helidon.version>27.0.0</helidon.version>
         <version.java>27</version.java>
         <version.lib.awaitility>4.3.0</version.lib.awaitility>

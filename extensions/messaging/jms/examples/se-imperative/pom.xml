@@ -29,13 +29,13 @@
 
     <groupId>io.helidon.extensions.messaging.jms.examples</groupId>
     <artifactId>helidon-extensions-messaging-jms-examples-se-imperative</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>27.0.0</version>
     <name>Helidon Extensions Messaging JMS Example SE Imperative</name>
 
     <properties>
         <maven.deploy.skip>true</maven.deploy.skip>
         <mainClass>io.helidon.extensions.messaging.jms.examples.imperative.JmsMain</mainClass>
-        <messaging.jms.extension.version>27.0.0-SNAPSHOT</messaging.jms.extension.version>
+        <messaging.jms.extension.version>27.0.0</messaging.jms.extension.version>
         <version.lib.artemis>2.55.0</version.lib.artemis>
         <version.lib.jakarta.jms-api>3.1.0</version.lib.jakarta.jms-api>
         <version.lib.awaitility>4.3.0</version.lib.awaitility>
