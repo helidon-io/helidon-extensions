@@ -94,7 +94,7 @@ readonly RESULT_FILE
 BASE_URL="https://github.com/checkstyle/checkstyle/releases/download"
 readonly BASE_URL
 
-VERSION=13.3.0
+VERSION=14.1.0
 readonly VERSION
 
 CACHE_DIR="${HOME}/.checkstyle"

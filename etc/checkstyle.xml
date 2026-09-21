@@ -40,15 +40,20 @@
 
     <!--
         exclude files
-         1. module-info.java - checkstyle can't process it
-         2. ProxyFactory.java - sources copied from Weld, does not adhere to Helidon style
-         3. Actor.java - Example copied from Neo4j
-         4. Movie.java - Example copied from Neo4j
-         5. Author.java - Example copied from Neo4j
-         6. MovieRepository.java - Example copied from Neo4j
+         1. ProxyFactory.java - sources copied from Weld, does not adhere to Helidon style
+         2. Actor.java - Example copied from Neo4j
+         3. Movie.java - Example copied from Neo4j
+         4. Author.java - Example copied from Neo4j
+         5. MovieRepository.java - Example copied from Neo4j
     -->
     <module name="BeforeExecutionExclusionFileFilter">
-        <property name="fileNamePattern" value="module\-info\.java$|ProxyFactory\.java$|Actor\.java$|Movie\.java$|Author\.java$|MovieRepository\.java$|Person\.java$"/>
+        <property name="fileNamePattern" value="ProxyFactory\.java$|Actor\.java$|Movie\.java$|Author\.java$|MovieRepository\.java$|Person\.java$"/>
+    </module>
+
+    <!-- Module descriptor conventions apply to production modules, but not
+         test-only modules, examples, and integration-test fixtures. -->
+    <module name="BeforeExecutionExclusionFileFilter">
+        <property name="fileNamePattern" value="[/\\](tests|examples)[/\\].*[/\\]module-info\.java$|[/\\]src[/\\](test|it)[/\\].*[/\\]module-info\.java$"/>
     </module>
 
     <!--
@@ -131,7 +136,21 @@
         <module name="JavadocVariable">
             <property name="accessModifiers" value="protected,public"/>
         </module>
-        <module name="JavadocStyle"/>
+        <module name="SummaryJavadoc"/>
+
+        <!-- MissingJavadocType does not support module declarations. Match the
+             Javadoc before the first annotation, or before the module/open keyword. -->
+        <module name="MatchXpath">
+            <property name="id" value="MissingModuleJavadoc"/>
+            <property name="query" value="//MODULE_DEF[not(
+                BLOCK_COMMENT_BEGIN[COMMENT_CONTENT[starts-with(@text, '*')]]
+                    [preceding-sibling::*[not(self::BLOCK_COMMENT_BEGIN or self::SINGLE_LINE_COMMENT)][1]
+                        [self::ANNOTATIONS and not(*)]]
+                | ANNOTATIONS/ANNOTATION[1]/BLOCK_COMMENT_BEGIN[COMMENT_CONTENT[starts-with(@text, '*')]]
+                    [not(preceding-sibling::*[not(self::BLOCK_COMMENT_BEGIN or self::SINGLE_LINE_COMMENT)])]
+            )]"/>
+            <message key="matchxpath.match" value="Missing Javadoc comment on module declaration."/>
+        </module>
 
         <!-- Checks for Naming Conventions.                  -->
         <!-- See http://checkstyle.sf.net/config_naming.html -->
@@ -144,6 +163,23 @@
         <module name="ParameterName"/>
         <module name="StaticVariableName"/>
         <module name="TypeName"/>
+
+        <module name="MatchXpath">
+            <property name="id" value="ModuleName"/>
+            <!-- The innermost DOT contains the first two name components. -->
+            <property name="query" value="//MODULE_DEF[
+                not(DOT/descendant-or-self::DOT[IDENT[1][@text='io'] and IDENT[2][@text='helidon']])
+                or (DOT//IDENT)[not(matches(@text, '^[a-z][a-z0-9]*$'))]
+            ]"/>
+            <message key="matchxpath.match"
+                     value="Module name must be io.helidon or start with io.helidon. and use lowercase alphanumeric components starting with a letter."/>
+        </module>
+
+        <module name="ModuleDirectiveOrder">
+            <property name="order" value="requires,exports,uses,provides,opens"/>
+            <!-- Preserve logical groups within a directive kind. -->
+            <property name="validateBlockSeparation" value="false"/>
+        </module>
 
         <!-- Checks for imports                              -->
         <!-- See http://checkstyle.sf.net/config_import.html -->

@@ -26,8 +26,6 @@
 @SuppressWarnings({ "requires-automatic", "requires-transitive-automatic" })
 module io.helidon.extensions.oci.v3.secrets.configsource {
 
-    exports io.helidon.extensions.oci.v3.secrets.configsource;
-
     requires io.helidon.common;
     requires transitive io.helidon.config;
     requires io.helidon.extensions.oci.v3;
@@ -35,6 +33,8 @@ module io.helidon.extensions.oci.v3.secrets.configsource {
     requires oci.java.sdk.common;
     requires transitive oci.java.sdk.secrets;
     requires transitive oci.java.sdk.vault;
+
+    exports io.helidon.extensions.oci.v3.secrets.configsource;
 
     provides io.helidon.config.spi.ConfigSourceProvider
             with io.helidon.extensions.oci.v3.secrets.configsource.OciSecretsConfigSourceProvider;

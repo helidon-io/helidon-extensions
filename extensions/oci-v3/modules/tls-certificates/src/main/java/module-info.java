@@ -34,12 +34,12 @@ module io.helidon.extensions.oci.v3.tls.certificates {
     requires oci.java.sdk.certificates;
     requires oci.java.sdk.keymanagement;
 
+    exports io.helidon.extensions.oci.v3.tls.certificates;
+    exports io.helidon.extensions.oci.v3.tls.certificates.spi;
+
     uses io.helidon.common.tls.spi.TlsManagerProvider;
     uses io.helidon.extensions.oci.v3.tls.certificates.spi.OciPrivateKeyDownloader;
     uses io.helidon.extensions.oci.v3.tls.certificates.spi.OciCertificatesDownloader;
-
-    exports io.helidon.extensions.oci.v3.tls.certificates;
-    exports io.helidon.extensions.oci.v3.tls.certificates.spi;
 
     provides io.helidon.common.tls.spi.TlsManagerProvider
             with io.helidon.extensions.oci.v3.tls.certificates.DefaultOciCertificatesTlsManagerProvider;
