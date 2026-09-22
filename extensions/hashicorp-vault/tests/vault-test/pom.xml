@@ -21,7 +21,7 @@
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.helidon.extensions.hashicorp.vault.tests</groupId>
+        <groupId>io.helidon.extensions.hashicorp-vault.tests</groupId>
         <artifactId>helidon-extensions-hashicorp-vault-tests-project</artifactId>
         <version>27.0.0-SNAPSHOT</version>
     </parent>
@@ -37,39 +37,39 @@
 
     <dependencies>
         <dependency>
-            <groupId>io.helidon.extensions.hashicorp.vault</groupId>
+            <groupId>io.helidon.extensions.hashicorp-vault</groupId>
             <artifactId>helidon-extensions-hashicorp-vault</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.extensions.hashicorp.vault.auths</groupId>
+            <groupId>io.helidon.extensions.hashicorp-vault.auths</groupId>
             <artifactId>helidon-extensions-hashicorp-vault-auths-token</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.extensions.hashicorp.vault.auths</groupId>
+            <groupId>io.helidon.extensions.hashicorp-vault.auths</groupId>
             <artifactId>helidon-extensions-hashicorp-vault-auths-approle</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.extensions.hashicorp.vault.secrets</groupId>
+            <groupId>io.helidon.extensions.hashicorp-vault.secrets</groupId>
             <artifactId>helidon-extensions-hashicorp-vault-secrets-kv1</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.extensions.hashicorp.vault.secrets</groupId>
+            <groupId>io.helidon.extensions.hashicorp-vault.secrets</groupId>
             <artifactId>helidon-extensions-hashicorp-vault-secrets-kv2</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.extensions.hashicorp.vault.secrets</groupId>
+            <groupId>io.helidon.extensions.hashicorp-vault.secrets</groupId>
             <artifactId>helidon-extensions-hashicorp-vault-secrets-cubbyhole</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.extensions.hashicorp.vault.secrets</groupId>
+            <groupId>io.helidon.extensions.hashicorp-vault.secrets</groupId>
             <artifactId>helidon-extensions-hashicorp-vault-secrets-transit</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.extensions.hashicorp.vault.secrets</groupId>
+            <groupId>io.helidon.extensions.hashicorp-vault.secrets</groupId>
             <artifactId>helidon-extensions-hashicorp-vault-secrets-database</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.extensions.hashicorp.vault.sys</groupId>
+            <groupId>io.helidon.extensions.hashicorp-vault.sys</groupId>
             <artifactId>helidon-extensions-hashicorp-vault-sys</artifactId>
         </dependency>
         <dependency>

@@ -28,7 +28,7 @@
         <relativePath/>
     </parent>
 
-    <groupId>io.helidon.extensions.oci.v3.examples</groupId>
+    <groupId>io.helidon.extensions.oci-v3.examples</groupId>
     <artifactId>helidon-extensions-oci-v3-examples-se-declarative</artifactId>
     <version>1.0.0-SNAPSHOT</version>
     <name>Helidon Extensions OCI SDK v3 Example SE Declarative</name>
@@ -50,7 +50,7 @@
             <artifactId>helidon-config-yaml</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.extensions.oci.v3</groupId>
+            <groupId>io.helidon.extensions.oci-v3</groupId>
             <artifactId>helidon-extensions-oci-v3</artifactId>
         </dependency>
         <dependency>
@@ -94,7 +94,7 @@
                 <scope>import</scope>
             </dependency>
             <dependency>
-                <groupId>io.helidon.extensions.oci.v3</groupId>
+                <groupId>io.helidon.extensions.oci-v3</groupId>
                 <artifactId>helidon-extensions-oci-v3-bom</artifactId>
                 <version>${oci-v3.extension.version}</version>
                 <type>pom</type>

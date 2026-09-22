@@ -14,7 +14,7 @@ Add the module to the application:
 
 ```xml
 <dependency>
-    <groupId>io.helidon.extensions.oci.v3</groupId>
+    <groupId>io.helidon.extensions.oci-v3</groupId>
     <artifactId>helidon-extensions-oci-v3-tls-certificates</artifactId>
 </dependency>
 ```
