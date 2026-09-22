@@ -16,11 +16,14 @@
 package io.helidon.extensions.chaos;
 
 import java.time.Duration;
+import java.util.HashSet;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -35,8 +38,11 @@ class ChaosConfigTest {
         assertThat(config.security().allowUnauthenticatedLocal(), is(false));
         assertThat(config.limits().maximumActiveRuns(), is(1));
         assertThat(config.limits().maximumRunDuration(), is(Duration.ofMinutes(15)));
+        assertThat(config.limits().maximumStagesPerRun(), is(16));
         assertThat(config.limits().maximumActivationsPerDisruption(), is(10_000L));
         assertThat(config.limits().maximumConcurrentActivationsPerDisruption(), is(64));
+        assertThat(config.limits().maximumLatency(), is(Duration.ofSeconds(30)));
+        assertThat(config.limits().maximumResponseTimeout(), is(Duration.ofSeconds(30)));
         assertThat(config.limits().maximumSyntheticBodyBytes(), is(65_536));
         assertThat(config.limits().maximumControlRequestBytes(), is(65_536L));
         assertThat(config.limits().maximumConcurrentControlRequests(), is(16));
@@ -90,6 +96,32 @@ class ChaosConfigTest {
     }
 
     @Test
+    void rejectsNullSocketWhenReplacingApplicationSockets() {
+        Set<String> sockets = new HashSet<>();
+        sockets.add(null);
+
+        assertThrows(NullPointerException.class, () -> ChaosConfig.builder().applicationSockets(sockets));
+    }
+
+    @Test
+    void rejectsNullSocketWhenAddingApplicationSockets() {
+        Set<String> sockets = new HashSet<>();
+        sockets.add(null);
+
+        assertThrows(NullPointerException.class, () -> ChaosConfig.builder().addApplicationSockets(sockets));
+    }
+
+    @Test
+    void rejectsNullSocketAddedThroughApplicationSocketsAccessor() {
+        ChaosConfig.Builder builder = ChaosConfig.builder();
+        builder.applicationSockets().add(null);
+
+        NullPointerException exception = assertThrows(NullPointerException.class, builder::buildPrototype);
+
+        assertThat(exception.getMessage(), containsString("Application socket"));
+    }
+
+    @Test
     void configBuildsItsRuntimeType() {
         ChaosServerFeature feature = ChaosConfig.builder().build();
 
@@ -109,9 +141,15 @@ class ChaosConfigTest {
         assertThrows(IllegalArgumentException.class,
                      () -> ChaosLimitsConfig.builder().maximumRunDuration(Duration.ZERO).build());
         assertThrows(IllegalArgumentException.class,
+                     () -> ChaosLimitsConfig.builder().maximumStagesPerRun(0).build());
+        assertThrows(IllegalArgumentException.class,
                      () -> ChaosLimitsConfig.builder().maximumActivationsPerDisruption(0).build());
         assertThrows(IllegalArgumentException.class,
                      () -> ChaosLimitsConfig.builder().maximumConcurrentActivationsPerDisruption(0).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> ChaosLimitsConfig.builder().maximumLatency(Duration.ZERO).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> ChaosLimitsConfig.builder().maximumResponseTimeout(Duration.ZERO).build());
         assertThrows(IllegalArgumentException.class,
                      () -> ChaosLimitsConfig.builder().maximumSyntheticBodyBytes(0).build());
         assertThrows(IllegalArgumentException.class,
@@ -130,6 +168,22 @@ class ChaosConfigTest {
                      () -> ChaosLimitsConfig.builder()
                              .maximumActiveRuns(2)
                              .maximumRetainedRuns(1)
+                             .build());
+    }
+
+    @Test
+    void maximumLatencyMustFitNanosecondPrecision() {
+        assertThrows(IllegalArgumentException.class,
+                     () -> ChaosLimitsConfig.builder()
+                             .maximumLatency(Duration.ofSeconds(Long.MAX_VALUE))
+                             .build());
+    }
+
+    @Test
+    void maximumResponseTimeoutMustFitNanosecondPrecision() {
+        assertThrows(IllegalArgumentException.class,
+                     () -> ChaosLimitsConfig.builder()
+                             .maximumResponseTimeout(Duration.ofSeconds(Long.MAX_VALUE))
                              .build());
     }
 }

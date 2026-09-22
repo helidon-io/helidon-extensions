@@ -17,6 +17,7 @@ package io.helidon.extensions.chaos;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.common.media.type.MediaTypes;
+import io.helidon.extensions.chaos.ChaosActivation.PeriodicBurstActivation;
 import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,10 +46,13 @@ import static io.helidon.extensions.chaos.ChaosRunState.STOPPING;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ChaosRunEngineTest {
+    private static final Instant STARTED_AT = Instant.parse("2026-08-24T12:00:00Z");
 
     private TestChaosScheduler scheduler;
     private ChaosRunEngine engine;
@@ -69,7 +74,159 @@ class ChaosRunEngineTest {
         ChaosRunView completed = engine.get(created.id()).orElseThrow();
         assertThat(completed.state(), is(COMPLETED));
         assertThat(completed.terminalReason().orElseThrow(), is("stage-duration-completed"));
-        assertThat(engine.reserve("GET", "/orders"), is(Optional.empty()));
+        assertThat(engine.reserveInbound("GET", "/orders"), is(Optional.empty()));
+    }
+
+    @Test
+    void selectsStagesAtExactWallClockBoundaries() {
+        ChaosRunView created = engine.create(sequencePlan(), "alice");
+
+        assertCurrentStage(created, 0, "slow-orders", STARTED_AT, STARTED_AT.plusSeconds(5));
+
+        try (ChaosRunEngine.Reservation reservation = engine.reserveInbound("GET", "/orders/42").orElseThrow()) {
+            assertThat(reservation.action(), instanceOf(ChaosLatencyAction.class));
+        }
+
+        scheduler.advance(Duration.ofMillis(4_999));
+        assertCurrentStage(engine.get(created.id()).orElseThrow(),
+                           0,
+                           "slow-orders",
+                           STARTED_AT,
+                           STARTED_AT.plusSeconds(5));
+
+        scheduler.advance(Duration.ofMillis(1));
+        assertCurrentStage(engine.get(created.id()).orElseThrow(),
+                           1,
+                           "orders-outage",
+                           STARTED_AT.plusSeconds(5),
+                           STARTED_AT.plusSeconds(15));
+        try (ChaosRunEngine.Reservation reservation = engine.reserveInbound("GET", "/orders/42").orElseThrow()) {
+            assertThat(((ChaosSyntheticResponse) reservation.action()).status(), is(503));
+        }
+
+        scheduler.advance(Duration.ofSeconds(10));
+        assertCurrentStage(engine.get(created.id()).orElseThrow(),
+                           2,
+                           "recovery",
+                           STARTED_AT.plusSeconds(15),
+                           STARTED_AT.plusSeconds(20));
+        assertThat(engine.reserveInbound("GET", "/orders/42"), is(Optional.empty()));
+
+        scheduler.advance(Duration.ofSeconds(5));
+        ChaosRunView completed = engine.get(created.id()).orElseThrow();
+        assertThat(completed.state(), is(COMPLETED));
+        assertThat(completed.currentStage(), is(Optional.empty()));
+        assertThat(completed.terminalReason().orElseThrow(), is("stage-duration-completed"));
+        assertThat(completed.matched(), is(2L));
+        assertThat(completed.activated(), is(2L));
+        assertThat(completed.completed(), is(2L));
+    }
+
+    @Test
+    void keepsBudgetsAndReservationsLocalToTheirOriginatingStage() {
+        ChaosRunPlan plan = new ChaosRunPlan("stage-local-budgets",
+                                              Duration.ofSeconds(20),
+                                              42,
+                                              List.of(stage("first",
+                                                            5,
+                                                            "/orders",
+                                                            ChaosActivation.always(),
+                                                            synthetic(503),
+                                                            1,
+                                                            1),
+                                                      stage("second",
+                                                            5,
+                                                            "/orders",
+                                                            ChaosActivation.always(),
+                                                            synthetic(529),
+                                                            1,
+                                                            1)));
+        ChaosRunView created = engine.create(plan, "alice");
+        ChaosRunEngine.Reservation first = engine.reserveInbound("GET", "/orders").orElseThrow();
+        assertThat(engine.reserveInbound("GET", "/orders"), is(Optional.empty()));
+
+        scheduler.advance(Duration.ofSeconds(5));
+        ChaosRunEngine.Reservation second = engine.reserveInbound("GET", "/orders").orElseThrow();
+        assertThat(((ChaosSyntheticResponse) second.action()).status(), is(529));
+        assertThat(engine.get(created.id()).orElseThrow().inFlight(), is(2L));
+
+        first.close();
+        assertThat(engine.get(created.id()).orElseThrow().inFlight(), is(1L));
+        second.close();
+        assertThat(engine.reserveInbound("GET", "/orders"), is(Optional.empty()));
+
+        ChaosRunView view = engine.get(created.id()).orElseThrow();
+        assertThat(view.matched(), is(4L));
+        assertThat(view.activated(), is(2L));
+        assertThat(view.skippedConcurrent(), is(1L));
+        assertThat(view.skippedBudget(), is(1L));
+        assertThat(view.inFlight(), is(0L));
+        assertThat(view.completed(), is(2L));
+    }
+
+    @Test
+    void restartsActivationSequenceForEachStage() {
+        PeriodicBurstActivation activation = new PeriodicBurstActivation(1, 2, 1);
+        ChaosRunPlan plan = new ChaosRunPlan("stage-local-activation",
+                                              Duration.ofSeconds(20),
+                                              42,
+                                              List.of(stage("first", 5, "/orders", activation, synthetic(503), 10, 2),
+                                                      stage("second", 5, "/orders", activation, synthetic(503), 10, 2)));
+        ChaosRunView created = engine.create(plan, "alice");
+
+        assertThat(reserveSequence(engine, 2), is(List.of(false, true)));
+        scheduler.advance(Duration.ofSeconds(5));
+        assertThat(reserveSequence(engine, 2), is(List.of(false, true)));
+
+        ChaosRunView view = engine.get(created.id()).orElseThrow();
+        assertThat(view.matched(), is(4L));
+        assertThat(view.activated(), is(2L));
+        assertThat(view.skippedActivation(), is(2L));
+    }
+
+    @Test
+    void derivesIndependentProbabilityStreamsForEachStage() {
+        ProbabilityActivation activation = new ProbabilityActivation(0.5);
+        ChaosRunPlan plan = new ChaosRunPlan("stage-local-randomness",
+                                              Duration.ofSeconds(20),
+                                              42,
+                                              List.of(stage("first", 5, "/orders", activation, synthetic(503), 20, 2),
+                                                      stage("second", 5, "/orders", activation, synthetic(503), 20, 2)));
+        engine.create(plan, "alice");
+
+        List<Boolean> first = reserveSequence(engine, 8);
+        scheduler.advance(Duration.ofSeconds(5));
+        List<Boolean> second = reserveSequence(engine, 8);
+
+        assertThat(second, not(is(first)));
+    }
+
+    @Test
+    void finalStageCompletionWaitsForEarlierReservationToDrain() {
+        ChaosRunPlan plan = new ChaosRunPlan("draining-completion",
+                                              Duration.ofSeconds(20),
+                                              42,
+                                              List.of(stage("first",
+                                                            5,
+                                                            "/orders",
+                                                            ChaosActivation.always(),
+                                                            synthetic(503),
+                                                            10,
+                                                            2),
+                                                      passiveStage("recovery", 5)));
+        ChaosRunView created = engine.create(plan, "alice");
+        ChaosRunEngine.Reservation reservation = engine.reserveInbound("GET", "/orders").orElseThrow();
+
+        scheduler.advance(Duration.ofSeconds(10));
+
+        ChaosRunView stopping = engine.get(created.id()).orElseThrow();
+        assertThat(stopping.state(), is(STOPPING));
+        assertThat(stopping.currentStage(), is(Optional.empty()));
+        reservation.close();
+
+        ChaosRunView completed = engine.get(created.id()).orElseThrow();
+        assertThat(completed.state(), is(COMPLETED));
+        assertThat(completed.terminalReason().orElseThrow(), is("stage-duration-completed"));
     }
 
     @Test
@@ -82,16 +239,27 @@ class ChaosRunEngineTest {
     }
 
     @Test
+    void completesNormallyWhenStageTotalEqualsMaximumDuration() {
+        ChaosRunView created = engine.create(plan(10, 10, 20, 2, "/orders"), "alice");
+
+        scheduler.fireLast();
+
+        ChaosRunView completed = engine.get(created.id()).orElseThrow();
+        assertThat(completed.state(), is(COMPLETED));
+        assertThat(completed.terminalReason().orElseThrow(), is("stage-duration-completed"));
+    }
+
+    @Test
     void cumulativeAndConcurrentBudgetsNeverOvershoot() {
         ChaosRunView created = engine.create(plan(10, 30, 2, 1, "/orders"), "alice");
-        ChaosRunEngine.Reservation first = engine.reserve("GET", "/orders/42").orElseThrow();
+        ChaosRunEngine.Reservation first = engine.reserveInbound("GET", "/orders/42").orElseThrow();
 
-        assertThat(engine.reserve("GET", "/orders/43"), is(Optional.empty()));
+        assertThat(engine.reserveInbound("GET", "/orders/43"), is(Optional.empty()));
         first.close();
-        try (ChaosRunEngine.Reservation second = engine.reserve("GET", "/orders/44").orElseThrow()) {
-            assertThat(((ChaosSyntheticResponse) second.effect()).status(), is(503));
+        try (ChaosRunEngine.Reservation second = engine.reserveInbound("GET", "/orders/44").orElseThrow()) {
+            assertThat(((ChaosSyntheticResponse) second.action()).status(), is(503));
         }
-        assertThat(engine.reserve("GET", "/orders/45"), is(Optional.empty()));
+        assertThat(engine.reserveInbound("GET", "/orders/45"), is(Optional.empty()));
 
         ChaosRunView view = engine.get(created.id()).orElseThrow();
         assertThat(view.matched(), is(4L));
@@ -142,6 +310,62 @@ class ChaosRunEngineTest {
     }
 
     @Test
+    void periodicBurstSkipsInitiallyThenRepeatsWithoutConsumingBudgetOnMisses() {
+        ChaosRunPlan plan = plan(10,
+                                 30,
+                                 20,
+                                 2,
+                                 "/orders",
+                                 new PeriodicBurstActivation(2, 4, 2),
+                                 42,
+                                 "synthetic");
+        ChaosRunView created = engine.create(plan, "alice");
+
+        List<Boolean> decisions = reserveSequence(engine, 12);
+
+        assertThat(decisions,
+                   is(List.of(false, false, true, true, false, false,
+                              true, true, false, false, true, true)));
+        ChaosRunView view = engine.get(created.id()).orElseThrow();
+        assertThat(view.matched(), is(12L));
+        assertThat(view.activated(), is(6L));
+        assertThat(view.skippedActivation(), is(6L));
+        assertThat(view.skippedConcurrent(), is(0L));
+        assertThat(view.skippedBudget(), is(0L));
+        assertThat(view.completed(), is(6L));
+    }
+
+    @Test
+    void periodicBurstCountsOnlyMatchingRequestsAndIgnoresSeed() {
+        PeriodicBurstActivation activation = new PeriodicBurstActivation(1, 3, 1);
+        engine.create(plan(10, 30, 20, 2, "/orders", activation, 42, "synthetic"), "alice");
+
+        assertThat(engine.reserveInbound("GET", "/customers"), is(Optional.empty()));
+        assertThat(engine.reserveInbound("POST", "/orders/42"), is(Optional.empty()));
+        List<Boolean> decisions = reserveSequence(engine, 5);
+
+        assertThat(decisions, is(List.of(false, true, false, false, true)));
+        assertThat(engine.list().getFirst().matched(), is(5L));
+
+        ChaosRunEngine differentSeedEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        differentSeedEngine.create(
+                plan(10, 30, 20, 2, "/orders", activation, 99, "synthetic"),
+                "alice");
+        assertThat(reserveSequence(differentSeedEngine, 5),
+                   is(List.of(false, true, false, false, true)));
+    }
+
+    @Test
+    void periodicBurstSupportsLongCounterBoundary() {
+        PeriodicBurstActivation activation =
+                new PeriodicBurstActivation(Long.MAX_VALUE - 2, Long.MAX_VALUE, 1);
+
+        assertThat(ChaosActivationDecider.activates(activation, 42, Long.MAX_VALUE - 2), is(false));
+        assertThat(ChaosActivationDecider.activates(activation, 42, Long.MAX_VALUE - 1), is(true));
+        assertThat(ChaosActivationDecider.activates(activation, 42, Long.MAX_VALUE), is(false));
+    }
+
+    @Test
     void stableIdentityEncodingSeparatesEmbeddedNullCharacters() {
         assertThat(ChaosActivationDecider.streamSeed(42, "a", "b\0c")
                            == ChaosActivationDecider.streamSeed(42, "a\0b", "c"),
@@ -149,9 +373,28 @@ class ChaosRunEngineTest {
     }
 
     @Test
+    void latencyUsesStableIndependentSeededSequence() {
+        ChaosLatency latency = new ChaosLatency(Duration.ofMillis(250), Duration.ofMillis(50));
+        ChaosRunEngine firstEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        firstEngine.create(plan(10, 30, 20, 2, "/orders",
+                                ChaosActivation.always(), 42, "latency", latency), "alice");
+        List<Duration> first = latencySequence(firstEngine, 8);
+
+        ChaosRunEngine sameEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        sameEngine.create(plan(10, 30, 20, 2, "/orders",
+                               ChaosActivation.always(), 42, "latency", latency), "alice");
+        assertThat(latencySequence(sameEngine, 8), is(first));
+
+        ChaosRunEngine differentSeedEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        differentSeedEngine.create(plan(10, 30, 20, 2, "/orders",
+                                        ChaosActivation.always(), 43, "latency", latency), "alice");
+        assertThat(latencySequence(differentSeedEngine, 8), not(is(first)));
+    }
+
+    @Test
     void reservationCloseIsIdempotent() {
         ChaosRunView created = engine.create(plan(10, 30, 2, 1, "/orders"), "alice");
-        ChaosRunEngine.Reservation reservation = engine.reserve("GET", "/orders").orElseThrow();
+        ChaosRunEngine.Reservation reservation = engine.reserveInbound("GET", "/orders").orElseThrow();
 
         reservation.close();
         reservation.close();
@@ -164,10 +407,10 @@ class ChaosRunEngineTest {
     @Test
     void deleteWaitsForInFlightReservation() {
         ChaosRunView created = engine.create(plan(10, 30, 2, 1, "/orders"), "alice");
-        ChaosRunEngine.Reservation reservation = engine.reserve("GET", "/orders").orElseThrow();
+        ChaosRunEngine.Reservation reservation = engine.reserveInbound("GET", "/orders").orElseThrow();
 
         assertThat(engine.stop(created.id()).state(), is(STOPPING));
-        assertThat(engine.reserve("GET", "/orders"), is(Optional.empty()));
+        assertThat(engine.reserveInbound("GET", "/orders"), is(Optional.empty()));
         reservation.close();
 
         assertThat(engine.get(created.id()).orElseThrow().state(), is(STOPPED));
@@ -185,6 +428,209 @@ class ChaosRunEngineTest {
         assertThrows(ChaosRunEngine.ConflictException.class,
                      () -> twoRunEngine.create(plan(10, 30, 2, 1, "/orders/42"), "bob"));
         assertThat(twoRunEngine.create(plan(10, 30, 2, 1, "/payments"), "bob").state(), is(RUNNING));
+    }
+
+    @Test
+    void reservesOutboundForTheCompleteNormalizedLogicalTarget() {
+        ChaosRunView created = engine.create(outboundPlan(), "alice");
+
+        try (ChaosRunEngine.Reservation reservation = engine.reserveOutbound("gEt",
+                                                                              "HTTPS",
+                                                                              "INVENTORY.EXAMPLE.COM",
+                                                                              443,
+                                                                              "/v1/items/42").orElseThrow()) {
+            assertThat(reservation.action(), instanceOf(ChaosLatencyAction.class));
+        }
+
+        ChaosRunView view = engine.get(created.id()).orElseThrow();
+        assertThat(view.matched(), is(1L));
+        assertThat(view.activated(), is(1L));
+        assertThat(view.completed(), is(1L));
+    }
+
+    @Test
+    void outboundComponentMissesDoNotAdvanceMatchedCounter() {
+        ChaosRunView created = engine.create(outboundPlan(), "alice");
+
+        assertThat(engine.reserveOutbound("POST", "https", "inventory.example.com", 443, "/v1/items"),
+                   is(Optional.empty()));
+        assertThat(engine.reserveOutbound("GET", "http", "inventory.example.com", 443, "/v1/items"),
+                   is(Optional.empty()));
+        assertThat(engine.reserveOutbound("GET", "https", "orders.example.com", 443, "/v1/items"),
+                   is(Optional.empty()));
+        assertThat(engine.reserveOutbound("GET", "https", "inventory.example.com", 8443, "/v1/items"),
+                   is(Optional.empty()));
+        assertThat(engine.reserveOutbound("GET", "https", "inventory.example.com", 443, "/v1/orders"),
+                   is(Optional.empty()));
+
+        assertThat(engine.get(created.id()).orElseThrow().matched(), is(0L));
+    }
+
+    @Test
+    void outboundProbabilityAndPeriodicBurstUseExistingActivationSequences() {
+        ChaosRunEngine probabilityEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        probabilityEngine.create(outboundPlan(new ProbabilityActivation(0.5),
+                                              synthetic(503),
+                                              20,
+                                              2,
+                                              42),
+                                 "alice");
+        assertThat(reserveOutboundSequence(probabilityEngine, 8),
+                   is(List.of(false, false, true, false, false, true, false, true)));
+
+        ChaosRunEngine burstEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        burstEngine.create(outboundPlan(new PeriodicBurstActivation(2, 4, 2),
+                                        synthetic(503),
+                                        20,
+                                        2,
+                                        42),
+                           "alice");
+        assertThat(reserveOutboundSequence(burstEngine, 12),
+                   is(List.of(false, false, true, true, false, false,
+                              true, true, false, false, true, true)));
+    }
+
+    @Test
+    void outboundLatencyUsesStableSeededEffectSequence() {
+        ChaosLatency latency = new ChaosLatency(Duration.ofMillis(250), Duration.ofMillis(50));
+        ChaosRunEngine firstEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        firstEngine.create(outboundPlan(ChaosActivation.always(), latency, 20, 2, 42), "alice");
+        List<Duration> first = outboundLatencySequence(firstEngine, 8);
+
+        ChaosRunEngine sameEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        sameEngine.create(outboundPlan(ChaosActivation.always(), latency, 20, 2, 42), "alice");
+        assertThat(outboundLatencySequence(sameEngine, 8), is(first));
+    }
+
+    @Test
+    void outboundBudgetsAndReservationDrainUseExistingSemantics() {
+        ChaosRunView created = engine.create(outboundPlan(ChaosActivation.always(), synthetic(503), 2, 1, 42), "alice");
+        ChaosRunEngine.Reservation first = engine.reserveOutbound("GET",
+                                                                   "https",
+                                                                   "inventory.example.com",
+                                                                   443,
+                                                                   "/v1/items").orElseThrow();
+
+        assertThat(engine.reserveOutbound("GET", "https", "inventory.example.com", 443, "/v1/items"),
+                   is(Optional.empty()));
+        first.close();
+        try (ChaosRunEngine.Reservation second = engine.reserveOutbound("GET",
+                                                                         "https",
+                                                                         "inventory.example.com",
+                                                                         443,
+                                                                         "/v1/items").orElseThrow()) {
+            assertThat(second.action(), instanceOf(ChaosSyntheticResponse.class));
+        }
+        assertThat(engine.reserveOutbound("GET", "https", "inventory.example.com", 443, "/v1/items"),
+                   is(Optional.empty()));
+
+        ChaosRunView view = engine.get(created.id()).orElseThrow();
+        assertThat(view.skippedConcurrent(), is(1L));
+        assertThat(view.skippedBudget(), is(1L));
+        assertThat(view.completed(), is(2L));
+    }
+
+    @Test
+    void outboundScopesConflictOnlyWithOverlappingOutboundScopes() {
+        ChaosRunEngine twoRunEngine = engine(limits(2, 8, Duration.ofMinutes(5)));
+
+        twoRunEngine.create(outboundPlan(), "alice");
+
+        assertThrows(ChaosRunEngine.ConflictException.class,
+                     () -> twoRunEngine.create(outboundPlan(), "bob"));
+        assertThat(twoRunEngine.create(outboundPlan(ChaosActivation.always(),
+                                                    synthetic(503),
+                                                    20,
+                                                    2,
+                                                    42,
+                                                    "/v1/orders"),
+                                        "bob").state(),
+                   is(RUNNING));
+
+        ChaosRunEngine inboundAndOutbound = engine(limits(2, 8, Duration.ofMinutes(5)));
+        inboundAndOutbound.create(plan(10, 30, 2, 1, "/v1/items"), "alice");
+        assertThat(inboundAndOutbound.create(outboundPlan(), "bob").state(), is(RUNNING));
+    }
+
+    @Test
+    void stopAndCloseRejectOutboundReservationsUntilAcceptedReservationsDrain() {
+        ChaosRunEngine stoppingEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        ChaosRunView created = stoppingEngine.create(outboundPlan(), "alice");
+        ChaosRunEngine.Reservation reservation = stoppingEngine.reserveOutbound("GET",
+                                                                                  "https",
+                                                                                  "inventory.example.com",
+                                                                                  443,
+                                                                                  "/v1/items").orElseThrow();
+
+        assertThat(stoppingEngine.stop(created.id()).state(), is(STOPPING));
+        assertThat(stoppingEngine.reserveOutbound("GET", "https", "inventory.example.com", 443, "/v1/items"),
+                   is(Optional.empty()));
+        reservation.close();
+        assertThat(stoppingEngine.get(created.id()).orElseThrow().state(), is(STOPPED));
+
+        ChaosRunEngine closedEngine = engine(limits(1, 8, Duration.ofMinutes(5)));
+        ChaosRunView closing = closedEngine.create(outboundPlan(), "alice");
+        ChaosRunEngine.Reservation accepted = closedEngine.reserveOutbound("GET",
+                                                                            "https",
+                                                                            "inventory.example.com",
+                                                                            443,
+                                                                            "/v1/items").orElseThrow();
+        closedEngine.close();
+        assertThat(closedEngine.reserveOutbound("GET", "https", "inventory.example.com", 443, "/v1/items"),
+                   is(Optional.empty()));
+        assertThat(closedEngine.get(closing.id()).orElseThrow().state(), is(STOPPING));
+        accepted.close();
+        assertThat(closedEngine.get(closing.id()).orElseThrow().state(), is(STOPPED));
+    }
+
+    @Test
+    void reservesEveryFutureDisruptiveScopeButNoPassiveScope() {
+        ChaosRunEngine twoRunEngine = engine(limits(2, 8, Duration.ofMinutes(5)));
+        ChaosRunPlan sequence = new ChaosRunPlan("changing-scope",
+                                                 Duration.ofSeconds(30),
+                                                 42,
+                                                 List.of(stage("orders",
+                                                               5,
+                                                               "/orders",
+                                                               ChaosActivation.always(),
+                                                               synthetic(503),
+                                                               10,
+                                                               2),
+                                                         passiveStage("recovery", 5),
+                                                         stage("payments",
+                                                               5,
+                                                               "/payments",
+                                                               ChaosActivation.always(),
+                                                               synthetic(503),
+                                                               10,
+                                                               2)));
+        twoRunEngine.create(sequence, "alice");
+
+        assertThrows(ChaosRunEngine.ConflictException.class,
+                     () -> twoRunEngine.create(plan(10, 30, 2, 1, "/payments/42"), "bob"));
+
+        ChaosRunEngine passiveEngine = engine(limits(2, 8, Duration.ofMinutes(5)));
+        ChaosRunPlan passive = new ChaosRunPlan("passive",
+                                                Duration.ofSeconds(30),
+                                                42,
+                                                List.of(passiveStage("observe", 5)));
+        passiveEngine.create(passive, "alice");
+        assertThat(passiveEngine.create(plan(10, 30, 2, 1, "/orders"), "bob").state(), is(RUNNING));
+    }
+
+    @Test
+    void retainsScopesUntilStoppingRunDrains() {
+        ChaosRunEngine twoRunEngine = engine(limits(2, 8, Duration.ofMinutes(5)));
+        ChaosRunView created = twoRunEngine.create(plan(10, 30, 2, 1, "/orders"), "alice");
+        ChaosRunEngine.Reservation reservation = twoRunEngine.reserveInbound("GET", "/orders").orElseThrow();
+
+        assertThat(twoRunEngine.stop(created.id()).state(), is(STOPPING));
+        assertThrows(ChaosRunEngine.ConflictException.class,
+                     () -> twoRunEngine.create(plan(10, 30, 2, 1, "/orders/42"), "bob"));
+
+        reservation.close();
+        assertThat(twoRunEngine.get(created.id()).orElseThrow().state(), is(STOPPED));
+        assertThat(twoRunEngine.create(plan(10, 30, 2, 1, "/orders/42"), "bob").state(), is(RUNNING));
     }
 
     @Test
@@ -234,7 +680,7 @@ class ChaosRunEngineTest {
                         if (!start.await(5, TimeUnit.SECONDS)) {
                             throw new AssertionError("Timed out waiting to start reservation attempt");
                         }
-                        candidate = engine.reserve("GET", "/orders");
+                        candidate = engine.reserveInbound("GET", "/orders");
                         if (candidate.isPresent()) {
                             reserved.incrementAndGet();
                         }
@@ -283,6 +729,63 @@ class ChaosRunEngineTest {
                 .maximumRetainedRuns(retainedRuns)
                 .terminalRunRetention(retention)
                 .build();
+    }
+
+    private static ChaosRunPlan sequencePlan() {
+        return new ChaosRunPlan("orders-sequence",
+                                Duration.ofSeconds(30),
+                                42,
+                                List.of(stage("slow-orders",
+                                              5,
+                                              "/orders",
+                                              ChaosActivation.always(),
+                                              new ChaosLatency(Duration.ofMillis(10), Duration.ZERO),
+                                              20,
+                                              2),
+                                        stage("orders-outage",
+                                              10,
+                                              "/orders",
+                                              ChaosActivation.always(),
+                                              synthetic(503),
+                                              20,
+                                              2),
+                                        passiveStage("recovery", 5)));
+    }
+
+    private static ChaosRunPlan.ChaosStage stage(String name,
+                                                  int durationSeconds,
+                                                  String path,
+                                                  ChaosActivation activation,
+                                                  ChaosEffect effect,
+                                                  long maximumActivations,
+                                                  int maximumConcurrent) {
+        ChaosHttpScope scope = new ChaosHttpScope(Set.of("GET"), PREFIX, path);
+        ChaosBudget budget = new ChaosBudget(maximumActivations, maximumConcurrent);
+        ChaosRunPlan.ChaosDisruption disruption =
+                new ChaosRunPlan.ChaosDisruption(name + "-disruption", scope, activation, effect, budget);
+        return new ChaosRunPlan.ChaosStage(name,
+                                            Duration.ofSeconds(durationSeconds),
+                                            Optional.of(disruption));
+    }
+
+    private static ChaosRunPlan.ChaosStage passiveStage(String name, int durationSeconds) {
+        return new ChaosRunPlan.ChaosStage(name, Duration.ofSeconds(durationSeconds), Optional.empty());
+    }
+
+    private static ChaosSyntheticResponse synthetic(int status) {
+        return new ChaosSyntheticResponse(status, Map.of(), Optional.empty(), new byte[0]);
+    }
+
+    private static void assertCurrentStage(ChaosRunView view,
+                                           int index,
+                                           String name,
+                                           Instant startedAt,
+                                           Instant endsAt) {
+        ChaosRunView.CurrentStage current = view.currentStage().orElseThrow();
+        assertThat(current.index(), is(index));
+        assertThat(current.name(), is(name));
+        assertThat(current.startedAt(), is(startedAt));
+        assertThat(current.endsAt(), is(endsAt));
     }
 
     private static ChaosRunPlan plan(int stageSeconds,
@@ -337,18 +840,98 @@ class ChaosRunEngineTest {
         ChaosRunPlan.ChaosDisruption disruption =
                 new ChaosRunPlan.ChaosDisruption(disruptionName, scope, activation, effect, budget);
         ChaosRunPlan.ChaosStage stage =
-                new ChaosRunPlan.ChaosStage("stage", Duration.ofSeconds(stageSeconds), disruption);
-        return new ChaosRunPlan("run", Duration.ofSeconds(maximumSeconds), seed, stage);
+                new ChaosRunPlan.ChaosStage("stage", Duration.ofSeconds(stageSeconds), Optional.of(disruption));
+        return new ChaosRunPlan("run", Duration.ofSeconds(maximumSeconds), seed, List.of(stage));
+    }
+
+    private static ChaosRunPlan outboundPlan() {
+        return outboundPlan(ChaosActivation.always(),
+                            new ChaosLatency(Duration.ofMillis(100), Duration.ZERO),
+                            20,
+                            2,
+                            42);
+    }
+
+    private static ChaosRunPlan outboundPlan(ChaosActivation activation,
+                                             ChaosEffect effect,
+                                             long maximumActivations,
+                                             int maximumConcurrent,
+                                             long seed) {
+        return outboundPlan(activation, effect, maximumActivations, maximumConcurrent, seed, "/v1/items");
+    }
+
+    private static ChaosRunPlan outboundPlan(ChaosActivation activation,
+                                             ChaosEffect effect,
+                                             long maximumActivations,
+                                             int maximumConcurrent,
+                                             long seed,
+                                             String path) {
+        ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("GET"),
+                                                                   "https",
+                                                                   "inventory.example.com",
+                                                                   443,
+                                                                   PREFIX,
+                                                                   path);
+        ChaosRunPlan.ChaosDisruption disruption = new ChaosRunPlan.ChaosDisruption(
+                "outbound-latency",
+                scope,
+                activation,
+                effect,
+                new ChaosBudget(maximumActivations, maximumConcurrent));
+        ChaosRunPlan.ChaosStage stage = new ChaosRunPlan.ChaosStage("slow-inventory",
+                                                                      Duration.ofSeconds(10),
+                                                                      Optional.of(disruption));
+        return new ChaosRunPlan("outbound-latency", Duration.ofSeconds(30), seed, List.of(stage));
     }
 
     private static List<Boolean> reserveSequence(ChaosRunEngine runEngine, int count) {
         List<Boolean> decisions = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
-            Optional<ChaosRunEngine.Reservation> reservation = runEngine.reserve("GET", "/orders/42");
+            Optional<ChaosRunEngine.Reservation> reservation = runEngine.reserveInbound("GET", "/orders/42");
             decisions.add(reservation.isPresent());
             reservation.ifPresent(ChaosRunEngine.Reservation::close);
         }
         return decisions;
+    }
+
+    private static List<Duration> latencySequence(ChaosRunEngine runEngine, int count) {
+        List<Duration> delays = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            try (ChaosRunEngine.Reservation reservation = runEngine.reserveInbound("GET", "/orders/42").orElseThrow()) {
+                ChaosLatencyAction latency = (ChaosLatencyAction) reservation.action();
+                delays.add(latency.delay());
+            }
+        }
+        return delays;
+    }
+
+    private static List<Boolean> reserveOutboundSequence(ChaosRunEngine runEngine, int count) {
+        List<Boolean> decisions = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            Optional<ChaosRunEngine.Reservation> reservation = runEngine.reserveOutbound("GET",
+                                                                                           "https",
+                                                                                           "inventory.example.com",
+                                                                                           443,
+                                                                                           "/v1/items/42");
+            decisions.add(reservation.isPresent());
+            reservation.ifPresent(ChaosRunEngine.Reservation::close);
+        }
+        return decisions;
+    }
+
+    private static List<Duration> outboundLatencySequence(ChaosRunEngine runEngine, int count) {
+        List<Duration> delays = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            try (ChaosRunEngine.Reservation reservation = runEngine.reserveOutbound("GET",
+                                                                                     "https",
+                                                                                     "inventory.example.com",
+                                                                                     443,
+                                                                                     "/v1/items/42").orElseThrow()) {
+                ChaosLatencyAction latency = (ChaosLatencyAction) reservation.action();
+                delays.add(latency.delay());
+            }
+        }
+        return delays;
     }
 
     private ChaosRunEngine engine(ChaosLimitsConfig limits) {

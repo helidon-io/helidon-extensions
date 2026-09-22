@@ -15,6 +15,7 @@
  */
 package io.helidon.extensions.chaos;
 
+import java.util.Objects;
 import java.util.Optional;
 
 import io.helidon.http.HeaderNames;
@@ -28,39 +29,63 @@ import io.helidon.webserver.http.RoutingResponse;
  * Applies accepted disruption reservations before application routing.
  */
 final class ChaosApplicationFilter implements Filter {
-    private final ChaosRunEngine engine;
+    private final ChaosRuntimeRegistration registration;
 
-    ChaosApplicationFilter(ChaosRunEngine engine) {
-        this.engine = engine;
+    ChaosApplicationFilter(ChaosRuntimeRegistration registration) {
+        this.registration = Objects.requireNonNull(registration, "registration is null");
     }
 
     @Override
     public void filter(FilterChain chain, RoutingRequest request, RoutingResponse response) {
         String method = request.prologue().method().text();
         String path = request.path().absolute().path();
-        Optional<ChaosRunEngine.Reservation> candidate = engine.reserve(method, path);
+        Optional<ChaosRunEngine.Reservation> candidate = registration.reserveInbound(method, path);
         if (candidate.isEmpty()) {
             chain.proceed();
             return;
         }
 
+        boolean proceed;
         try (ChaosRunEngine.Reservation reservation = candidate.orElseThrow()) {
-            ChaosSyntheticResponse effect = (ChaosSyntheticResponse) reservation.effect();
-            byte[] body = effect.body();
-            response.status(effect.status());
-            effect.headers().forEach(response::header);
-            effect.mediaType().ifPresent(mediaType -> response.header(HeaderNames.CONTENT_TYPE, mediaType.text()));
-            response.contentLength(body.length);
-            if (body.length == 0) {
-                response.send();
-            } else {
-                response.send(body);
+            proceed = switch (reservation.action()) {
+            case ChaosConnectFailure connectFailure -> throw new IllegalStateException(
+                    "Unsupported inbound effect action: " + connectFailure.getClass().getSimpleName());
+            case ChaosDnsFailure dnsFailure -> throw new IllegalStateException(
+                    "Unsupported inbound effect action: " + dnsFailure.getClass().getSimpleName());
+            case ChaosLatencyAction latency -> {
+                latency.apply();
+                yield true;
             }
+            case ChaosResponseTimeoutAction timeout -> throw new IllegalStateException(
+                    "Unsupported inbound effect action: " + timeout.getClass().getSimpleName());
+            case ChaosSyntheticResponse synthetic -> {
+                sendSyntheticResponse(response, synthetic);
+                yield false;
+            }
+            case ChaosTlsHandshakeFailure tlsFailure -> throw new IllegalStateException(
+                    "Unsupported inbound effect action: " + tlsFailure.getClass().getSimpleName());
+            };
+        }
+        if (proceed) {
+            chain.proceed();
         }
     }
 
     @Override
     public void afterStop() {
-        engine.close();
+        registration.close();
+    }
+
+    private static void sendSyntheticResponse(RoutingResponse response, ChaosSyntheticResponse effect) {
+        byte[] body = effect.body();
+        response.status(effect.status());
+        effect.headers().forEach(response::header);
+        effect.mediaType().ifPresent(mediaType -> response.header(HeaderNames.CONTENT_TYPE, mediaType.text()));
+        response.contentLength(body.length);
+        if (body.length == 0) {
+            response.send();
+        } else {
+            response.send(body);
+        }
     }
 }

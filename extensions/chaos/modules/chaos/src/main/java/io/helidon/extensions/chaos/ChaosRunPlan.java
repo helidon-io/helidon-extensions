@@ -16,7 +16,9 @@
 package io.helidon.extensions.chaos;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Immutable normalized plan for the first Chaos vertical slice.
@@ -24,24 +26,33 @@ import java.util.Objects;
  * @param name diagnostic run name
  * @param maximumDuration run guard duration
  * @param seed deterministic run seed
- * @param stage single run stage
+ * @param stages ordered run stages
  */
-record ChaosRunPlan(String name, Duration maximumDuration, long seed, ChaosStage stage) {
+record ChaosRunPlan(String name, Duration maximumDuration, long seed, List<ChaosStage> stages) {
 
     ChaosRunPlan {
         Objects.requireNonNull(name);
         Objects.requireNonNull(maximumDuration);
-        Objects.requireNonNull(stage);
+        Objects.requireNonNull(stages);
+        stages = List.copyOf(stages);
+    }
+
+    Duration duration() {
+        Duration result = Duration.ZERO;
+        for (ChaosStage stage : stages) {
+            result = result.plus(stage.duration());
+        }
+        return result;
     }
 
     /**
-     * Single stage in a run plan.
+     * One stage in a run plan.
      *
      * @param name diagnostic stage name
      * @param duration active stage duration
-     * @param disruption single disruption
+     * @param disruption optional disruption
      */
-    record ChaosStage(String name, Duration duration, ChaosDisruption disruption) {
+    record ChaosStage(String name, Duration duration, Optional<ChaosDisruption> disruption) {
         ChaosStage {
             Objects.requireNonNull(name);
             Objects.requireNonNull(duration);
@@ -50,16 +61,16 @@ record ChaosRunPlan(String name, Duration maximumDuration, long seed, ChaosStage
     }
 
     /**
-     * Single inbound HTTP disruption.
+     * Single HTTP disruption.
      *
      * @param name diagnostic disruption name
-     * @param scope inbound request scope
+     * @param scope request scope
      * @param activation matched-invocation activation policy
      * @param effect disruption effect
      * @param budget cumulative and concurrent budget
      */
     record ChaosDisruption(String name,
-                           ChaosHttpScope scope,
+                           ChaosScope scope,
                            ChaosActivation activation,
                            ChaosEffect effect,
                            ChaosBudget budget) {

@@ -15,6 +15,9 @@
  */
 package io.helidon.extensions.chaos;
 
+import java.util.Objects;
+import java.util.Set;
+
 import io.helidon.builder.api.Prototype;
 
 /**
@@ -22,7 +25,36 @@ import io.helidon.builder.api.Prototype;
  */
 final class ChaosConfigSupport {
 
+    private static final String NULL_APPLICATION_SOCKET = "Application socket name must not be null";
+
     private ChaosConfigSupport() {
+    }
+
+    static final class ApplicationSocketDecorator
+            implements Prototype.OptionDecorator<ChaosConfig.BuilderBase<?, ?>, String> {
+
+        @Override
+        public void decorate(ChaosConfig.BuilderBase<?, ?> builder, String applicationSocket) {
+            Objects.requireNonNull(builder);
+            Objects.requireNonNull(applicationSocket, NULL_APPLICATION_SOCKET);
+        }
+
+        @Override
+        public void decorateSetSet(ChaosConfig.BuilderBase<?, ?> builder, Set<String> applicationSockets) {
+            Objects.requireNonNull(builder);
+            requireNonNullElements(applicationSockets);
+        }
+
+        @Override
+        public void decorateAddSet(ChaosConfig.BuilderBase<?, ?> builder, Set<String> applicationSockets) {
+            Objects.requireNonNull(builder);
+            requireNonNullElements(applicationSockets);
+        }
+
+        private static void requireNonNullElements(Set<String> applicationSockets) {
+            applicationSockets.forEach(applicationSocket -> Objects.requireNonNull(applicationSocket,
+                                                                                   NULL_APPLICATION_SOCKET));
+        }
     }
 
     static final class BuilderDecorator implements Prototype.BuilderDecorator<ChaosConfig.BuilderBase<?, ?>> {
@@ -32,7 +64,10 @@ final class ChaosConfigSupport {
             requireText(builder.name(), "Chaos feature name must not be blank");
             builder.controlSocket().ifPresent(socket -> requireText(socket, "Control socket name must not be blank"));
             builder.applicationSockets()
-                    .forEach(socket -> requireText(socket, "Application socket name must not be blank"));
+                    .forEach(socket -> {
+                        Objects.requireNonNull(socket, NULL_APPLICATION_SOCKET);
+                        requireText(socket, "Application socket name must not be blank");
+                    });
 
             if (!builder.enabled()) {
                 return;
