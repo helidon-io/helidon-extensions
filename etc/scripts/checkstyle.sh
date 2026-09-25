@@ -82,7 +82,7 @@ readonly SCRIPT_PATH
 
 # Path to the root of the workspace
 # shellcheck disable=SC2046
-WS_DIR=$(cd $(dirname -- "${SCRIPT_PATH}") ; cd ../.. ; pwd -P)
+WS_DIR=$(CDPATH='' cd -- $(dirname -- "${SCRIPT_PATH}") ; cd -- ../.. ; pwd -P)
 readonly WS_DIR
 
 LOG_FILE=$(mktemp -t XXXcheckstyle-log)
@@ -125,7 +125,7 @@ if [ "${#JAVA_FILES[@]}" -eq 0 ] ; then
   exit 0
 fi
 
-cd "${WS_DIR}"
+CDPATH='' cd -- "${WS_DIR}"
 status_code=0
 if java -jar "${JAR_FILE}" \
   -c "${WS_DIR}/etc/checkstyle.xml" \

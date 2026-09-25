@@ -40,7 +40,7 @@ readonly SCRIPT_PATH
 
 # Path to the root of the workspace
 # shellcheck disable=SC2046
-WS_DIR=$(cd $(dirname -- "${SCRIPT_PATH}") ; cd ../.. ; pwd -P)
+WS_DIR=$(CDPATH='' cd -- $(dirname -- "${SCRIPT_PATH}") ; cd -- ../.. ; pwd -P)
 readonly WS_DIR
 
 print_usage() {
@@ -134,7 +134,7 @@ printf '%s\n' "${HELIDON_VERSION}" > "${WS_DIR}/.m2/repository/io/helidon/.prime
 HELIDON_BRANCH=$(branch "${HELIDON_VERSION}")
 readonly HELIDON_BRANCH
 
-cd "$(mktemp -d)"
+CDPATH='' cd -- "$(mktemp -d)"
 git clone https://github.com/helidon-io/helidon --branch "${HELIDON_BRANCH}" --single-branch --depth 1
 
 HELIDON_VERSION_IN_REPO=$(version helidon/bom/pom.xml)

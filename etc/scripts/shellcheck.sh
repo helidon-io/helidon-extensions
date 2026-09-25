@@ -24,7 +24,7 @@ fi
 readonly SCRIPT_PATH
 
 # Path to the root of the workspace
-WS_DIR=$(cd "$(dirname -- "${SCRIPT_PATH}")" && cd ../.. && pwd -P)
+WS_DIR=$(CDPATH='' cd -- "$(dirname -- "${SCRIPT_PATH}")" && cd -- ../.. && pwd -P)
 readonly WS_DIR
 
 BASE_URL="https://github.com/koalaman/shellcheck/releases/download"
