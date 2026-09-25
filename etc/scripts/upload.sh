@@ -205,7 +205,7 @@ central_upload() {
   upload_bundle="io-helidon-extensions-${extension_id}-artifacts-${version}.zip"
   rm -f "${upload_bundle}"
   printf "Creating artifact bundle %s...\n" "${upload_bundle}" >&2
-  (cd "${2}"; zip -ryq "../${upload_bundle}" .)
+  (CDPATH='' cd -- "${2}"; zip -ryq "../${upload_bundle}" .)
 
   local responseFile statusFile
   responseFile=$(mktemp)
