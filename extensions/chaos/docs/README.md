@@ -1,6 +1,6 @@
 # Helidon Chaos extension
 
-The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response.
+The Helidon Chaos extension adds a bounded, process-local chaos run engine to Helidon WebServer. Operators create and stop runs through `/chaos/v1` on a dedicated control socket. Matching requests on explicitly selected application sockets can receive a synthetic HTTP error response or inbound latency, and matching Helidon WebClient calls can receive bounded outbound latency, a synthetic HTTP error response, a simulated connection, DNS, or TLS handshake failure, or a simulated response timeout.
 
 This first slice targets Helidon 4.5.4 and is disabled by default.
 
@@ -37,7 +37,7 @@ Then add the extension when direct packaging is appropriate:
 </dependency>
 ```
 
-Helidon discovers the extension through `ServerFeatureProvider`; application code does not register `/chaos/v1` or install a filter.
+Helidon discovers the server feature through `ServerFeatureProvider`; application code does not register `/chaos/v1` or install a filter. Separately, when the Chaos module and Helidon WebClient are present, WebClient service providers are discovered automatically by default, so application code does not add or register the `chaos` service. Disabling `services-discover-services` prevents automatic installation; such a client participates only when the `chaos` service is otherwise explicitly configured.
 
 ## Configuration
 
@@ -162,7 +162,299 @@ Validation uses strict JSON. Request-shape errors return `400`; policy and limit
 }
 ```
 
+For bounded latency on an outbound Helidon WebClient call, create a run with an `outbound-http` scope:
+
+```json
+{
+  "name": "inventory-latency",
+  "maximumDuration": "PT30S",
+  "seed": 148894,
+  "stages": [
+    {
+      "name": "slow-inventory",
+      "duration": "PT10S",
+      "disruptions": [
+        {
+          "name": "inventory-latency",
+          "scope": {
+            "type": "outbound-http",
+            "methods": ["GET"],
+            "scheme": "https",
+            "host": "inventory.example.com",
+            "port": 443,
+            "path": {"match": "prefix", "value": "/v1/items"}
+          },
+          "activation": {"type": "always"},
+          "effect": {"type": "latency", "delay": "PT0.25S", "jitter": "PT0.05S"},
+          "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+        }
+      ]
+    }
+  ]
+}
+```
+
+The same outbound scope can return a complete synthetic response without contacting the destination:
+
+```json
+{
+  "name": "inventory-unavailable",
+  "maximumDuration": "PT30S",
+  "seed": 148894,
+  "stages": [
+    {
+      "name": "reject-inventory",
+      "duration": "PT10S",
+      "disruptions": [
+        {
+          "name": "inventory-503",
+          "scope": {
+            "type": "outbound-http",
+            "methods": ["GET"],
+            "scheme": "https",
+            "host": "inventory.example.com",
+            "port": 443,
+            "path": {"match": "prefix", "value": "/v1/items"}
+          },
+          "activation": {"type": "always"},
+          "effect": {
+            "type": "synthetic-http-response",
+            "status": 503,
+            "headers": {"Retry-After": "3"},
+            "mediaType": "application/problem+json",
+            "body": "{\"title\":\"Inventory unavailable\",\"status\":503}"
+          },
+          "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+        }
+      ]
+    }
+  ]
+}
+```
+
+The outbound scope can instead fail before contacting the destination:
+
+```json
+{
+  "name": "inventory-connect-failure",
+  "maximumDuration": "PT30S",
+  "seed": 148894,
+  "stages": [
+    {
+      "name": "fail-inventory-connect",
+      "duration": "PT10S",
+      "disruptions": [
+        {
+          "name": "inventory-connect-failure",
+          "scope": {
+            "type": "outbound-http",
+            "methods": ["GET"],
+            "scheme": "https",
+            "host": "inventory.example.com",
+            "port": 443,
+            "path": {"match": "prefix", "value": "/v1/items"}
+          },
+          "activation": {"type": "always"},
+          "effect": {"type": "connect-failure"},
+          "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+        }
+      ]
+    }
+  ]
+}
+```
+
+Stages execute in declared order. A stage may contain one disruption or may use an empty `disruptions` array as a
+passive interval for observing recovery:
+
+```json
+{
+  "name": "orders-degradation-sequence",
+  "maximumDuration": "PT30S",
+  "seed": 148894,
+  "stages": [
+    {
+      "name": "slow-orders",
+      "duration": "PT5S",
+      "disruptions": [{
+        "name": "orders-latency",
+        "scope": {
+          "type": "inbound-http",
+          "methods": ["GET"],
+          "path": {"match": "prefix", "value": "/orders"}
+        },
+        "activation": {"type": "always"},
+        "effect": {"type": "latency", "delay": "PT0.25S"},
+        "budget": {"maximumActivations": 100, "maximumConcurrent": 10}
+      }]
+    },
+    {
+      "name": "orders-outage",
+      "duration": "PT10S",
+      "disruptions": [{
+        "name": "orders-503",
+        "scope": {
+          "type": "inbound-http",
+          "methods": ["GET"],
+          "path": {"match": "prefix", "value": "/orders"}
+        },
+        "activation": {"type": "always"},
+        "effect": {"type": "synthetic-http-response", "status": 503},
+        "budget": {"maximumActivations": 100, "maximumConcurrent": 10}
+      }]
+    },
+    {
+      "name": "recovery",
+      "duration": "PT5S",
+      "disruptions": []
+    }
+  ]
+}
+```
+
+Stage intervals are contiguous and use `[startedAt, endsAt)` boundaries, so a request arriving exactly at a boundary
+uses the next stage. Stage names must be unique, every duration must be positive, and the duration total must not exceed
+`maximumDuration`. Activation sequences and budgets are independent per disruptive stage; response counters are run-wide
+aggregates. Scopes from every disruptive stage are reserved against other nonterminal runs for the run's lifetime,
+including while in-flight work drains. Passive stages reserve no scope.
+
+While a run is running, its representation identifies the stage selected for the current time:
+
+```json
+"currentStage": {
+  "index": 2,
+  "name": "recovery",
+  "startedAt": "2026-09-12T22:10:15Z",
+  "endsAt": "2026-09-12T22:10:20Z"
+}
+```
+
+`index` is zero-based and addresses the normalized `plan.stages` array. `currentStage` is omitted after the sequence ends
+or while the run is stopping. A request already reserved by an earlier stage finishes normally after a transition; the
+transition does not wait for in-flight work.
+
 An exact path matches only that path. A prefix is segment-aware: `/orders` matches `/orders` and `/orders/42`, but not `/orders-old`. The filter does not invoke application code after it reserves a synthetic response. Non-matching or budget-skipped traffic continues normally.
+
+Only Helidon WebClient-backed outbound calls participate. An outbound scope matches the logical method, scheme, host, effective logical port, and decoded path before discovery or transport; resolved endpoints and addresses are ignored. Methods are compared in uppercase, scheme and host in lowercase, and host, scheme, and port match exactly. Paths use the same exact and segment-aware prefix matching described above. Query parameters, fragments, and headers are ignored. Each redirect is evaluated independently for its logical attempt.
+
+The outbound-only `connect-failure` effect has no additional properties. A selected call does not continue through the
+WebClient chain and does not access the network. It throws `java.io.UncheckedIOException` with a
+`java.net.ConnectException` cause, matching the exception shape used by Helidon WebClient for connection failures. The
+reservation is released before the exception reaches the caller, so completed and in-flight counters remain accurate.
+
+The outbound-only `dns-failure` effect also has no additional properties:
+
+```json
+{"type": "dns-failure"}
+```
+
+A selected call does not continue through the WebClient chain, invoke DNS resolution, or access the network. It throws
+`java.lang.IllegalArgumentException` with the target host in the message, matching the exception shape used by Helidon's
+default DNS resolver when address resolution fails. Existing activation rules determine which calls are selected, so
+the effect remains deterministic even when the operating system or JVM has cached an address. It simulates the
+application-visible failure and does not exercise DNS infrastructure, caching, or fallback behavior.
+
+The outbound-only `tls-handshake-failure` effect is valid only for a scope whose scheme is `https` and has no additional
+properties:
+
+```json
+{"type": "tls-handshake-failure"}
+```
+
+A selected call does not continue through the WebClient chain or access DNS or the network. It throws
+`java.io.UncheckedIOException` with message `Failed to execute SSL handshake` and a
+`javax.net.ssl.SSLHandshakeException` cause, matching Helidon WebClient's application-visible handshake failure
+envelope. Existing activation rules and budgets determine which calls are selected and bound their occurrence. This
+effect does not perform a TLS handshake or exercise certificate validation, trust stores, server-name verification,
+mutual TLS, protocol negotiation, or transport cleanup.
+
+For an outbound response timeout after a fixed duration, use `response-timeout`:
+
+```json
+{
+  "type": "response-timeout",
+  "duration": "PT2S"
+}
+```
+
+An optional `jitter` selects a deterministic duration below or above the base duration:
+
+```json
+{
+  "type": "response-timeout",
+  "duration": "PT2S",
+  "jitter": "PT0.25S"
+}
+```
+
+The second example waits from 1.75 through 2.25 seconds. `duration` must be positive. `jitter` defaults to zero, must
+not be negative, and must not exceed `duration`. The worst-case value of `duration + jitter` must not exceed the
+server's `maximum-response-timeout` limit. The run seed and matching invocation number determine the selected duration.
+A selected call does not continue through the WebClient chain or access the network. After waiting, it throws
+`java.io.UncheckedIOException` with a `java.net.SocketTimeoutException` cause. This is a client-visible simulated
+response timeout, not a transport-level stalled connection. The reservation remains in flight for the wait, so
+`maximumConcurrent` bounds simultaneous timeout effects. If the wait is interrupted, the interrupt status is restored
+and the timeout is thrown immediately.
+
+For a fixed delay, use the `latency` effect:
+
+```json
+{
+  "type": "latency",
+  "delay": "PT0.25S"
+}
+```
+
+Add `jitter` for a uniformly selected delay below or above the base delay:
+
+```json
+{
+  "type": "latency",
+  "delay": "PT0.25S",
+  "jitter": "PT0.05S"
+}
+```
+
+The second example delays a selected request by 200 through 300 milliseconds. `delay` must be positive. `jitter`
+defaults to zero, must not be negative, and must not exceed `delay`. The worst-case value of `delay + jitter` must not
+exceed the server's `maximum-latency` limit. The run seed and matching invocation number determine the selected delay;
+effect sampling uses a separate deterministic stream from activation sampling. For inbound traffic, a latency reservation
+is released before the application handler runs, so application processing time does not consume chaos concurrency
+budget. For outbound traffic, the delay occurs in the application WebClient service layer before network I/O, so it is
+visible to wrappers around the whole invocation and can fall outside WebClient transport connect and read timeout clocks;
+it is not a transport fault. Its reservation closes before the downstream chain and network call, so
+`maximumConcurrent` bounds simultaneous artificial delays, not calls to the dependency. If an artificial delay is
+interrupted, the thread interrupt status is restored and the request proceeds.
+
+To select one of several effects for each accepted activation, use `weighted-choice`:
+
+```json
+{
+  "type": "weighted-choice",
+  "outcomes": [
+    {
+      "weight": 60,
+      "effect": {"type": "synthetic-http-response", "status": 503}
+    },
+    {
+      "weight": 25,
+      "effect": {"type": "synthetic-http-response", "status": 429}
+    },
+    {
+      "weight": 15,
+      "effect": {"type": "latency", "delay": "PT0.5S", "jitter": "PT0.1S"}
+    }
+  ]
+}
+```
+
+Weights are positive integers and do not need to total 100. At least one outcome is required, and the total weight must
+not exceed `Long.MAX_VALUE`. Inbound and outbound scopes accept `synthetic-http-response` and `latency`; outbound scopes
+also accept `connect-failure`, `dns-failure`, `response-timeout`, and `tls-handshake-failure`. A weighted choice may contain
+only leaf effects valid for its scope, and nested weighted choices are rejected. Selection is deterministic for the run
+seed and matching invocation number, uses a separate random stream from activation and effect jitter, and preserves
+declared outcome order in normalized responses. The disruption's cumulative and concurrent budgets apply across all
+selected outcomes.
 
 Activation can also select a deterministic fraction of matching requests:
 
@@ -171,6 +463,24 @@ Activation can also select a deterministic fraction of matching requests:
 ```
 
 `probability` must be between `2^-53` (approximately `1.1102230246251565e-16`) and one, matching the sampler's explicit 53-bit resolution. Values below that resolution, or values below one that would round to one, are rejected rather than silently changing their meaning. The extension derives an independent pseudo-random stream from the run `seed` and unambiguously encoded stage/disruption identity. The same normalized plan, seed, and matched-request order therefore produce the same decisions. Probability misses increment `skippedActivation` and do not consume cumulative or concurrency budget. The implementation uses extension-owned deterministic mixing rather than a JDK random-generator implementation.
+
+For a repeating count-based burst, use `periodic-burst` activation:
+
+```json
+{
+  "type": "periodic-burst",
+  "initialSkip": 20,
+  "cycleSize": 10,
+  "burstSize": 3
+}
+```
+
+Only requests matching the disruption scope advance the activation count. `initialSkip` is optional and defaults to zero.
+After those initial requests, the first `burstSize` requests in every `cycleSize` requests activate the disruption. The
+example therefore does not activate chaos for requests 1 through 20, activates requests 21 through 23, does not activate
+chaos for requests 24 through 30, and repeats that ten-request cycle. `cycleSize` and `burstSize` must be positive, and
+`burstSize` must not exceed `cycleSize`. The run seed does not affect this deterministic schedule. Periodic-burst
+misses increment `skippedActivation` and do not consume cumulative or concurrency budget.
 
 ```bash
 curl --fail-with-body \
@@ -196,8 +506,11 @@ curl --fail-with-body --request DELETE --user operator:test-only-password \
 |---|---:|
 | `maximum-active-runs` | `1` |
 | `maximum-run-duration` | `PT15M` |
+| `maximum-stages-per-run` | `16` |
 | `maximum-activations-per-disruption` | `10000` |
 | `maximum-concurrent-activations-per-disruption` | `64` |
+| `maximum-latency` | `PT30S` |
+| `maximum-response-timeout` | `PT30S` |
 | `maximum-synthetic-body-bytes` | `65536` |
 | `maximum-control-request-bytes` | `65536` |
 | `maximum-concurrent-control-requests` | `16` |
@@ -205,17 +518,24 @@ curl --fail-with-body --request DELETE --user operator:test-only-password \
 | `terminal-run-retention` | `PT15M` |
 
 Request budgets may be lower than these ceilings but never higher. Concurrent and cumulative reservations are atomic,
-and stopping a run prevents new reservations while in-flight work drains.
+and stopping a run prevents new reservations while in-flight work drains. `maximum-latency` applies to both inbound and
+outbound latency effects. `maximum-response-timeout` applies to outbound response timeout effects.
+`maximum-synthetic-body-bytes` applies to both inbound and outbound synthetic responses.
 
 ## Runtime model and first-slice boundary
 
 Runs are local to one Helidon server process, in memory, bounded, and not reconstructed after restart. A caller must create a run on each selected instance. Restart is an unconditional cleanup boundary.
 
-The current slice intentionally supports one stage, one inbound HTTP disruption, `always` or deterministic
-`probability` activation, exact or segment-aware prefix paths, and a synthetic 4xx/5xx HTTP response. Its public vocabulary includes `runs`, `stages`,
-`disruptions`, `scope`, `activation`, `effect`, and `budget` so later additions can introduce invocation cycles,
-repetitions, and other bounded local effects without adopting another project's API.
+The current slice intentionally supports bounded ordered stages with zero or one HTTP disruption per stage, inbound or
+outbound as implemented; `always`, deterministic `probability`, or `periodic-burst` activation; exact or segment-aware
+prefix paths; inbound synthetic 4xx/5xx HTTP responses and latency; outbound Helidon WebClient synthetic 4xx/5xx HTTP
+responses, latency, simulated connection, DNS, and TLS handshake failures, and simulated response timeouts; and
+deterministic weighted selection between valid effects. Its public vocabulary includes
+`runs`, `stages`, `disruptions`, `scope`,
+`activation`, `effect`, and `budget` so later additions can introduce other bounded local effects without adopting
+another project's API.
 
-Out of scope for this slice are timeout or connection-stall effects, bytecode injection, exception injection inside
-arbitrary methods, outbound client failures, CPU or memory pressure, network faults outside the process, distributed
-orchestration, persistent run recovery, and automatic enablement.
+Out of scope for this slice are non-Helidon clients, post-connect connection resets, actual transport connection stalls,
+actual DNS, TLS, and other network faults outside the process, and other transport faults; bytecode injection; exception
+injection inside arbitrary methods; CPU or memory pressure; distributed orchestration; persistent run recovery; and
+automatic enablement.

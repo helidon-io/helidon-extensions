@@ -15,9 +15,6 @@
  */
 package io.helidon.extensions.chaos;
 
-import java.util.Collections;
-import java.util.LinkedHashSet;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
@@ -28,22 +25,30 @@ import java.util.Set;
  * @param pathMatch path matching mode
  * @param path normalized absolute path
  */
-record ChaosHttpScope(Set<String> methods, PathMatch pathMatch, String path) {
+record ChaosHttpScope(Set<String> methods, PathMatch pathMatch, String path) implements ChaosScope {
 
     ChaosHttpScope {
-        methods = Collections.unmodifiableSet(new LinkedHashSet<>(methods));
-        Objects.requireNonNull(pathMatch);
-        Objects.requireNonNull(path);
+        methods = ChaosScopeSupport.normalizeMethods(methods);
+        Objects.requireNonNull(pathMatch, "pathMatch is null");
+        Objects.requireNonNull(path, "path is null");
     }
 
     boolean matches(String method, String requestPath) {
-        if (!methods.contains(method.toUpperCase(Locale.ROOT))) {
-            return false;
-        }
-        return switch (pathMatch) {
-        case EXACT -> requestPath.equals(path);
-        case PREFIX -> path.equals("/") || requestPath.equals(path) || requestPath.startsWith(path + "/");
-        };
+        Objects.requireNonNull(method, "method is null");
+        Objects.requireNonNull(requestPath, "requestPath is null");
+        return ChaosScopeSupport.methodMatches(methods, method)
+                && ChaosScopeSupport.pathMatches(pathMatch, path, requestPath);
+    }
+
+    @Override
+    public boolean overlaps(ChaosScope other) {
+        return other instanceof ChaosHttpScope scope
+                && ChaosScopeSupport.overlaps(methods,
+                                              pathMatch,
+                                              path,
+                                              scope.methods,
+                                              scope.pathMatch,
+                                              scope.path);
     }
 
     /**

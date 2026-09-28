@@ -15,55 +15,33 @@
  */
 package io.helidon.extensions.chaos;
 
-import java.nio.charset.StandardCharsets;
-
+import io.helidon.extensions.chaos.ChaosActivation.PeriodicBurstActivation;
 import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 
 /**
  * Stable activation decisions that do not depend on JDK random-generator implementations.
  */
 final class ChaosActivationDecider {
-    private static final long FNV_OFFSET_BASIS = 0xcbf29ce484222325L;
-    private static final long FNV_PRIME = 0x100000001b3L;
-    private static final long GOLDEN_GAMMA = 0x9e3779b97f4a7c15L;
-    private static final double DOUBLE_UNIT = 0x1.0p-53;
-
     private ChaosActivationDecider() {
     }
 
     static long streamSeed(long runSeed, String... identities) {
-        long identityHash = FNV_OFFSET_BASIS;
-        identityHash = hashByte(identityHash, identities.length);
-        for (String component : identities) {
-            byte[] bytes = component.getBytes(StandardCharsets.UTF_8);
-            identityHash = hashByte(identityHash, bytes.length >>> 24);
-            identityHash = hashByte(identityHash, bytes.length >>> 16);
-            identityHash = hashByte(identityHash, bytes.length >>> 8);
-            identityHash = hashByte(identityHash, bytes.length);
-            for (byte value : bytes) {
-                identityHash = hashByte(identityHash, value);
-            }
-        }
-        return mix64(runSeed ^ identityHash);
+        return ChaosRandom.streamSeed(runSeed, identities);
     }
 
     static boolean activates(ChaosActivation activation, long streamSeed, long matchedInvocation) {
         if (activation instanceof ProbabilityActivation probability) {
-            long sampleBits = mix64(streamSeed + (matchedInvocation - 1) * GOLDEN_GAMMA);
-            double sample = (sampleBits >>> 11) * DOUBLE_UNIT;
+            double sample = ChaosRandom.unitInterval(ChaosRandom.sample(streamSeed, matchedInvocation));
             return sample < probability.probability();
         }
+        if (activation instanceof PeriodicBurstActivation periodicBurst) {
+            long cycleInvocation = matchedInvocation - periodicBurst.initialSkip();
+            if (cycleInvocation <= 0) {
+                return false;
+            }
+            long cyclePosition = (cycleInvocation - 1) % periodicBurst.cycleSize();
+            return cyclePosition < periodicBurst.burstSize();
+        }
         return true;
-    }
-
-    static long mix64(long value) {
-        long mixed = value;
-        mixed = (mixed ^ (mixed >>> 30)) * 0xbf58476d1ce4e5b9L;
-        mixed = (mixed ^ (mixed >>> 27)) * 0x94d049bb133111ebL;
-        return mixed ^ (mixed >>> 31);
-    }
-
-    private static long hashByte(long hash, int value) {
-        return (hash ^ (value & 0xff)) * FNV_PRIME;
     }
 }

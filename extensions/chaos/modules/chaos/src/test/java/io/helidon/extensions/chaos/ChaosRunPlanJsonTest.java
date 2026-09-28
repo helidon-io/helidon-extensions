@@ -18,9 +18,11 @@ package io.helidon.extensions.chaos;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import io.helidon.extensions.chaos.ChaosActivation.PeriodicBurstActivation;
 import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 import io.helidon.json.JsonObject;
 import io.helidon.json.JsonParser;
@@ -30,6 +32,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasEntry;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
@@ -46,14 +49,652 @@ class ChaosRunPlanJsonTest {
         assertThat(plan.name(), is("orders-unavailable"));
         assertThat(plan.maximumDuration(), is(Duration.ofSeconds(30)));
         assertThat(plan.seed(), is(148_894L));
-        assertThat(plan.stage().duration(), is(Duration.ofSeconds(10)));
-        assertThat(plan.stage().disruption().scope().methods(), contains("GET"));
-        assertThat(plan.stage().disruption().activation(), is(ChaosActivation.always()));
-        ChaosSyntheticResponse effect = (ChaosSyntheticResponse) plan.stage().disruption().effect();
+        assertThat(plan.stages(), hasSize(1));
+        ChaosRunPlan.ChaosStage stage = plan.stages().getFirst();
+        assertThat(stage.duration(), is(Duration.ofSeconds(10)));
+        ChaosRunPlan.ChaosDisruption disruption = stage.disruption().orElseThrow();
+        assertThat(((ChaosHttpScope) disruption.scope()).methods(), contains("GET"));
+        assertThat(disruption.activation(), is(ChaosActivation.always()));
+        ChaosSyntheticResponse effect = (ChaosSyntheticResponse) disruption.effect();
         assertThat(effect.status(), is(503));
         assertThat(effect.headers(), hasEntry("Retry-After", "1"));
         assertThat(new String(effect.body(), StandardCharsets.UTF_8),
                    is("Synthetic service failure"));
+    }
+
+    @Test
+    void parsesAndNormalizesOutboundHttpScope() {
+        ChaosRunPlan plan = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """)), LIMITS);
+
+        ChaosOutboundHttpScope scope = (ChaosOutboundHttpScope) plan.stages().getFirst()
+                .disruption().orElseThrow().scope();
+        assertThat(scope.methods(), contains("GET"));
+        assertThat(scope.scheme(), is("https"));
+        assertThat(scope.host(), is("inventory.example.com"));
+        assertThat(scope.port(), is(443));
+        assertThat(scope.pathMatch(), is(ChaosHttpScope.PathMatch.PREFIX));
+        assertThat(scope.path(), is("/v1/items"));
+
+        ChaosRunPlan ipv6Plan = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("Inventory.Example.COM", "[2001:DB8::1]")), LIMITS);
+        ChaosOutboundHttpScope ipv6Scope = (ChaosOutboundHttpScope) ipv6Plan.stages().getFirst()
+                .disruption().orElseThrow().scope();
+        assertThat(ipv6Scope.host(), is("[2001:db8::1]"));
+    }
+
+    @Test
+    void acceptsOutboundLatencySyntheticResponseAndWeightedChoice() {
+        ChaosRunPlan latency = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """)), LIMITS);
+        ChaosRunPlan synthetic = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {
+                  "type": "synthetic-http-response",
+                  "status": 503,
+                  "headers": {"Retry-After": "3"},
+                  "mediaType": "application/problem+json",
+                  "body": "Inventory unavailable"
+                }
+                """)), LIMITS);
+        ChaosRunPlan weightedChoice = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 3, "effect": {"type": "latency", "delay": "PT0.25S"}},
+                    {"weight": 1, "effect": {"type": "synthetic-http-response", "status": 502}}
+                  ]
+                }
+                """)), LIMITS);
+
+        assertThat(latency.stages().getFirst().disruption().orElseThrow().effect(), instanceOf(ChaosLatency.class));
+        ChaosSyntheticResponse syntheticEffect = (ChaosSyntheticResponse) synthetic.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        assertThat(syntheticEffect.status(), is(503));
+        assertThat(syntheticEffect.headers(), hasEntry("Retry-After", "3"));
+        assertThat(syntheticEffect.mediaType().orElseThrow().text(), is("application/problem+json"));
+        assertThat(new String(syntheticEffect.body(), StandardCharsets.UTF_8), is("Inventory unavailable"));
+        ChaosWeightedChoice weightedEffect = (ChaosWeightedChoice) weightedChoice.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        assertThat(weightedEffect.outcomes().getFirst().effect(), instanceOf(ChaosLatency.class));
+        assertThat(weightedEffect.outcomes().getLast().effect(), instanceOf(ChaosSyntheticResponse.class));
+    }
+
+    @Test
+    void acceptsOutboundConnectFailure() {
+        ChaosRunPlan direct = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "connect-failure"}
+                """)), LIMITS);
+        ChaosRunPlan weighted = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "connect-failure"}}
+                  ]
+                }
+                """)), LIMITS);
+
+        assertThat(direct.stages().getFirst().disruption().orElseThrow().effect(),
+                   instanceOf(ChaosConnectFailure.class));
+        ChaosWeightedChoice choice = (ChaosWeightedChoice) weighted.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        assertThat(choice.outcomes().getFirst().effect(), instanceOf(ChaosConnectFailure.class));
+    }
+
+    @Test
+    void acceptsOutboundDnsFailure() {
+        ChaosRunPlan direct = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "dns-failure"}
+                """)), LIMITS);
+        ChaosRunPlan weighted = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "dns-failure"}}
+                  ]
+                }
+                """)), LIMITS);
+
+        assertThat(direct.stages().getFirst().disruption().orElseThrow().effect(),
+                   instanceOf(ChaosDnsFailure.class));
+        ChaosWeightedChoice choice = (ChaosWeightedChoice) weighted.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        assertThat(choice.outcomes().getFirst().effect(), instanceOf(ChaosDnsFailure.class));
+    }
+
+    @Test
+    void acceptsOutboundTlsHandshakeFailure() {
+        ChaosRunPlan direct = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "tls-handshake-failure"}
+                """)), LIMITS);
+        ChaosRunPlan weighted = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "tls-handshake-failure"}}
+                  ]
+                }
+                """)), LIMITS);
+
+        assertThat(direct.stages().getFirst().disruption().orElseThrow().effect(),
+                   instanceOf(ChaosTlsHandshakeFailure.class));
+        ChaosWeightedChoice choice = (ChaosWeightedChoice) weighted.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        assertThat(choice.outcomes().getFirst().effect(), instanceOf(ChaosTlsHandshakeFailure.class));
+    }
+
+    @Test
+    void acceptsOutboundResponseTimeout() {
+        ChaosRunPlan direct = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0.25S"}
+                """)), LIMITS);
+        ChaosRunPlan weighted = ChaosRunPlanJson.parse(json(outboundPlanJson("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {
+                      "weight": 1,
+                      "effect": {
+                        "type": "response-timeout",
+                        "duration": "PT0.25S",
+                        "jitter": "PT0.05S"
+                      }
+                    }
+                  ]
+                }
+                """)), LIMITS);
+
+        ChaosResponseTimeout timeout = (ChaosResponseTimeout) direct.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        assertThat(timeout.duration(), is(Duration.ofMillis(250)));
+        assertThat(timeout.jitter(), is(Duration.ZERO));
+        ChaosWeightedChoice choice = (ChaosWeightedChoice) weighted.stages().getFirst()
+                .disruption().orElseThrow().effect();
+        ChaosResponseTimeout weightedTimeout = (ChaosResponseTimeout) choice.outcomes().getFirst().effect();
+        assertThat(weightedTimeout.duration(), is(Duration.ofMillis(250)));
+        assertThat(weightedTimeout.jitter(), is(Duration.ofMillis(50)));
+    }
+
+    @Test
+    void rejectsInboundConnectFailureAtExactEffectPath() {
+        assertInvalidPlan(withEffect("""
+                {"type": "connect-failure"}
+                """),
+                          "/stages/0/disruptions/0/effect/type",
+                          "unsupported-inbound-effect");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "connect-failure"}}
+                  ]
+                }
+                """),
+                          "/stages/0/disruptions/0/effect/outcomes/0/effect/type",
+                          "unsupported-inbound-effect");
+    }
+
+    @Test
+    void rejectsInboundDnsFailureAtExactEffectPath() {
+        assertInvalidPlan(withEffect("""
+                {"type": "dns-failure"}
+                """),
+                          "/stages/0/disruptions/0/effect/type",
+                          "unsupported-inbound-effect");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "dns-failure"}}
+                  ]
+                }
+                """),
+                          "/stages/0/disruptions/0/effect/outcomes/0/effect/type",
+                          "unsupported-inbound-effect");
+    }
+
+    @Test
+    void rejectsInboundTlsHandshakeFailureAtExactEffectPath() {
+        assertInvalidPlan(withEffect("""
+                {"type": "tls-handshake-failure"}
+                """),
+                          "/stages/0/disruptions/0/effect/type",
+                          "unsupported-inbound-effect");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "tls-handshake-failure"}}
+                  ]
+                }
+                """),
+                          "/stages/0/disruptions/0/effect/outcomes/0/effect/type",
+                          "unsupported-inbound-effect");
+    }
+
+    @Test
+    void rejectsTlsHandshakeFailureForNonHttpsOutboundScope() {
+        String direct = outboundPlanJson("""
+                {"type": "tls-handshake-failure"}
+                """).replace("\"scheme\": \"HTTPS\"", "\"scheme\": \"http\"");
+        String weighted = outboundPlanJson("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "tls-handshake-failure"}}
+                  ]
+                }
+                """).replace("\"scheme\": \"HTTPS\"", "\"scheme\": \"http\"");
+
+        assertInvalidPlan(direct,
+                          "/stages/0/disruptions/0/effect/type",
+                          "unsupported-outbound-effect");
+        assertInvalidPlan(weighted,
+                          "/stages/0/disruptions/0/effect/outcomes/0/effect/type",
+                          "unsupported-outbound-effect");
+    }
+
+    @Test
+    void rejectsInboundResponseTimeoutAtExactEffectPath() {
+        assertInvalidPlan(withEffect("""
+                {"type": "response-timeout", "duration": "PT0.25S"}
+                """),
+                          "/stages/0/disruptions/0/effect/type",
+                          "unsupported-inbound-effect");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {
+                      "weight": 1,
+                      "effect": {"type": "response-timeout", "duration": "PT0.25S"}
+                    }
+                  ]
+                }
+                """),
+                          "/stages/0/disruptions/0/effect/outcomes/0/effect/type",
+                          "unsupported-inbound-effect");
+    }
+
+    @Test
+    void rejectsMalformedOutboundHttpScope() {
+        String scopePath = "/stages/0/disruptions/0/scope";
+        assertBadRequest(outboundPlanJsonWithout("type"), scopePath + "/type");
+        assertBadRequest(outboundPlanJsonWithout("methods"), scopePath + "/methods");
+        assertBadRequest(outboundPlanJsonWithout("scheme"), scopePath + "/scheme");
+        assertBadRequest(outboundPlanJsonWithout("host"), scopePath + "/host");
+        assertBadRequest(outboundPlanJsonWithout("port"), scopePath + "/port");
+        assertBadRequest(outboundPlanJsonWithout("path"), scopePath + "/path");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"port\": 443", "\"port\": \"443\""), scopePath + "/port");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"methods\": [\"get\"]", "\"methods\": \"get\""), scopePath + "/methods");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"type\": \"outbound-http\"", "\"type\": []"), scopePath + "/type");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"scheme\": \"HTTPS\"", "\"scheme\": []"), scopePath + "/scheme");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"host\": \"Inventory.Example.COM\"", "\"host\": []"), scopePath + "/host");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"path\": {\"match\": \"prefix\", \"value\": \"/v1/items\"}",
+                                "\"path\": []"), scopePath + "/path");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "latency", "delay": "PT0.25S"}
+                """).replace("\"port\": 443", "\"port\": 443, \"unexpected\": true"),
+                         scopePath + "/unexpected");
+    }
+
+    @Test
+    void rejectsInvalidOutboundHttpScope() {
+        String scopePath = "/stages/0/disruptions/0/scope";
+        assertInvalidPlan(outboundPlanJsonWithScope("\"scheme\": \" \""), scopePath + "/scheme");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"scheme\": \"1https\""), scopePath + "/scheme");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"host\": \" \""), scopePath + "/host");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"host\": \"user@inventory.example.com\""), scopePath + "/host");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"host\": \"inventory.example.com/path\""), scopePath + "/host");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"host\": \"inventory.example.com:443\""), scopePath + "/host");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"host\": \"inventory.example.com?debug=true\""), scopePath + "/host");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"host\": \"inventory.example.com#fragment\""), scopePath + "/host");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"port\": 0"), scopePath + "/port");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"port\": 65536"), scopePath + "/port");
+        assertInvalidPlan(outboundPlanJsonWithScope("\"path\": {\"match\": \"prefix\", \"value\": \"orders\"}"),
+                          scopePath + "/path/value");
+    }
+
+    @Test
+    void parsesOrderedDisruptiveAndPassiveStages() {
+        ChaosRunPlan plan = ChaosRunPlanJson.parse(json(multiStageJson()), LIMITS);
+
+        assertThat(plan.stages(), hasSize(3));
+        assertThat(plan.stages().stream().map(ChaosRunPlan.ChaosStage::name).toList(),
+                   is(List.of("slow-orders", "orders-outage", "recovery")));
+        assertThat(plan.stages().get(0).disruption().orElseThrow().effect(), instanceOf(ChaosLatency.class));
+        assertThat(plan.stages().get(1).disruption().orElseThrow().effect(),
+                   instanceOf(ChaosSyntheticResponse.class));
+        assertThat(plan.stages().get(2).disruption(), is(Optional.empty()));
+        assertThat(plan.duration(), is(Duration.ofSeconds(20)));
+    }
+
+    @Test
+    void acceptsStageDurationTotalEqualToMaximumDuration() {
+        String input = multiStageJson().replace("PT30S", "PT20S");
+
+        assertThat(ChaosRunPlanJson.parse(json(input), LIMITS).duration(), is(Duration.ofSeconds(20)));
+    }
+
+    @Test
+    void rejectsInvalidStageSequences() {
+        assertInvalidPlan("""
+                {"name":"empty","maximumDuration":"PT30S","stages":[]}
+                """, "/stages", "stage-count");
+
+        ChaosLimitsConfig twoStageLimit = ChaosLimitsConfig.builder().maximumStagesPerRun(2).build();
+        assertInvalidPlan(multiStageJson(), twoStageLimit, "/stages", "stage-limit");
+
+        assertInvalidPlan(multiStageJson().replace("\"name\": \"orders-outage\"",
+                                                   "\"name\": \"slow-orders\""),
+                          "/stages/1/name",
+                          "duplicate-name");
+
+        assertInvalidPlan("""
+                {
+                  "name":"too-many-disruptions",
+                  "maximumDuration":"PT30S",
+                  "stages":[{
+                    "name":"stage",
+                    "duration":"PT10S",
+                    "disruptions":[{}, {}]
+                  }]
+                }
+                """, "/stages/0/disruptions", "disruption-count");
+
+        assertInvalidPlan(multiStageJson().replace("PT30S", "PT19S"),
+                          "/stages/2/duration",
+                          "duration-limit");
+
+        ChaosLimitsConfig maximumDurationLimit = ChaosLimitsConfig.builder()
+                .maximumRunDuration(Duration.ofSeconds(Long.MAX_VALUE))
+                .build();
+        assertInvalidPlan("""
+                {
+                  "name":"duration-overflow",
+                  "maximumDuration":"PT9223372036854775807S",
+                  "stages":[
+                    {"name":"first","duration":"PT9223372036854775807S","disruptions":[]},
+                    {"name":"second","duration":"PT1S","disruptions":[]}
+                  ]
+                }
+                """, maximumDurationLimit, "/stages/1/duration", "duration-limit");
+    }
+
+    @Test
+    void rejectsMalformedStageDisruptions() {
+        assertBadRequest("""
+                {
+                  "name":"missing-disruptions",
+                  "maximumDuration":"PT30S",
+                  "stages":[{"name":"stage","duration":"PT10S"}]
+                }
+                """, "/stages/0/disruptions");
+        assertBadRequest("""
+                {
+                  "name":"non-array-disruptions",
+                  "maximumDuration":"PT30S",
+                  "stages":[{"name":"stage","duration":"PT10S","disruptions":{}}]
+                }
+                """, "/stages/0/disruptions");
+    }
+
+    @Test
+    void parsesFixedLatencyWithDefaultJitter() {
+        ChaosRunPlan plan = ChaosRunPlanJson.parse(json(withEffect("""
+                {
+                  "type": "latency",
+                  "delay": "PT0.25S"
+                }
+                """)), LIMITS);
+
+        ChaosLatency effect = (ChaosLatency) plan.stages().getFirst().disruption().orElseThrow().effect();
+        assertThat(effect.delay(), is(Duration.ofMillis(250)));
+        assertThat(effect.jitter(), is(Duration.ZERO));
+    }
+
+    @Test
+    void parsesLatencyJitter() {
+        ChaosRunPlan plan = ChaosRunPlanJson.parse(json(withEffect("""
+                {
+                  "type": "latency",
+                  "delay": "PT0.25S",
+                  "jitter": "PT0.05S"
+                }
+                """)), LIMITS);
+
+        ChaosLatency effect = (ChaosLatency) plan.stages().getFirst().disruption().orElseThrow().effect();
+        assertThat(effect.delay(), is(Duration.ofMillis(250)));
+        assertThat(effect.jitter(), is(Duration.ofMillis(50)));
+    }
+
+    @Test
+    void parsesWeightedChoiceEffect() {
+        ChaosRunPlan plan = ChaosRunPlanJson.parse(json(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {
+                      "weight": 3,
+                      "effect": {"type": "synthetic-http-response", "status": 503}
+                    },
+                    {
+                      "weight": 1,
+                      "effect": {"type": "latency", "delay": "PT0.25S"}
+                    }
+                  ]
+                }
+                """)), LIMITS);
+
+        assertThat(plan.stages().getFirst().disruption().orElseThrow().effect(),
+                   instanceOf(ChaosWeightedChoice.class));
+    }
+
+    @Test
+    void rejectsInvalidLatency() {
+        assertBadRequest(withEffect("""
+                {"type": "latency"}
+                """), "/stages/0/disruptions/0/effect/delay");
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "not-a-duration"}
+                """), "/stages/0/disruptions/0/effect/delay");
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "PT0S"}
+                """), "/stages/0/disruptions/0/effect/delay");
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "-PT0.001S"}
+                """), "/stages/0/disruptions/0/effect/delay");
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "PT0.25S", "jitter": "-PT0.001S"}
+                """), "/stages/0/disruptions/0/effect/jitter");
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "PT0.25S", "jitter": "PT0.251S"}
+                """), "/stages/0/disruptions/0/effect/jitter");
+
+        ChaosLimitsConfig limits = ChaosLimitsConfig.builder().maximumLatency(Duration.ofMillis(275)).build();
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "PT0.276S"}
+                """), limits, "/stages/0/disruptions/0/effect/delay");
+        assertInvalidPlan(withEffect("""
+                {"type": "latency", "delay": "PT0.25S", "jitter": "PT0.05S"}
+                """), limits, "/stages/0/disruptions/0/effect/jitter");
+    }
+
+    @Test
+    void rejectsInvalidResponseTimeout() {
+        assertBadRequest(outboundPlanJson("""
+                {"type": "response-timeout"}
+                """), "/stages/0/disruptions/0/effect/duration");
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "not-a-duration"}
+                """), "/stages/0/disruptions/0/effect/duration");
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0S"}
+                """), "/stages/0/disruptions/0/effect/duration");
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "-PT0.001S"}
+                """), "/stages/0/disruptions/0/effect/duration");
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0.25S", "jitter": "-PT0.001S"}
+                """), "/stages/0/disruptions/0/effect/jitter");
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0.25S", "jitter": "PT0.251S"}
+                """), "/stages/0/disruptions/0/effect/jitter");
+
+        ChaosLimitsConfig limits = ChaosLimitsConfig.builder()
+                .maximumResponseTimeout(Duration.ofMillis(275))
+                .build();
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0.276S"}
+                """), limits, "/stages/0/disruptions/0/effect/duration");
+        assertInvalidPlan(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0.25S", "jitter": "PT0.05S"}
+                """), limits, "/stages/0/disruptions/0/effect/jitter");
+    }
+
+    @Test
+    void rejectsMalformedWeightedChoiceEffects() {
+        assertBadRequest(withEffect("""
+                {"type": "weighted-choice"}
+                """), "/stages/0/disruptions/0/effect/outcomes");
+        assertBadRequest(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"effect": {"type": "synthetic-http-response", "status": 503}}
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/weight");
+        assertBadRequest(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 1.5, "effect": {"type": "synthetic-http-response", "status": 503}}
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/weight");
+        assertBadRequest(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [{"weight": 1}]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/effect");
+        assertBadRequest(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {
+                      "weight": 1,
+                      "unexpected": true,
+                      "effect": {"type": "synthetic-http-response", "status": 503}
+                    }
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/unexpected");
+    }
+
+    @Test
+    void rejectsInvalidWeightedChoiceEffects() {
+        assertInvalidPlan(withEffect("""
+                {"type": "weighted-choice", "outcomes": []}
+                """), "/stages/0/disruptions/0/effect/outcomes");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": 0, "effect": {"type": "synthetic-http-response", "status": 503}}
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/weight");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {"weight": -1, "effect": {"type": "synthetic-http-response", "status": 503}}
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/weight");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {
+                      "weight": 1,
+                      "effect": {"type": "weighted-choice", "outcomes": [
+                        {"weight": 1, "effect": {"type": "synthetic-http-response", "status": 503}}
+                      ]}
+                    }
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes/0/effect/type");
+        assertInvalidPlan(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "outcomes": [
+                    {
+                      "weight": 9223372036854775807,
+                      "effect": {"type": "synthetic-http-response", "status": 503}
+                    },
+                    {"weight": 1, "effect": {"type": "latency", "delay": "PT0.001S"}}
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/outcomes");
+    }
+
+    @Test
+    void keepsEffectPropertiesMutuallyExclusive() {
+        assertBadRequest(withEffect("""
+                {"type": "latency", "delay": "PT0.25S", "status": 503}
+                """), "/stages/0/disruptions/0/effect/status");
+        assertBadRequest(withEffect("""
+                {"type": "synthetic-http-response", "status": 503, "delay": "PT0.25S"}
+                """), "/stages/0/disruptions/0/effect/delay");
+        assertBadRequest(withEffect("""
+                {
+                  "type": "weighted-choice",
+                  "status": 503,
+                  "outcomes": [
+                    {"weight": 1, "effect": {"type": "synthetic-http-response", "status": 503}}
+                  ]
+                }
+                """), "/stages/0/disruptions/0/effect/status");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "connect-failure", "delay": "PT0.25S"}
+                """), "/stages/0/disruptions/0/effect/delay");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "dns-failure", "duration": "PT0.25S"}
+                """), "/stages/0/disruptions/0/effect/duration");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "tls-handshake-failure", "duration": "PT0.25S"}
+                """), "/stages/0/disruptions/0/effect/duration");
+        assertBadRequest(outboundPlanJson("""
+                {"type": "response-timeout", "duration": "PT0.25S", "status": 503}
+                """), "/stages/0/disruptions/0/effect/status");
+    }
+
+    @Test
+    void enforcesLatencyInvariants() {
+        assertThrows(NullPointerException.class, () -> new ChaosLatency(null, Duration.ZERO));
+        assertThrows(NullPointerException.class, () -> new ChaosLatency(Duration.ofMillis(1), null));
+        assertThrows(IllegalArgumentException.class, () -> new ChaosLatency(Duration.ZERO, Duration.ZERO));
+        assertThrows(IllegalArgumentException.class,
+                     () -> new ChaosLatency(Duration.ofMillis(1), Duration.ofMillis(-1)));
+        assertThrows(IllegalArgumentException.class,
+                     () -> new ChaosLatency(Duration.ofMillis(1), Duration.ofMillis(2)));
     }
 
     @Test
@@ -63,18 +704,101 @@ class ChaosRunPlanJsonTest {
 
         ChaosRunPlan plan = ChaosRunPlanJson.parse(json(input), LIMITS);
 
-        assertThat(plan.stage().disruption().activation(), is(new ProbabilityActivation(0.25)));
+        assertThat(plan.stages().getFirst().disruption().orElseThrow().activation(),
+                   is(new ProbabilityActivation(0.25)));
 
         ChaosRunPlan minimum = ChaosRunPlanJson.parse(
                 json(withActivation("{\"type\": \"probability\", "
                                             + "\"probability\": 1.1102230246251565e-16}")),
                 LIMITS);
-        assertThat(minimum.stage().disruption().activation(),
+        assertThat(minimum.stages().getFirst().disruption().orElseThrow().activation(),
                    is(new ProbabilityActivation(0x1.0p-53)));
         ChaosRunPlan certain = ChaosRunPlanJson.parse(
                 json(withActivation("{\"type\": \"probability\", \"probability\": 1}")),
                 LIMITS);
-        assertThat(certain.stage().disruption().activation(), is(new ProbabilityActivation(1)));
+        assertThat(certain.stages().getFirst().disruption().orElseThrow().activation(),
+                   is(new ProbabilityActivation(1)));
+    }
+
+    @Test
+    void parsesPeriodicBurstActivation() {
+        ChaosRunPlan explicit = ChaosRunPlanJson.parse(
+                json(withActivation("""
+                        {
+                          "type": "periodic-burst",
+                          "initialSkip": 20,
+                          "cycleSize": 10,
+                          "burstSize": 3
+                        }
+                        """)),
+                LIMITS);
+        ChaosRunPlan defaultInitialSkip = ChaosRunPlanJson.parse(
+                json(withActivation("""
+                        {
+                          "type": "periodic-burst",
+                          "cycleSize": 10,
+                          "burstSize": 3
+                        }
+                        """)),
+                LIMITS);
+
+        assertThat(explicit.stages().getFirst().disruption().orElseThrow().activation(),
+                   is(new PeriodicBurstActivation(20, 10, 3)));
+        assertThat(defaultInitialSkip.stages().getFirst().disruption().orElseThrow().activation(),
+                   is(new PeriodicBurstActivation(0, 10, 3)));
+    }
+
+    @Test
+    void rejectsMalformedPeriodicBurstActivation() {
+        assertBadRequest(withActivation("""
+                {"type": "periodic-burst", "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/cycleSize");
+        assertBadRequest(withActivation("""
+                {"type": "periodic-burst", "cycleSize": 10}
+                """), "/stages/0/disruptions/0/activation/burstSize");
+        assertBadRequest(withActivation("""
+                {"type": "periodic-burst", "initialSkip": "twenty", "cycleSize": 10, "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/initialSkip");
+        assertBadRequest(withActivation("""
+                {"type": "periodic-burst", "cycleSize": 10.5, "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/cycleSize");
+    }
+
+    @Test
+    void rejectsInvalidPeriodicBurstActivation() {
+        assertInvalidPlan(withActivation("""
+                {"type": "periodic-burst", "initialSkip": -1, "cycleSize": 10, "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/initialSkip");
+        assertInvalidPlan(withActivation("""
+                {"type": "periodic-burst", "cycleSize": 0, "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/cycleSize");
+        assertInvalidPlan(withActivation("""
+                {"type": "periodic-burst", "cycleSize": 10, "burstSize": 0}
+                """), "/stages/0/disruptions/0/activation/burstSize");
+        assertInvalidPlan(withActivation("""
+                {"type": "periodic-burst", "cycleSize": 10, "burstSize": 11}
+                """), "/stages/0/disruptions/0/activation/burstSize");
+    }
+
+    @Test
+    void enforcesPeriodicBurstActivationInvariants() {
+        assertThrows(IllegalArgumentException.class, () -> new PeriodicBurstActivation(-1, 10, 3));
+        assertThrows(IllegalArgumentException.class, () -> new PeriodicBurstActivation(0, 0, 3));
+        assertThrows(IllegalArgumentException.class, () -> new PeriodicBurstActivation(0, 10, 0));
+        assertThrows(IllegalArgumentException.class, () -> new PeriodicBurstActivation(0, 10, 11));
+    }
+
+    @Test
+    void keepsActivationPropertiesMutuallyExclusive() {
+        assertBadRequest(withActivation("""
+                {"type": "always", "cycleSize": 10}
+                """), "/stages/0/disruptions/0/activation/cycleSize");
+        assertBadRequest(withActivation("""
+                {"type": "probability", "probability": 0.25, "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/burstSize");
+        assertBadRequest(withActivation("""
+                {"type": "periodic-burst", "probability": 0.25, "cycleSize": 10, "burstSize": 3}
+                """), "/stages/0/disruptions/0/activation/probability");
     }
 
     @Test
@@ -112,7 +836,7 @@ class ChaosRunPlanJsonTest {
 
     @Test
     void rejectsUnsupportedScopeActivationAndEffectTypes() {
-        assertInvalidPlan(validJson().replace("inbound-http", "outbound-http"), "/stages/0/disruptions/0/scope/type");
+        assertInvalidPlan(validJson().replace("inbound-http", "future-scope"), "/stages/0/disruptions/0/scope/type");
         assertInvalidPlan(validJson().replace("\"always\"", "\"invocation-cycle\""),
                           "/stages/0/disruptions/0/activation/type");
         assertInvalidPlan(validJson().replace("synthetic-http-response", "future-effect"),
@@ -124,6 +848,19 @@ class ChaosRunPlanJsonTest {
         String input = withActivation("{\"type\": \"future\", \"unexpected\": true}");
 
         assertBadRequest(input, "/stages/0/disruptions/0/activation/unexpected");
+    }
+
+    @Test
+    void rejectsUnknownScopePropertyBeforeUnsupportedType() {
+        String input = outboundPlanJson("{\"type\": \"latency\", \"delay\": \"PT0.25S\"}")
+                .replace("\"type\": \"outbound-http\"", "\"type\": \"future-scope\", \"unexpected\": true");
+
+        ChaosRequestException exception = assertThrows(ChaosRequestException.class,
+                                                        () -> ChaosRunPlanJson.parse(json(input), LIMITS));
+
+        assertThat(exception.status(), is(400));
+        assertThat(exception.violations().getFirst().path(), is("/stages/0/disruptions/0/scope/unexpected"));
+        assertThat(exception.violations().getFirst().code(), is("unknown-property"));
     }
 
     @Test
@@ -218,22 +955,12 @@ class ChaosRunPlanJsonTest {
         assertBadRequest(validJson().replace("orders-unavailable", "bad\\ud800name"), "/name");
     }
 
-    @Test
-    void rejectsWrongStageAndDisruptionCounts() {
-        assertInvalidPlan("""
-                {"name":"empty","maximumDuration":"PT30S","stages":[]}
-                """, "/stages");
-        assertInvalidPlan("""
-                {
-                  "name":"empty",
-                  "maximumDuration":"PT30S",
-                  "stages":[{"name":"stage","duration":"PT10S","disruptions":[]}]
-                }
-                """, "/stages/0/disruptions");
-    }
-
     private static void assertInvalidPlan(String input, String path) {
         assertInvalidPlan(input, LIMITS, path);
+    }
+
+    private static void assertInvalidPlan(String input, String path, String code) {
+        assertInvalidPlan(input, LIMITS, path, code);
     }
 
     private static void assertBadRequest(String input, String path) {
@@ -248,6 +975,14 @@ class ChaosRunPlanJsonTest {
                                                         () -> ChaosRunPlanJson.parse(json(input), limits));
         assertThat(exception.status(), is(422));
         assertThat(exception.violations().getFirst().path(), is(path));
+    }
+
+    private static void assertInvalidPlan(String input, ChaosLimitsConfig limits, String path, String code) {
+        ChaosRequestException exception = assertThrows(ChaosRequestException.class,
+                                                        () -> ChaosRunPlanJson.parse(json(input), limits));
+        assertThat(exception.status(), is(422));
+        assertThat(exception.violations().getFirst().path(), is(path));
+        assertThat(exception.violations().getFirst().code(), is(code));
     }
 
     private static JsonObject json(String text) {
@@ -274,6 +1009,53 @@ class ChaosRunPlanJsonTest {
                 """);
     }
 
+    private static String multiStageJson() {
+        return """
+                {
+                  "name": "orders-degradation-sequence",
+                  "maximumDuration": "PT30S",
+                  "seed": 148894,
+                  "stages": [
+                    {
+                      "name": "slow-orders",
+                      "duration": "PT5S",
+                      "disruptions": [{
+                        "name": "orders-latency",
+                        "scope": {
+                          "type": "inbound-http",
+                          "methods": ["get"],
+                          "path": {"match": "prefix", "value": "/orders"}
+                        },
+                        "activation": {"type": "always"},
+                        "effect": {"type": "latency", "delay": "PT0.25S"},
+                        "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                      }]
+                    },
+                    {
+                      "name": "orders-outage",
+                      "duration": "PT10S",
+                      "disruptions": [{
+                        "name": "orders-503",
+                        "scope": {
+                          "type": "inbound-http",
+                          "methods": ["get"],
+                          "path": {"match": "prefix", "value": "/orders"}
+                        },
+                        "activation": {"type": "always"},
+                        "effect": {"type": "synthetic-http-response", "status": 503},
+                        "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                      }]
+                    },
+                    {
+                      "name": "recovery",
+                      "duration": "PT5S",
+                      "disruptions": []
+                    }
+                  ]
+                }
+                """;
+    }
+
     private static String planJson(String effect) {
         return """
                 {
@@ -297,5 +1079,77 @@ class ChaosRunPlanJsonTest {
                   }]
                 }
                 """.formatted(effect);
+    }
+
+    private static String outboundPlanJson(String effect) {
+        return """
+                {
+                  "name": "inventory-latency",
+                  "maximumDuration": "PT30S",
+                  "seed": 148894,
+                  "stages": [{
+                    "name": "slow-inventory",
+                    "duration": "PT10S",
+                    "disruptions": [{
+                      "name": "inventory-latency",
+                      "scope": {
+                        "type": "outbound-http",
+                        "methods": ["get"],
+                        "scheme": "HTTPS",
+                        "host": "Inventory.Example.COM",
+                        "port": 443,
+                        "path": {"match": "prefix", "value": "/v1/items"}
+                      },
+                      "activation": {"type": "always"},
+                      "effect": %s,
+                      "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                    }]
+                  }]
+                }
+                """.formatted(effect.strip());
+    }
+
+    private static String outboundPlanJsonWithout(String property) {
+        List<String> fields = List.of(
+                "\"type\": \"outbound-http\"",
+                "\"methods\": [\"get\"]",
+                "\"scheme\": \"HTTPS\"",
+                "\"host\": \"Inventory.Example.COM\"",
+                "\"port\": 443",
+                "\"path\": {\"match\": \"prefix\", \"value\": \"/v1/items\"}")
+                .stream()
+                .filter(field -> !field.startsWith("\"" + property + "\""))
+                .toList();
+        return """
+                {
+                  "name": "inventory-latency",
+                  "maximumDuration": "PT30S",
+                  "seed": 148894,
+                  "stages": [{
+                    "name": "slow-inventory",
+                    "duration": "PT10S",
+                    "disruptions": [{
+                      "name": "inventory-latency",
+                      "scope": {
+                        %s
+                      },
+                      "activation": {"type": "always"},
+                      "effect": {"type": "latency", "delay": "PT0.25S"},
+                      "budget": {"maximumActivations": 20, "maximumConcurrent": 2}
+                    }]
+                  }]
+                }
+                """.formatted(String.join(",\n                        ", fields));
+    }
+
+    private static String outboundPlanJsonWithScope(String property) {
+        String original = switch (property.substring(1, property.indexOf('\"', 1))) {
+        case "scheme" -> "\"scheme\": \"HTTPS\"";
+        case "host" -> "\"host\": \"Inventory.Example.COM\"";
+        case "port" -> "\"port\": 443";
+        case "path" -> "\"path\": {\"match\": \"prefix\", \"value\": \"/v1/items\"}";
+        default -> throw new IllegalArgumentException("Unknown outbound scope property: " + property);
+        };
+        return outboundPlanJson("{\"type\": \"latency\", \"delay\": \"PT0.25S\"}").replace(original, property);
     }
 }

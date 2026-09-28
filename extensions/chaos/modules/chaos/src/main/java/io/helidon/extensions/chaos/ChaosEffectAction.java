@@ -16,13 +16,12 @@
 package io.helidon.extensions.chaos;
 
 /**
- * Normalized effect in a Chaos run plan.
+ * Effect resolved for one accepted activation.
  */
-sealed interface ChaosEffect permits ChaosConnectFailure,
+sealed interface ChaosEffectAction permits ChaosConnectFailure,
         ChaosDnsFailure,
-        ChaosLatency,
-        ChaosResponseTimeout,
+        ChaosLatencyAction,
+        ChaosResponseTimeoutAction,
         ChaosSyntheticResponse,
-        ChaosTlsHandshakeFailure,
-        ChaosWeightedChoice {
+        ChaosTlsHandshakeFailure {
 }

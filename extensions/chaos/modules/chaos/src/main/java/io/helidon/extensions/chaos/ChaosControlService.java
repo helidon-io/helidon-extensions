@@ -42,24 +42,26 @@ final class ChaosControlService implements HttpService {
     private static final String RUNS_PATH = "/chaos/v1/runs/";
     private static final MediaType PROBLEM_JSON = MediaTypes.create("application", "problem+json");
 
+    private final ChaosRuntimeRegistration registration;
     private final ChaosRunEngine engine;
     private final ChaosLimitsConfig limits;
     private final boolean anonymousLocal;
     private final Handler authorization;
     private final Semaphore capacity;
 
-    ChaosControlService(ChaosRunEngine engine, ChaosConfig config, boolean anonymousLocal) {
-        this(engine,
+    ChaosControlService(ChaosRuntimeRegistration registration, ChaosConfig config, boolean anonymousLocal) {
+        this(registration,
              config,
              anonymousLocal,
              new Semaphore(config.limits().maximumConcurrentControlRequests(), true));
     }
 
-    ChaosControlService(ChaosRunEngine engine,
+    ChaosControlService(ChaosRuntimeRegistration registration,
                         ChaosConfig config,
                         boolean anonymousLocal,
                         Semaphore capacity) {
-        this.engine = Objects.requireNonNull(engine);
+        this.registration = Objects.requireNonNull(registration, "registration is null");
+        this.engine = registration.engine();
         this.limits = Objects.requireNonNull(config).limits();
         this.anonymousLocal = anonymousLocal;
         this.capacity = Objects.requireNonNull(capacity);
@@ -78,7 +80,7 @@ final class ChaosControlService implements HttpService {
 
     @Override
     public void afterStop() {
-        engine.close();
+        registration.close();
     }
 
     private static JsonObject requestBody(ServerRequest request) {

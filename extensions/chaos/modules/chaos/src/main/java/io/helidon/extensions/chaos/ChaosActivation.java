@@ -18,7 +18,9 @@ package io.helidon.extensions.chaos;
 /**
  * Determines whether a matched invocation attempts to reserve disruption budget.
  */
-sealed interface ChaosActivation permits ChaosActivation.AlwaysActivation, ChaosActivation.ProbabilityActivation {
+sealed interface ChaosActivation permits ChaosActivation.AlwaysActivation,
+        ChaosActivation.PeriodicBurstActivation,
+        ChaosActivation.ProbabilityActivation {
 
     /**
      * Shared activation that accepts every matched invocation.
@@ -47,6 +49,29 @@ sealed interface ChaosActivation permits ChaosActivation.AlwaysActivation, Chaos
         public ProbabilityActivation {
             if (!Double.isFinite(probability) || probability < MINIMUM || probability > 1) {
                 throw new IllegalArgumentException("probability must be between 2^-53 and one");
+            }
+        }
+    }
+
+    /**
+     * Activates the first part of each fixed-size invocation cycle after an initial skip.
+     *
+     * @param initialSkip number of initial matched invocations that do not activate
+     * @param cycleSize size of each repeating cycle of matched invocations
+     * @param burstSize number of invocations that activate at the start of each cycle
+     */
+    record PeriodicBurstActivation(long initialSkip, long cycleSize, long burstSize) implements ChaosActivation {
+
+        // must be public, as the record is implicitly public (on interface), even though it cannot be accessed
+        public PeriodicBurstActivation {
+            if (initialSkip < 0) {
+                throw new IllegalArgumentException("initialSkip must not be negative");
+            }
+            if (cycleSize <= 0) {
+                throw new IllegalArgumentException("cycleSize must be positive");
+            }
+            if (burstSize <= 0 || burstSize > cycleSize) {
+                throw new IllegalArgumentException("burstSize must be positive and at most cycleSize");
             }
         }
     }

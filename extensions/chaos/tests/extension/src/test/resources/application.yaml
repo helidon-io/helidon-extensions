@@ -33,3 +33,4 @@ server:
         maximum-run-duration: PT30S
         maximum-activations-per-disruption: 20
         maximum-concurrent-activations-per-disruption: 2
+        maximum-response-timeout: PT0.15S

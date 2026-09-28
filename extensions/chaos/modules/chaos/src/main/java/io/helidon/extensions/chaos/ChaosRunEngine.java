@@ -16,6 +16,7 @@
 package io.helidon.extensions.chaos;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.Iterator;
@@ -24,10 +25,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 import static io.helidon.extensions.chaos.ChaosRunState.COMPLETED;
@@ -87,67 +88,73 @@ final class ChaosRunEngine implements AutoCloseable {
             Objects.requireNonNull(plan);
             Objects.requireNonNull(actor);
             ensureOpen();
+            Instant now = clock.instant();
+            refreshRuns(now);
             evictExpiredTerminalRuns();
 
             List<ChaosRun> activeRuns = activeRuns();
             if (activeRuns.size() >= limits.maximumActiveRuns()) {
                 throw new ConflictException("The maximum number of active chaos runs has been reached");
             }
-            ChaosHttpScope requestedScope = plan.stage().disruption().scope();
-            if (activeRuns.stream().anyMatch(run -> overlaps(run.scope(), requestedScope))) {
+            List<ChaosScope> requestedScopes = scopes(plan);
+            if (activeRuns.stream().anyMatch(run -> overlaps(run.scopes(), requestedScopes))) {
                 throw new ConflictException("The requested scope overlaps an active chaos disruption");
             }
             evictForCapacity();
 
             UUID id = nextId();
-            ChaosRun run = new ChaosRun(id, ++sequence, plan, actor, clock.instant());
-            ChaosScheduler.Cancellable completionTask = scheduler.schedule(plan.stage().duration(),
+            ChaosRun run = new ChaosRun(id, ++sequence, plan, actor, now);
+            Duration runDuration = plan.duration();
+            ChaosScheduler.Cancellable completionTask = scheduler.schedule(runDuration,
                                                                            () -> terminate(id,
                                                                                            COMPLETED,
                                                                                            REASON_COMPLETED));
+            Optional<ChaosScheduler.Cancellable> expirationTask = Optional.empty();
             try {
-                ChaosScheduler.Cancellable expirationTask = scheduler.schedule(plan.maximumDuration(),
-                                                                                () -> terminate(id,
-                                                                                                EXPIRED,
-                                                                                                REASON_EXPIRED));
+                if (plan.maximumDuration().compareTo(runDuration) > 0) {
+                    expirationTask = Optional.of(scheduler.schedule(plan.maximumDuration(),
+                                                                    () -> terminate(id,
+                                                                                    EXPIRED,
+                                                                                    REASON_EXPIRED)));
+                }
                 run.tasks(completionTask, expirationTask);
             } catch (RuntimeException exception) {
                 completionTask.cancel();
                 throw exception;
             }
             runs.put(id, run);
-            return run.view();
+            return run.view(now);
         } finally {
             lock.unlock();
         }
     }
 
-    Optional<Reservation> reserve(String method, String requestPath) {
-        lock.lock();
-        try {
-            Objects.requireNonNull(method);
-            Objects.requireNonNull(requestPath);
-            if (closed) {
-                return Optional.empty();
-            }
-            for (ChaosRun run : runs.values()) {
-                Optional<ChaosRun.Activation> activation = run.reserve(method, requestPath);
-                if (activation.isPresent()) {
-                    return Optional.of(new Reservation(this, run.id(), activation.orElseThrow()));
-                }
-            }
-            return Optional.empty();
-        } finally {
-            lock.unlock();
-        }
+    Optional<Reservation> reserveInbound(String method, String requestPath) {
+        Objects.requireNonNull(method);
+        Objects.requireNonNull(requestPath);
+        return reserve((run, now) -> run.reserveInbound(method, requestPath, now));
+    }
+
+    Optional<Reservation> reserveOutbound(String method,
+                                          String scheme,
+                                          String host,
+                                          int port,
+                                          String requestPath) {
+        Objects.requireNonNull(method);
+        Objects.requireNonNull(scheme);
+        Objects.requireNonNull(host);
+        Objects.requireNonNull(requestPath);
+        return reserve((run, now) -> run.reserveOutbound(method, scheme, host, port, requestPath, now));
     }
 
     Optional<ChaosRunView> get(UUID id) {
         lock.lock();
         try {
             Objects.requireNonNull(id);
+            Instant now = clock.instant();
+            refreshRuns(now);
             evictExpiredTerminalRuns();
-            return Optional.ofNullable(runs.get(id)).map(ChaosRun::view);
+            return Optional.ofNullable(runs.get(id)).map(run -> run.view(now));
         } finally {
             lock.unlock();
         }
@@ -156,11 +163,13 @@ final class ChaosRunEngine implements AutoCloseable {
     List<ChaosRunView> list() {
         lock.lock();
         try {
+            Instant now = clock.instant();
+            refreshRuns(now);
             evictExpiredTerminalRuns();
             return runs.values()
                     .stream()
                     .sorted(Comparator.comparingLong(ChaosRun::sequence).reversed())
-                    .map(ChaosRun::view)
+                    .map(run -> run.view(now))
                     .toList();
         } finally {
             lock.unlock();
@@ -171,15 +180,17 @@ final class ChaosRunEngine implements AutoCloseable {
         lock.lock();
         try {
             Objects.requireNonNull(id);
+            Instant now = clock.instant();
+            refreshRuns(now);
             evictExpiredTerminalRuns();
             ChaosRun run = runs.get(id);
             if (run == null) {
                 throw new NotFoundException(id);
             }
             if (run.running()) {
-                run.terminate(STOPPED, REASON_STOPPED, clock.instant());
+                run.terminate(STOPPED, REASON_STOPPED, now);
             }
-            return run.view();
+            return run.view(now);
         } finally {
             lock.unlock();
         }
@@ -204,28 +215,36 @@ final class ChaosRunEngine implements AutoCloseable {
         }
     }
 
-    private static boolean overlaps(ChaosHttpScope first, ChaosHttpScope second) {
-        if (!methodsOverlap(first.methods(), second.methods())) {
-            return false;
+    private static List<ChaosScope> scopes(ChaosRunPlan plan) {
+        return plan.stages().stream()
+                .flatMap(stage -> stage.disruption().stream())
+                .map(ChaosRunPlan.ChaosDisruption::scope)
+                .toList();
+    }
+
+    private static boolean overlaps(List<ChaosScope> first, List<ChaosScope> second) {
+        return first.stream()
+                .anyMatch(firstScope -> second.stream()
+                .anyMatch(firstScope::overlaps));
+    }
+
+    private Optional<Reservation> reserve(BiFunction<ChaosRun, Instant, Optional<ChaosRun.Activation>> reserve) {
+        lock.lock();
+        try {
+            if (closed) {
+                return Optional.empty();
+            }
+            Instant now = clock.instant();
+            for (ChaosRun run : runs.values()) {
+                Optional<ChaosRun.Activation> activation = reserve.apply(run, now);
+                if (activation.isPresent()) {
+                    return Optional.of(new Reservation(this, run.id(), activation.orElseThrow()));
+                }
+            }
+            return Optional.empty();
+        } finally {
+            lock.unlock();
         }
-        return switch (first.pathMatch()) {
-        case EXACT -> switch (second.pathMatch()) {
-            case EXACT -> first.path().equals(second.path());
-            case PREFIX -> prefixContains(second.path(), first.path());
-        };
-        case PREFIX -> switch (second.pathMatch()) {
-            case EXACT -> prefixContains(first.path(), second.path());
-            case PREFIX -> prefixContains(first.path(), second.path()) || prefixContains(second.path(), first.path());
-        };
-        };
-    }
-
-    private static boolean methodsOverlap(Set<String> first, Set<String> second) {
-        return first.stream().anyMatch(second::contains);
-    }
-
-    private static boolean prefixContains(String prefix, String path) {
-        return prefix.equals("/") || path.equals(prefix) || path.startsWith(prefix + "/");
     }
 
     private void terminate(UUID id, ChaosRunState state, String reason) {
@@ -240,12 +259,12 @@ final class ChaosRunEngine implements AutoCloseable {
         }
     }
 
-    private void release(UUID id) {
+    private void release(UUID id, int stageIndex) {
         lock.lock();
         try {
             ChaosRun run = runs.get(id);
             if (run != null) {
-                run.release(clock.instant());
+                run.release(stageIndex, clock.instant());
             }
         } finally {
             lock.unlock();
@@ -253,7 +272,11 @@ final class ChaosRunEngine implements AutoCloseable {
     }
 
     private List<ChaosRun> activeRuns() {
-        return runs.values().stream().filter(ChaosRun::running).toList();
+        return runs.values().stream().filter(run -> !run.terminal()).toList();
+    }
+
+    private void refreshRuns(Instant now) {
+        runs.values().forEach(run -> run.refresh(now));
     }
 
     private UUID nextId() {
@@ -297,23 +320,25 @@ final class ChaosRunEngine implements AutoCloseable {
     static final class Reservation implements AutoCloseable {
         private final ChaosRunEngine engine;
         private final UUID runId;
-        private final ChaosEffect effect;
+        private final int stageIndex;
+        private final ChaosEffectAction action;
         private final AtomicBoolean closed = new AtomicBoolean();
 
         private Reservation(ChaosRunEngine engine, UUID runId, ChaosRun.Activation activation) {
             this.engine = engine;
             this.runId = runId;
-            this.effect = activation.effect();
+            this.stageIndex = activation.stageIndex();
+            this.action = activation.action();
         }
 
-        ChaosEffect effect() {
-            return effect;
+        ChaosEffectAction action() {
+            return action;
         }
 
         @Override
         public void close() {
             if (closed.compareAndSet(false, true)) {
-                engine.release(runId);
+                engine.release(runId, stageIndex);
             }
         }
     }

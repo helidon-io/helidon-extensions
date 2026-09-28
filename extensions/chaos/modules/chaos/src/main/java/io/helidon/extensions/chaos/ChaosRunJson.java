@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+import io.helidon.extensions.chaos.ChaosActivation.PeriodicBurstActivation;
 import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 import io.helidon.json.JsonArray;
 import io.helidon.json.JsonObject;
@@ -48,6 +49,7 @@ final class ChaosRunJson {
                 .set("links", JsonObject.builder().set("self", RUN_PATH + run.id()).build());
         run.terminalAt().ifPresent(value -> result.set("terminalAt", value.toString()));
         run.terminalReason().ifPresent(value -> result.set("terminalReason", value));
+        run.currentStage().ifPresent(value -> result.set("currentStage", currentStage(value)));
         return result.build();
     }
 
@@ -60,7 +62,7 @@ final class ChaosRunJson {
                 .set("name", plan.name())
                 .set("maximumDuration", plan.maximumDuration().toString())
                 .set("seed", plan.seed())
-                .setValues("stages", List.of(stage(plan.stage())))
+                .setValues("stages", plan.stages().stream().map(ChaosRunJson::stage).toList())
                 .build();
     }
 
@@ -68,7 +70,16 @@ final class ChaosRunJson {
         return JsonObject.builder()
                 .set("name", stage.name())
                 .set("duration", stage.duration().toString())
-                .setValues("disruptions", List.of(disruption(stage.disruption())))
+                .setValues("disruptions", stage.disruption().stream().map(ChaosRunJson::disruption).toList())
+                .build();
+    }
+
+    private static JsonObject currentStage(ChaosRunView.CurrentStage stage) {
+        return JsonObject.builder()
+                .set("index", stage.index())
+                .set("name", stage.name())
+                .set("startedAt", stage.startedAt().toString())
+                .set("endsAt", stage.endsAt().toString())
                 .build();
     }
 
@@ -92,12 +103,27 @@ final class ChaosRunJson {
                     .set("probability", probability.probability())
                     .build();
         }
+        if (activation instanceof PeriodicBurstActivation periodicBurst) {
+            return JsonObject.builder()
+                    .set("type", "periodic-burst")
+                    .set("initialSkip", periodicBurst.initialSkip())
+                    .set("cycleSize", periodicBurst.cycleSize())
+                    .set("burstSize", periodicBurst.burstSize())
+                    .build();
+        }
         return JsonObject.builder()
                 .set("type", "always")
                 .build();
     }
 
-    private static JsonObject scope(ChaosHttpScope scope) {
+    private static JsonObject scope(ChaosScope scope) {
+        return switch (scope) {
+        case ChaosHttpScope inbound -> inboundHttpScope(inbound);
+        case ChaosOutboundHttpScope outbound -> outboundHttpScope(outbound);
+        };
+    }
+
+    private static JsonObject inboundHttpScope(ChaosHttpScope scope) {
         List<String> methods = new ArrayList<>(scope.methods());
         return JsonObject.builder()
                 .set("type", "inbound-http")
@@ -109,8 +135,62 @@ final class ChaosRunJson {
                 .build();
     }
 
+    private static JsonObject outboundHttpScope(ChaosOutboundHttpScope scope) {
+        List<String> methods = new ArrayList<>(scope.methods());
+        return JsonObject.builder()
+                .set("type", "outbound-http")
+                .set("methods", JsonArray.createStrings(methods))
+                .set("scheme", scope.scheme())
+                .set("host", scope.host())
+                .set("port", scope.port())
+                .set("path", JsonObject.builder()
+                        .set("match", scope.pathMatch().name().toLowerCase(Locale.ROOT))
+                        .set("value", scope.path())
+                        .build())
+                .build();
+    }
+
     private static JsonObject effect(ChaosEffect effect) {
-        ChaosSyntheticResponse synthetic = (ChaosSyntheticResponse) effect;
+        return switch (effect) {
+        case ChaosConnectFailure connectFailure -> JsonObject.builder()
+                .set("type", connectFailure.type())
+                .build();
+        case ChaosDnsFailure dnsFailure -> JsonObject.builder()
+                .set("type", dnsFailure.type())
+                .build();
+        case ChaosLatency latency -> JsonObject.builder()
+                .set("type", "latency")
+                .set("delay", latency.delay().toString())
+                .set("jitter", latency.jitter().toString())
+                .build();
+        case ChaosResponseTimeout timeout -> JsonObject.builder()
+                .set("type", "response-timeout")
+                .set("duration", timeout.duration().toString())
+                .set("jitter", timeout.jitter().toString())
+                .build();
+        case ChaosSyntheticResponse synthetic -> syntheticResponse(synthetic);
+        case ChaosTlsHandshakeFailure tlsFailure -> JsonObject.builder()
+                .set("type", tlsFailure.type())
+                .build();
+        case ChaosWeightedChoice choice -> weightedChoice(choice);
+        };
+    }
+
+    private static JsonObject weightedChoice(ChaosWeightedChoice choice) {
+        List<JsonObject> outcomes = choice.outcomes()
+                .stream()
+                .map(outcome -> JsonObject.builder()
+                        .set("weight", outcome.weight())
+                        .set("effect", effect(outcome.effect()))
+                        .build())
+                .toList();
+        return JsonObject.builder()
+                .set("type", "weighted-choice")
+                .setValues("outcomes", outcomes)
+                .build();
+    }
+
+    private static JsonObject syntheticResponse(ChaosSyntheticResponse synthetic) {
         JsonObject.Builder headers = JsonObject.builder();
         synthetic.headers().forEach(headers::set);
         JsonObject.Builder result = JsonObject.builder()

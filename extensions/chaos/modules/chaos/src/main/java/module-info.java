@@ -39,11 +39,16 @@ module io.helidon.extensions.chaos {
     requires io.helidon.service.registry;
     requires io.helidon.webserver.security;
 
+    requires static io.helidon.common.buffers;
     requires static io.helidon.common.features.api;
+    requires static io.helidon.common.socket;
     requires static io.helidon.config.metadata;
+    requires static transitive io.helidon.webclient.api;
 
     exports io.helidon.extensions.chaos;
 
     provides io.helidon.webserver.spi.ServerFeatureProvider
             with io.helidon.extensions.chaos.ChaosServerFeatureProvider;
+    provides io.helidon.webclient.spi.WebClientServiceProvider
+            with io.helidon.extensions.chaos.ChaosWebClientServiceProvider;
 }

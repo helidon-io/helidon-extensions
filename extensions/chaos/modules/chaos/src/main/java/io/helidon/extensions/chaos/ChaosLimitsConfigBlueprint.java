@@ -46,6 +46,15 @@ interface ChaosLimitsConfigBlueprint {
     Duration maximumRunDuration();
 
     /**
+     * Maximum number of stages in one run.
+     *
+     * @return maximum stages
+     */
+    @Option.Configured
+    @Option.DefaultInt(16)
+    int maximumStagesPerRun();
+
+    /**
      * Maximum cumulative activations of one disruption.
      *
      * @return maximum activations
@@ -62,6 +71,24 @@ interface ChaosLimitsConfigBlueprint {
     @Option.Configured
     @Option.DefaultInt(64)
     int maximumConcurrentActivationsPerDisruption();
+
+    /**
+     * Maximum latency applied to one request, including jitter.
+     *
+     * @return maximum latency
+     */
+    @Option.Configured
+    @Option.Default("PT30S")
+    Duration maximumLatency();
+
+    /**
+     * Maximum simulated response timeout duration, including jitter.
+     *
+     * @return maximum response timeout
+     */
+    @Option.Configured
+    @Option.Default("PT30S")
+    Duration maximumResponseTimeout();
 
     /**
      * Maximum synthetic response body size in UTF-8 bytes.

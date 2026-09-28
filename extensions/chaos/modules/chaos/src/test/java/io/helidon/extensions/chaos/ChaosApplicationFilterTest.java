@@ -17,6 +17,7 @@ package io.helidon.extensions.chaos;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -34,6 +35,7 @@ import io.helidon.webserver.http.ServerResponse;
 import io.helidon.webserver.testing.junit5.ServerTest;
 import io.helidon.webserver.testing.junit5.SetUpRoute;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -41,12 +43,15 @@ import static io.helidon.extensions.chaos.ChaosHttpScope.PathMatch.EXACT;
 import static io.helidon.extensions.chaos.ChaosHttpScope.PathMatch.PREFIX;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @ServerTest
 class ChaosApplicationFilterTest {
     private static final AtomicInteger APPLICATION_INVOCATIONS = new AtomicInteger();
+    private static final AtomicInteger OBSERVED_IN_FLIGHT = new AtomicInteger();
     private static final HeaderName APPLICATION_HEADER = HeaderNames.create("X-Application");
     private static ChaosRunEngine engine;
+    private static ChaosRuntimeRegistration registration;
 
     private final WebClient client;
 
@@ -57,7 +62,8 @@ class ChaosApplicationFilterTest {
     @SetUpRoute
     static void setUpRoute(HttpRouting.Builder routing) {
         engine = ChaosRunEngine.create(ChaosLimitsConfig.builder().build());
-        routing.addFilter(new ChaosApplicationFilter(engine))
+        registration = ChaosRuntimeBridge.register(engine);
+        routing.addFilter(new ChaosApplicationFilter(registration))
                 .get("/orders/42", ChaosApplicationFilterTest::application)
                 .get("/orders-old", ChaosApplicationFilterTest::application)
                 .post("/orders/42", ChaosApplicationFilterTest::application);
@@ -69,6 +75,12 @@ class ChaosApplicationFilterTest {
                 .filter(run -> run.state() == ChaosRunState.RUNNING)
                 .forEach(run -> engine.stop(run.id()));
         APPLICATION_INVOCATIONS.set(0);
+        OBSERVED_IN_FLIGHT.set(-1);
+    }
+
+    @AfterAll
+    static void closeRegistration() {
+        registration.close();
     }
 
     @Test
@@ -130,8 +142,48 @@ class ChaosApplicationFilterTest {
         assertThat(APPLICATION_INVOCATIONS.get(), is(1));
     }
 
+    @Test
+    void latencyDelaysBeforeInvokingApplication() {
+        ChaosLatency latency = new ChaosLatency(Duration.ofMillis(100), Duration.ZERO);
+        ChaosRunView created = engine.create(plan(PREFIX,
+                                                  "/orders",
+                                                  Set.of("GET"),
+                                                  20,
+                                                  2,
+                                                  latency,
+                                                  "latency"),
+                                             "alice");
+
+        long started = System.nanoTime();
+        ClientResponseTyped<String> response = client.get("/orders/42").request(String.class);
+        Duration elapsed = Duration.ofNanos(System.nanoTime() - started);
+
+        assertThat(response.status(), is(Status.OK_200));
+        assertThat(response.entity(), is("application"));
+        assertThat(response.headers().first(APPLICATION_HEADER).orElseThrow(), is("reached"));
+        response.close();
+        assertThat(elapsed.compareTo(Duration.ofMillis(90)) >= 0, is(true));
+        assertThat(APPLICATION_INVOCATIONS.get(), is(1));
+        assertThat(OBSERVED_IN_FLIGHT.get(), is(0));
+        ChaosRunView view = engine.get(created.id()).orElseThrow();
+        assertThat(view.activated(), is(1L));
+        assertThat(view.completed(), is(1L));
+        assertThat(view.inFlight(), is(0L));
+    }
+
+    @Test
+    void rejectsNullRuntimeRegistration() {
+        NullPointerException exception = assertThrows(NullPointerException.class, () -> new ChaosApplicationFilter(null));
+
+        assertThat(exception.getMessage(), is("registration is null"));
+    }
+
     private static void application(ServerRequest request, ServerResponse response) {
         APPLICATION_INVOCATIONS.incrementAndGet();
+        engine.list().stream()
+                .filter(run -> run.state() == ChaosRunState.RUNNING)
+                .findFirst()
+                .ifPresent(run -> OBSERVED_IN_FLIGHT.set((int) run.inFlight()));
         response.header(APPLICATION_HEADER, "reached");
         response.send("application");
     }
@@ -160,7 +212,7 @@ class ChaosApplicationFilterTest {
         ChaosRunPlan.ChaosDisruption disruption =
                 new ChaosRunPlan.ChaosDisruption(disruptionName, scope, ChaosActivation.always(), effect, budget);
         ChaosRunPlan.ChaosStage stage =
-                new ChaosRunPlan.ChaosStage("stage", Duration.ofSeconds(30), disruption);
-        return new ChaosRunPlan("run", Duration.ofMinutes(1), 42, stage);
+                new ChaosRunPlan.ChaosStage("stage", Duration.ofSeconds(30), Optional.of(disruption));
+        return new ChaosRunPlan("run", Duration.ofMinutes(1), 42, List.of(stage));
     }
 }

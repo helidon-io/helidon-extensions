@@ -15,14 +15,23 @@
  */
 package io.helidon.extensions.chaos;
 
-/**
- * Normalized effect in a Chaos run plan.
- */
-sealed interface ChaosEffect permits ChaosConnectFailure,
-        ChaosDnsFailure,
-        ChaosLatency,
-        ChaosResponseTimeout,
-        ChaosSyntheticResponse,
-        ChaosTlsHandshakeFailure,
-        ChaosWeightedChoice {
+import org.junit.jupiter.api.Test;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+class ChaosDnsFailureTest {
+
+    @Test
+    void createsHelidonAddressResolutionFailure() {
+        IllegalArgumentException exception = ChaosDnsFailure.instance().exception("inventory.example.com");
+
+        assertThat(exception.getMessage(), is("Failed to get address for host inventory.example.com"));
+    }
+
+    @Test
+    void rejectsNullHost() {
+        assertThrows(NullPointerException.class, () -> ChaosDnsFailure.instance().exception(null));
+    }
 }

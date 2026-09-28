@@ -34,7 +34,7 @@ import io.helidon.common.media.type.MediaType;
 record ChaosSyntheticResponse(int status,
                               Map<String, String> headers,
                               Optional<MediaType> mediaType,
-                              byte[] body) implements ChaosEffect {
+                              byte[] body) implements ChaosEffect, ChaosEffectAction {
 
     ChaosSyntheticResponse {
         headers = Collections.unmodifiableMap(new LinkedHashMap<>(Objects.requireNonNull(headers, "headers is null")));

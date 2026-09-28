@@ -16,17 +16,26 @@
 package io.helidon.extensions.chaos;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Predicate;
+
+import static io.helidon.extensions.chaos.ChaosRunState.COMPLETED;
 
 final class ChaosRun {
+    private static final String REASON_COMPLETED = "stage-duration-completed";
+
     private final UUID id;
     private final long sequence;
     private final ChaosRunPlan plan;
     private final String actor;
     private final Instant createdAt;
     private final Instant expiresAt;
-    private final long activationStreamSeed;
+    private final Instant completesAt;
+    private final List<StageRuntime> stages;
 
     private ChaosRunState state = ChaosRunState.RUNNING;
     private ChaosRunState drainedState;
@@ -40,7 +49,7 @@ final class ChaosRun {
     private long inFlight;
     private long completed;
     private ChaosScheduler.Cancellable completionTask;
-    private ChaosScheduler.Cancellable expirationTask;
+    private Optional<ChaosScheduler.Cancellable> expirationTask = Optional.empty();
 
     ChaosRun(UUID id,
              long sequence,
@@ -53,10 +62,17 @@ final class ChaosRun {
         this.actor = actor;
         this.createdAt = createdAt;
         this.expiresAt = createdAt.plus(plan.maximumDuration());
-        ChaosRunPlan.ChaosDisruption disruption = plan.stage().disruption();
-        this.activationStreamSeed = ChaosActivationDecider.streamSeed(plan.seed(),
-                                                                      plan.stage().name(),
-                                                                      disruption.name());
+
+        List<StageRuntime> runtimes = new ArrayList<>(plan.stages().size());
+        Instant startedAt = createdAt;
+        for (int index = 0; index < plan.stages().size(); index++) {
+            ChaosRunPlan.ChaosStage stage = plan.stages().get(index);
+            Instant endsAt = startedAt.plus(stage.duration());
+            runtimes.add(new StageRuntime(index, stage, startedAt, endsAt, plan.seed()));
+            startedAt = endsAt;
+        }
+        this.stages = List.copyOf(runtimes);
+        this.completesAt = startedAt;
     }
 
     UUID id() {
@@ -67,8 +83,11 @@ final class ChaosRun {
         return sequence;
     }
 
-    ChaosHttpScope scope() {
-        return plan.stage().disruption().scope();
+    List<ChaosScope> scopes() {
+        return stages.stream()
+                .flatMap(stage -> stage.disruption.stream())
+                .map(disruption -> disruption.plan.scope())
+                .toList();
     }
 
     boolean running() {
@@ -83,33 +102,36 @@ final class ChaosRun {
         return terminal() && terminalAt != null && !terminalAt.isAfter(instant);
     }
 
-    void tasks(ChaosScheduler.Cancellable completionTask, ChaosScheduler.Cancellable expirationTask) {
+    void tasks(ChaosScheduler.Cancellable completionTask,
+               Optional<ChaosScheduler.Cancellable> expirationTask) {
         this.completionTask = completionTask;
         this.expirationTask = expirationTask;
     }
 
-    Optional<Activation> reserve(String method, String requestPath) {
-        ChaosRunPlan.ChaosDisruption disruption = plan.stage().disruption();
-        if (!running() || !disruption.scope().matches(method, requestPath)) {
-            return Optional.empty();
+    Optional<Activation> reserveInbound(String method, String requestPath, Instant now) {
+        Objects.requireNonNull(method, "method is null");
+        Objects.requireNonNull(requestPath, "requestPath is null");
+        return reserve(scope -> scope instanceof ChaosHttpScope httpScope && httpScope.matches(method, requestPath), now);
+    }
+
+    Optional<Activation> reserveOutbound(String method,
+                                         String scheme,
+                                         String host,
+                                         int port,
+                                         String requestPath,
+                                         Instant now) {
+        Objects.requireNonNull(method, "method is null");
+        Objects.requireNonNull(scheme, "scheme is null");
+        Objects.requireNonNull(host, "host is null");
+        Objects.requireNonNull(requestPath, "requestPath is null");
+        return reserve(scope -> scope instanceof ChaosOutboundHttpScope outboundScope
+                        && outboundScope.matches(method, scheme, host, port, requestPath), now);
+    }
+
+    void refresh(Instant now) {
+        if (running() && !now.isBefore(completesAt)) {
+            terminate(COMPLETED, REASON_COMPLETED, now);
         }
-        matched++;
-        if (!ChaosActivationDecider.activates(disruption.activation(), activationStreamSeed, matched)) {
-            skippedActivation++;
-            return Optional.empty();
-        }
-        ChaosBudget budget = disruption.budget();
-        if (inFlight >= budget.maximumConcurrent()) {
-            skippedConcurrent++;
-            return Optional.empty();
-        }
-        if (activated >= budget.maximumActivations()) {
-            skippedBudget++;
-            return Optional.empty();
-        }
-        inFlight++;
-        activated++;
-        return Optional.of(new Activation(disruption.effect()));
     }
 
     void terminate(ChaosRunState terminalState, String reason, Instant now) {
@@ -124,10 +146,12 @@ final class ChaosRun {
         }
     }
 
-    void release(Instant now) {
-        if (inFlight == 0) {
+    void release(int stageIndex, Instant now) {
+        DisruptionRuntime disruption = stages.get(stageIndex).disruption.orElseThrow();
+        if (disruption.inFlight == 0) {
             return;
         }
+        disruption.inFlight--;
         inFlight--;
         completed++;
         if (state == ChaosRunState.STOPPING && inFlight == 0) {
@@ -136,7 +160,11 @@ final class ChaosRun {
         }
     }
 
-    ChaosRunView view() {
+    ChaosRunView view(Instant now) {
+        refresh(now);
+        Optional<ChaosRunView.CurrentStage> current = running()
+                ? currentStage(now).map(StageRuntime::view)
+                : Optional.empty();
         return new ChaosRunView(id,
                                 plan.name(),
                                 state,
@@ -146,6 +174,7 @@ final class ChaosRun {
                                 createdAt,
                                 createdAt,
                                 expiresAt,
+                                current,
                                 Optional.ofNullable(terminalAt),
                                 Optional.ofNullable(terminalReason),
                                 matched,
@@ -157,15 +186,113 @@ final class ChaosRun {
                                 completed);
     }
 
+    private Optional<Activation> reserve(Predicate<ChaosScope> matchesScope, Instant now) {
+        refresh(now);
+        if (!running()) {
+            return Optional.empty();
+        }
+        Optional<StageRuntime> current = currentStage(now);
+        if (current.isEmpty() || current.orElseThrow().disruption.isEmpty()) {
+            return Optional.empty();
+        }
+        StageRuntime stage = current.orElseThrow();
+        DisruptionRuntime disruption = stage.disruption.orElseThrow();
+        if (!matchesScope.test(disruption.plan.scope())) {
+            return Optional.empty();
+        }
+        disruption.matched++;
+        matched++;
+        if (!ChaosActivationDecider.activates(disruption.plan.activation(),
+                                              disruption.activationStreamSeed,
+                                              disruption.matched)) {
+            skippedActivation++;
+            return Optional.empty();
+        }
+        ChaosBudget budget = disruption.plan.budget();
+        if (disruption.inFlight >= budget.maximumConcurrent()) {
+            skippedConcurrent++;
+            return Optional.empty();
+        }
+        if (disruption.activated >= budget.maximumActivations()) {
+            skippedBudget++;
+            return Optional.empty();
+        }
+        ChaosEffectAction action = switch (disruption.plan.effect()) {
+        case ChaosConnectFailure connectFailure -> connectFailure;
+        case ChaosDnsFailure dnsFailure -> dnsFailure;
+        case ChaosLatency latency -> latency.resolve(ChaosRandom.sample(disruption.effectStreamSeed,
+                                                                        disruption.matched));
+        case ChaosResponseTimeout timeout -> timeout.resolve(ChaosRandom.sample(disruption.effectStreamSeed,
+                                                                                 disruption.matched));
+        case ChaosSyntheticResponse synthetic -> synthetic;
+        case ChaosTlsHandshakeFailure tlsFailure -> tlsFailure;
+        case ChaosWeightedChoice choice -> choice.resolve(ChaosRandom.sample(disruption.choiceStreamSeed,
+                                                                             disruption.matched),
+                                                          ChaosRandom.sample(disruption.effectStreamSeed,
+                                                                             disruption.matched));
+        };
+        disruption.inFlight++;
+        disruption.activated++;
+        inFlight++;
+        activated++;
+        return Optional.of(new Activation(stage.index, action));
+    }
+
+    private Optional<StageRuntime> currentStage(Instant now) {
+        return stages.stream()
+                .filter(stage -> !now.isBefore(stage.startedAt) && now.isBefore(stage.endsAt))
+                .findFirst();
+    }
+
     private void cancelTasks() {
         if (completionTask != null) {
             completionTask.cancel();
         }
-        if (expirationTask != null) {
-            expirationTask.cancel();
+        expirationTask.ifPresent(ChaosScheduler.Cancellable::cancel);
+    }
+
+    record Activation(int stageIndex, ChaosEffectAction action) {
+    }
+
+    private static final class StageRuntime {
+        private final int index;
+        private final ChaosRunPlan.ChaosStage plan;
+        private final Instant startedAt;
+        private final Instant endsAt;
+        private final Optional<DisruptionRuntime> disruption;
+
+        private StageRuntime(int index,
+                             ChaosRunPlan.ChaosStage plan,
+                             Instant startedAt,
+                             Instant endsAt,
+                             long seed) {
+            this.index = index;
+            this.plan = plan;
+            this.startedAt = startedAt;
+            this.endsAt = endsAt;
+            this.disruption = plan.disruption()
+                    .map(value -> new DisruptionRuntime(value, seed, plan.name()));
+        }
+
+        private ChaosRunView.CurrentStage view() {
+            return new ChaosRunView.CurrentStage(index, plan.name(), startedAt, endsAt);
         }
     }
 
-    record Activation(ChaosEffect effect) {
+    private static final class DisruptionRuntime {
+        private final ChaosRunPlan.ChaosDisruption plan;
+        private final long activationStreamSeed;
+        private final long effectStreamSeed;
+        private final long choiceStreamSeed;
+        private long matched;
+        private long activated;
+        private long inFlight;
+
+        private DisruptionRuntime(ChaosRunPlan.ChaosDisruption plan, long seed, String stageName) {
+            this.plan = plan;
+            this.activationStreamSeed = ChaosActivationDecider.streamSeed(seed, stageName, plan.name());
+            this.effectStreamSeed = ChaosRandom.streamSeed(seed, stageName, plan.name(), "effect");
+            this.choiceStreamSeed = ChaosRandom.streamSeed(seed, stageName, plan.name(), "choice");
+        }
     }
 }

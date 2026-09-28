@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Locale;
@@ -31,6 +32,7 @@ import java.util.regex.Pattern;
 
 import io.helidon.common.media.type.MediaType;
 import io.helidon.common.media.type.MediaTypes;
+import io.helidon.extensions.chaos.ChaosActivation.PeriodicBurstActivation;
 import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 import io.helidon.json.JsonArray;
 import io.helidon.json.JsonObject;
@@ -47,6 +49,7 @@ final class ChaosRunPlanJson {
     private static final SecureRandom SEED_SOURCE = new SecureRandom();
     private static final BigDecimal MINIMUM_PROBABILITY = BigDecimal.valueOf(0x1.0p-53);
     private static final Pattern TOKEN = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
+    private static final Pattern URI_SCHEME = Pattern.compile("[A-Za-z][A-Za-z0-9+.-]*");
     private static final Set<String> FORBIDDEN_HEADERS = Set.of(
             "connection",
             "content-length",
@@ -83,55 +86,109 @@ final class ChaosRunPlanJson {
         long seed = json.containsKey("seed") ? integer(json, "seed", "/seed") : SEED_SOURCE.nextLong();
 
         JsonArray stages = requiredArray(json, "stages", "/stages");
-        if (stages.size() != 1) {
-            throw invalid("/stages", "stage-count", "Exactly one stage is supported.");
+        if (stages.size() == 0) {
+            throw invalid("/stages", "stage-count", "At least one stage is required.");
         }
-        ChaosRunPlan.ChaosStage stage = stage(requiredObject(stages.get(0).orElseThrow(), "/stages/0"),
-                                               maximumDuration,
-                                               limits);
-        return new ChaosRunPlan(name, maximumDuration, seed, stage);
+        if (stages.size() > limits.maximumStagesPerRun()) {
+            throw invalid("/stages", "stage-limit", "Stage count exceeds the server limit.");
+        }
+        Set<String> stageNames = new LinkedHashSet<>();
+        var parsedStages = new ArrayList<ChaosRunPlan.ChaosStage>(stages.size());
+        Duration totalDuration = Duration.ZERO;
+        for (int index = 0; index < stages.size(); index++) {
+            String path = "/stages/" + index;
+            ChaosRunPlan.ChaosStage stage = stage(requiredObject(stages.get(index).orElseThrow(), path),
+                                                   path,
+                                                   limits);
+            if (!stageNames.add(stage.name())) {
+                throw invalid(path + "/name", "duplicate-name", "Stage names must be unique within a run.");
+            }
+            try {
+                totalDuration = totalDuration.plus(stage.duration());
+            } catch (ArithmeticException exception) {
+                throw invalid(path + "/duration", "duration-limit",
+                              "Cumulative stage duration is too large.", exception);
+            }
+            if (totalDuration.compareTo(maximumDuration) > 0) {
+                throw invalid(path + "/duration", "duration-limit",
+                              "Cumulative stage duration exceeds maximumDuration.");
+            }
+            parsedStages.add(stage);
+        }
+        return new ChaosRunPlan(name, maximumDuration, seed, parsedStages);
     }
 
     private static ChaosRunPlan.ChaosStage stage(JsonObject json,
-                                                  Duration maximumDuration,
+                                                  String path,
                                                   ChaosLimitsConfig limits) {
-        String path = "/stages/0";
         rejectUnknown(json, path, Set.of("name", "duration", "disruptions"));
         String name = requiredNonBlank(json, "name", path + "/name");
         Duration duration = duration(json, "duration", path + "/duration");
         requirePositive(duration, path + "/duration");
-        if (duration.compareTo(maximumDuration) > 0) {
-            throw invalid(path + "/duration", "duration-limit", "Stage duration exceeds maximumDuration.");
-        }
 
         JsonArray disruptions = requiredArray(json, "disruptions", path + "/disruptions");
-        if (disruptions.size() != 1) {
-            throw invalid(path + "/disruptions", "disruption-count", "Exactly one disruption is supported.");
+        if (disruptions.size() > 1) {
+            throw invalid(path + "/disruptions", "disruption-count", "At most one disruption is supported per stage.");
         }
+        Optional<ChaosRunPlan.ChaosDisruption> disruption = disruptions.size() == 0
+                ? Optional.empty()
+                : Optional.of(disruption(requiredObject(disruptions.get(0).orElseThrow(), path + "/disruptions/0"),
+                                         path + "/disruptions/0",
+                                         limits));
         return new ChaosRunPlan.ChaosStage(name,
                                            duration,
-                                           disruption(requiredObject(disruptions.get(0).orElseThrow(),
-                                                                     path + "/disruptions/0"),
-                                                      limits));
+                                           disruption);
     }
 
-    private static ChaosRunPlan.ChaosDisruption disruption(JsonObject json, ChaosLimitsConfig limits) {
-        String path = "/stages/0/disruptions/0";
+    private static ChaosRunPlan.ChaosDisruption disruption(JsonObject json,
+                                                           String path,
+                                                           ChaosLimitsConfig limits) {
         rejectUnknown(json, path, Set.of("name", "scope", "activation", "effect", "budget"));
         String name = requiredNonBlank(json, "name", path + "/name");
-        ChaosHttpScope scope = scope(requiredObject(json, "scope", path + "/scope"), path + "/scope");
+        ChaosScope scope = scope(requiredObject(json, "scope", path + "/scope"), path + "/scope");
         ChaosActivation activation = activation(requiredObject(json, "activation", path + "/activation"),
                                                   path + "/activation");
         ChaosEffect effect = effect(requiredObject(json, "effect", path + "/effect"),
                                     path + "/effect",
                                     limits);
+        validateEffectForScope(scope, effect, path + "/effect");
         ChaosBudget budget = budget(requiredObject(json, "budget", path + "/budget"), path + "/budget", limits);
         return new ChaosRunPlan.ChaosDisruption(name, scope, activation, effect, budget);
     }
 
-    private static ChaosHttpScope scope(JsonObject json, String path) {
+    private static ChaosScope scope(JsonObject json, String path) {
+        rejectUnknown(json, path, Set.of("type", "methods", "scheme", "host", "port", "path"));
+        String type = requiredString(json, "type", path + "/type");
+        return switch (type) {
+        case "inbound-http" -> inboundHttpScope(json, path);
+        case "outbound-http" -> outboundHttpScope(json, path);
+        default -> throw invalid(path + "/type", "unsupported-type",
+                                 "Scope type must be inbound-http or outbound-http.");
+        };
+    }
+
+    private static ChaosHttpScope inboundHttpScope(JsonObject json, String path) {
         rejectUnknown(json, path, Set.of("type", "methods", "path"));
-        requireType(json, "type", "inbound-http", path + "/type");
+        return new ChaosHttpScope(methods(json, path), pathMatch(json, path), pathValue(json, path));
+    }
+
+    private static ChaosOutboundHttpScope outboundHttpScope(JsonObject json, String path) {
+        rejectUnknown(json, path, Set.of("type", "methods", "scheme", "host", "port", "path"));
+        String scheme = scheme(json, path);
+        String host = host(json, path);
+        long port = integer(json, "port", path + "/port");
+        if (port < 1 || port > 65535) {
+            throw invalid(path + "/port", "invalid-port", "port must be between 1 and 65535.");
+        }
+        return new ChaosOutboundHttpScope(methods(json, path),
+                                          scheme,
+                                          host,
+                                          (int) port,
+                                          pathMatch(json, path),
+                                          pathValue(json, path));
+    }
+
+    private static Set<String> methods(JsonObject json, String path) {
         JsonArray methodsJson = requiredArray(json, "methods", path + "/methods");
         if (methodsJson.size() == 0) {
             throw invalid(path + "/methods", "empty-methods", "At least one HTTP method is required.");
@@ -145,23 +202,61 @@ final class ChaosRunPlanJson {
             }
             methods.add(method);
         }
+        return methods;
+    }
 
+    private static ChaosHttpScope.PathMatch pathMatch(JsonObject json, String path) {
         JsonObject pathJson = requiredObject(json, "path", path + "/path");
         rejectUnknown(pathJson, path + "/path", Set.of("match", "value"));
         String match = requiredString(pathJson, "match", path + "/path/match");
-        ChaosHttpScope.PathMatch pathMatch = switch (match) {
+        return switch (match) {
         case "exact" -> EXACT;
         case "prefix" -> PREFIX;
         default -> throw invalid(path + "/path/match", "unsupported-path-match",
                                  "Path match must be exact or prefix.");
         };
+    }
+
+    private static String pathValue(JsonObject json, String path) {
+        JsonObject pathJson = requiredObject(json, "path", path + "/path");
+        rejectUnknown(pathJson, path + "/path", Set.of("match", "value"));
         String value = requiredString(pathJson, "value", path + "/path/value");
         validatePath(value, path + "/path/value");
-        return new ChaosHttpScope(methods, pathMatch, value);
+        return value;
+    }
+
+    private static String scheme(JsonObject json, String path) {
+        String value = requiredString(json, "scheme", path + "/scheme");
+        if (!URI_SCHEME.matcher(value).matches()) {
+            throw invalid(path + "/scheme", "invalid-scheme", "scheme must be a valid URI scheme.");
+        }
+        return value.toLowerCase(Locale.ROOT);
+    }
+
+    private static String host(JsonObject json, String path) {
+        String value = requiredString(json, "host", path + "/host");
+        if (value.isBlank()) {
+            throw invalid(path + "/host", "invalid-host", "host must be a valid URI host.");
+        }
+        try {
+            URI uri = URI.create("//" + value);
+            if (uri.getHost() == null
+                    || uri.getUserInfo() != null
+                    || uri.getPort() != -1
+                    || !value.equals(uri.getRawAuthority())
+                    || !uri.getRawPath().isEmpty()
+                    || uri.getRawQuery() != null
+                    || uri.getRawFragment() != null) {
+                throw invalid(path + "/host", "invalid-host", "host must be a valid URI host.");
+            }
+            return uri.getHost().toLowerCase(Locale.ROOT);
+        } catch (IllegalArgumentException exception) {
+            throw invalid(path + "/host", "invalid-host", "host must be a valid URI host.", exception);
+        }
     }
 
     private static ChaosActivation activation(JsonObject json, String path) {
-        rejectUnknown(json, path, Set.of("type", "probability"));
+        rejectUnknown(json, path, Set.of("type", "probability", "initialSkip", "cycleSize", "burstSize"));
         String type = requiredString(json, "type", path + "/type");
         return switch (type) {
         case "always" -> {
@@ -186,19 +281,200 @@ final class ChaosRunPlanJson {
             }
             yield new ProbabilityActivation(normalized);
         }
+        case "periodic-burst" -> {
+            rejectUnknown(json, path, Set.of("type", "initialSkip", "cycleSize", "burstSize"));
+            long initialSkip = json.containsKey("initialSkip")
+                    ? integer(json, "initialSkip", path + "/initialSkip")
+                    : 0;
+            long cycleSize = integer(json, "cycleSize", path + "/cycleSize");
+            long burstSize = integer(json, "burstSize", path + "/burstSize");
+            if (initialSkip < 0) {
+                throw invalid(path + "/initialSkip", "invalid-initial-skip",
+                              "initialSkip must not be negative.");
+            }
+            if (cycleSize <= 0) {
+                throw invalid(path + "/cycleSize", "invalid-cycle-size", "cycleSize must be positive.");
+            }
+            if (burstSize <= 0 || burstSize > cycleSize) {
+                throw invalid(path + "/burstSize", "invalid-burst-size",
+                              "burstSize must be positive and at most cycleSize.");
+            }
+            yield new PeriodicBurstActivation(initialSkip, cycleSize, burstSize);
+        }
         default -> throw invalid(path + "/type", "unsupported-type",
-                                 "Activation type must be always or probability.");
+                                 "Activation type must be always, probability, or periodic-burst.");
         };
     }
 
-    private static ChaosEffect effect(JsonObject json, String path, ChaosLimitsConfig limits) {
-        rejectUnknown(json, path, Set.of("type", "status", "headers", "mediaType", "body"));
+    private static ChaosEffect effect(JsonObject json,
+                                      String path,
+                                      ChaosLimitsConfig limits) {
+        return effect(json, path, limits, true);
+    }
+
+    private static ChaosEffect effect(JsonObject json,
+                                      String path,
+                                      ChaosLimitsConfig limits,
+                                      boolean weightedChoiceAllowed) {
+        rejectUnknown(json, path,
+                      Set.of("type", "status", "headers", "mediaType", "body", "delay", "duration", "jitter", "outcomes"));
         String type = requiredString(json, "type", path + "/type");
         return switch (type) {
+        case "connect-failure" -> connectFailure(json, path);
+        case "dns-failure" -> dnsFailure(json, path);
+        case "latency" -> latency(json, path, limits);
+        case "response-timeout" -> responseTimeout(json, path, limits);
         case "synthetic-http-response" -> syntheticResponse(json, path, limits);
+        case "tls-handshake-failure" -> tlsHandshakeFailure(json, path);
+        case "weighted-choice" -> {
+            if (!weightedChoiceAllowed) {
+                throw invalid(path + "/type", "nested-weighted-choice",
+                              "weighted-choice outcomes must be connect-failure, dns-failure, latency, response-timeout, "
+                                      + "synthetic-http-response, or tls-handshake-failure.");
+            }
+            yield weightedChoice(json, path, limits);
+        }
         default -> throw invalid(path + "/type", "unsupported-type",
-                                 "Effect type must be synthetic-http-response.");
+                                 "Effect type must be connect-failure, dns-failure, latency, response-timeout, "
+                                         + "synthetic-http-response, tls-handshake-failure, or weighted-choice.");
         };
+    }
+
+    private static ChaosConnectFailure connectFailure(JsonObject json, String path) {
+        rejectUnknown(json, path, Set.of("type"));
+        return ChaosConnectFailure.instance();
+    }
+
+    private static ChaosDnsFailure dnsFailure(JsonObject json, String path) {
+        rejectUnknown(json, path, Set.of("type"));
+        return ChaosDnsFailure.instance();
+    }
+
+    private static ChaosTlsHandshakeFailure tlsHandshakeFailure(JsonObject json, String path) {
+        rejectUnknown(json, path, Set.of("type"));
+        return ChaosTlsHandshakeFailure.instance();
+    }
+
+    private static ChaosWeightedChoice weightedChoice(JsonObject json,
+                                                       String path,
+                                                       ChaosLimitsConfig limits) {
+        rejectUnknown(json, path, Set.of("type", "outcomes"));
+        JsonArray values = requiredArray(json, "outcomes", path + "/outcomes");
+        if (values.size() == 0) {
+            throw invalid(path + "/outcomes", "empty-outcomes", "At least one weighted outcome is required.");
+        }
+        long totalWeight = 0;
+        var outcomes = new ArrayList<ChaosWeightedChoice.Outcome>(values.size());
+        for (int index = 0; index < values.size(); index++) {
+            String outcomePath = path + "/outcomes/" + index;
+            JsonObject value = requiredObject(values.get(index).orElseThrow(), outcomePath);
+            rejectUnknown(value, outcomePath, Set.of("weight", "effect"));
+            long weight = integer(value, "weight", outcomePath + "/weight");
+            if (weight <= 0) {
+                throw invalid(outcomePath + "/weight", "invalid-weight", "weight must be positive.");
+            }
+            try {
+                totalWeight = Math.addExact(totalWeight, weight);
+            } catch (ArithmeticException exception) {
+                throw invalid(path + "/outcomes", "weight-total", "The outcome weight total is too large.", exception);
+            }
+            ChaosEffect outcomeEffect = effect(requiredObject(value, "effect", outcomePath + "/effect"),
+                                                 outcomePath + "/effect",
+                                                 limits,
+                                                 false);
+            outcomes.add(new ChaosWeightedChoice.Outcome(weight, outcomeEffect));
+        }
+        return new ChaosWeightedChoice(outcomes);
+    }
+
+    private static void validateEffectForScope(ChaosScope scope, ChaosEffect effect, String path) {
+        if (scope instanceof ChaosHttpScope && effect instanceof ChaosConnectFailure) {
+            throw invalid(path + "/type", "unsupported-inbound-effect",
+                          "connect-failure is supported only for outbound-http scopes.");
+        }
+        if (scope instanceof ChaosHttpScope && effect instanceof ChaosDnsFailure) {
+            throw invalid(path + "/type", "unsupported-inbound-effect",
+                          "dns-failure is supported only for outbound-http scopes.");
+        }
+        if (scope instanceof ChaosHttpScope && effect instanceof ChaosResponseTimeout) {
+            throw invalid(path + "/type", "unsupported-inbound-effect",
+                          "response-timeout is supported only for outbound-http scopes.");
+        }
+        if (scope instanceof ChaosHttpScope && effect instanceof ChaosTlsHandshakeFailure) {
+            throw invalid(path + "/type", "unsupported-inbound-effect",
+                          "tls-handshake-failure is supported only for outbound-http scopes using https.");
+        }
+        if (scope instanceof ChaosOutboundHttpScope outbound
+                && effect instanceof ChaosTlsHandshakeFailure
+                && !"https".equals(outbound.scheme())) {
+            throw invalid(path + "/type", "unsupported-outbound-effect",
+                          "tls-handshake-failure requires an outbound-http scope using https.");
+        }
+        if (effect instanceof ChaosWeightedChoice choice) {
+            for (int index = 0; index < choice.outcomes().size(); index++) {
+                validateEffectForScope(scope,
+                                       choice.outcomes().get(index).effect(),
+                                       path + "/outcomes/" + index + "/effect");
+            }
+        }
+    }
+
+    private static ChaosLatency latency(JsonObject json, String path, ChaosLimitsConfig limits) {
+        rejectUnknown(json, path, Set.of("type", "delay", "jitter"));
+        Duration delay = duration(json, "delay", path + "/delay");
+        requirePositive(delay, path + "/delay");
+        if (delay.compareTo(limits.maximumLatency()) > 0) {
+            throw invalid(path + "/delay", "latency-limit", "delay exceeds the server latency limit.");
+        }
+        Duration jitter = json.containsKey("jitter") ? duration(json, "jitter", path + "/jitter") : Duration.ZERO;
+        if (jitter.isNegative()) {
+            throw invalid(path + "/jitter", "invalid-jitter", "jitter must not be negative.");
+        }
+        if (jitter.compareTo(delay) > 0) {
+            throw invalid(path + "/jitter", "invalid-jitter", "jitter must not exceed delay.");
+        }
+        Duration maximumDelay;
+        try {
+            maximumDelay = delay.plus(jitter);
+        } catch (ArithmeticException exception) {
+            throw invalid(path + "/jitter", "latency-limit", "delay plus jitter is too large.", exception);
+        }
+        if (maximumDelay.compareTo(limits.maximumLatency()) > 0) {
+            throw invalid(path + "/jitter", "latency-limit",
+                          "delay plus jitter exceeds the server latency limit.");
+        }
+        return new ChaosLatency(delay, jitter);
+    }
+
+    private static ChaosResponseTimeout responseTimeout(JsonObject json,
+                                                        String path,
+                                                        ChaosLimitsConfig limits) {
+        rejectUnknown(json, path, Set.of("type", "duration", "jitter"));
+        Duration duration = duration(json, "duration", path + "/duration");
+        requirePositive(duration, path + "/duration");
+        if (duration.compareTo(limits.maximumResponseTimeout()) > 0) {
+            throw invalid(path + "/duration", "response-timeout-limit",
+                          "duration exceeds the server response timeout limit.");
+        }
+        Duration jitter = json.containsKey("jitter") ? duration(json, "jitter", path + "/jitter") : Duration.ZERO;
+        if (jitter.isNegative()) {
+            throw invalid(path + "/jitter", "invalid-jitter", "jitter must not be negative.");
+        }
+        if (jitter.compareTo(duration) > 0) {
+            throw invalid(path + "/jitter", "invalid-jitter", "jitter must not exceed duration.");
+        }
+        Duration maximumDuration;
+        try {
+            maximumDuration = duration.plus(jitter);
+        } catch (ArithmeticException exception) {
+            throw invalid(path + "/jitter", "response-timeout-limit",
+                          "duration plus jitter is too large.", exception);
+        }
+        if (maximumDuration.compareTo(limits.maximumResponseTimeout()) > 0) {
+            throw invalid(path + "/jitter", "response-timeout-limit",
+                          "duration plus jitter exceeds the server response timeout limit.");
+        }
+        return new ChaosResponseTimeout(duration, jitter);
     }
 
     private static ChaosSyntheticResponse syntheticResponse(JsonObject json, String path, ChaosLimitsConfig limits) {
@@ -264,13 +540,6 @@ final class ChaosRunPlanJson {
             throw invalid(path + "/maximumConcurrent", "integer-range", "maximumConcurrent is too large.");
         }
         return new ChaosBudget(maximumActivations, (int) maximumConcurrent);
-    }
-
-    private static void requireType(JsonObject json, String name, String expected, String path) {
-        String actual = requiredString(json, name, path);
-        if (!expected.equals(actual)) {
-            throw invalid(path, "unsupported-type", "Only " + expected + " is supported in this release.");
-        }
     }
 
     private static void validatePath(String value, String path) {

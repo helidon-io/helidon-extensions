@@ -16,6 +16,7 @@
 package io.helidon.extensions.chaos;
 
 import java.time.Instant;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -31,6 +32,7 @@ import java.util.UUID;
  * @param createdAt creation time
  * @param startedAt activation time
  * @param expiresAt maximum-duration guard time
+ * @param currentStage current stage while running
  * @param terminalAt terminal transition time, if terminal
  * @param terminalReason stable machine-readable terminal reason
  * @param matched matched inbound requests
@@ -50,6 +52,7 @@ record ChaosRunView(UUID id,
                     Instant createdAt,
                     Instant startedAt,
                     Instant expiresAt,
+                    Optional<CurrentStage> currentStage,
                     Optional<Instant> terminalAt,
                     Optional<String> terminalReason,
                     long matched,
@@ -59,4 +62,20 @@ record ChaosRunView(UUID id,
                     long skippedBudget,
                     long inFlight,
                     long completed) {
+
+    /**
+     * Current stage projection for a running chaos run.
+     *
+     * @param index zero-based plan stage index
+     * @param name stage name
+     * @param startedAt planned stage start
+     * @param endsAt planned stage end
+     */
+    record CurrentStage(int index, String name, Instant startedAt, Instant endsAt) {
+        CurrentStage {
+            Objects.requireNonNull(name);
+            Objects.requireNonNull(startedAt);
+            Objects.requireNonNull(endsAt);
+        }
+    }
 }

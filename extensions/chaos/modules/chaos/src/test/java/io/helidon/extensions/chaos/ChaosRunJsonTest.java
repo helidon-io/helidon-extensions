@@ -26,6 +26,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.common.media.type.MediaTypes;
+import io.helidon.extensions.chaos.ChaosActivation.PeriodicBurstActivation;
 import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
 import io.helidon.json.JsonArray;
 import io.helidon.json.JsonObject;
@@ -35,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import static io.helidon.extensions.chaos.ChaosHttpScope.PathMatch.PREFIX;
 import static io.helidon.extensions.chaos.ChaosRunState.RUNNING;
 import static io.helidon.extensions.chaos.ChaosRunState.STOPPED;
+import static io.helidon.extensions.chaos.ChaosRunState.STOPPING;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -57,6 +59,11 @@ class ChaosRunJsonTest {
         assertThat(json.stringValue("expiresAt").orElseThrow(), is("2026-08-24T12:00:30Z"));
         assertThat(json.containsKey("terminalAt"), is(false));
         assertThat(json.containsKey("terminalReason"), is(false));
+        JsonObject currentStage = json.objectValue("currentStage").orElseThrow();
+        assertThat(currentStage.intValue("index").orElseThrow(), is(0));
+        assertThat(currentStage.stringValue("name").orElseThrow(), is("reject-orders"));
+        assertThat(currentStage.stringValue("startedAt").orElseThrow(), is("2026-08-24T12:00:00Z"));
+        assertThat(currentStage.stringValue("endsAt").orElseThrow(), is("2026-08-24T12:00:10Z"));
 
         JsonObject counters = json.objectValue("counters").orElseThrow();
         assertThat(counters.longValue("matched").orElseThrow(), is(7L));
@@ -90,6 +97,161 @@ class ChaosRunJsonTest {
     }
 
     @Test
+    void writesNormalizedPeriodicBurstActivation() {
+        ChaosRunPlan periodicBurstPlan = plan(new PeriodicBurstActivation(0, 10, 3));
+
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   periodicBurstPlan));
+
+        JsonObject activation = json.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("activation").orElseThrow();
+        assertThat(activation.stringValue("type").orElseThrow(), is("periodic-burst"));
+        assertThat(activation.longValue("initialSkip").orElseThrow(), is(0L));
+        assertThat(activation.longValue("cycleSize").orElseThrow(), is(10L));
+        assertThat(activation.longValue("burstSize").orElseThrow(), is(3L));
+    }
+
+    @Test
+    void writesNormalizedLatencyEffect() {
+        ChaosRunPlan latencyPlan = plan(new ChaosLatency(Duration.ofMillis(250), Duration.ofMillis(50)));
+
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   latencyPlan));
+
+        JsonObject effect = json.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("effect").orElseThrow();
+        assertThat(effect.stringValue("type").orElseThrow(), is("latency"));
+        assertThat(effect.stringValue("delay").orElseThrow(), is("PT0.25S"));
+        assertThat(effect.stringValue("jitter").orElseThrow(), is("PT0.05S"));
+    }
+
+    @Test
+    void writesNormalizedConnectFailureEffect() {
+        ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("GET"),
+                                                                   "https",
+                                                                   "inventory.example.com",
+                                                                   443,
+                                                                   PREFIX,
+                                                                   "/v1/items");
+        ChaosRunPlan connectFailurePlan = plan(scope, ChaosConnectFailure.instance());
+
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   connectFailurePlan));
+
+        JsonObject effect = json.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("effect").orElseThrow();
+        assertThat(effect.toString(), is("{\"type\":\"connect-failure\"}"));
+        assertThat(effect.stringValue("type").orElseThrow(), is("connect-failure"));
+    }
+
+    @Test
+    void writesNormalizedDnsFailureEffect() {
+        ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("GET"),
+                                                                   "https",
+                                                                   "inventory.example.com",
+                                                                   443,
+                                                                   PREFIX,
+                                                                   "/v1/items");
+        ChaosRunPlan dnsFailurePlan = plan(scope, ChaosDnsFailure.instance());
+
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   dnsFailurePlan));
+
+        JsonObject effect = json.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("effect").orElseThrow();
+        assertThat(effect.toString(), is("{\"type\":\"dns-failure\"}"));
+    }
+
+    @Test
+    void writesNormalizedTlsHandshakeFailureEffect() {
+        ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("GET"),
+                                                                   "https",
+                                                                   "inventory.example.com",
+                                                                   443,
+                                                                   PREFIX,
+                                                                   "/v1/items");
+        ChaosRunPlan tlsFailurePlan = plan(scope, ChaosTlsHandshakeFailure.instance());
+
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   tlsFailurePlan));
+
+        JsonObject effect = json.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("effect").orElseThrow();
+        assertThat(effect.toString(), is("{\"type\":\"tls-handshake-failure\"}"));
+    }
+
+    @Test
+    void writesNormalizedResponseTimeoutEffect() {
+        ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("GET"),
+                                                                   "https",
+                                                                   "inventory.example.com",
+                                                                   443,
+                                                                   PREFIX,
+                                                                   "/v1/items");
+        ChaosRunPlan timeoutPlan = plan(scope,
+                                        new ChaosResponseTimeout(Duration.ofMillis(250),
+                                                                 Duration.ofMillis(50)));
+
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   timeoutPlan));
+
+        JsonObject effect = json.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("effect").orElseThrow();
+        assertThat(effect.stringValue("type").orElseThrow(), is("response-timeout"));
+        assertThat(effect.stringValue("duration").orElseThrow(), is("PT0.25S"));
+        assertThat(effect.stringValue("jitter").orElseThrow(), is("PT0.05S"));
+    }
+
+    @Test
+    void writesNormalizedOutboundHttpScope() {
+        ChaosOutboundHttpScope scope = new ChaosOutboundHttpScope(Set.of("get"),
+                                                                   "HTTPS",
+                                                                   "Inventory.Example.COM",
+                                                                   443,
+                                                                   PREFIX,
+                                                                   "/v1/items");
+        ChaosRunPlan plan = plan(scope, new ChaosLatency(Duration.ofMillis(250), Duration.ZERO));
+
+        JsonObject rendered = ChaosRunJson.toJson(view(RUNNING, Optional.empty(), Optional.empty(), plan));
+
+        JsonObject json = rendered.objectValue("plan").orElseThrow()
+                .arrayValue("stages").orElseThrow().get(0).orElseThrow().asObject()
+                .arrayValue("disruptions").orElseThrow().get(0).orElseThrow().asObject()
+                .objectValue("scope").orElseThrow();
+        assertThat(json.stringValue("type").orElseThrow(), is("outbound-http"));
+        assertThat(json.arrayValue("methods").orElseThrow().get(0).orElseThrow().asString().value(), is("GET"));
+        assertThat(json.stringValue("scheme").orElseThrow(), is("https"));
+        assertThat(json.stringValue("host").orElseThrow(), is("inventory.example.com"));
+        assertThat(json.intValue("port").orElseThrow(), is(443));
+        assertThat(json.objectValue("path").orElseThrow().stringValue("match").orElseThrow(), is("prefix"));
+        assertThat(json.objectValue("path").orElseThrow().stringValue("value").orElseThrow(), is("/v1/items"));
+    }
+
+    @Test
     void writesTerminalFieldsAndRunList() {
         JsonObject terminal = ChaosRunJson.toJson(view(STOPPED,
                                                        Optional.of(CREATED.plusSeconds(4)),
@@ -97,11 +259,38 @@ class ChaosRunJsonTest {
 
         assertThat(terminal.stringValue("terminalAt").orElseThrow(), is("2026-08-24T12:00:04Z"));
         assertThat(terminal.stringValue("terminalReason").orElseThrow(), is("operator-stopped"));
+        assertThat(terminal.containsKey("currentStage"), is(false));
         JsonArray list = ChaosRunJson.toJson(List.of(view(STOPPED,
                                                          Optional.of(CREATED.plusSeconds(4)),
                                                          Optional.of("operator-stopped"))));
         assertThat(list.size(), is(1));
         assertThat(list.get(0).orElseThrow().asObject().toString(), is(terminal.toString()));
+    }
+
+    @Test
+    void omitsCurrentStageWhileStopping() {
+        JsonObject stopping = ChaosRunJson.toJson(view(STOPPING, Optional.empty(), Optional.empty()));
+
+        assertThat(stopping.containsKey("currentStage"), is(false));
+    }
+
+    @Test
+    void writesAllStagesIncludingPassiveRecovery() {
+        JsonObject json = ChaosRunJson.toJson(view(RUNNING,
+                                                   Optional.empty(),
+                                                   Optional.empty(),
+                                                   multiStagePlan(),
+                                                   Optional.of(new ChaosRunView.CurrentStage(1,
+                                                                                             "recovery",
+                                                                                             CREATED.plusSeconds(10),
+                                                                                             CREATED.plusSeconds(15)))));
+
+        JsonArray stages = json.objectValue("plan").orElseThrow().arrayValue("stages").orElseThrow();
+        assertThat(stages.size(), is(2));
+        JsonObject recovery = stages.get(1).orElseThrow().asObject();
+        assertThat(recovery.stringValue("name").orElseThrow(), is("recovery"));
+        assertThat(recovery.arrayValue("disruptions").orElseThrow().size(), is(0));
+        assertThat(json.objectValue("currentStage").orElseThrow().intValue("index").orElseThrow(), is(1));
     }
 
     @Test
@@ -209,6 +398,20 @@ class ChaosRunJsonTest {
                                      Optional<Instant> terminalAt,
                                      Optional<String> terminalReason,
                                      ChaosRunPlan plan) {
+        Optional<ChaosRunView.CurrentStage> currentStage = state == RUNNING
+                ? Optional.of(new ChaosRunView.CurrentStage(0,
+                                                            plan.stages().getFirst().name(),
+                                                            CREATED,
+                                                            CREATED.plus(plan.stages().getFirst().duration())))
+                : Optional.empty();
+        return view(state, terminalAt, terminalReason, plan, currentStage);
+    }
+
+    private static ChaosRunView view(ChaosRunState state,
+                                     Optional<Instant> terminalAt,
+                                     Optional<String> terminalReason,
+                                     ChaosRunPlan plan,
+                                     Optional<ChaosRunView.CurrentStage> currentStage) {
         return new ChaosRunView(ID,
                                 plan.name(),
                                 state,
@@ -218,6 +421,7 @@ class ChaosRunJsonTest {
                                 CREATED,
                                 CREATED,
                                 CREATED.plusSeconds(30),
+                                currentStage,
                                 terminalAt,
                                 terminalReason,
                                 7,
@@ -239,12 +443,39 @@ class ChaosRunJsonTest {
                                                                       Map.of("Retry-After", "1"),
                                                                       Optional.of(MediaTypes.TEXT_PLAIN),
                                                                       "failure".getBytes(StandardCharsets.UTF_8));
+        return plan(activation, response);
+    }
+
+    private static ChaosRunPlan plan(ChaosEffect effect) {
+        return plan(ChaosActivation.always(), effect);
+    }
+
+    private static ChaosRunPlan plan(ChaosActivation activation, ChaosEffect effect) {
+        ChaosHttpScope scope = new ChaosHttpScope(Set.of("GET"), PREFIX, "/orders");
+        return plan(scope, activation, effect);
+    }
+
+    private static ChaosRunPlan plan(ChaosScope scope, ChaosEffect effect) {
+        return plan(scope, ChaosActivation.always(), effect);
+    }
+
+    private static ChaosRunPlan plan(ChaosScope scope, ChaosActivation activation, ChaosEffect effect) {
         ChaosBudget budget = new ChaosBudget(20, 2);
         ChaosRunPlan.ChaosDisruption disruption =
-                new ChaosRunPlan.ChaosDisruption("orders-503", scope, activation, response, budget);
+                new ChaosRunPlan.ChaosDisruption("orders-503", scope, activation, effect, budget);
         ChaosRunPlan.ChaosStage stage =
-                new ChaosRunPlan.ChaosStage("reject-orders", Duration.ofSeconds(10), disruption);
-        return new ChaosRunPlan("orders-unavailable", Duration.ofSeconds(30), 148_894, stage);
+                new ChaosRunPlan.ChaosStage("reject-orders", Duration.ofSeconds(10), Optional.of(disruption));
+        return new ChaosRunPlan("orders-unavailable", Duration.ofSeconds(30), 148_894, List.of(stage));
+    }
+
+    private static ChaosRunPlan multiStagePlan() {
+        ChaosRunPlan.ChaosStage disruptive = plan().stages().getFirst();
+        ChaosRunPlan.ChaosStage recovery =
+                new ChaosRunPlan.ChaosStage("recovery", Duration.ofSeconds(5), Optional.empty());
+        return new ChaosRunPlan("orders-unavailable",
+                                Duration.ofSeconds(30),
+                                148_894,
+                                List.of(disruptive, recovery));
     }
 
     private static JsonObject json(String text) {
