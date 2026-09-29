@@ -107,6 +107,7 @@ class VaultTest {
     private static final MySQLContainer<?> MY_SQL_CONTAINER = new MySQLContainer<>(MYSQL_IMAGE)
             .withUsername(MYSQL_USER)
             .withPassword(MYSQL_PASSWORD)
+            .withEnv("MYSQL_ROOT_HOST", "%")
             .withNetworkAliases("mysql")
             .withDatabaseName("pokemon")
             .withNetwork(NETWORK);
