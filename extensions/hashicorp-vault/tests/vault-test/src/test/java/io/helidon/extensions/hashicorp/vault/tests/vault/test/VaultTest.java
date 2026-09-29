@@ -97,7 +97,7 @@ class VaultTest {
     private static final DockerImageName MYSQL_IMAGE = DockerImageName.parse(
                     "container-registry.oracle.com/mysql/community-server:9.7.1")
             .asCompatibleSubstituteFor("mysql");
-    private static final DockerImageName HCP_VAULT_IMAGE = DockerImageName.parse("hashicorp/vault:1.20.4")
+    private static final DockerImageName HCP_VAULT_IMAGE = DockerImageName.parse("hashicorp/vault:1.21.4")
             .asCompatibleSubstituteFor("vault");
 
     private static final Network NETWORK = Network.newNetwork();
