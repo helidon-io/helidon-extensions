@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Copyright (c) 2026 Oracle and/or its affiliates.
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.helidon.extensions.openapi-generator.it</groupId>
+        <artifactId>openapi-generator-maven-harnesses-parent</artifactId>
+        <version>@project.version@</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+    <artifactId>enum-options</artifactId>
+    <properties>
+        <inputSpec>${project.basedir}/../../specs/enum-options.yaml</inputSpec>
+        <skipGeneratedTests>false</skipGeneratedTests>
+    </properties>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.openapitools</groupId>
+                <artifactId>openapi-generator-maven-plugin</artifactId>
+                <configuration>
+                    <generateSupportingFiles>false</generateSupportingFiles>
+                    <generateApiTests>false</generateApiTests>
+                    <configOptions>
+                        <helidonVersion>${helidon.version}</helidonVersion>
+                        <enumCaseInsensitive>true</enumCaseInsensitive>
+                        <modelRegistryServices>true</modelRegistryServices>
+                    </configOptions>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>generate-helidon-project</id>
+                        <configuration>
+                            <generateApis>false</generateApis>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>generate-api-only</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>generate</goal></goals>
+                        <configuration>
+                            <generatorName>helidon-declarative</generatorName>
+                            <inputSpec>${inputSpec}</inputSpec>
+                            <output>${generated.project.dir}</output>
+                            <generateModels>false</generateModels>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

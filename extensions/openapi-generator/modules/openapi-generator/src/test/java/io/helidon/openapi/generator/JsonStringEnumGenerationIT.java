@@ -61,7 +61,8 @@ class JsonStringEnumGenerationIT {
         assertThat(mode, containsString("(\"legacy.value\")"));
         assertThat(mode, containsString("public String value()"));
         assertThat(mode, containsString("public static Mode fromValue(String value)"));
-        assertThat(mode, containsString("implements JsonConverter<Mode>, Mapper<String, Mode>"));
+        assertThat(mode, containsString("implements io.helidon.json.binding.JsonConverter<Mode>, "
+                                               + "io.helidon.common.mapper.Mapper<String, Mode>"));
         assertThat(mode, not(containsString("MapperProvider")));
     }
 
@@ -78,7 +79,7 @@ class JsonStringEnumGenerationIT {
     void converterNamesDoNotCollideWithGeneratedSchemaTypes() throws IOException {
         String mode = read(outputDir.resolve("src/main/java/io/helidon/example/model/Mode.java"));
         assertThat(mode, containsString("@Json.Converter(ModeJsonConverter2.class)"));
-        assertThat(mode, containsString("final class ModeJsonConverter2 implements JsonConverter<Mode>"));
+        assertThat(mode, containsString("final class ModeJsonConverter2 implements io.helidon.json.binding.JsonConverter<Mode>"));
 
         String reserved = read(outputDir.resolve(
                 "src/main/java/io/helidon/example/model/ModeJsonConverter.java"));
@@ -106,8 +107,8 @@ class JsonStringEnumGenerationIT {
         assertThat(envelope, containsString("(\"on-hold\")"));
         assertThat(envelope, containsString("public enum InlineModesEnum"));
         assertThat(envelope, containsString("(\"batchAuthZ\")"));
-        assertThat(envelope, containsString("implements JsonConverter<EnumEnvelope.InlineModeEnum>"));
-        assertThat(envelope, containsString("implements JsonConverter<EnumEnvelope.InlineModesEnum>"));
+        assertThat(envelope, containsString("implements io.helidon.json.binding.JsonConverter<EnumEnvelope.InlineModeEnum>"));
+        assertThat(envelope, containsString("implements io.helidon.json.binding.JsonConverter<EnumEnvelope.InlineModesEnum>"));
         assertThat(envelope, containsString("private NumericPriorityEnum numericPriority"));
         assertThat(envelope, containsString("public enum NumericPriorityEnum"));
         assertThat(envelope, containsString("NUMBER_1"));
@@ -125,9 +126,9 @@ class JsonStringEnumGenerationIT {
         assertThat(api, containsString("Optional<List<Mode>> modes"));
         assertThat(api, containsString("InspectModeXTraceModeEnum xTraceMode"));
         assertThat(api, containsString("@Http.Entity InspectModeBodyEnum body"));
-        assertThat(api, containsString("implements JsonConverter<EnumsApi.InspectModeRouteModeEnum>, "
-                                               + "Mapper<String, EnumsApi.InspectModeRouteModeEnum>"));
-        assertThat(api, containsString("implements JsonConverter<EnumsApi.InspectModeBodyEnum>"));
+        assertThat(api, containsString("implements io.helidon.json.binding.JsonConverter<EnumsApi.InspectModeRouteModeEnum>, "
+                                               + "io.helidon.common.mapper.Mapper<String, EnumsApi.InspectModeRouteModeEnum>"));
+        assertThat(api, containsString("implements io.helidon.json.binding.JsonConverter<EnumsApi.InspectModeBodyEnum>"));
         assertThat(api, not(containsString("Mapper<String, EnumsApi.InspectModeBodyEnum>")));
         assertThat(api, containsString("enum EnumNoIdPostBodyEnum"));
         assertThat(api, containsString("Exact string values declared by the OpenAPI schema."));

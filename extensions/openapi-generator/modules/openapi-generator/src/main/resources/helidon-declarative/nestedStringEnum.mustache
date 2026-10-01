@@ -38,7 +38,7 @@ limitations under the License.
         }
 
         /**
-         * Resolve an exact OpenAPI wire value.
+         * Resolve an OpenAPI wire value{{#enumCaseInsensitive}} ignoring case{{/enumCaseInsensitive}}.
          *
          * @param value wire value
          * @return matching enum constant
@@ -47,12 +47,22 @@ limitations under the License.
          */
         public static {{enumName}} fromValue(String value) {
             java.util.Objects.requireNonNull(value, "value");
+{{#enumCaseInsensitive}}
+            String normalized = value.toLowerCase(java.util.Locale.US);
+            for ({{enumName}} item : values()) {
+                if (normalized.equals(item.value.toLowerCase(java.util.Locale.US))) {
+                    return item;
+                }
+            }
+            throw new IllegalArgumentException("Unexpected {{enumName}} value '" + value + "'");
+{{/enumCaseInsensitive}}{{^enumCaseInsensitive}}
             return switch (value) {
 {{#values}}
                 case {{{value}}} -> {{name}};
 {{/values}}
                 default -> throw new IllegalArgumentException("Unexpected {{enumName}} value '" + value + "'");
             };
+{{/enumCaseInsensitive}}
         }
 
         @Override

@@ -172,6 +172,8 @@ Set these under Maven `<configOptions>` or CLI `--additional-properties`.
 | `tracingEnabled` | `false` | Add `@Tracing.Traced` to generated endpoint classes |
 | `metricsEnabled` | `false` | Add `@Metrics.Timed` to generated endpoint methods |
 | `avoidOptionalListParams` | `false` | Generate `List<T>` instead of `Optional<List<T>>` for optional query list params |
+| `enumCaseInsensitive` | `false` | Compare string enum input using `Locale.US` lowercase normalization; serialized values stay unchanged |
+| `modelRegistryServices` | `false` | Emit model registry services in companion files, including enum HTTP mappers for model-only generation |
 | `discriminatorRepresentation` | schema-driven | Use `metadata` or `readOnlyProperty` for every discriminator unless a schema overrides it |
 
 Legacy aliases `serveOpenApi` and `serveBasePath` are still accepted for compatibility.
@@ -238,6 +240,18 @@ or later is required for declarative HTTP binding to translate a mapper failure
 for a client-supplied enum value into the standard HTTP 400 response.
 String-enum cookie parameters fail generation with an actionable diagnostic because
 Helidon declarative HTTP does not provide a cookie-parameter annotation.
+
+With `enumCaseInsensitive=true`, lookup accepts case variants for model and API
+parameter enums. Generation rejects wire values that become ambiguous under the
+same normalization used at runtime. This option does not change canonical JSON
+or HTTP output, or make unknown values valid.
+
+With `modelRegistryServices=true`, model generation emits companion
+`*JsonServices.java` files containing discoverable enum converters and mappers,
+and JSON factories for union and polymorphic models. Model files retain one
+top-level type. Companion names avoid collisions with schema names. These files
+are generated with the models even when API and supporting-file generation are
+disabled, so a separate API module can use model enums as HTTP parameters.
 
 ### Composed Schemas
 

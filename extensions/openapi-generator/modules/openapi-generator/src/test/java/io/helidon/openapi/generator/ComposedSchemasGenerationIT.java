@@ -130,7 +130,8 @@ class ComposedSchemasGenerationIT {
         assertThat(content, containsString("public interface Contact"));
         assertThat(content, not(containsString("@Json.Entity")));
         assertThat(content, containsString("final class ContactJsonConverter implements JsonConverter<Contact>"));
-        assertThat(content, containsString("final class ContactJsonBindingFactory implements JsonBindingFactory<Contact>"));
+        assertThat(content, containsString("final class ContactJsonBindingFactory implements "
+                                                  + "io.helidon.json.binding.JsonBindingFactory<Contact>"));
         assertThat(content, containsString("return deserializeStructurally(jsonObject);"));
         assertThat(content, containsString("throw new IllegalArgumentException(\"Ambiguous anyOf match for Contact\")"));
     }

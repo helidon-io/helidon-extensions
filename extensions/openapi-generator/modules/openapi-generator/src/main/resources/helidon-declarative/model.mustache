@@ -66,7 +66,7 @@ import {{import}};
  */
 {{#vendorExtensions.x-top-level-string-enum}}{{>stringEnum}}
 
-{{>stringEnumConverter}}
+{{^modelRegistryServices}}{{>stringEnumConverter}}{{/modelRegistryServices}}
 {{/vendorExtensions.x-top-level-string-enum}}{{^vendorExtensions.x-top-level-string-enum}}{{#vendorExtensions.x-is-union-interface}}{{#vendorExtensions.x-use-union-converter}}@Json.Converter({{classname}}.{{classname}}JsonConverter.class)
 {{#isDeprecated}}@Deprecated
 {{/isDeprecated}}public interface {{classname}} {
@@ -81,6 +81,9 @@ import {{import}};
 {{/vendorExtensions.x-abstract-discriminator-accessors}}
     /** Helidon JSON converter for the complete {{classname}} union. */
     final class {{classname}}JsonConverter implements JsonConverter<{{classname}}> {
+        // Keys are generated schema patterns, never request values; matchers remain request-local.
+        private static final java.util.concurrent.ConcurrentMap<String, Pattern> PATTERNS =
+                new java.util.concurrent.ConcurrentHashMap<>();
 {{#vendorExtensions.x-union-members}}
         private JsonDeserializer<{{name}}> {{deserializerField}};
         private JsonSerializer<{{name}}> {{serializerField}};
@@ -226,6 +229,12 @@ import {{import}};
                 return false;
             }
             for (String enumValue : enumValues) {
+{{#enumCaseInsensitive}}
+                if (value.type() == JsonValueType.STRING
+                        && enumValue.toLowerCase(java.util.Locale.US).equals(scalarValue.toLowerCase(java.util.Locale.US))) {
+                    return true;
+                }
+{{/enumCaseInsensitive}}
                 if (enumValue.equals(scalarValue)) {
                     return true;
                 }
@@ -250,13 +259,23 @@ import {{import}};
                 return false;
             }
             String stringValue = value.asString().value();
+{{#enumCaseInsensitive}}
+            // Enum conversion validates canonical wire values, not the client's casing.
+            for (String enumValue : constraint.enumValues()) {
+                if (enumValue.toLowerCase(java.util.Locale.US).equals(stringValue.toLowerCase(java.util.Locale.US))) {
+                    stringValue = enumValue;
+                    break;
+                }
+            }
+{{/enumCaseInsensitive}}
             if (constraint.minLength() != null && stringValue.length() < constraint.minLength()) {
                 return false;
             }
             if (constraint.maxLength() != null && stringValue.length() > constraint.maxLength()) {
                 return false;
             }
-            return constraint.pattern() == null || Pattern.compile(constraint.pattern()).matcher(stringValue).find();
+            return constraint.pattern() == null
+                    || PATTERNS.computeIfAbsent(constraint.pattern(), Pattern::compile).matcher(stringValue).find();
         }
 
         private boolean matchesNumberConstraints(JsonValue value, UnionConstraint constraint) {
@@ -371,34 +390,7 @@ import {{import}};
 
 }
 
-@io.helidon.service.registry.Service.Singleton
-final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{classname}}> {
-
-    @Override
-    public JsonDeserializer<{{classname}}> createDeserializer(Class<? extends {{classname}}> type) {
-        return new {{classname}}.{{classname}}JsonConverter();
-    }
-
-    @Override
-    public JsonDeserializer<{{classname}}> createDeserializer(GenericType<? extends {{classname}}> type) {
-        return new {{classname}}.{{classname}}JsonConverter();
-    }
-
-    @Override
-    public JsonSerializer<{{classname}}> createSerializer(Class<? extends {{classname}}> type) {
-        return new {{classname}}.{{classname}}JsonConverter();
-    }
-
-    @Override
-    public JsonSerializer<{{classname}}> createSerializer(GenericType<? extends {{classname}}> type) {
-        return new {{classname}}.{{classname}}JsonConverter();
-    }
-
-    @Override
-    public Set<Class<?>> supportedTypes() {
-        return Set.of({{classname}}.class);
-    }
-}
+{{^modelRegistryServices}}{{>polymorphicClassConverterFactory}}{{/modelRegistryServices}}
 {{/vendorExtensions.x-use-union-converter}}{{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}{{#vendorExtensions.x-use-polymorphic-converter}}@Json.Converter({{classname}}.{{classname}}JsonConverter.class)
 {{/vendorExtensions.x-use-polymorphic-converter}}{{^vendorExtensions.x-use-polymorphic-converter}}@Json.Entity
 {{#vendorExtensions.x-has-polymorphic-subtypes}}@Json.Polymorphic(key = {{{vendorExtensions.x-polymorphic-key-literal}}})
@@ -700,11 +692,11 @@ final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{clas
 
 {{/vendorExtensions.x-enum-wire-constraints-validated}}{{/isEnum}}{{/vendorExtensions.x-render-vars}}
 }
-{{#vendorExtensions.x-use-polymorphic-converter}}{{>polymorphicClassConverterFactory}}
-{{/vendorExtensions.x-use-polymorphic-converter}}
+{{^modelRegistryServices}}{{#vendorExtensions.x-use-polymorphic-converter}}{{>polymorphicClassConverterFactory}}
+{{/vendorExtensions.x-use-polymorphic-converter}}{{/modelRegistryServices}}
 {{#vendorExtensions.x-inline-string-enums}}
 
-{{>stringEnumConverter}}
+{{^modelRegistryServices}}{{>stringEnumConverter}}{{/modelRegistryServices}}
 {{/vendorExtensions.x-inline-string-enums}}
 {{/vendorExtensions.x-is-union-interface}}
 {{/vendorExtensions.x-top-level-string-enum}}
