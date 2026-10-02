@@ -67,7 +67,7 @@ class AuthenticationDetailsProvidersTest {
 
     @SetUpRoute
     static void routing(HttpRules rules) {
-        rules.get("/opc/v2/instance", (req, res) -> res.status(Status.NOT_FOUND_404).send());
+        rules.get("/opc/v2/instance", (_, res) -> res.status(Status.NOT_FOUND_404).send());
     }
 
     void setUp(Config config) {
