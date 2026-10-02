@@ -25,6 +25,7 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>enum-options</artifactId>
+    <name>OpenAPI Generator IT Enum Options</name>
     <properties>
         <inputSpec>${project.basedir}/../../specs/enum-options.yaml</inputSpec>
         <skipGeneratedTests>false</skipGeneratedTests>
