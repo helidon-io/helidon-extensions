@@ -74,7 +74,6 @@ import static org.openapitools.codegen.utils.StringUtils.camelize;
  * application.yaml, logging.properties.
  */
 public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
-
     static final String OPT_HELIDON_VERSION = "helidonVersion";
     static final String OPT_JAVA_VERSION = "javaVersion";
     static final String OPT_GENERATE_CLIENT = "generateClient";
@@ -88,6 +87,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     static final String OPT_TRACING_ENABLED = "tracingEnabled";
     static final String OPT_METRICS_ENABLED = "metricsEnabled";
     static final String OPT_AVOID_OPTIONAL_LIST_PARAMS = "avoidOptionalListParams";
+    static final String OPT_ENUM_CASE_INSENSITIVE = "enumCaseInsensitive";
+    static final String OPT_MODEL_REGISTRY_SERVICES = "modelRegistryServices";
     private static final Set<String> MODEL_SUFFIX_TOKENS = Set.of(
             "DETAIL",
             "DETAILS",
@@ -123,6 +124,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     private boolean tracingEnabled = false;
     private boolean metricsEnabled = false;
     private boolean avoidOptionalListParams = false;
+    private final ModelRegistryServicesSupport modelServices = new ModelRegistryServicesSupport();
     private DiscriminatorRepresentation discriminatorRepresentation;
     private List<SecurityRequirement> globalSecurityRequirements = List.of();
     private final JsonStringEnumSupport jsonStringEnums;
@@ -211,15 +213,16 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         addOption(OPT_AVOID_OPTIONAL_LIST_PARAMS,
                 "Use bare List<T> instead of Optional<List<T>> for optional query list parameters",
                 String.valueOf(avoidOptionalListParams));
+        addOption(OPT_ENUM_CASE_INSENSITIVE,
+                "Compare string enum wire values using locale-stable case normalization", "false");
+        addOption(OPT_MODEL_REGISTRY_SERVICES,
+                "Generate model-only enum mappers and one top-level type per model source file", "false");
         addOption(OPT_DISCRIMINATOR_REPRESENTATION,
                 "Represent discriminators as metadata or a derived read-only property",
                 "schema-driven");
     }
 
-    // -------------------------------------------------------------------------
     // Metadata
-    // -------------------------------------------------------------------------
-
     @Override
     public String getName() {
         return "helidon-declarative";
@@ -238,6 +241,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     @Override
     public void processOpts() {
         super.processOpts();
+        jsonStringEnums.configure(additionalProperties);
+        modelServices.configure(additionalProperties, modelTemplateFiles);
 
         if (additionalProperties.containsKey(OPT_HELIDON_VERSION)) {
             helidonVersion = additionalProperties.get(OPT_HELIDON_VERSION).toString();
@@ -336,10 +341,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return text;
     }
 
-    // -------------------------------------------------------------------------
     // Naming: use plain camelCase (no "Api" suffix) so classname = "Pets", not "PetsApi"
-    // -------------------------------------------------------------------------
-
     @Override
     public String toApiName(String name) {
         if (name == null || name.isEmpty()) {
@@ -382,10 +384,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         };
     }
 
-    // -------------------------------------------------------------------------
     // Spec pre-processing: extract server base path
-    // -------------------------------------------------------------------------
-
     @Override
     public void preprocessOpenAPI(io.swagger.v3.oas.models.OpenAPI openAPI) {
         jsonStringEnums.preprocess(openAPI);
@@ -469,10 +468,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return slash >= 0 ? schemaRef.substring(slash + 1) : schemaRef;
     }
 
-    // -------------------------------------------------------------------------
     // Per-model: strip swagger 1.x annotation imports (not on Helidon SE classpath)
-    // -------------------------------------------------------------------------
-
     @Override
     @SuppressWarnings("rawtypes")
     public CodegenModel fromModel(String name, Schema schema) {
@@ -523,10 +519,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return model;
     }
 
-    // -------------------------------------------------------------------------
     // Per-operation enrichment
-    // -------------------------------------------------------------------------
-
     @Override
     public CodegenOperation fromOperation(String path,
                                           String httpMethod,
@@ -673,10 +666,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return op;
     }
 
-    // -------------------------------------------------------------------------
     // Per-tag post-processing: compute paths, error model, optional-param flags
-    // -------------------------------------------------------------------------
-
     @Override
     public OperationsMap postProcessOperationsWithModels(OperationsMap objs,
                                                          List<ModelMap> allModels) {
@@ -903,10 +893,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return sb.length() == 0 ? "/" : sb.toString();
     }
 
-    // -------------------------------------------------------------------------
     // Per-model post-processing: mark required properties and validation constraints
-    // -------------------------------------------------------------------------
-
     @Override
     public Map<String, ModelsMap> postProcessAllModels(Map<String, ModelsMap> objs) {
         Map<String, ModelsMap> result = super.postProcessAllModels(objs);
@@ -1004,7 +991,22 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         if (anyValidation) {
             additionalProperties.put("hasValidation", Boolean.TRUE);
         }
+        modelServices.prepare(result, openAPI, this::toModelName);
         return result;
+    }
+
+    @Override
+    public String modelFilename(String templateName, String modelName) {
+        return "modelRegistryServices.mustache".equals(templateName)
+                ? Path.of(modelFileFolder(), modelServices.serviceName(modelName) + ".java").toString()
+                : super.modelFilename(templateName, modelName);
+    }
+
+    @Override
+    public String modelFilename(String templateName, String modelName, String outputFolder) {
+        return "modelRegistryServices.mustache".equals(templateName)
+                ? Path.of(outputFolder, modelServices.serviceName(modelName) + ".java").toString()
+                : super.modelFilename(templateName, modelName, outputFolder);
     }
 
     private void normalizeComposedModels(List<CodegenModel> models,

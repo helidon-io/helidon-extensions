@@ -1,0 +1,122 @@
+#
+# Copyright (c) 2026 Oracle and/or its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+---
+openapi: 3.0.3
+info:
+  title: Enum option contracts
+  version: '1'
+paths:
+  /modes:
+    get:
+      tags: [Modes]
+      operationId: inspect
+      parameters:
+        - name: mode
+          in: query
+          schema:
+            $ref: '#/components/schemas/Mode'
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+            enum: [displayName, timeCreated]
+      responses:
+        '200':
+          description: Selected canonical values
+          content:
+            text/plain:
+              schema:
+                type: string
+components:
+  schemas:
+    Mapper:
+      type: string
+      enum: [mapped]
+    Set:
+      type: string
+      enum: [selected]
+    Mode:
+      type: string
+      enum: [fast-mode, authZ]
+    ModeJsonServices:
+      type: object
+      properties:
+        name:
+          type: string
+    Envelope:
+      type: object
+      properties:
+        mode:
+          $ref: '#/components/schemas/Mode'
+        state:
+          type: string
+          enum: [on-hold, ready]
+        next:
+          $ref: '#/components/schemas/Envelope'
+    Selection:
+      oneOf:
+        - $ref: '#/components/schemas/Alpha'
+        - $ref: '#/components/schemas/Beta'
+    EnumSelection:
+      oneOf:
+        - $ref: '#/components/schemas/Small'
+        - $ref: '#/components/schemas/Large'
+    Small:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: string
+          enum: [small]
+          pattern: '^small$'
+    Large:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: string
+          enum: [large]
+          pattern: '^large$'
+    Base:
+      type: object
+      discriminator:
+        propertyName: kind
+        mapping:
+          child.special: '#/components/schemas/Child'
+      properties:
+        kind:
+          type: string
+    Child:
+      allOf:
+        - $ref: '#/components/schemas/Base'
+        - type: object
+          properties:
+            name:
+              type: string
+    Alpha:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          pattern: a
+    Beta:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          pattern: b

@@ -15,30 +15,30 @@ limitations under the License.
 }}
 
 @io.helidon.service.registry.Service.Singleton
-final class {{classname}}JsonBindingFactory implements JsonBindingFactory<{{classname}}> {
+{{#modelRegistryServices}}static {{/modelRegistryServices}}final class {{classname}}JsonBindingFactory implements io.helidon.json.binding.JsonBindingFactory<{{classname}}> {
 
     @Override
-    public JsonDeserializer<{{classname}}> createDeserializer(Class<? extends {{classname}}> type) {
+    public io.helidon.json.binding.JsonDeserializer<{{classname}}> createDeserializer(Class<? extends {{classname}}> type) {
         return new {{classname}}.{{classname}}JsonConverter();
     }
 
     @Override
-    public JsonDeserializer<{{classname}}> createDeserializer(GenericType<? extends {{classname}}> type) {
+    public io.helidon.json.binding.JsonDeserializer<{{classname}}> createDeserializer(io.helidon.common.GenericType<? extends {{classname}}> type) {
         return new {{classname}}.{{classname}}JsonConverter();
     }
 
     @Override
-    public JsonSerializer<{{classname}}> createSerializer(Class<? extends {{classname}}> type) {
+    public io.helidon.json.binding.JsonSerializer<{{classname}}> createSerializer(Class<? extends {{classname}}> type) {
         return new {{classname}}.{{classname}}JsonConverter();
     }
 
     @Override
-    public JsonSerializer<{{classname}}> createSerializer(GenericType<? extends {{classname}}> type) {
+    public io.helidon.json.binding.JsonSerializer<{{classname}}> createSerializer(io.helidon.common.GenericType<? extends {{classname}}> type) {
         return new {{classname}}.{{classname}}JsonConverter();
     }
 
     @Override
-    public Set<Class<?>> supportedTypes() {
-        return Set.of({{classname}}.class);
+    public java.util.Set<Class<?>> supportedTypes() {
+        return java.util.Set.of({{classname}}.class);
     }
 }

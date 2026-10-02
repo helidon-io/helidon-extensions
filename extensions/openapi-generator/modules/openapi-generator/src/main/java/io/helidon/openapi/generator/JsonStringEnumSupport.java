@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiFunction;
@@ -50,6 +51,13 @@ final class JsonStringEnumSupport {
     private Map<String, List<String>> topLevelStringEnumValues = Map.of();
     private Map<String, List<String>> inlineRequestEntityEnumValues = Map.of();
     private Set<String> inlineRequestEntityEnumCollections = Set.of();
+    private boolean caseInsensitive;
+
+    void configure(Map<String, Object> properties) {
+        caseInsensitive = Boolean.parseBoolean(properties.getOrDefault(
+                HelidonDeclarativeCodegen.OPT_ENUM_CASE_INSENSITIVE, false).toString());
+        properties.put(HelidonDeclarativeCodegen.OPT_ENUM_CASE_INSENSITIVE, caseInsensitive);
+    }
 
     JsonStringEnumSupport(BiFunction<String, String, String> enumVarNamer,
                           UnaryOperator<String> modelNamer) {
@@ -556,6 +564,15 @@ final class JsonStringEnumSupport {
                                                Map<String, Object> allowableValues,
                                                List<String> wireValues,
                                                boolean httpMapper) {
+        if (caseInsensitive) {
+            Set<String> normalized = new LinkedHashSet<>();
+            for (String wireValue : wireValues) {
+                if (!normalized.add(wireValue.toLowerCase(Locale.US))) {
+                    throw new IllegalArgumentException("Case-insensitive enum '" + enumName
+                                                               + "' contains ambiguous wire values: " + wireValue);
+                }
+            }
+        }
         List<Map<String, String>> values = uniqueEnumValues(
                 enumName,
                 exactEnumValues(enumName, allowableValues, wireValues));

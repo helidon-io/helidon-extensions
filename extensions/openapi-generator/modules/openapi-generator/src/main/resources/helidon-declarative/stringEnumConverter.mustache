@@ -15,19 +15,20 @@ limitations under the License.
 }}
 
 @io.helidon.service.registry.Service.Singleton
-final class {{converterName}} implements JsonConverter<{{qualifiedType}}>{{#httpMapper}}, Mapper<String, {{qualifiedType}}>{{/httpMapper}} {
-    private static final GenericType<{{qualifiedType}}> TYPE = GenericType.create({{qualifiedType}}.class);
+{{#nestedService}}static final class {{simpleConverterName}}{{/nestedService}}{{^nestedService}}final class {{converterName}}{{/nestedService}} implements io.helidon.json.binding.JsonConverter<{{qualifiedType}}>{{#httpMapper}}, io.helidon.common.mapper.Mapper<String, {{qualifiedType}}>{{/httpMapper}} {
+    private static final io.helidon.common.GenericType<{{qualifiedType}}> TYPE =
+            io.helidon.common.GenericType.create({{qualifiedType}}.class);
 {{#httpMapper}}
-    private static final GenericType<String> SOURCE_TYPE = GenericType.create(String.class);
+    private static final io.helidon.common.GenericType<String> SOURCE_TYPE = io.helidon.common.GenericType.create(String.class);
 {{/httpMapper}}
 
     @Override
-    public GenericType<{{qualifiedType}}> type() {
+    public io.helidon.common.GenericType<{{qualifiedType}}> type() {
         return TYPE;
     }
 
     @Override
-    public {{qualifiedType}} deserialize(JsonParser parser) {
+    public {{qualifiedType}} deserialize(io.helidon.json.JsonParser parser) {
         if (parser.checkNull()) {
             return null;
         }
@@ -35,7 +36,7 @@ final class {{converterName}} implements JsonConverter<{{qualifiedType}}>{{#http
     }
 
     @Override
-    public void serialize(JsonGenerator generator, {{qualifiedType}} instance, boolean writeNulls) {
+    public void serialize(io.helidon.json.JsonGenerator generator, {{qualifiedType}} instance, boolean writeNulls) {
         if (instance == null) {
             generator.writeNull();
             return;
@@ -50,12 +51,12 @@ final class {{converterName}} implements JsonConverter<{{qualifiedType}}>{{#http
     }
 
     @Override
-    public GenericType<String> sourceType() {
+    public io.helidon.common.GenericType<String> sourceType() {
         return SOURCE_TYPE;
     }
 
     @Override
-    public GenericType<{{qualifiedType}}> targetType() {
+    public io.helidon.common.GenericType<{{qualifiedType}}> targetType() {
         return TYPE;
     }
 {{/httpMapper}}
