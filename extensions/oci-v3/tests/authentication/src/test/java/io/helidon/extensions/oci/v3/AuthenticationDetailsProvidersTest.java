@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.oci.v3;
 
+import java.net.URI;
 import java.util.Optional;
 
 import io.helidon.common.media.type.MediaTypes;
@@ -23,8 +24,12 @@ import io.helidon.common.types.TypeName;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.extensions.oci.v3.spi.OciAuthenticationMethod;
+import io.helidon.http.Status;
 import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
+import io.helidon.webserver.http.HttpRules;
+import io.helidon.webserver.testing.junit5.ServerTest;
+import io.helidon.webserver.testing.junit5.SetUpRoute;
 
 import com.oracle.bmc.Region;
 import com.oracle.bmc.auth.BasicAuthenticationDetailsProvider;
@@ -44,17 +49,31 @@ import static org.hamcrest.Matchers.not;
 /*
 This class MUST be in the same package, to be able to reset OciConfig before each test
  */
+@ServerTest
 class AuthenticationDetailsProvidersTest {
     private static final TypeName INSTANCE_PRINCIPAL_METHOD_IMPL = TypeName.create(
             "io.helidon.extensions.oci.v3.authentication.instance.AuthenticationMethodInstancePrincipal");
     private static final TypeName RESOURCE_PRINCIPAL_METHOD_IMPL = TypeName.create(
             "io.helidon.extensions.oci.v3.authentication.resource.AuthenticationMethodResourcePrincipal");
 
+    private final int port;
+
     private ServiceRegistryManager registryManager;
     private ServiceRegistry registry;
 
+    AuthenticationDetailsProvidersTest(URI uri) {
+        this.port = uri.getPort();
+    }
+
+    @SetUpRoute
+    static void routing(HttpRules rules) {
+        rules.get("/opc/v2/instance", (_, res) -> res.status(Status.NOT_FOUND_404).send());
+    }
+
     void setUp(Config config) {
-        OciConfigProvider.config(OciConfig.create(config.get("helidon.oci")));
+        OciConfigProvider.config(OciConfig.builder(OciConfig.create(config.get("helidon.oci")))
+                                         .imdsBaseUri(URI.create("http://localhost:%d/opc/v2/".formatted(port)))
+                                         .build());
         registryManager = ServiceRegistryManager.create();
         registry = registryManager.registry();
     }
