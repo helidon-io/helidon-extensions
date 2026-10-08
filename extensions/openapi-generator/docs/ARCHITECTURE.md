@@ -236,7 +236,8 @@ Per tag:
 Per schema:
 
 - `{Model}.java`
-  - `@Json.Entity` model class
+  - `@Json.Entity(accessorStyle = io.helidon.common.AccessorStyle.RECORD)` model class,
+    so JSON binding treats all prefixless accessors consistently, including `is...` and `get...` schema properties
   - prefixless accessor and mutator methods for schema properties
   - `@Json.BuilderInfo` and a generated `Builder` / `BuilderBase<B, T>`
     implementing `io.helidon.common.Builder`

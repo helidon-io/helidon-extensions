@@ -43,6 +43,7 @@
         <module>modules/discriminator-enum-mapping-repro-2</module>
         <module>modules/composed-schemas</module>
         <module>modules/json-string-enums</module>
+        <module>modules/mixed-accessors</module>
         <module>modules/enum-options</module>
         <module>modules/swagger2-contracts</module>
     </modules>

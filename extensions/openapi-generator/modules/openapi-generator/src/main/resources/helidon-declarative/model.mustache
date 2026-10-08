@@ -392,7 +392,7 @@ import {{import}};
 
 {{^modelRegistryServices}}{{>polymorphicClassConverterFactory}}{{/modelRegistryServices}}
 {{/vendorExtensions.x-use-union-converter}}{{/vendorExtensions.x-is-union-interface}}{{^vendorExtensions.x-is-union-interface}}{{#vendorExtensions.x-use-polymorphic-converter}}@Json.Converter({{classname}}.{{classname}}JsonConverter.class)
-{{/vendorExtensions.x-use-polymorphic-converter}}{{^vendorExtensions.x-use-polymorphic-converter}}@Json.Entity
+{{/vendorExtensions.x-use-polymorphic-converter}}{{^vendorExtensions.x-use-polymorphic-converter}}@Json.Entity(accessorStyle = io.helidon.common.AccessorStyle.RECORD)
 {{#vendorExtensions.x-has-polymorphic-subtypes}}@Json.Polymorphic(key = {{{vendorExtensions.x-polymorphic-key-literal}}})
 {{#vendorExtensions.x-polymorphic-subtypes}}@Json.Subtype(alias = {{{aliasLiteral}}}, value = {{name}}.class)
 {{/vendorExtensions.x-polymorphic-subtypes}}{{/vendorExtensions.x-has-polymorphic-subtypes}}

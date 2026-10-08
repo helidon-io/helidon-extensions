@@ -260,7 +260,8 @@ class PetstoreGenerationIT {
 
     @Test
     void petModelHasJsonEntityAnnotation() throws IOException {
-        assertThat(read(modelFile("Pet.java")), containsString("@Json.Entity"));
+        assertThat(read(modelFile("Pet.java")),
+                   containsString("@Json.Entity(accessorStyle = io.helidon.common.AccessorStyle.RECORD)"));
     }
 
     @Test
