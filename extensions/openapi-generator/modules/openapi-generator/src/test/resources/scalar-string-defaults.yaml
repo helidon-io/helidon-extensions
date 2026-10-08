@@ -15,35 +15,11 @@
 #
 openapi: 3.1.0
 info:
-  title: Enum Default Test
+  title: Scalar String Default Test
   version: 1.0.0
 paths: {}
 components:
   schemas:
-    Mode:
-      type: string
-      enum: [NONE, ACTIVE]
-      default: NONE
-    Item:
-      type: object
-      properties:
-        typedMode:
-          type: string
-          $ref: '#/components/schemas/Mode'
-        mode:
-          $ref: '#/components/schemas/Mode'
-        inlineMode:
-          type: string
-          enum: [NONE, ACTIVE]
-          default: NONE
-        count:
-          type: integer
-          default: 7
-        enabled:
-          type: boolean
-          default: true
-        label:
-          type: string
     StringDefaults:
       type: object
       properties:
