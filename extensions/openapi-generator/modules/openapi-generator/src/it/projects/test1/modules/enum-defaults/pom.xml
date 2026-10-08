@@ -31,7 +31,7 @@
 
     <properties>
         <helidon.version>4.5.0</helidon.version>
-        <inputSpec>${project.basedir}/../../specs/enum-defaults.yaml</inputSpec>
+        <inputSpec>${project.baseUri}../../specs/enum-defaults.yaml</inputSpec>
         <skipGeneratedTests>false</skipGeneratedTests>
     </properties>
 </project>
