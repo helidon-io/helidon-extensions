@@ -45,6 +45,7 @@
         <module>modules/json-string-enums</module>
         <module>modules/mixed-accessors</module>
         <module>modules/enum-options</module>
+        <module>modules/enum-defaults</module>
         <module>modules/swagger2-contracts</module>
     </modules>
 </project>

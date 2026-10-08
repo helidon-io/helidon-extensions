@@ -1792,7 +1792,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             return null;
         }
         String val = prop.defaultValue;
-        if (prop.isEnum) {
+        if (prop.isEnum || prop.isEnumRef) {
             // Upstream AbstractJavaCodegen already formats the default as "TypeName.CONSTANT"
             return val;
         }
