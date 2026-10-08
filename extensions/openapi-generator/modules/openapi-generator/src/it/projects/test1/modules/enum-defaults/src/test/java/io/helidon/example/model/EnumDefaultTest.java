@@ -18,18 +18,19 @@ package io.helidon.example.model;
 
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.nullValue;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 class EnumDefaultTest {
     @Test
     void newModelUsesSchemaDefaults() {
         Item item = new Item();
-        assertEquals(Mode.NONE, item.typedMode());
-        assertEquals(Mode.NONE, item.mode());
-        assertEquals(Item.InlineModeEnum.NONE, item.inlineMode());
-        assertEquals(Integer.valueOf(7), item.count());
-        assertEquals(Boolean.TRUE, item.enabled());
-        assertNull(item.label());
+        assertThat(item.typedMode(), is(Mode.NONE));
+        assertThat(item.mode(), is(Mode.NONE));
+        assertThat(item.inlineMode(), is(Item.InlineModeEnum.NONE));
+        assertThat(item.count(), is(7));
+        assertThat(item.enabled(), is(true));
+        assertThat(item.label(), nullValue());
     }
 }
