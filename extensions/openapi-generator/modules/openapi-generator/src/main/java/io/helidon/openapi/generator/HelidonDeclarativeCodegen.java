@@ -52,6 +52,7 @@ import org.openapitools.codegen.model.ModelMap;
 import org.openapitools.codegen.model.ModelsMap;
 import org.openapitools.codegen.model.OperationMap;
 import org.openapitools.codegen.model.OperationsMap;
+import org.openapitools.codegen.utils.ModelUtils;
 
 import static org.openapitools.codegen.utils.StringUtils.camelize;
 
@@ -964,7 +965,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                                                       cascadingValidation.participatingModels(),
                                                       modelPackage);
                     // Format default value as a Java literal for field initializer
-                    String javaDefault = formatDefaultValue(prop);
+                    String javaDefault = ModelDefaultSupport.formatDefaultValue(prop);
                     if (javaDefault != null) {
                         prop.vendorExtensions.put("x-default-value", javaDefault);
                     }
@@ -1783,33 +1784,11 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return result;
     }
 
-    /**
-     * Formats a property's default value as a Java literal for use in a field initializer.
-     * Returns {@code null} when no useful initializer can be produced (e.g. arrays).
-     */
-    private String formatDefaultValue(CodegenProperty prop) {
-        if (prop.defaultValue == null || prop.defaultValue.isEmpty()) {
-            return null;
-        }
-        String val = prop.defaultValue;
-        if (prop.isEnum || prop.isEnumRef) {
-            // Upstream AbstractJavaCodegen already formats the default as "TypeName.CONSTANT"
-            return val;
-        }
-        if (prop.isString) {
-            // Escape backslashes and double-quotes, then wrap in quotes
-            return "\"" + val.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
-        }
-        if (prop.isLong) {
-            return val + "L";
-        }
-        if (prop.isFloat) {
-            return val + "f";
-        }
-        if (prop.isArray || prop.isMap || ValidationTypeSupport.isJavaArray(prop.datatypeWithEnum)) {
-            return null;  // skip — complex initialization
-        }
-        return val;  // integer, double, boolean — value as-is
+    @Override
+    public String toDefaultValue(CodegenProperty property, Schema schema) {
+        Schema resolvedSchema = ModelUtils.getReferencedSchema(openAPI, schema);
+        String stringDefault = ModelDefaultSupport.scalarStringDefault(property, resolvedSchema);
+        return stringDefault != null ? stringDefault : super.toDefaultValue(property, schema);
     }
 
     /**
