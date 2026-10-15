@@ -223,6 +223,20 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 "schema-driven");
     }
 
+    /**
+     * Preserves schema regex semantics until a Java annotation literal is emitted.
+     *
+     * OpenAPI Generator also invokes this hook for schemas without a pattern;
+     * its inherited null-in/null-out contract is preserved.
+     *
+     * @param pattern regular expression from the schema, or {@code null} when absent
+     * @return unescaped regular expression, or {@code null} when absent
+     */
+    @Override
+    public String toRegularExpression(String pattern) {
+        return pattern;
+    }
+
     // Metadata
     @Override
     public String getName() {
@@ -1743,8 +1757,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             }
             // pattern → @Validation.String.Pattern
             if (prop.pattern != null && !prop.pattern.isEmpty()) {
-                String escaped = prop.pattern.replace("\\", "\\\\").replace("\"", "\\\"");
-                result.add(Map.of("annotation", "@Validation.String.Pattern(\"" + escaped + "\")"));
+                String literal = JavaStringLiterals.toJavaStringLiteral(prop.pattern);
+                result.add(Map.of("annotation", "@Validation.String.Pattern(" + literal + ")"));
             }
         } else if (prop.isInteger) {
             addIntegerBounds(result, prop.minimum, prop.exclusiveMinimum, prop.maximum, prop.exclusiveMaximum);
@@ -1807,8 +1821,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                         "@Validation.String.Length(" + String.join(", ", attrs) + ")"));
             }
             if (param.pattern != null && !param.pattern.isEmpty()) {
-                String escaped = param.pattern.replace("\\", "\\\\").replace("\"", "\\\"");
-                result.add(Map.of("annotation", "@Validation.String.Pattern(\"" + escaped + "\")"));
+                String literal = JavaStringLiterals.toJavaStringLiteral(param.pattern);
+                result.add(Map.of("annotation", "@Validation.String.Pattern(" + literal + ")"));
             }
         } else if (param.isInteger) {
             addIntegerBounds(result, param.minimum, param.exclusiveMinimum, param.maximum, param.exclusiveMaximum);
