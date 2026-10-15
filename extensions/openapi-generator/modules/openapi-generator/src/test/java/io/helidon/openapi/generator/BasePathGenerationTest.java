@@ -21,9 +21,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import io.swagger.parser.OpenAPIParser;
+import io.swagger.v3.oas.models.OpenAPI;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -66,6 +68,7 @@ class BasePathGenerationTest {
             "swagger2|/v1|serverBasePath|/custom|/custom/widgets",
             "openapi3|/v1|serverBasePath|/custom/|/custom/widgets",
             "openapi3|/v1|serverBasePath|custom|/custom/widgets",
+            "openapi3|/v1|serverBasePath|/custom/child/..|/custom/widgets",
             "openapi3|/v1|serverBasePath|/|/widgets",
             "swagger2|/v1|serveBasePath|/legacy|/legacy/widgets"
     }, delimiter = '|')
@@ -76,6 +79,119 @@ class BasePathGenerationTest {
         String prefix = expected.substring(0, expected.length() - "/widgets".length());
         assertPaths("Status", List.of(prefix.isEmpty() ? "/" : prefix, "/health", "/ready"));
         assertPaths("Root", List.of(prefix.isEmpty() ? "/" : prefix));
+        if (serverPath == null) {
+            return;
+        }
+        var published = publishedSpec();
+        String expectedPrefix = prefix.isEmpty() ? "/" : prefix;
+        assertThat(published.getServers().get(0).getUrl(),
+                   is((format.equals("swagger2") ? "http://localhost" : "https://example.com")
+                              + (option == null ? serverPath : expectedPrefix)));
+    }
+
+    /**
+     * Relative server URLs are paths, so no segment may be consumed as a host name.
+     *
+     * @param url server URL from the specification
+     * @param expected class-level route path
+     * @throws IOException if generated sources cannot be read
+     */
+    @ParameterizedTest
+    @CsvSource(value = {
+            "v1|/v1/widgets",
+            "api/v1|/api/v1/widgets",
+            "/api/v1|/api/v1/widgets",
+            "./api/v1|/api/v1/widgets",
+            "api/../v1|/v1/widgets",
+            "../api/v1|/api/v1/widgets",
+            "../../v1|/v1/widgets",
+            "//example.com/api/v1|/api/v1/widgets",
+            "https://example.com/api/v1|/api/v1/widgets"
+    }, delimiter = '|')
+    void retainsRelativeServerPath(String url, String expected) throws IOException {
+        generateSpec("""
+                openapi: 3.0.3
+                info: {title: Relative server, version: '1'}
+                servers:
+                  - url: '%s'
+                paths:
+                  /widgets:
+                    get:
+                      tags: [Widgets]
+                      operationId: listWidgets
+                      responses:
+                        '204': {description: OK}
+                """.formatted(url), Map.of(), false);
+        assertPaths("Widgets", List.of(expected));
+    }
+
+    /**
+     * The published document must describe the override without modifying the caller's specification.
+     * Alternative server origins, descriptions, and host variables must remain usable.
+     *
+     * @throws IOException if the generated document cannot be read
+     */
+    @Test
+    void publishesOverrideWithoutChangingSource() throws IOException {
+        var source = generateSpec("""
+                openapi: 3.0.3
+                info: {title: Published override, version: '1'}
+                servers:
+                  - url: https://{host}/{version}
+                    description: Primary server
+                    variables:
+                      host: {default: example.com}
+                      version: {default: v1}
+                  - url: //backup.example.com/v1
+                  - url: api/v1?region=test#section
+                paths:
+                  /widgets:
+                    servers:
+                      - url: api/v1
+                    get:
+                      tags: [Widgets]
+                      operationId: listWidgets
+                      servers:
+                        - url: https://operations.example.com/v1?region=test
+                      responses:
+                        '204': {description: OK}
+                """, Map.of("serverBasePath", "/custom/"), false);
+        var published = publishedSpec();
+        assertThat(published.getServers().get(0).getUrl(), is("https://{host}/custom"));
+        assertThat(published.getServers().get(0).getDescription(), is("Primary server"));
+        assertThat(published.getServers().get(0).getVariables().keySet(), is(Set.of("host")));
+        assertThat(published.getServers().get(1).getUrl(), is("//backup.example.com/custom"));
+        assertThat(published.getServers().get(2).getUrl(), is("/custom?region=test#section"));
+        var widgets = published.getPaths().get("/widgets");
+        assertThat(widgets.getServers().get(0).getUrl(), is("/custom"));
+        assertThat(widgets.getGet().getServers().get(0).getUrl(),
+                   is("https://operations.example.com/custom?region=test"));
+        assertThat(source.getServers().get(0).getUrl(), is("https://{host}/{version}"));
+        assertThat(source.getServers().get(0).getVariables().keySet(), is(Set.of("host", "version")));
+        assertPaths("Widgets", List.of("/custom/widgets"));
+    }
+
+    /**
+     * A specification without servers must still advertise the explicitly configured route prefix.
+     *
+     * @throws IOException if the generated document cannot be read
+     */
+    @Test
+    void publishesOverrideWithoutOriginalServer() throws IOException {
+        generate("openapi3", null, Map.of("serverBasePath", "/custom"), false);
+        assertThat(publishedSpec().getServers().get(0).getUrl(), is("/custom"));
+    }
+
+    /**
+     * Disabling published OpenAPI support must not disable routing-prefix overrides.
+     *
+     * @throws IOException if generated sources cannot be read
+     */
+    @Test
+    void overrideDoesNotRequirePublishedOpenApi() throws IOException {
+        generate("openapi3", "/v1", Map.of("serverBasePath", "/custom", "serverOpenApi", "false"), false);
+        assertPaths("Widgets", List.of("/custom/widgets", "/{widgetId}"));
+        assertThat(Files.exists(directory.resolve("src/main/resources/META-INF/openapi.yaml")), is(false));
     }
 
     /**
@@ -97,15 +213,17 @@ class BasePathGenerationTest {
     /**
      * Server variable defaults must resolve before extracting the route prefix.
      *
+     * @param url absolute or relative URL template
      * @throws IOException if generated sources cannot be read
      */
-    @Test
-    void resolvesServerVariableDefaults() throws IOException {
+    @ParameterizedTest
+    @CsvSource({"https://{host}/{version}", "{version}"})
+    void resolvesServerVariableDefaults(String url) throws IOException {
         generateSpec("""
                 openapi: 3.0.3
                 info: {title: Variable server, version: '1'}
                 servers:
-                  - url: https://{host}/{version}
+                  - url: '%s'
                     variables:
                       host: {default: example.com}
                       version: {default: v1}
@@ -116,8 +234,33 @@ class BasePathGenerationTest {
                       operationId: listWidgets
                       responses:
                         '204': {description: OK}
-                """, Map.of(), false);
+                """.formatted(url), Map.of(), false);
         assertPaths("Widgets", List.of("/v1/widgets"));
+    }
+
+    /**
+     * Explicit server variable values must affect relative paths just as they affect absolute URLs.
+     *
+     * @throws IOException if generated sources cannot be read
+     */
+    @Test
+    void resolvesServerVariableOverrides() throws IOException {
+        generateSpec("""
+                openapi: 3.0.3
+                info: {title: Server variable override, version: '1'}
+                servers:
+                  - url: api/{version}
+                    variables:
+                      version: {default: v1}
+                paths:
+                  /widgets:
+                    get:
+                      tags: [Widgets]
+                      operationId: listWidgets
+                      responses:
+                        '204': {description: OK}
+                """, Map.of(), false, Map.of("version", "v2"));
+        assertPaths("Widgets", List.of("/api/v2/widgets"));
     }
 
     /**
@@ -167,13 +310,28 @@ class BasePathGenerationTest {
     }
 
     /**
-     * Renders API sources from a parsed specification without generating unrelated supporting files.
+     * Renders API sources and the published document through the public generator pipeline.
      *
      * @param spec specification text
      * @param options generator overrides
      * @param client whether to generate clients
+     * @return parsed source specification, which must remain unchanged by document publication
      */
-    private void generateSpec(String spec, Map<String, String> options, boolean client) {
+    private OpenAPI generateSpec(String spec, Map<String, String> options, boolean client) {
+        return generateSpec(spec, options, client, Map.of());
+    }
+
+    /**
+     * Generates sources using the same server variable override map as command-line and Maven callers.
+     *
+     * @param spec specification text
+     * @param options generator overrides
+     * @param client whether to generate clients
+     * @param serverVariables server variable overrides
+     * @return parsed source specification
+     */
+    private OpenAPI generateSpec(String spec, Map<String, String> options, boolean client,
+                                Map<String, String> serverVariables) {
         var parsed = new OpenAPIParser().readContents(spec, null, null);
         assertThat(parsed.getMessages().toString(), parsed.getOpenAPI(), notNullValue());
         var codegen = new HelidonDeclarativeCodegen();
@@ -181,10 +339,23 @@ class BasePathGenerationTest {
         codegen.additionalProperties().put("helidonVersion", "4.5.0");
         codegen.additionalProperties().put("generateClient", client);
         codegen.additionalProperties().putAll(options);
+        codegen.serverVariableOverrides().putAll(serverVariables);
         var generator = new DefaultGenerator();
-        generator.setGeneratorPropertyDefault("supportingFiles", "false");
+        generator.setGeneratorPropertyDefault("supportingFiles", "true");
         generator.setGeneratorPropertyDefault("apis", "true");
         generator.opts(new ClientOptInput().config(codegen).openAPI(parsed.getOpenAPI())).generate();
+        return parsed.getOpenAPI();
+    }
+
+    /**
+     * Reads the document that the generated application will expose through OpenAPI support.
+     *
+     * @return parsed generated document
+     * @throws IOException if the generated document cannot be read
+     */
+    private OpenAPI publishedSpec() throws IOException {
+        String yaml = Files.readString(directory.resolve("src/main/resources/META-INF/openapi.yaml"));
+        return new OpenAPIParser().readContents(yaml, null, null).getOpenAPI();
     }
 
     /**

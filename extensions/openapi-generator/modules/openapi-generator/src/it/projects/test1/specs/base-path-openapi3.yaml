@@ -15,7 +15,7 @@
 #
 openapi: 3.0.3
 servers:
-  - url: /v1/
+  - url: api/v1/
 info: {title: Base path routes, version: "1"}
 paths:
   /widgets:

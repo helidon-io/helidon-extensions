@@ -49,5 +49,6 @@
         <module>modules/swagger2-contracts</module>
         <module>modules/base-path-swagger2</module>
         <module>modules/base-path-openapi3</module>
+        <module>modules/base-path-override</module>
     </modules>
 </project>

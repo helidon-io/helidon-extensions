@@ -113,7 +113,7 @@ OpenAPI document
 
 This stage extracts global metadata before per-operation processing:
 
-- server base path from `servers[0].url`
+- server base path from `servers[0].url`, unless `serverBasePath` (or legacy `serveBasePath`) overrides it
 - top-level security requirements
 - YAML serialization of the source spec for generated `META-INF/openapi.yaml`
 
@@ -180,11 +180,20 @@ Notable behavior:
 
 This stage performs per-tag aggregation and template shaping:
 
-- computes the shared tag-level base path
-- determines method sub-paths
+- computes the common operation path for each tag, then prepends the configured or derived server base path
+- determines method sub-paths relative to the common operation path, without repeating the server prefix
 - tracks whether optional query params, validation, multipart, form, or security are present
 - identifies generated error model usage
 - exposes tag-level booleans used by the Mustache templates
+
+The resulting `helidonBasePath` supplies the shared API interface's class-level
+`@Http.Path`. Generated endpoints and clients inherit this annotation, matching
+Helidon's class-path and method-path composition. The `serverBasePath` override
+changes this route prefix during generation and replaces server URL paths in a
+copy of the published OpenAPI document, preserving origins and unrelated metadata.
+The caller's input document is unchanged. See
+[Overriding the context path](README.md#overriding-the-context-path) for configuration
+examples.
 
 ## Templates
 

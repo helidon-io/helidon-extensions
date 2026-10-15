@@ -46,7 +46,8 @@ class BasePathHttpTest {
      */
     @Test
     void prefixedRoutesReachGeneratedEndpoints() {
-        for (String path : new String[] {"/v1/widgets", "/v1/widgets/widget-1", "/v1/health", "/v1/ready", "/v1"}) {
+        for (String path : new String[] {
+                "/api/v1/widgets", "/api/v1/widgets/widget-1", "/api/v1/health", "/api/v1/ready", "/api/v1"}) {
             try (var response = client.get(path).request()) {
                 assertThat(path, response.status(), is(Status.INTERNAL_SERVER_ERROR_500));
             }
@@ -58,7 +59,7 @@ class BasePathHttpTest {
      */
     @Test
     void unprefixedAndDoublePrefixedRoutesAreAbsent() {
-        for (String path : new String[] {"/widgets", "/widgets/widget-1", "/health", "/ready", "/v1/v1/widgets"}) {
+        for (String path : new String[] {"/widgets", "/widgets/widget-1", "/health", "/ready", "/api/v1/api/v1/widgets"}) {
             try (var response = client.get(path).request()) {
                 assertThat(path, response.status(), is(Status.NOT_FOUND_404));
             }

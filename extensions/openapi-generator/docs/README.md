@@ -166,7 +166,7 @@ Set these under Maven `<configOptions>` or CLI `--additional-properties`.
 | `generateClient` | `true` | Generate `{Tag}Client.java` declarative REST client interfaces |
 | `generateErrorHandler` | `true` | Generate `{Tag}Exception.java` and `{Tag}ErrorHandler.java` |
 | `serverOpenApi` | `true` | Copy the OpenAPI document into `META-INF/openapi.yaml` and add server-side OpenAPI support |
-| `serverBasePath` | derived from spec | Overrides the first server URL path (Swagger 2 `basePath`); prepended once to the shared API contract. Use `/` to omit the spec prefix. |
+| `serverBasePath` | derived from spec | Overrides the route context path derived from the first server URL (Swagger 2 `basePath`). Use `/` to remove the prefix. See [Overriding the context path](#overriding-the-context-path). |
 | `corsEnabled` | `false` | Add `@Cors.Defaults` to generated endpoint classes |
 | `ftEnabled` | `false` | Add `@Ft.Retry` to generated REST client interfaces |
 | `tracingEnabled` | `false` | Add `@Tracing.Traced` to generated endpoint classes |
@@ -187,6 +187,55 @@ If `helidonVersion` starts with a `v` it is assumed to identify a major version 
 it will resolve to the latest release of that major version. For example, `v4` resolves to the latest version
 of Helidon 4.X.X. For repeatability it is recommended to use a specific version of Helidon and not
 rely on this shorthand.
+
+## Overriding the context path
+
+Use the generator option `serverBasePath` to replace the context path from the
+specification. With no override (or an empty value), the generator uses the path
+of the first top-level OpenAPI 3 `servers` URL, resolving server variables from
+their defaults or configured overrides. Swagger 2 `basePath` is handled through
+the parser's conversion to OpenAPI 3. Relative URLs such as `api/v1` retain every
+path segment and are interpreted from the server root, where the generated
+application exposes `/openapi`. An absent server path contributes no prefix.
+
+For example, with `servers: [{url: "https://example.com/v1"}]` (or Swagger 2
+`basePath: /v1`) and an operation at `/widgets`:
+
+| `serverBasePath` | Generated route |
+|------------------|-----------------|
+| omitted or empty | `/v1/widgets` |
+| `/custom` | `/custom/widgets` |
+| `/` | `/widgets` |
+
+The override replaces the specification's prefix. It is applied once to the
+class-level `@Http.Path` on the shared API interface; method paths contain only
+the remaining operation path. Generated server endpoints and REST clients inherit
+that contract. Leading and trailing slashes on the override are normalized, so
+`custom`, `/custom`, and `/custom/` produce the same prefix.
+
+In the Maven plugin's `<configuration>`, set:
+
+```xml
+<configOptions>
+    <serverBasePath>/custom</serverBasePath>
+</configOptions>
+```
+
+For the CLI, add this to the `generate` command:
+
+```bash
+--additional-properties serverBasePath=/custom
+```
+
+This is a generation-time option; regenerate the sources after changing it.
+The option name is `serverBasePath`. The legacy alias `serveBasePath` is accepted,
+with `serverBasePath` taking precedence when both are supplied.
+
+When `serverOpenApi=true`, the generated `META-INF/openapi.yaml` also uses the
+overridden path in every declared server URL, including path-item and operation
+servers. Server origins and unrelated metadata are preserved; variables used only
+in the replaced path are removed. If no top-level server is declared, a relative
+server URL containing the override is added. The input specification is unchanged.
 
 ## What Gets Generated
 

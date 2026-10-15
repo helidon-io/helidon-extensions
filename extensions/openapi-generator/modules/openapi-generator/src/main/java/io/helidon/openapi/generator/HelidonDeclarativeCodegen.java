@@ -34,6 +34,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import io.swagger.v3.core.util.Yaml;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.media.Schema;
@@ -53,7 +54,6 @@ import org.openapitools.codegen.model.ModelsMap;
 import org.openapitools.codegen.model.OperationMap;
 import org.openapitools.codegen.model.OperationsMap;
 import org.openapitools.codegen.utils.ModelUtils;
-import org.openapitools.codegen.utils.URLPathUtils;
 
 import static org.openapitools.codegen.utils.StringUtils.camelize;
 
@@ -198,7 +198,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 "Copy spec to META-INF/openapi.yaml and add helidon-openapi dependency",
                 String.valueOf(serverOpenApi));
         addOption(OPT_SERVER_BASE_PATH,
-                "Base path prefix to add in front of all endpoint paths (e.g. /v1)",
+                "Overrides the specification server path for generated routes and OpenAPI; use / for no prefix",
                 serverBasePath);
         addOption(OPT_CORS_ENABLED,
                 "Add @Cors.Defaults to every endpoint class (enables CORS via application.yaml configuration)",
@@ -388,7 +388,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
     /**
      * Prepares schema metadata and derives the endpoint prefix from the first server URL unless configured.
-     * Server variables use the same defaults and overrides as the generation pipeline.
+     * Server variables use their defaults or configured overrides; publication reflects an explicit path override.
      *
      * @param openAPI specification to generate
      */
@@ -402,17 +402,19 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 ? List.of()
                 : new ArrayList<>(openAPI.getSecurity());
 
-        if (serverBasePath.isEmpty()) {
-            String path = URLPathUtils.getServerURL(openAPI, serverVariableOverrides()).getPath();
-            additionalProperties.put(OPT_SERVER_BASE_PATH, path);
-        }
+        String path = serverBasePath.isEmpty()
+                ? ServerBasePathSupport.path(openAPI, serverVariableOverrides())
+                : ServerBasePathSupport.normalize(serverBasePath);
+        additionalProperties.put(OPT_SERVER_BASE_PATH, path);
 
         // Serialize the spec so the openapi.yaml.mustache template can write it to
         // src/main/resources/META-INF/openapi.yaml (picked up by helidon-openapi at runtime)
         if (serverOpenApi) {
             try {
-                String yamlContent = io.swagger.v3.core.util.Yaml.pretty()
-                        .writeValueAsString(openAPI);
+                OpenAPI published = serverBasePath.isEmpty()
+                        ? openAPI
+                        : ServerBasePathSupport.publishedDocument(openAPI, path);
+                String yamlContent = Yaml.pretty().writeValueAsString(published);
                 additionalProperties.put("x-openapi-spec-yaml", yamlContent);
             } catch (Exception ignored) {
                 // Serialization failed — spec file will be skipped
