@@ -31,7 +31,6 @@ import io.swagger.v3.oas.models.servers.Server;
  */
 final class ServerBasePathSupport {
     private static final Pattern VARIABLE = Pattern.compile("\\{([^}]+)}");
-    private static final Pattern ORIGIN = Pattern.compile("^((?:[^:/?#]+:)?//[^/?#]*)([^?#]*)(.*)$");
 
     /**
      * Prevents instantiation of this stateless support class.
@@ -122,18 +121,7 @@ final class ServerBasePathSupport {
             return;
         }
         for (Server server : servers) {
-            String url = server.getUrl();
-            Matcher origin = ORIGIN.matcher(url);
-            String replacement;
-            if (origin.matches()) {
-                replacement = origin.group(1) + path + origin.group(3);
-            } else {
-                int query = url.indexOf('?');
-                int fragment = url.indexOf('#');
-                int suffix = query < 0 ? fragment : fragment < 0 ? query : Math.min(query, fragment);
-                replacement = path + (suffix < 0 ? "" : url.substring(suffix));
-            }
-            server.setUrl(replacement);
+            server.setUrl(replacePath(server.getUrl(), path));
             if (server.getVariables() != null) {
                 server.getVariables().keySet().removeIf(name -> !server.getUrl().contains("{" + name + "}"));
                 if (server.getVariables().isEmpty()) {
@@ -141,5 +129,31 @@ final class ServerBasePathSupport {
                 }
             }
         }
+    }
+
+    /**
+     * Replaces a URL path using component boundaries, retaining template variables in its origin and suffix.
+     *
+     * @param url server URL, which may be relative or contain unresolved variables
+     * @param path normalized override
+     * @return server URL with the replaced path
+     */
+    private static String replacePath(String url, String path) {
+        int query = url.indexOf('?');
+        int fragment = url.indexOf('#');
+        int suffix = query < 0 ? fragment : fragment < 0 ? query : Math.min(query, fragment);
+        String address = suffix < 0 ? url : url.substring(0, suffix);
+        int scheme = address.indexOf("://");
+        int authority;
+        if (address.startsWith("//")) {
+            authority = 2;
+        } else if (scheme > 0 && address.substring(0, scheme).indexOf('/') < 0) {
+            authority = scheme + 3;
+        } else {
+            authority = -1;
+        }
+        int pathStart = authority < 0 ? 0 : address.indexOf('/', authority);
+        String origin = pathStart < 0 ? address : address.substring(0, pathStart);
+        return origin + path + (suffix < 0 ? "" : url.substring(suffix));
     }
 }

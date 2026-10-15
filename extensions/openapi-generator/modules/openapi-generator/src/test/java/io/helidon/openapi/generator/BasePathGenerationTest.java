@@ -144,6 +144,8 @@ class BasePathGenerationTest {
                       version: {default: v1}
                   - url: //backup.example.com/v1
                   - url: api/v1?region=test#section
+                  - url: https://root.example.com:8443?region=test#section
+                  - url: //bare.example.com
                 paths:
                   /widgets:
                     servers:
@@ -162,6 +164,8 @@ class BasePathGenerationTest {
         assertThat(published.getServers().get(0).getVariables().keySet(), is(Set.of("host")));
         assertThat(published.getServers().get(1).getUrl(), is("//backup.example.com/custom"));
         assertThat(published.getServers().get(2).getUrl(), is("/custom?region=test#section"));
+        assertThat(published.getServers().get(3).getUrl(), is("https://root.example.com:8443/custom?region=test#section"));
+        assertThat(published.getServers().get(4).getUrl(), is("//bare.example.com/custom"));
         var widgets = published.getPaths().get("/widgets");
         assertThat(widgets.getServers().get(0).getUrl(), is("/custom"));
         assertThat(widgets.getGet().getServers().get(0).getUrl(),
