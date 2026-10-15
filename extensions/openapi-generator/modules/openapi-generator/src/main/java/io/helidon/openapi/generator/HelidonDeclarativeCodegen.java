@@ -19,7 +19,6 @@ package io.helidon.openapi.generator;
 import java.io.File;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,6 +34,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
@@ -53,6 +53,7 @@ import org.openapitools.codegen.model.ModelsMap;
 import org.openapitools.codegen.model.OperationMap;
 import org.openapitools.codegen.model.OperationsMap;
 import org.openapitools.codegen.utils.ModelUtils;
+import org.openapitools.codegen.utils.URLPathUtils;
 
 import static org.openapitools.codegen.utils.StringUtils.camelize;
 
@@ -385,9 +386,14 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         };
     }
 
-    // Spec pre-processing: extract server base path
+    /**
+     * Prepares schema metadata and derives the endpoint prefix from the first server URL unless configured.
+     * Server variables use the same defaults and overrides as the generation pipeline.
+     *
+     * @param openAPI specification to generate
+     */
     @Override
-    public void preprocessOpenAPI(io.swagger.v3.oas.models.OpenAPI openAPI) {
+    public void preprocessOpenAPI(OpenAPI openAPI) {
         jsonStringEnums.preprocess(openAPI);
         captureRawDiscriminatorMappings(openAPI);
         allOfValidationSnapshot = AllOfValidationSupport.snapshot(openAPI);
@@ -396,20 +402,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 ? List.of()
                 : new ArrayList<>(openAPI.getSecurity());
 
-        if (openAPI.getServers() != null && !openAPI.getServers().isEmpty()) {
-            String serverUrl = openAPI.getServers().get(0).getUrl();
-            try {
-                URI uri = new URI(serverUrl);
-                String path = uri.getPath();
-                if (path != null && !path.isEmpty() && !"/".equals(path)) {
-                    // Only set serverBasePath from URL if not explicitly configured
-                    if (serverBasePath.isEmpty()) {
-                        additionalProperties.put("serverBasePath", path);
-                    }
-                }
-            } catch (Exception ignored) {
-                // Malformed URL — skip
-            }
+        if (serverBasePath.isEmpty()) {
+            String path = URLPathUtils.getServerURL(openAPI, serverVariableOverrides()).getPath();
+            additionalProperties.put(OPT_SERVER_BASE_PATH, path);
         }
 
         // Serialize the spec so the openapi.yaml.mustache template can write it to
@@ -667,7 +662,13 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return op;
     }
 
-    // Per-tag post-processing: compute paths, error model, optional-param flags
+    /**
+     * Splits each operation path into a shared class path and method suffix, applying the server prefix once.
+     *
+     * @param objs operations grouped by tag
+     * @param allModels generated models
+     * @return enriched operations and template properties
+     */
     @Override
     public OperationsMap postProcessOperationsWithModels(OperationsMap objs,
                                                          List<ModelMap> allModels) {
@@ -683,7 +684,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         // would be overridden when DefaultGenerator merges additionalProperties into the
         // template context. Use a Helidon-specific key instead.
         String commonPath = computeCommonPath(opList);
-        result.put("helidonBasePath", commonPath);
+        result.put("helidonBasePath", endpointBasePath(commonPath));
 
         // Per-operation: method-level sub-path and other enrichments
         boolean anyComputedHeaders = false;
@@ -699,9 +700,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         for (CodegenOperation op : opList) {
             // Sub-path (part after commonPath)
             String fullPath = op.path;
-            String subPath = fullPath.startsWith(commonPath)
-                    ? fullPath.substring(commonPath.length())
-                    : fullPath;
+            String subPath = fullPath.equals(commonPath) ? "" : fullPath;
+            if (!"/".equals(commonPath) && fullPath.startsWith(commonPath)) {
+                subPath = fullPath.substring(commonPath.length());
+            }
             if (!subPath.isEmpty()) {
                 op.vendorExtensions.put("x-method-path", subPath);
                 op.vendorExtensions.put("x-has-method-path", Boolean.TRUE);
@@ -857,6 +859,22 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 throw new RuntimeException("Failed to generate computed header function class: " + file, e);
             }
         }
+    }
+
+    /**
+     * Combines the configured or derived server prefix with the common operation path.
+     * Root prefixes contribute no extra separator; the spec's operation paths remain relative to the server.
+     *
+     * @param commonPath common prefix of the operation paths
+     * @return class-level HTTP path including the server prefix
+     */
+    private String endpointBasePath(String commonPath) {
+        String prefix = additionalProperties.getOrDefault(OPT_SERVER_BASE_PATH, "").toString()
+                .replaceAll("^/+|/+$", "");
+        if (prefix.isEmpty()) {
+            return commonPath;
+        }
+        return "/" + prefix + ("/".equals(commonPath) ? "" : commonPath);
     }
 
     /**

@@ -166,7 +166,7 @@ Set these under Maven `<configOptions>` or CLI `--additional-properties`.
 | `generateClient` | `true` | Generate `{Tag}Client.java` declarative REST client interfaces |
 | `generateErrorHandler` | `true` | Generate `{Tag}Exception.java` and `{Tag}ErrorHandler.java` |
 | `serverOpenApi` | `true` | Copy the OpenAPI document into `META-INF/openapi.yaml` and add server-side OpenAPI support |
-| `serverBasePath` | derived from spec | Base path prefix prepended to generated endpoint paths |
+| `serverBasePath` | derived from spec | Overrides the first server URL path (Swagger 2 `basePath`); prepended once to the shared API contract. Use `/` to omit the spec prefix. |
 | `corsEnabled` | `false` | Add `@Cors.Defaults` to generated endpoint classes |
 | `ftEnabled` | `false` | Add `@Ft.Retry` to generated REST client interfaces |
 | `tracingEnabled` | `false` | Add `@Tracing.Traced` to generated endpoint classes |

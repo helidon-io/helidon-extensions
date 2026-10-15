@@ -47,5 +47,7 @@
         <module>modules/enum-options</module>
         <module>modules/enum-defaults</module>
         <module>modules/swagger2-contracts</module>
+        <module>modules/base-path-swagger2</module>
+        <module>modules/base-path-openapi3</module>
     </modules>
 </project>
