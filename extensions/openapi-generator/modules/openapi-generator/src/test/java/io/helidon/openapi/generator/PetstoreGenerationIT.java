@@ -228,9 +228,14 @@ class PetstoreGenerationIT {
         assertThat(read(apiFile("PetsApi.java")), containsString("public interface PetsApi"));
     }
 
+    /**
+     * The shared contract must include both the server URL's /v1 prefix and the common operation path.
+     *
+     * @throws IOException if generated sources cannot be read
+     */
     @Test
     void apiInterfaceHasHttpPathAnnotation() throws IOException {
-        assertThat(read(apiFile("PetsApi.java")), containsString("@Http.Path(\"/pets\")"));
+        assertThat(read(apiFile("PetsApi.java")), containsString("@Http.Path(\"/v1/pets\")"));
     }
 
     // -------------------------------------------------------------------------
