@@ -27,7 +27,7 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 /**
- * Exercises annotation-processed routes with an explicit base path override, including shared and root paths.
+ * Exercises an explicit prefix containing a reserved character across all server scopes.
  */
 @ServerTest
 class BasePathHttpTest {
@@ -45,11 +45,13 @@ class BasePathHttpTest {
     /**
      * Prefixed requests must reach the generated stubs, whose bodies deliberately throw.
      * A missing route would return 404 instead of the stub's 500 response.
+     * The configured prefix replaces global, path-item, and operation-level server paths.
      */
     @Test
     void prefixedRoutesReachGeneratedEndpoints() {
         for (String path : new String[] {
-                "/custom/widgets", "/custom/widgets/widget-1", "/custom/health", "/custom/ready", "/custom"}) {
+                "/custom&v2/widgets", "/custom&v2/widgets/widget-1", "/custom&v2/health", "/custom&v2/ready", "/custom&v2",
+                "/custom&v2/global", "/custom&v2/path", "/custom&v2/operation", "/custom&v2/reserved"}) {
             try (var response = client.get(path).request()) {
                 assertThat(path, response.status(), is(Status.INTERNAL_SERVER_ERROR_500));
             }
@@ -66,7 +68,7 @@ class BasePathHttpTest {
             var document = JsonParser.create(response.as(String.class)).readJsonObject();
             String server = document.arrayValue("servers").orElseThrow().get(0).orElseThrow()
                     .asObject().stringValue("url").orElseThrow();
-            assertThat(server, is("/custom"));
+            assertThat(server, is("/custom&v2"));
             try (var route = client.get(server + "/widgets").request()) {
                 assertThat(route.status(), is(Status.INTERNAL_SERVER_ERROR_500));
             }
@@ -74,12 +76,13 @@ class BasePathHttpTest {
     }
 
     /**
-     * Dropping or applying the spec prefix twice must not expose an alternate route.
+     * Original, repeated, and HTML-escaped prefixes must not expose alternate routes.
      */
     @Test
     void unprefixedAndDoublePrefixedRoutesAreAbsent() {
         for (String path : new String[] {
-                "/widgets", "/widgets/widget-1", "/health", "/ready", "/api/v1/widgets", "/custom/custom/widgets"}) {
+                "/widgets", "/widgets/widget-1", "/health", "/ready", "/api/v0/widgets", "/custom&v2/custom&v2/widgets",
+                "/custom&amp;v2/widgets", "/path", "/a&b/operation", "/a&b/reserved"}) {
             try (var response = client.get(path).request()) {
                 assertThat(path, response.status(), is(Status.NOT_FOUND_404));
             }

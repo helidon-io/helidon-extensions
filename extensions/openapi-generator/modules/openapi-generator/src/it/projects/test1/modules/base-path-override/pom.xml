@@ -45,7 +45,7 @@
                         <id>generate-helidon-project</id>
                         <configuration>
                             <configOptions>
-                                <serverBasePath>/custom/</serverBasePath>
+                                <serverBasePath>/custom&amp;v2/</serverBasePath>
                             </configOptions>
                         </configuration>
                     </execution>

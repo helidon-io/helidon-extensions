@@ -34,4 +34,23 @@
         <inputSpec>${project.basedir}/../../specs/base-path-openapi3.yaml</inputSpec>
         <skipGeneratedTests>false</skipGeneratedTests>
     </properties>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.openapitools</groupId>
+                <artifactId>openapi-generator-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>generate-helidon-project</id>
+                        <configuration>
+                            <serverVariableOverrides>
+                                <serverVariableOverride>version=v1</serverVariableOverride>
+                            </serverVariableOverrides>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

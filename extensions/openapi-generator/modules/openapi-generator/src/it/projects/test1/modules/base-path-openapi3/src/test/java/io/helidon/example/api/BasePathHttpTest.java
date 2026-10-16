@@ -16,7 +16,9 @@
 
 package io.helidon.example.api;
 
+import io.helidon.common.media.type.MediaTypes;
 import io.helidon.http.Status;
+import io.helidon.json.JsonParser;
 import io.helidon.webclient.http1.Http1Client;
 import io.helidon.webserver.testing.junit5.ServerTest;
 import org.junit.jupiter.api.Test;
@@ -25,7 +27,7 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 /**
- * Exercises annotation-processed routes with a spec base path, including shared and root paths.
+ * Exercises inherited server paths, scoped overrides, and reserved characters in generated routes.
  */
 @ServerTest
 class BasePathHttpTest {
@@ -55,11 +57,45 @@ class BasePathHttpTest {
     }
 
     /**
+     * Scoped prefixes must reach their stubs even when a tag contains several different prefixes.
+     * Reserved characters must survive both class-level and method-level path annotations.
+     */
+    @Test
+    void scopedAndReservedRoutesReachGeneratedEndpoints() {
+        for (String path : new String[] {"/api/v1/global", "/path", "/a&b/operation", "/a&b/reserved"}) {
+            try (var response = client.get(path).request()) {
+                assertThat(path, response.status(), is(Status.INTERNAL_SERVER_ERROR_500));
+            }
+        }
+    }
+
+    /**
+     * Published server variables must advertise the effective configured value that reaches a handler.
+     */
+    @Test
+    void publishedServerVariablesMatchRoutes() {
+        try (var response = client.get("/openapi").accept(MediaTypes.APPLICATION_JSON).request()) {
+            assertThat(response.status(), is(Status.OK_200));
+            var document = JsonParser.create(response.as(String.class)).readJsonObject();
+            var server = document.arrayValue("servers").orElseThrow().get(0).orElseThrow().asObject();
+            var version = server.objectValue("variables").orElseThrow().objectValue("version").orElseThrow();
+            String value = version.stringValue("default").orElseThrow();
+            assertThat(value, is("v1"));
+            String url = server.stringValue("url").orElseThrow().replace("{version}", value);
+            try (var route = client.get("/" + url + "widgets").request()) {
+                assertThat(route.status(), is(Status.INTERNAL_SERVER_ERROR_500));
+            }
+        }
+    }
+
+    /**
      * Dropping or applying the spec prefix twice must not expose an alternate route.
      */
     @Test
     void unprefixedAndDoublePrefixedRoutesAreAbsent() {
-        for (String path : new String[] {"/widgets", "/widgets/widget-1", "/health", "/ready", "/api/v1/api/v1/widgets"}) {
+        for (String path : new String[] {
+                "/widgets", "/widgets/widget-1", "/health", "/ready", "/api/v1/api/v1/widgets",
+                "/api/v0/widgets", "/api/v1/path", "/api/v1/operation", "/unused/operation", "/a&amp;b/reserved"}) {
             try (var response = client.get(path).request()) {
                 assertThat(path, response.status(), is(Status.NOT_FOUND_404));
             }

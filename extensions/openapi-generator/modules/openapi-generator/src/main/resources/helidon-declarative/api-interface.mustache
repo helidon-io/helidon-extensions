@@ -54,7 +54,7 @@ import io.helidon.security.abac.role.RoleValidator;
  * {@code @Http.GET}, etc.) that are shared between the server endpoint and the
  * declarative REST client.</p>
  */
-@Http.Path("{{helidonBasePath}}")
+@Http.Path("{{{helidonBasePath}}}")
 @io.helidon.service.registry.Service.Singleton
 public interface {{classname}}Api {
 
@@ -66,7 +66,7 @@ public interface {{classname}}Api {
     {{#isDeprecated}}@Deprecated
     {{/isDeprecated}}// {{operationId}} — {{httpMethod}} {{path}}
     {{vendorExtensions.x-http-annotation}}
-    {{#vendorExtensions.x-has-method-path}}@Http.Path("{{vendorExtensions.x-method-path}}")
+    {{#vendorExtensions.x-has-method-path}}@Http.Path("{{{vendorExtensions.x-method-path}}}")
     {{/vendorExtensions.x-has-method-path}}{{#hasProduces}}@Http.Produces({{{vendorExtensions.x-produces-value}}})
     {{/hasProduces}}{{#hasConsumes}}@Http.Consumes({{{vendorExtensions.x-consumes-value}}})
     {{/hasConsumes}}{{#vendorExtensions.x-status-code}}@RestServer.Status({{vendorExtensions.x-status-code}})

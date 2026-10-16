@@ -15,7 +15,9 @@
 #
 openapi: 3.0.3
 servers:
-  - url: api/v1/
+  - url: api/{version}/
+    variables:
+      version: {default: v0}
 info: {title: Base path routes, version: "1"}
 paths:
   /widgets:
@@ -51,5 +53,37 @@ paths:
     get:
       tags: [Root]
       operationId: root
+      responses:
+        "204": {description: OK}
+  /global:
+    get:
+      tags: [Scoped]
+      operationId: aGlobal
+      responses:
+        "204": {description: OK}
+  /path:
+    servers:
+      - url: /
+    get:
+      tags: [Scoped]
+      operationId: bPath
+      responses:
+        "204": {description: OK}
+  /operation:
+    servers:
+      - url: /unused
+    get:
+      tags: [Scoped]
+      operationId: cOperation
+      servers:
+        - url: https://example.com/a&b
+      responses:
+        "204": {description: OK}
+  /reserved:
+    get:
+      tags: [Reserved]
+      operationId: reserved
+      servers:
+        - url: https://example.com/a&b
       responses:
         "204": {description: OK}

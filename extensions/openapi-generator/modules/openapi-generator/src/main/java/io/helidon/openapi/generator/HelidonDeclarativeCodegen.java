@@ -40,6 +40,7 @@ import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.servers.Server;
+import org.apache.commons.text.StringEscapeUtils;
 import org.openapitools.codegen.CodegenComposedSchemas;
 import org.openapitools.codegen.CodegenModel;
 import org.openapitools.codegen.CodegenOperation;
@@ -387,8 +388,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     }
 
     /**
-     * Prepares schema metadata and derives the endpoint prefix from the first server URL unless configured.
-     * Server variables use their defaults or configured overrides; publication reflects an explicit path override.
+     * Prepares schema metadata and the default endpoint prefix from the first top-level server unless configured.
+     * Publication reflects configured server variable values and explicit path overrides.
      *
      * @param openAPI specification to generate
      */
@@ -403,7 +404,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 : new ArrayList<>(openAPI.getSecurity());
 
         String path = serverBasePath.isEmpty()
-                ? ServerBasePathSupport.path(openAPI, serverVariableOverrides())
+                ? ServerBasePathSupport.path(openAPI.getServers(), serverVariableOverrides())
                 : ServerBasePathSupport.normalize(serverBasePath);
         additionalProperties.put(OPT_SERVER_BASE_PATH, path);
 
@@ -411,9 +412,10 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         // src/main/resources/META-INF/openapi.yaml (picked up by helidon-openapi at runtime)
         if (serverOpenApi) {
             try {
-                OpenAPI published = serverBasePath.isEmpty()
+                OpenAPI published = serverBasePath.isEmpty() && serverVariableOverrides().isEmpty()
                         ? openAPI
-                        : ServerBasePathSupport.publishedDocument(openAPI, path);
+                        : ServerBasePathSupport.publishedDocument(openAPI, serverBasePath.isEmpty() ? "" : path,
+                                                                  serverVariableOverrides());
                 String yamlContent = Yaml.pretty().writeValueAsString(published);
                 additionalProperties.put("x-openapi-spec-yaml", yamlContent);
             } catch (Exception ignored) {
@@ -517,7 +519,16 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         return model;
     }
 
-    // Per-operation enrichment
+    /**
+     * Enriches the operation contract and resolves its route with operation, path-item, then root server precedence.
+     * An explicit server base path replaces the prefix at every scope.
+     *
+     * @param path specification operation path
+     * @param httpMethod HTTP method
+     * @param operation specification operation
+     * @param servers path-item servers, or {@code null} when inherited
+     * @return enriched operation with its effective route
+     */
     @Override
     public CodegenOperation fromOperation(String path,
                                           String httpMethod,
@@ -525,6 +536,13 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                                           List<Server> servers) {
         CodegenOperation op = super.fromOperation(path, httpMethod, operation, servers);
         jsonStringEnums.restoreInlineRequestEntityEnum(path, httpMethod, op);
+
+        String prefix = additionalProperties.getOrDefault(OPT_SERVER_BASE_PATH, "/").toString();
+        if (serverBasePath.isEmpty()) {
+            prefix = ServerBasePathSupport.operationPrefix(operation, servers, serverVariableOverrides(), prefix);
+        }
+        op.vendorExtensions.put("x-helidon-operation-path",
+                                "/".equals(prefix) ? op.path : prefix + ("/".equals(op.path) ? "" : op.path));
 
         // HTTP method annotation string (e.g. "@Http.GET")
         op.vendorExtensions.put("x-http-annotation", "@Http." + httpMethod.toUpperCase());
@@ -665,7 +683,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     }
 
     /**
-     * Splits each operation path into a shared class path and method suffix, applying the server prefix once.
+     * Splits effective operation routes into a shared class path and method suffix, applying each server prefix once.
      *
      * @param objs operations grouped by tag
      * @param allModels generated models
@@ -685,8 +703,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
         // NOTE: "basePath" is already used by additionalProperties (full server URL) and
         // would be overridden when DefaultGenerator merges additionalProperties into the
         // template context. Use a Helidon-specific key instead.
-        String commonPath = computeCommonPath(opList);
-        result.put("helidonBasePath", endpointBasePath(commonPath));
+        String commonPath = ServerBasePathSupport.commonPath(opList);
+        result.put("helidonBasePath", StringEscapeUtils.escapeJava(commonPath));
 
         // Per-operation: method-level sub-path and other enrichments
         boolean anyComputedHeaders = false;
@@ -701,13 +719,13 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
         for (CodegenOperation op : opList) {
             // Sub-path (part after commonPath)
-            String fullPath = op.path;
+            String fullPath = ServerBasePathSupport.endpointPath(op);
             String subPath = fullPath.equals(commonPath) ? "" : fullPath;
             if (!"/".equals(commonPath) && fullPath.startsWith(commonPath)) {
                 subPath = fullPath.substring(commonPath.length());
             }
             if (!subPath.isEmpty()) {
-                op.vendorExtensions.put("x-method-path", subPath);
+                op.vendorExtensions.put("x-method-path", StringEscapeUtils.escapeJava(subPath));
                 op.vendorExtensions.put("x-has-method-path", Boolean.TRUE);
             }
 
@@ -861,57 +879,6 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 throw new RuntimeException("Failed to generate computed header function class: " + file, e);
             }
         }
-    }
-
-    /**
-     * Combines the configured or derived server prefix with the common operation path.
-     * Root prefixes contribute no extra separator; the spec's operation paths remain relative to the server.
-     *
-     * @param commonPath common prefix of the operation paths
-     * @return class-level HTTP path including the server prefix
-     */
-    private String endpointBasePath(String commonPath) {
-        String prefix = additionalProperties.getOrDefault(OPT_SERVER_BASE_PATH, "").toString()
-                .replaceAll("^/+|/+$", "");
-        if (prefix.isEmpty()) {
-            return commonPath;
-        }
-        return "/" + prefix + ("/".equals(commonPath) ? "" : commonPath);
-    }
-
-    /**
-     * Find the longest common path prefix shared by all operations in a tag group.
-     * Stops before any path-parameter segment ({...}).
-     */
-    private String computeCommonPath(List<CodegenOperation> ops) {
-        if (ops.isEmpty()) return "/";
-
-        String first = ops.get(0).path;
-        String[] firstParts = first.split("/", -1);
-
-        // Find how many leading segments all operations share
-        int commonSegments = firstParts.length;
-        for (CodegenOperation op : ops) {
-            String[] parts = op.path.split("/", -1);
-            int match = 0;
-            for (int i = 0; i < Math.min(commonSegments, parts.length); i++) {
-                if (firstParts[i].equals(parts[i])) {
-                    match = i + 1;
-                } else {
-                    break;
-                }
-            }
-            commonSegments = Math.min(commonSegments, match);
-        }
-
-        // Build the common path, stopping before any path-parameter segments
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < commonSegments; i++) {
-            if (firstParts[i].isEmpty()) continue;      // skip the leading ""
-            if (firstParts[i].startsWith("{")) break;   // stop at path params
-            sb.append("/").append(firstParts[i]);
-        }
-        return sb.length() == 0 ? "/" : sb.toString();
     }
 
     // Per-model post-processing: mark required properties and validation constraints

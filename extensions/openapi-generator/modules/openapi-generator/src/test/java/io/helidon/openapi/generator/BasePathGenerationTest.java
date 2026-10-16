@@ -243,17 +243,23 @@ class BasePathGenerationTest {
     }
 
     /**
-     * Explicit server variable values must affect relative paths just as they affect absolute URLs.
+     * Explicit server variable values must affect routes and publication without changing the source.
      *
+     * @param url relative or absolute server URL
+     * @param expected generated route
      * @throws IOException if generated sources cannot be read
      */
-    @Test
-    void resolvesServerVariableOverrides() throws IOException {
-        generateSpec("""
+    @ParameterizedTest
+    @CsvSource(value = {
+            "api/{version}|/api/v2/widgets",
+            "https://example.com/{version}|/v2/widgets"
+    }, delimiter = '|')
+    void resolvesServerVariableOverrides(String url, String expected) throws IOException {
+        var source = generateSpec("""
                 openapi: 3.0.3
                 info: {title: Server variable override, version: '1'}
                 servers:
-                  - url: api/{version}
+                  - url: %s
                     variables:
                       version: {default: v1}
                 paths:
@@ -263,8 +269,162 @@ class BasePathGenerationTest {
                       operationId: listWidgets
                       responses:
                         '204': {description: OK}
+                """.formatted(url), Map.of(), false, Map.of("version", "v2"));
+        assertPaths("Widgets", List.of(expected));
+        var published = publishedSpec().getServers().get(0);
+        assertThat(published.getUrl(), is(url));
+        assertThat(published.getVariables().get("version").getDefault(), is("v2"));
+        assertThat(source.getServers().get(0).getVariables().get("version").getDefault(), is("v1"));
+    }
+
+    /**
+     * Each operation inherits its nearest server declaration before tag paths are split.
+     * An explicit prefix overrides every scope, including operations sharing a tag.
+     *
+     * @param override whether to override all server prefixes
+     * @throws IOException if generated sources cannot be read
+     */
+    @ParameterizedTest
+    @CsvSource({"false", "true"})
+    void respectsScopedServers(boolean override) throws IOException {
+        generateSpec("""
+                openapi: 3.0.3
+                info: {title: Scoped servers, version: '1'}
+                servers:
+                  - url: /v1
+                paths:
+                  /widgets:
+                    servers:
+                      - url: /
+                    get:
+                      tags: [Widgets]
+                      operationId: listWidgets
+                      responses:
+                        '204': {description: OK}
+                  /global:
+                    get:
+                      tags: [Mixed]
+                      operationId: aGlobal
+                      responses:
+                        '204': {description: OK}
+                  /path:
+                    servers:
+                      - url: /path
+                    get:
+                      tags: [Mixed]
+                      operationId: bPath
+                      responses:
+                        '204': {description: OK}
+                  /operation:
+                    servers:
+                      - url: /path
+                    get:
+                      tags: [Mixed]
+                      operationId: cOperation
+                      servers:
+                        - url: /v2
+                      responses:
+                        '204': {description: OK}
+                """, override ? Map.of("serverBasePath", "/custom") : Map.of(), false);
+        assertPaths("Widgets", List.of(override ? "/custom/widgets" : "/widgets"));
+        assertPaths("Mixed", override
+                ? List.of("/custom", "/global", "/path", "/operation")
+                : List.of("/", "/v1/global", "/path/path", "/v2/operation"));
+    }
+
+    /**
+     * Scoped variable overrides must be reflected in both routing and the published defaults.
+     *
+     * @throws IOException if generated sources cannot be read
+     */
+    @Test
+    void publishesScopedVariableOverrides() throws IOException {
+        var source = generateSpec("""
+                openapi: 3.0.3
+                info: {title: Scoped variables, version: '1'}
+                paths:
+                  /widgets:
+                    servers:
+                      - url: /path/{version}
+                        variables:
+                          version: {default: v1}
+                    get:
+                      tags: [Widgets]
+                      operationId: listWidgets
+                      responses:
+                        '204': {description: OK}
+                    post:
+                      tags: [Widgets]
+                      operationId: saveWidget
+                      servers:
+                        - url: /operation/{version}
+                          variables:
+                            version: {default: v1}
+                      responses:
+                        '204': {description: OK}
                 """, Map.of(), false, Map.of("version", "v2"));
-        assertPaths("Widgets", List.of("/api/v2/widgets"));
+        assertPaths("Widgets", List.of("/", "/path/v2/widgets", "/operation/v2/widgets"));
+        var published = publishedSpec().getPaths().get("/widgets");
+        assertThat(published.getServers().get(0).getVariables().get("version").getDefault(), is("v2"));
+        assertThat(published.getPost().getServers().get(0).getVariables().get("version").getDefault(), is("v2"));
+        assertThat(source.getPaths().get("/widgets").getServers().get(0).getVariables().get("version").getDefault(),
+                   is("v1"));
+        assertThat(source.getPaths().get("/widgets").getPost().getServers().get(0)
+                           .getVariables().get("version").getDefault(), is("v1"));
+    }
+
+    /**
+     * Legal reserved characters in configured and derived prefixes must survive Java source rendering.
+     *
+     * @param override whether the prefix comes from configuration
+     * @throws IOException if generated sources cannot be read
+     */
+    @ParameterizedTest
+    @CsvSource({"false", "true"})
+    void retainsReservedPathCharacters(boolean override) throws IOException {
+        String prefix = "/a&b;c=d+e,@f$g!h'i(j)";
+        generate("openapi3", override ? "/v1" : prefix,
+                 override ? Map.of("serverBasePath", prefix) : Map.of(), false);
+        assertPaths("Widgets", List.of(prefix + "/widgets", "/{widgetId}"));
+        assertThat(publishedSpec().getServers().get(0).getUrl(), is("https://example.com" + prefix));
+    }
+
+    /**
+     * Replacing a path must retain an origin supplied entirely by a server variable.
+     *
+     * @param url URL template
+     * @param endpoint variable default containing the origin
+     * @param suffix suffix to preserve after replacing the path
+     * @throws IOException if the generated document cannot be read
+     */
+    @ParameterizedTest
+    @CsvSource(value = {
+            "{endpoint}|https://example.com/v1|",
+            "{endpoint}/v1|https://example.com|",
+            "{endpoint}|//example.com/v1|",
+            "{endpoint}?next=https://other.example.com#section|https://example.com/v1|?next=https://other.example.com#section"
+    }, delimiter = '|')
+    void preservesVariableOriginOnPathOverride(String url, String endpoint, String suffix) throws IOException {
+        var source = generateSpec("""
+                openapi: 3.0.3
+                info: {title: Variable origin, version: '1'}
+                servers:
+                  - url: '%s'
+                    variables:
+                      endpoint: {default: '%s'}
+                paths:
+                  /widgets:
+                    get:
+                      tags: [Widgets]
+                      operationId: listWidgets
+                      responses:
+                        '204': {description: OK}
+                """.formatted(url, endpoint), Map.of("serverBasePath", "/custom"), false);
+        assertPaths("Widgets", List.of("/custom/widgets"));
+        assertThat(publishedSpec().getServers().get(0).getUrl(),
+                   is((endpoint.startsWith("//") ? "//" : "https://") + "example.com/custom" + (suffix == null ? "" : suffix)));
+        assertThat(source.getServers().get(0).getUrl(), is(url));
+        assertThat(source.getServers().get(0).getVariables().get("endpoint").getDefault(), is(endpoint));
     }
 
     /**

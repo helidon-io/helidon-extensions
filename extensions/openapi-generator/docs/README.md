@@ -166,7 +166,7 @@ Set these under Maven `<configOptions>` or CLI `--additional-properties`.
 | `generateClient` | `true` | Generate `{Tag}Client.java` declarative REST client interfaces |
 | `generateErrorHandler` | `true` | Generate `{Tag}Exception.java` and `{Tag}ErrorHandler.java` |
 | `serverOpenApi` | `true` | Copy the OpenAPI document into `META-INF/openapi.yaml` and add server-side OpenAPI support |
-| `serverBasePath` | derived from spec | Overrides the route context path derived from the first server URL (Swagger 2 `basePath`). Use `/` to remove the prefix. See [Overriding the context path](#overriding-the-context-path). |
+| `serverBasePath` | derived from spec | Overrides the route context path derived from the effective server URL (Swagger 2 `basePath`). Use `/` to remove the prefix. See [Overriding the context path](#overriding-the-context-path). |
 | `corsEnabled` | `false` | Add `@Cors.Defaults` to generated endpoint classes |
 | `ftEnabled` | `false` | Add `@Ft.Retry` to generated REST client interfaces |
 | `tracingEnabled` | `false` | Add `@Tracing.Traced` to generated endpoint classes |
@@ -192,10 +192,12 @@ rely on this shorthand.
 
 Use the generator option `serverBasePath` to replace the context path from the
 specification. With no override (or an empty value), the generator uses the path
-of the first top-level OpenAPI 3 `servers` URL, resolving server variables from
-their defaults or configured overrides. Swagger 2 `basePath` is handled through
-the parser's conversion to OpenAPI 3. Relative URLs such as `api/v1` retain every
-path segment and are interpreted from the server root, where the generated
+of the first URL in the effective OpenAPI 3 `servers` list: operation-level
+servers take precedence over path-item servers, then top-level servers. Server
+variables resolve from their defaults or configured overrides. Swagger 2
+`basePath` is handled through the parser's conversion to OpenAPI 3. Relative URLs
+such as `api/v1` retain every path segment and are interpreted from the server
+root, where the generated
 application exposes `/openapi`. An absent server path contributes no prefix.
 
 For example, with `servers: [{url: "https://example.com/v1"}]` (or Swagger 2
@@ -207,10 +209,12 @@ For example, with `servers: [{url: "https://example.com/v1"}]` (or Swagger 2
 | `/custom` | `/custom/widgets` |
 | `/` | `/widgets` |
 
-The override replaces the specification's prefix. It is applied once to the
-class-level `@Http.Path` on the shared API interface; method paths contain only
-the remaining operation path. Generated server endpoints and REST clients inherit
-that contract. Leading and trailing slashes on the override are normalized, so
+The override replaces the specification's prefix at every server scope. The
+shared API interface places the common route prefix in its class-level
+`@Http.Path`; method paths contain the remaining route segments. Operations
+sharing a tag may have different effective prefixes. Generated server endpoints
+and REST clients inherit that contract. Leading and trailing slashes on the
+override are normalized, so
 `custom`, `/custom`, and `/custom/` produce the same prefix.
 
 In the Maven plugin's `<configuration>`, set:
@@ -235,7 +239,10 @@ When `serverOpenApi=true`, the generated `META-INF/openapi.yaml` also uses the
 overridden path in every declared server URL, including path-item and operation
 servers. Server origins and unrelated metadata are preserved; variables used only
 in the replaced path are removed. If no top-level server is declared, a relative
-server URL containing the override is added. The input specification is unchanged.
+server URL containing the override is added. If a variable supplies the entire
+origin, the published URL retains the expanded origin. Configured
+`serverVariableOverrides` values are also reflected in the published variable
+defaults, even without `serverBasePath`. The input specification is unchanged.
 
 ## What Gets Generated
 
