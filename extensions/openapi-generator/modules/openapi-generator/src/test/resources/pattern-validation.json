@@ -1,0 +1,161 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Generic pattern validation",
+    "version": "1"
+  },
+  "paths": {
+    "/items": {
+      "post": {
+        "operationId": "createItem",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payload"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listItems",
+        "parameters": [
+          {
+            "name": "rate",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9]\\d*/s$"
+            }
+          },
+          {
+            "name": "quoted",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^a\"b$"
+            }
+          },
+          {
+            "name": "lineBreak",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^a\nb$"
+            }
+          },
+          {
+            "name": "backslash",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^a\\\\b$"
+            }
+          },
+          {
+            "name": "unicode",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^café$"
+            }
+          },
+          {
+            "name": "dotted",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Z]+\\.[0-9]+$"
+            }
+          },
+          {
+            "name": "tab",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^a\tb$"
+            }
+          },
+          {
+            "name": "carriage",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^a\rb$"
+            }
+          },
+          {
+            "name": "unconstrained",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No items"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Payload": {
+        "type": "object",
+        "properties": {
+          "rate": {
+            "type": "string",
+            "pattern": "^[1-9]\\d*/s$"
+          },
+          "quoted": {
+            "type": "string",
+            "pattern": "^a\"b$"
+          },
+          "lineBreak": {
+            "type": "string",
+            "pattern": "^a\nb$"
+          },
+          "backslash": {
+            "type": "string",
+            "pattern": "^a\\\\b$"
+          },
+          "unicode": {
+            "type": "string",
+            "pattern": "^café$"
+          },
+          "dotted": {
+            "type": "string",
+            "pattern": "^[A-Z]+\\.[0-9]+$"
+          },
+          "tab": {
+            "type": "string",
+            "pattern": "^a\tb$"
+          },
+          "carriage": {
+            "type": "string",
+            "pattern": "^a\rb$"
+          },
+          "unconstrained": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

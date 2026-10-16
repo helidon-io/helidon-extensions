@@ -1,0 +1,75 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Generic pattern validation",
+    "version": "1"
+  },
+  "paths": {
+    "/items": {
+      "post": {
+        "operationId": "createItem",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payload"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listItems",
+        "parameters": [
+          {
+            "name": "rate",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9]\\d*/s$",
+              "enum": [
+                "1/s",
+                "100/s"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No items"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Payload": {
+        "type": "object",
+        "properties": {
+          "rate": {
+            "type": "string",
+            "pattern": "^[1-9]\\d*/s$",
+            "enum": [
+              "1/s",
+              "100/s"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
