@@ -1,0 +1,38 @@
+/*
+ * Copyright (c) 2026 Oracle and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.55; }
+body { margin: 0; background: #111923; color: #e3e9ef; }
+main { width: min(46rem, calc(100% - 2rem)); margin: 3rem auto; }
+header { margin-bottom: 2rem; }
+.eyebrow { color: #83cab5; letter-spacing: .1em; text-transform: uppercase; font-size: .8rem; }
+h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.15; margin: .5rem 0; }
+header > p, footer { color: #aebccb; }
+#conversation { padding: 0; list-style: none; }
+#conversation li { padding: 1rem 1.25rem; margin: 1rem 0; border-radius: .6rem; background: #1c2a38; }
+#conversation .assistant { border-left: 3px solid #83cab5; }
+#conversation p { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 0; }
+label { display: block; margin-bottom: .5rem; font-weight: 600; }
+textarea { box-sizing: border-box; width: 100%; padding: .8rem; resize: vertical; font: inherit;
+           color: inherit; background: #16222e; border: 1px solid #617287; border-radius: .5rem; }
+.actions { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: .8rem; }
+button { border: 1px solid #83cab5; border-radius: .4rem; padding: .65rem 1rem; font: inherit; cursor: pointer; }
+#send { background: #83cab5; color: #10231d; }
+#reset { background: transparent; color: #e3e9ef; }
+button:disabled { opacity: .55; cursor: wait; }
+button:focus-visible, textarea:focus-visible { outline: 3px solid #91bff3; outline-offset: 3px; }
+#status { min-height: 1.6em; color: #efc591; }
+footer { font-size: .8rem; margin-top: 2rem; }
