@@ -26,15 +26,19 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
+import io.helidon.common.media.type.MediaTypes;
+import io.helidon.config.Config;
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnector;
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarIncomingConfig;
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarMessage;
@@ -43,12 +47,17 @@ import io.helidon.extensions.messaging.connectors.pulsar.PulsarSchemaType;
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarSubscriptionInitialPosition;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.AutoIncomingReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.AutoOutgoingSender;
+import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.BatchMessageReceiver;
+import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.BatchPayloadReceiver;
+import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.BatchReceiver;
+import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.BlockingBatchReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.FailOnceReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.FailedMappingReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.IncomingReceiver;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonOutgoingSender;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.JsonSchemaProvider;
 import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.OutgoingSender;
+import io.helidon.extensions.messaging.tests.pulsar.PulsarMessagingTypes.PartialBatchReceiver;
 import io.helidon.messaging.DeadLetterMessage;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
@@ -61,6 +70,7 @@ import io.helidon.service.registry.ServiceRegistry;
 import io.helidon.service.registry.ServiceRegistryManager;
 
 import org.apache.pulsar.client.api.Consumer;
+import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.Schema;
@@ -78,6 +88,7 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
 @Testcontainers(disabledWithoutDocker = true)
 class PulsarConnectorIT {
@@ -456,28 +467,37 @@ class PulsarConnectorIT {
         String sourceTopic = uniqueName("failed-mapping-source");
         String deadLetterTopic = uniqueName("failed-mapping-dlq");
         String sourceSubscription = uniqueName("failed-mapping-subscription");
-        String yaml = failedMappingYaml(sourceTopic, deadLetterTopic, sourceSubscription);
+        String yaml = failedMappingYaml(sourceTopic, deadLetterTopic, sourceSubscription)
+                .replace("receive-timeout: PT0.1S", "receive-timeout: PT30S\n      batch-receive-max-messages: 4");
 
         try (PulsarClient client = newClient();
-                Producer<String> producer = client.newProducer(Schema.STRING).topic(sourceTopic).create();
+                Producer<String> producer = client.newProducer(Schema.STRING)
+                        .topic(sourceTopic)
+                        .enableBatching(false)
+                        .create();
                 Consumer<String> deadLetterConsumer = stringConsumer(client,
                                                                      deadLetterTopic,
                                                                      uniqueName("failed-mapping-dlq-reader"))) {
+            try (Consumer<String> consumer = stringConsumer(client, sourceTopic, sourceSubscription)) {
+                assertThat(consumer.isConnected(), is(true));
+            }
+            producer.send("a");
+            producer.newMessage()
+                    .key("null-key")
+                    .property("kind", "null")
+                    .value(null)
+                    .send();
+            producer.newMessage()
+                    .key("oversized-key")
+                    .property("kind", "oversized")
+                    .value("oversized")
+                    .send();
+            producer.send("b");
+
             ServiceRegistryManager firstManager = PulsarScenarioRegistry.create(yaml, FailedMappingReceiver.class);
             try {
                 FailedMappingReceiver receiver = firstManager.registry().get(FailedMappingReceiver.class);
                 firstManager.registry().get(MessagingRuntime.class);
-
-                producer.newMessage()
-                        .key("null-key")
-                        .property("kind", "null")
-                        .value(null)
-                        .send();
-                producer.newMessage()
-                        .key("oversized-key")
-                        .property("kind", "oversized")
-                        .value("oversized")
-                        .send();
 
                 org.apache.pulsar.client.api.Message<String> nullDeadLetter = receiveOne(deadLetterConsumer);
                 org.apache.pulsar.client.api.Message<String> oversizedDeadLetter = receiveOne(deadLetterConsumer);
@@ -486,6 +506,11 @@ class PulsarConnectorIT {
                                               "oversized-key",
                                               "oversized",
                                               sourceTopic);
+                PulsarMessage<String> first = receiver.awaitMessage(WAIT_TIMEOUT);
+                PulsarMessage<String> last = receiver.awaitMessage(WAIT_TIMEOUT);
+                assertThat(first, notNullValue());
+                assertThat(last, notNullValue());
+                assertThat(List.of(first.entity(), last.entity()), is(List.of("a", "b")));
                 assertThat("failed mappings must not reach the application handler",
                            receiver.awaitMessage(NO_MESSAGE_TIMEOUT),
                            nullValue());
@@ -493,7 +518,9 @@ class PulsarConnectorIT {
                 firstManager.shutdown();
             }
 
-            ServiceRegistryManager secondManager = PulsarScenarioRegistry.create(yaml, FailedMappingReceiver.class);
+            ServiceRegistryManager secondManager = PulsarScenarioRegistry.create(
+                    yaml.replace("batch-receive-max-messages: 4", "batch-receive-max-messages: 1"),
+                    FailedMappingReceiver.class);
             try {
                 FailedMappingReceiver receiver = secondManager.registry().get(FailedMappingReceiver.class);
                 secondManager.registry().get(MessagingRuntime.class);
@@ -501,6 +528,8 @@ class PulsarConnectorIT {
                 assertThat("settled mapping failures must not be dead-lettered again after restart",
                            deadLetterConsumer.receive((int) NO_MESSAGE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS),
                            nullValue());
+                assertThat("valid siblings are settled with the failed mappings",
+                           receiver.awaitMessage(NO_MESSAGE_TIMEOUT), nullValue());
                 producer.send("x");
                 PulsarMessage<String> valid = receiver.awaitMessage(WAIT_TIMEOUT);
                 assertThat(valid, notNullValue());
@@ -545,6 +574,433 @@ class PulsarConnectorIT {
             } finally {
                 secondManager.shutdown();
             }
+        }
+    }
+
+    @Test
+    @Timeout(90)
+    void testDefaultNativeBatchDispatchesEveryScalarHandlerAndSettlesAcrossRestart() throws Exception {
+        String topic = uniqueName("default-batch");
+        String subscription = uniqueName("default-batch-reader");
+        List<String> payloads = Stream.iterate(0, i -> i + 1)
+                .limit(101)
+                .map(i -> "message-" + i)
+                .toList();
+        String yaml = batchYaml(topic, subscription, "");
+
+        try (PulsarClient client = newClient()) {
+            seedBacklog(client, topic, subscription, payloads);
+            ServiceRegistryManager manager = PulsarScenarioRegistry.create(yaml,
+                                                                          BatchReceiver.class,
+                                                                          BatchPayloadReceiver.class,
+                                                                          BatchMessageReceiver.class);
+            try {
+                ServiceRegistry registry = manager.registry();
+                BatchReceiver batchReceiver = registry.get(BatchReceiver.class);
+                BatchPayloadReceiver payloadReceiver = registry.get(BatchPayloadReceiver.class);
+                BatchMessageReceiver messageReceiver = registry.get(BatchMessageReceiver.class);
+                registry.get(MessagingRuntime.class);
+
+                List<MessageBatch<String>> batches = receiveBatches(batchReceiver, payloads.size());
+                assertThat("default receive policy collects native messages into batches",
+                           batches.stream().anyMatch(batch -> batch.size() > 1), is(true));
+                assertThat("default count cap", batches.stream().allMatch(batch -> batch.size() <= 100), is(true));
+                assertThat(batchPayloads(batches), is(payloads));
+                for (String expected : payloads) {
+                    assertThat(payloadReceiver.awaitPayload(WAIT_TIMEOUT), is(expected));
+                    Message<String> message = messageReceiver.awaitMessage(WAIT_TIMEOUT);
+                    assertThat(message, notNullValue());
+                    assertThat(message.entity(), is(expected));
+                    assertThat(message.header("sequence").orElseThrow(), is(expected));
+                }
+                assertThat(payloadReceiver.awaitPayload(NO_MESSAGE_TIMEOUT), nullValue());
+                assertThat(messageReceiver.awaitMessage(NO_MESSAGE_TIMEOUT), nullValue());
+                assertThat(batchReceiver.awaitBatch(NO_MESSAGE_TIMEOUT), nullValue());
+            } finally {
+                manager.shutdown();
+            }
+            assertSubscriptionEmpty(client, topic, subscription);
+        }
+    }
+
+    @Test
+    @Timeout(90)
+    void testConfiguredCountBoundsNativeBatchesIncludingSingletonOverride() throws Exception {
+        try (PulsarClient client = newClient()) {
+            for (int maximum : List.of(1, 3)) {
+                String topic = uniqueName("count-batch");
+                String subscription = uniqueName("count-batch-reader");
+                List<String> payloads = List.of("a", "b", "c", "d", "e", "f");
+                seedBacklog(client, topic, subscription, payloads);
+                String yaml = batchYaml(topic, subscription, """
+                        batch-receive-max-messages: %d
+                        receive-timeout: PT30S
+                        """.formatted(maximum));
+                ServiceRegistryManager manager = PulsarScenarioRegistry.create(yaml, BatchReceiver.class);
+                try {
+                    BatchReceiver receiver = manager.registry().get(BatchReceiver.class);
+                    manager.registry().get(MessagingRuntime.class);
+                    List<MessageBatch<String>> batches = receiveBatches(receiver, payloads.size());
+                    assertThat(batches.stream().map(MessageBatch::size).toList(),
+                               is(Collections.nCopies(payloads.size() / maximum, maximum)));
+                    assertThat(batchPayloads(batches), is(payloads));
+                } finally {
+                    manager.shutdown();
+                }
+                assertSubscriptionEmpty(client, topic, subscription);
+            }
+        }
+    }
+
+    @Test
+    @Timeout(90)
+    void testNativeAutoscalingCannotExceedConfiguredPrefetchLimit() throws Exception {
+        String topic = uniqueName("autoscale-batch");
+        String subscription = uniqueName("autoscale-batch-reader");
+        List<String> payloads = Stream.iterate(0, i -> i + 1)
+                .limit(30)
+                .map(i -> "message-" + i)
+                .toList();
+        String yaml = batchYaml(topic, subscription, """
+                batch-receive-max-messages: 5
+                receiver-queue-size: 5
+                receive-timeout: PT30S
+                consumer-properties:
+                  autoScaledReceiverQueueSizeEnabled: true
+                execution:
+                  max-pending-messages: 5
+                  max-in-flight-messages: 5
+                """);
+        try (PulsarClient client = newClient()) {
+            seedBacklog(client, topic, subscription, payloads);
+            ServiceRegistryManager manager = PulsarScenarioRegistry.create(yaml, BlockingBatchReceiver.class);
+            BlockingBatchReceiver receiver = manager.registry().get(BlockingBatchReceiver.class);
+            try {
+                manager.registry().get(MessagingRuntime.class);
+                MessageBatch<String> batch = receiver.awaitBatch(WAIT_TIMEOUT);
+                assertThat(batch, notNullValue());
+                assertThat(batch.size(), is(5));
+                assertThat("the first delivery remains blocked", receiver.awaitBatch(NO_MESSAGE_TIMEOUT), nullValue());
+
+                var result = PULSAR.execInContainer("/pulsar/bin/pulsar-admin",
+                                                    "topics",
+                                                    "stats",
+                                                    canonicalTopic(topic));
+                assertThat(result.getStderr(), result.getExitCode(), is(0));
+                Config stats = Config.just(result.getStdout(), MediaTypes.APPLICATION_YAML);
+                assertThat("broker deliveries cannot exceed the retained batch plus the configured prefetch queue",
+                           stats.get("msgOutCounter").asLong().get(), lessThanOrEqualTo(10L));
+            } finally {
+                receiver.release();
+                manager.shutdown();
+            }
+        }
+    }
+
+    @Test
+    @Timeout(90)
+    void testByteThresholdFlushesBeforeCountOrTimeoutAndAllowsOversizedSingleton() throws Exception {
+        try (PulsarClient client = newClient()) {
+            for (List<String> payloads : List.of(List.of("aa", "bb", "cc"), List.of("oversized"))) {
+                String topic = uniqueName("bytes-batch");
+                String subscription = uniqueName("bytes-batch-reader");
+                seedBacklog(client, topic, subscription, payloads);
+                String yaml = batchYaml(topic, subscription, """
+                        batch-receive-max-bytes: 6
+                        receive-timeout: PT30S
+                        """);
+                ServiceRegistryManager manager = PulsarScenarioRegistry.create(yaml, BatchReceiver.class);
+                try {
+                    BatchReceiver receiver = manager.registry().get(BatchReceiver.class);
+                    manager.registry().get(MessagingRuntime.class);
+                    MessageBatch<String> batch = receiver.awaitBatch(WAIT_TIMEOUT);
+                    assertThat("byte threshold completes before the 30-second collection timeout", batch, notNullValue());
+                    assertThat(batch.messages().stream().map(Message::entity).toList(), is(payloads));
+                } finally {
+                    manager.shutdown();
+                }
+                assertSubscriptionEmpty(client, topic, subscription);
+            }
+        }
+    }
+
+    @Test
+    @Timeout(90)
+    void testPartitionedTopicHonorsNativeBatchCountLimit() throws Exception {
+        String topic = uniqueName("partitioned-batch");
+        String subscription = uniqueName("partitioned-batch-reader");
+        var result = PULSAR.execInContainer("/pulsar/bin/pulsar-admin",
+                                            "topics",
+                                            "create-partitioned-topic",
+                                            canonicalTopic(topic),
+                                            "--partitions",
+                                            "2");
+        assertThat(result.getStderr(), result.getExitCode(), is(0));
+        String yaml = batchYaml(topic, subscription, """
+                batch-receive-max-messages: 2
+                receive-timeout: PT30S
+                """);
+        try (PulsarClient client = newClient()) {
+            seedBacklog(client, topic + "-partition-0", subscription, List.of("a", "b", "c"));
+            seedBacklog(client, topic + "-partition-1", subscription, List.of("d", "e", "f"));
+            ServiceRegistryManager manager = PulsarScenarioRegistry.create(yaml, BatchReceiver.class);
+            try {
+                BatchReceiver receiver = manager.registry().get(BatchReceiver.class);
+                manager.registry().get(MessagingRuntime.class);
+                List<MessageBatch<String>> batches = receiveBatches(receiver, 6);
+                assertThat(batches.stream().map(MessageBatch::size).toList(), is(List.of(2, 2, 2)));
+                assertThat(batchPayloads(batches).stream().sorted().toList(), is(List.of("a", "b", "c", "d", "e", "f")));
+            } finally {
+                manager.shutdown();
+            }
+            assertSubscriptionEmpty(client, topic, subscription);
+        }
+    }
+
+    @Test
+    @Timeout(90)
+    void testSparseBatchFlushesOnTimeoutAndIdleReceivesDoNotDispatchEmptyBatches() throws Exception {
+        String topic = uniqueName("timeout-batch");
+        String subscription = uniqueName("timeout-batch-reader");
+        String yaml = batchYaml(topic, subscription, """
+                batch-receive-max-messages: 10
+                receive-timeout: PT0.1S
+                """);
+        try (PulsarClient client = newClient();
+                Producer<String> producer = client.newProducer(Schema.STRING).topic(topic).enableBatching(false).create()) {
+            ServiceRegistryManager manager = PulsarScenarioRegistry.create(yaml, BatchReceiver.class);
+            try {
+                BatchReceiver receiver = manager.registry().get(BatchReceiver.class);
+                manager.registry().get(MessagingRuntime.class);
+                assertThat(receiver.awaitBatch(NO_MESSAGE_TIMEOUT), nullValue());
+
+                producer.send("sparse");
+                MessageBatch<String> batch = receiver.awaitBatch(WAIT_TIMEOUT);
+                assertThat(batch, notNullValue());
+                assertThat(batch.messages().stream().map(Message::entity).toList(), is(List.of("sparse")));
+                assertThat(receiver.awaitBatch(NO_MESSAGE_TIMEOUT), nullValue());
+
+                producer.send("after idle");
+                MessageBatch<String> afterIdle = receiver.awaitBatch(WAIT_TIMEOUT);
+                assertThat(afterIdle, notNullValue());
+                assertThat(afterIdle.messages().stream().map(Message::entity).toList(), is(List.of("after idle")));
+            } finally {
+                manager.shutdown();
+            }
+            assertSubscriptionEmpty(client, topic, subscription);
+        }
+    }
+
+    @Test
+    @Timeout(90)
+    void testPartialBatchFailureSettlesSuccessfulSourceIndexesAcrossRestart() throws Exception {
+        List<String> payloads = List.of("first", "poison", "last");
+        try (PulsarClient client = newClient()) {
+            for (boolean producerBatching : List.of(false, true)) {
+                String topic = uniqueName("partial-batch");
+                String subscription = uniqueName("partial-batch-reader");
+                String yaml = batchYaml(topic, subscription, """
+                        batch-receive-max-messages: 3
+                        batch-index-acknowledgment-enabled: true
+                        receive-timeout: PT30S
+                        failure:
+                          retry:
+                            calls: 1
+                          on-exhausted: FAIL
+                        """);
+                seedBacklog(client, topic, subscription, payloads, producerBatching);
+                ServiceRegistryManager manager = PulsarScenarioRegistry.create(yaml, PartialBatchReceiver.class);
+                try {
+                    PartialBatchReceiver receiver = manager.registry().get(PartialBatchReceiver.class);
+                    manager.registry().get(MessagingRuntime.class);
+                    MessageBatch<String> batch = receiver.awaitBatch(WAIT_TIMEOUT);
+                    assertThat(batch, notNullValue());
+                    assertThat(batch.messages().stream().map(Message::entity).toList(), is(payloads));
+                } finally {
+                    shutdownAfterExpectedSourceFailure(manager);
+                }
+                try (Consumer<String> consumer = stringConsumer(client, topic, subscription)) {
+                    assertThat(receiveOne(consumer).getValue(), is("poison"));
+                    assertThat("successful indexes are individually acknowledged; producer batching=" + producerBatching,
+                               consumer.receive((int) NO_MESSAGE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS), nullValue());
+                }
+            }
+        }
+    }
+
+    @Test
+    @Timeout(90)
+    void testForcedShutdownRedeliversEntireUnsettledNativeBatch() throws Exception {
+        String topic = uniqueName("shutdown-batch");
+        String subscription = uniqueName("shutdown-batch-reader");
+        List<String> payloads = List.of("first", "second", "third");
+        String yaml = batchYaml(topic, subscription, """
+                batch-receive-max-messages: 3
+                receive-timeout: PT30S
+                """).replace("messaging:\n", "messaging:\n  shutdown-timeout: PT0.5S\n");
+        try (PulsarClient client = newClient()) {
+            seedBacklog(client, topic, subscription, payloads);
+            ServiceRegistryManager manager = PulsarScenarioRegistry.create(yaml, BlockingBatchReceiver.class);
+            BlockingBatchReceiver receiver = manager.registry().get(BlockingBatchReceiver.class);
+            try {
+                manager.registry().get(MessagingRuntime.class);
+                MessageBatch<String> batch = receiver.awaitBatch(WAIT_TIMEOUT);
+                assertThat(batch, notNullValue());
+                assertThat(batch.messages().stream().map(Message::entity).toList(), is(payloads));
+            } finally {
+                try {
+                    shutdownAfterExpectedSourceFailure(manager);
+                } finally {
+                    receiver.release();
+                }
+            }
+            try (Consumer<String> consumer = stringConsumer(client, topic, subscription)) {
+                assertThat(receive(consumer, payloads.size()).stream()
+                                   .map(org.apache.pulsar.client.api.Message::getValue)
+                                   .toList(), is(payloads));
+            }
+        }
+    }
+
+    @Test
+    @Timeout(90)
+    void testGracefulShutdownRedeliversPartialBatchWaitingForNativeReceive() throws Exception {
+        String topic = uniqueName("pending-batch");
+        String subscription = uniqueName("pending-batch-reader");
+        List<String> payloads = List.of("first", "second");
+        String yaml = batchYaml(topic, subscription, """
+                batch-receive-max-messages: 3
+                receive-timeout: PT30S
+                """);
+        try (PulsarClient client = newClient()) {
+            seedBacklog(client, topic, subscription, payloads);
+            ServiceRegistryManager manager = PulsarScenarioRegistry.create(yaml, BatchReceiver.class);
+            BatchReceiver receiver = manager.registry().get(BatchReceiver.class);
+            try {
+                manager.registry().get(MessagingRuntime.class);
+                assertThat("partial receive is still waiting for the third message",
+                           receiver.awaitBatch(NO_MESSAGE_TIMEOUT), nullValue());
+            } finally {
+                manager.shutdown();
+            }
+            assertThat("shutdown must not dispatch the interrupted partial receive",
+                       receiver.awaitBatch(Duration.ZERO), nullValue());
+            try (Consumer<String> consumer = stringConsumer(client, topic, subscription)) {
+                assertThat(receive(consumer, payloads.size()).stream()
+                                   .map(org.apache.pulsar.client.api.Message::getValue)
+                                   .toList(), is(payloads));
+            }
+        }
+    }
+
+    @Test
+    @Timeout(90)
+    void testDropMappingFailureRetainsValidSiblingsInSameNativeBatch() throws Exception {
+        String topic = uniqueName("drop-batch");
+        String subscription = uniqueName("drop-batch-reader");
+        String yaml = batchYaml(topic, subscription, """
+                batch-receive-max-messages: 3
+                receive-timeout: PT30S
+                max-message-bytes: 1
+                failure:
+                  retry:
+                    calls: 1
+                  on-exhausted: DROP
+                """);
+        try (PulsarClient client = newClient()) {
+            seedBacklog(client, topic, subscription, List.of("a", "oversized", "b"));
+            ServiceRegistryManager manager = PulsarScenarioRegistry.create(yaml, BatchReceiver.class);
+            try {
+                BatchReceiver receiver = manager.registry().get(BatchReceiver.class);
+                manager.registry().get(MessagingRuntime.class);
+                assertThat(batchPayloads(receiveBatches(receiver, 2)), is(List.of("a", "b")));
+                assertThat(receiver.awaitBatch(NO_MESSAGE_TIMEOUT), nullValue());
+            } finally {
+                manager.shutdown();
+            }
+            assertSubscriptionEmpty(client, topic, subscription);
+        }
+    }
+
+    private static String batchYaml(String topic, String subscription, String options) {
+        return """
+                messaging:
+                  connector:
+                    test-pulsar:
+                      type: helidon-pulsar
+                      service-url: "%s"
+                  incoming:
+                    %s:
+                      connector: test-pulsar
+                      topic: "%s"
+                      schema: STRING
+                      subscription-name: "%s"
+                      subscription-initial-position: EARLIEST
+                """.formatted(PULSAR.getPulsarBrokerUrl(), PulsarMessagingTypes.BATCH_INCOMING_CHANNEL, topic, subscription)
+                + options.indent(6);
+    }
+
+    private static void seedBacklog(PulsarClient client,
+                                    String topic,
+                                    String subscription,
+                                    List<String> payloads) throws Exception {
+        seedBacklog(client, topic, subscription, payloads, false);
+    }
+
+    private static void seedBacklog(PulsarClient client,
+                                    String topic,
+                                    String subscription,
+                                    List<String> payloads,
+                                    boolean producerBatching) throws Exception {
+        try (Consumer<String> consumer = stringConsumer(client, topic, subscription)) {
+            // Retain every source message before the application consumer starts.
+            assertThat(consumer.isConnected(), is(true));
+        }
+        try (Producer<String> producer = client.newProducer(Schema.STRING)
+                .topic(topic)
+                .enableBatching(producerBatching)
+                .batchingMaxPublishDelay(30, TimeUnit.SECONDS)
+                .batchingMaxMessages(payloads.size())
+                .create()) {
+            List<CompletableFuture<MessageId>> sends = new ArrayList<>();
+            for (String payload : payloads) {
+                sends.add(producer.newMessage().property("sequence", payload).value(payload).sendAsync());
+            }
+            producer.flush();
+            for (CompletableFuture<MessageId> send : sends) {
+                send.get(WAIT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            }
+        }
+    }
+
+    private static List<MessageBatch<String>> receiveBatches(BatchReceiver receiver, int expectedCount) throws Exception {
+        List<MessageBatch<String>> batches = new ArrayList<>();
+        int received = 0;
+        long deadline = System.nanoTime() + WAIT_TIMEOUT.toNanos();
+        while (received < expectedCount) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                break;
+            }
+            MessageBatch<String> batch = receiver.awaitBatch(Duration.ofNanos(remaining));
+            if (batch == null) {
+                break;
+            }
+            batches.add(batch);
+            received += batch.size();
+        }
+        assertThat("received message count across native batches", received, is(expectedCount));
+        return List.copyOf(batches);
+    }
+
+    private static List<String> batchPayloads(List<MessageBatch<String>> batches) {
+        return batches.stream().flatMap(batch -> batch.messages().stream()).map(Message::entity).toList();
+    }
+
+    private static void assertSubscriptionEmpty(PulsarClient client, String topic, String subscription) throws Exception {
+        try (Consumer<String> consumer = stringConsumer(client, topic, subscription)) {
+            assertThat("acknowledged source messages are not redelivered after restart",
+                       consumer.receive((int) NO_MESSAGE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS), nullValue());
         }
     }
 

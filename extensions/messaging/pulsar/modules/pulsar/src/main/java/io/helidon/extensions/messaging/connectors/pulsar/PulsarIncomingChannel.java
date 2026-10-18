@@ -17,6 +17,8 @@
 package io.helidon.extensions.messaging.connectors.pulsar;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
@@ -32,6 +34,9 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarConnectorConfigSupport.IncomingSettings;
+import io.helidon.messaging.BatchDeliveryException;
+import io.helidon.messaging.BatchItemOutcome;
+import io.helidon.messaging.BatchItemStatus;
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
 import io.helidon.messaging.IncomingConnectorContext;
@@ -42,6 +47,7 @@ import io.helidon.messaging.spi.IncomingChannel;
 
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.Message;
+import org.apache.pulsar.client.api.Messages;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.PulsarClientException;
 
@@ -80,6 +86,57 @@ final class PulsarIncomingChannel {
     @FunctionalInterface
     interface ClientFactory {
         PulsarClient create(IncomingSettings config) throws PulsarClientException;
+    }
+
+    private static final class PendingBatch {
+        private final List<Message<Object>> nativeMessages;
+        private final MessageBatch<Object> batch;
+        private final BatchDeliveryException mappingFailure;
+
+        private PendingBatch(List<Message<Object>> nativeMessages,
+                             MessageBatch<Object> batch,
+                             BatchDeliveryException mappingFailure) {
+            this.nativeMessages = nativeMessages;
+            this.batch = batch;
+            this.mappingFailure = mappingFailure;
+        }
+
+        private static PendingBatch create(List<Message<Object>> nativeMessages,
+                                           IncomingSettings config,
+                                           PulsarSchemaResolver.ResolvedSchema schema) {
+            List<PulsarMessage<Object>> messages = new ArrayList<>(nativeMessages.size());
+            List<BatchItemOutcome> outcomes = new ArrayList<>(nativeMessages.size());
+            RuntimeException primaryFailure = null;
+            for (int i = 0; i < nativeMessages.size(); i++) {
+                Message<Object> nativeMessage = nativeMessages.get(i);
+                try {
+                    messages.add(PulsarMessageMapper.fromPulsarMessage(nativeMessage, config, schema));
+                    outcomes.add(BatchItemOutcome.notAttempted(i));
+                } catch (RuntimeException e) {
+                    outcomes.add(BatchItemOutcome.failed(i, e));
+                    if (primaryFailure == null) {
+                        primaryFailure = e;
+                    } else if (primaryFailure != e) {
+                        primaryFailure.addSuppressed(e);
+                    }
+                    try {
+                        messages.add(PulsarMessageMapper.metadataOnly(nativeMessage));
+                    } catch (RuntimeException metadataFailure) {
+                        if (metadataFailure != e) {
+                            e.addSuppressed(metadataFailure);
+                        }
+                        messages.add(PulsarMessageImpl.rejected());
+                    }
+                }
+            }
+            MessageBatch<Object> batch = MessageBatch.create(messages);
+            BatchDeliveryException mappingFailure = primaryFailure == null ? null
+                    : new BatchDeliveryException("Cannot map Pulsar batch on channel " + config.channelName(),
+                                                 primaryFailure,
+                                                 batch,
+                                                 outcomes);
+            return new PendingBatch(nativeMessages, batch, mappingFailure);
+        }
     }
 
     private final class Connector implements IncomingChannel {
@@ -287,62 +344,64 @@ final class PulsarIncomingChannel {
                     if (stopping()) {
                         return;
                     }
-                    Message<Object> nativeMessage = receive(consumer);
-                    if (nativeMessage == null) {
+                    List<Message<Object>> nativeMessages = receive(consumer);
+                    if (nativeMessages.isEmpty()) {
                         continue;
                     }
                     if (stopping()) {
-                        negativeAcknowledge(consumer, nativeMessage, null);
+                        negativeAcknowledge(consumer, nativeMessages, null);
                         return;
                     }
-                    deliver(consumer, nativeMessage, reservation);
+                    int limit = PulsarConnectorConfigSupport.batchReceiveMaxMessages(config, context.maxDeliveryMessages());
+                    if (nativeMessages.size() > limit) {
+                        MessagingRejectedException failure = new MessagingRejectedException(
+                                config.channelName(),
+                                MessagingRejectedException.Reason.OVERSIZED,
+                                "Pulsar batch contains " + nativeMessages.size() + " messages, exceeding channel "
+                                        + config.channelName() + " limit " + limit);
+                        negativeAcknowledge(consumer, nativeMessages, failure);
+                        throw failure;
+                    }
+                    deliver(consumer, nativeMessages, reservation);
                 }
             }
         }
 
-        private Message<Object> receive(Consumer<Object> consumer) {
+        private List<Message<Object>> receive(Consumer<Object> consumer) {
             consumer.resume();
             try {
-                return consumer.receive(PulsarConnectorConfigSupport.receiveTimeoutMillis(config),
-                                        TimeUnit.MILLISECONDS);
+                Messages<Object> received = consumer.batchReceive();
+                if (received == null) {
+                    if (stopping()) {
+                        return List.of();
+                    }
+                    throw new MessagingException("Pulsar batch receive returned no result on channel " + config.channelName());
+                }
+                List<Message<Object>> messages = new ArrayList<>();
+                received.forEach(messages::add);
+                return List.copyOf(messages);
             } catch (PulsarClientException e) {
                 if (stopping()) {
-                    return null;
+                    return List.of();
                 }
-                throw new MessagingException("Cannot receive Pulsar message from topic " + config.topic(), e);
+                throw new MessagingException("Cannot receive Pulsar batch from topic " + config.topic(), e);
             } finally {
                 consumer.pause();
             }
         }
 
         private void deliver(Consumer<Object> consumer,
-                             Message<Object> nativeMessage,
+                             List<Message<Object>> nativeMessages,
                              ConnectorDeliveryReservation reservation) {
-            MessageBatch<?> batch;
-            RuntimeException mappingFailure = null;
-            try {
-                batch = MessageBatch.create(PulsarMessageMapper.fromPulsarMessage(nativeMessage, config, schema));
-            } catch (RuntimeException e) {
-                mappingFailure = e;
-                try {
-                    batch = MessageBatch.create(PulsarMessageMapper.metadataOnly(nativeMessage));
-                } catch (RuntimeException metadataFailure) {
-                    if (metadataFailure != e) {
-                        e.addSuppressed(metadataFailure);
-                    }
-                    batch = MessageBatch.create(PulsarMessageImpl.rejected());
-                }
-            }
-
-            MessageBatch<?> actualBatch = batch;
-            RuntimeException actualMappingFailure = mappingFailure;
+            PendingBatch pending;
             ConnectorDelivery delivery;
             try {
-                delivery = actualMappingFailure == null
-                        ? startDelivery(() -> reservation.start(actualBatch))
-                        : startDelivery(() -> reservation.startFailed(actualBatch, actualMappingFailure));
+                pending = PendingBatch.create(nativeMessages, config, schema);
+                delivery = pending.mappingFailure == null
+                        ? startDelivery(() -> reservation.start(pending.batch))
+                        : startDelivery(() -> reservation.startFailed(pending.batch, pending.mappingFailure));
             } catch (RuntimeException | Error e) {
-                negativeAcknowledge(consumer, nativeMessage, e);
+                negativeAcknowledge(consumer, nativeMessages, e);
                 throw e;
             }
 
@@ -353,22 +412,24 @@ final class PulsarIncomingChannel {
                 if (forceCloseRequested.get()) {
                     delivery.cancel();
                 }
+                RuntimeException processingFailure = null;
                 try {
                     delivery.await();
                 } catch (RuntimeException e) {
                     if (forceCloseRequested.get() && causedByInterruption(e)) {
                         return;
                     }
-                    negativeAcknowledge(consumer, nativeMessage, e);
-                    throw e;
+                    processingFailure = e;
                 } catch (Error e) {
-                    negativeAcknowledge(consumer, nativeMessage, e);
+                    negativeAcknowledge(consumer, nativeMessages, e);
                     throw e;
                 }
-                if (forceCloseRequested.get()) {
-                    return;
+                if (!forceCloseRequested.get()) {
+                    settle(consumer, pending, processingFailure);
                 }
-                acknowledge(consumer, nativeMessage);
+                if (processingFailure != null) {
+                    throw processingFailure;
+                }
             } finally {
                 activeDelivery.compareAndSet(delivery, null);
                 signalDeliveryStateChanged();
@@ -452,41 +513,88 @@ final class PulsarIncomingChannel {
             return null;
         }
 
-        private void acknowledge(Consumer<Object> consumer,
-                                 Message<?> nativeMessage) {
-            CompletableFuture<Void> acknowledgement;
-            try {
-                acknowledgement = consumer.acknowledgeAsync(nativeMessage);
-            } catch (RuntimeException e) {
-                throw new MessagingException("Cannot acknowledge Pulsar message on channel " + config.channelName(), e);
+        private void settle(Consumer<Object> consumer, PendingBatch pending, RuntimeException processingFailure) {
+            long deadline = System.nanoTime() + config.settlementTimeout().toNanos();
+            BatchDeliveryException batchFailure = processingFailure instanceof BatchDeliveryException failure
+                    && failure.batch() == pending.batch ? failure : null;
+            List<CompletableFuture<Void>> acknowledgements = new ArrayList<>(pending.nativeMessages.size());
+            RuntimeException settlementFailure = null;
+            for (int i = 0; i < pending.nativeMessages.size(); i++) {
+                if (forceCloseRequested.get()) {
+                    break;
+                }
+                Message<Object> message = pending.nativeMessages.get(i);
+                boolean succeeded = processingFailure == null
+                        || batchFailure != null && batchFailure.outcome(i).status() == BatchItemStatus.SUCCEEDED;
+                try {
+                    if (succeeded) {
+                        acknowledgements.add(consumer.acknowledgeAsync(message));
+                    } else {
+                        consumer.negativeAcknowledge(message);
+                    }
+                } catch (RuntimeException e) {
+                    settlementFailure = mergeFailure(settlementFailure,
+                                                     new MessagingException("Cannot "
+                                                             + (succeeded ? "acknowledge" : "negatively acknowledge")
+                                                             + " Pulsar message on channel " + config.channelName(), e));
+                }
             }
-            try {
-                acknowledgement.get(config.settlementTimeout().toNanos(), TimeUnit.NANOSECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new MessagingException("Pulsar acknowledgement was interrupted on channel "
-                                                     + config.channelName(), e);
-            } catch (ExecutionException e) {
-                Throwable cause = e.getCause() == null ? e : e.getCause();
-                throw new MessagingException("Cannot acknowledge Pulsar message on channel " + config.channelName(), cause);
-            } catch (TimeoutException e) {
-                throw new MessagingException("Pulsar acknowledgement timed out after " + config.settlementTimeout()
-                                                     + " on channel " + config.channelName(), e);
+            for (CompletableFuture<Void> acknowledgement : acknowledgements) {
+                if (forceCloseRequested.get()) {
+                    break;
+                }
+                try {
+                    acknowledgement.get(remainingNanos(deadline), TimeUnit.NANOSECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    settlementFailure = mergeFailure(settlementFailure,
+                                                     new MessagingException("Pulsar acknowledgement was interrupted on channel "
+                                                             + config.channelName(), e));
+                    break;
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause() == null ? e : e.getCause();
+                    settlementFailure = mergeFailure(settlementFailure,
+                                                     new MessagingException("Cannot acknowledge Pulsar message on channel "
+                                                             + config.channelName(), cause));
+                } catch (TimeoutException e) {
+                    settlementFailure = mergeFailure(settlementFailure,
+                                                     new MessagingException("Pulsar acknowledgement timed out after "
+                                                             + config.settlementTimeout() + " on channel "
+                                                             + config.channelName(), e));
+                } catch (RuntimeException e) {
+                    settlementFailure = mergeFailure(settlementFailure,
+                                                     new MessagingException("Cannot acknowledge Pulsar message on channel "
+                                                             + config.channelName(), e));
+                }
+            }
+            if (settlementFailure != null) {
+                if (processingFailure != null) {
+                    processingFailure.addSuppressed(settlementFailure);
+                } else {
+                    throw settlementFailure;
+                }
             }
         }
 
         private void negativeAcknowledge(Consumer<Object> consumer,
-                                         Message<?> nativeMessage,
+                                         List<Message<Object>> nativeMessages,
                                          Throwable primaryFailure) {
-            try {
-                consumer.negativeAcknowledge(nativeMessage);
-            } catch (RuntimeException negativeAckFailure) {
-                if (primaryFailure != null && primaryFailure != negativeAckFailure) {
-                    primaryFailure.addSuppressed(negativeAckFailure);
-                    return;
+            RuntimeException failure = null;
+            for (Message<Object> message : nativeMessages) {
+                try {
+                    consumer.negativeAcknowledge(message);
+                } catch (RuntimeException e) {
+                    failure = mergeFailure(failure,
+                                           new MessagingException("Cannot negatively acknowledge Pulsar message on channel "
+                                                                          + config.channelName(), e));
                 }
-                throw new MessagingException("Cannot negatively acknowledge Pulsar message on channel "
-                                                     + config.channelName(), negativeAckFailure);
+            }
+            if (failure != null) {
+                if (primaryFailure != null) {
+                    primaryFailure.addSuppressed(failure);
+                } else {
+                    throw failure;
+                }
             }
         }
 
