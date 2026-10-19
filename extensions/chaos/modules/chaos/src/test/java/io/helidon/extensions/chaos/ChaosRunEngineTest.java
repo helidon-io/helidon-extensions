@@ -863,6 +863,54 @@ class ChaosRunEngineTest {
         assertThat(twoRunEngine.activeRunCount(), is(0));
     }
 
+    @Test
+    void validateAcceptsPlanWithoutCreatingRun() {
+        engine.validate(plan(10, 30, 20, 2, "/orders"));
+
+        assertThat(engine.list(), is(empty()));
+        assertThat(engine.reservationsPossible(), is(false));
+    }
+
+    @Test
+    void validateRejectsOverlappingScopeLikeCreate() {
+        ChaosRunEngine twoRunEngine = engine(limits(2, 8, Duration.ofMinutes(5)));
+        twoRunEngine.create(plan(10, 30, 20, 2, "/orders"), "alice");
+
+        assertThrows(ChaosRunEngine.ConflictException.class,
+                     () -> twoRunEngine.validate(plan(10, 30, 20, 2, "/orders/42")));
+        assertThrows(ChaosRunEngine.ConflictException.class,
+                     () -> twoRunEngine.create(plan(10, 30, 20, 2, "/orders/42"), "bob"));
+    }
+
+    @Test
+    void validateRejectsActiveRunLimitLikeCreate() {
+        engine.create(plan(10, 30, 20, 2, "/orders"), "alice");
+
+        assertThrows(ChaosRunEngine.ConflictException.class,
+                     () -> engine.validate(plan(10, 30, 20, 2, "/payments")));
+        assertThrows(ChaosRunEngine.ConflictException.class,
+                     () -> engine.create(plan(10, 30, 20, 2, "/payments"), "bob"));
+    }
+
+    @Test
+    void validateDoesNotEvictRetainedRuns() {
+        ChaosRunEngine smallEngine = engine(limits(1, 1, Duration.ofMinutes(5)));
+        ChaosRunView first = smallEngine.create(plan(10, 30, 20, 2, "/orders"), "alice");
+        smallEngine.stop(first.id());
+
+        smallEngine.validate(plan(10, 30, 20, 2, "/payments"));
+
+        assertThat(smallEngine.get(first.id()).isPresent(), is(true));
+    }
+
+    @Test
+    void validateRejectsClosedEngine() {
+        engine.close();
+
+        assertThrows(ChaosRunEngine.ConflictException.class,
+                     () -> engine.validate(plan(10, 30, 20, 2, "/orders")));
+    }
+
     private static ChaosLimitsConfig limits(int activeRuns, int retainedRuns, Duration retention) {
         return ChaosLimitsConfig.builder()
                 .maximumActiveRuns(activeRuns)

@@ -58,6 +58,15 @@ final class ChaosRunJson {
         return JsonArray.create(runs.stream().map(ChaosRunJson::toJson).toList());
     }
 
+    static JsonObject validation(ChaosRunPlan plan) {
+        return JsonObject.builder()
+                .set("plan", plan(plan))
+                .set("effective", JsonObject.builder()
+                        .set("worstCaseDuration", plan.maximumDuration().toString())
+                        .build())
+                .build();
+    }
+
     static JsonObject toJson(ChaosRunEngine.HaltResult result) {
         return JsonObject.builder()
                 .set("halted", JsonArray.createStrings(ids(result.halted())))

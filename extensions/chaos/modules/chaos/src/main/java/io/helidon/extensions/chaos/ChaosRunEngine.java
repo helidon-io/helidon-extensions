@@ -92,15 +92,7 @@ final class ChaosRunEngine implements AutoCloseable {
             Instant now = clock.instant();
             refreshRuns(now);
             evictExpiredTerminalRuns();
-
-            List<ChaosRun> activeRuns = activeRuns();
-            if (activeRuns.size() >= limits.maximumActiveRuns()) {
-                throw new ConflictException("The maximum number of active chaos runs has been reached");
-            }
-            List<ChaosScope> requestedScopes = scopes(plan);
-            if (activeRuns.stream().anyMatch(run -> overlaps(run.scopes(), requestedScopes))) {
-                throw new ConflictException("The requested scope overlaps an active chaos disruption");
-            }
+            checkAdmission(plan);
             evictForCapacity();
 
             UUID id = nextId();
@@ -207,6 +199,22 @@ final class ChaosRunEngine implements AutoCloseable {
                 run.terminate(OPERATOR_STOPPED, now);
             }
             return run.view(now);
+        } finally {
+            try {
+                publishRequestPathWork();
+            } finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    void validate(ChaosRunPlan plan) {
+        lock.lock();
+        try {
+            Objects.requireNonNull(plan);
+            ensureOpen();
+            refreshRuns(clock.instant());
+            checkAdmission(plan);
         } finally {
             try {
                 publishRequestPathWork();
@@ -360,6 +368,18 @@ final class ChaosRunEngine implements AutoCloseable {
         boolean active = !closed && runs.values().stream().anyMatch(run -> !run.terminal());
         reservationsPossible = active;
         inboundWorkNeeded = active;
+    }
+
+    // Called with the lock held; shared by create and validate so both reject the same plans.
+    private void checkAdmission(ChaosRunPlan plan) {
+        List<ChaosRun> activeRuns = activeRuns();
+        if (activeRuns.size() >= limits.maximumActiveRuns()) {
+            throw new ConflictException("The maximum number of active chaos runs has been reached");
+        }
+        List<ChaosScope> requestedScopes = scopes(plan);
+        if (activeRuns.stream().anyMatch(run -> overlaps(run.scopes(), requestedScopes))) {
+            throw new ConflictException("The requested scope overlaps an active chaos disruption");
+        }
     }
 
     private List<ChaosRun> activeRuns() {

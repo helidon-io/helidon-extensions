@@ -124,6 +124,7 @@ All resources are under the dedicated control listener:
 | `GET` | `/chaos/v1/runs` | List retained runs, newest first |
 | `GET` | `/chaos/v1/runs/{runId}` | Read normalized plan, lifecycle, actor, timestamps, and counters |
 | `DELETE` | `/chaos/v1/runs/{runId}` | Stop a run; returns `200`, or `202` while in-flight work drains |
+| `POST` | `/chaos/v1/validations` | Validate a run plan without starting it; returns `200` |
 | `POST` | `/chaos/v1/halt` | Stop every active run; returns `200` |
 | `GET` | `/chaos/v1/limits` | Read the server-enforced limits and the number of active runs |
 
@@ -517,6 +518,21 @@ A terminal or draining run carries `terminalReason`, one of a closed list of sta
 
 A run with in-flight work is `STOPPING` with its `terminalReason` already set, and reaches the final state when that
 work drains. Clients must treat an unknown value as "stopped for an unlisted reason", so the list can grow.
+
+### Validate a run
+
+`POST /chaos/v1/validations` takes the same body as `POST /chaos/v1/runs` and runs the same checks, including limits and
+conflicts with active runs, but never creates, starts or reserves anything. Errors use the same status codes and
+problem types as creation. A success returns the normalized plan and effective values:
+
+```json
+{"plan": {"name": "orders-unavailable", "maximumDuration": "PT30S", "seed": 148894, "stages": []},
+ "effective": {"worstCaseDuration": "PT30S"}}
+```
+
+`plan` is shown shortened here; it is the same normalized plan a created run reports. `worstCaseDuration` is the run's
+`maximumDuration`, the longest the run can stay active. The result is advisory: state can change before creation, and
+creation checks again.
 
 ### Halt all runs
 

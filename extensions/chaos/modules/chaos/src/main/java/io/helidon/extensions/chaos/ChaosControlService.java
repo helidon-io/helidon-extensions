@@ -17,6 +17,7 @@ package io.helidon.extensions.chaos;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
 
@@ -73,6 +74,7 @@ final class ChaosControlService implements HttpService {
     @Override
     public void routing(HttpRules rules) {
         rules.post("/runs", authorization, this::createRun)
+                .post("/validations", authorization, this::validateRun)
                 .get("/runs", authorization, this::listRuns)
                 .get("/runs/{runId}", authorization, this::getRun)
                 .delete("/runs/{runId}", authorization, this::deleteRun)
@@ -135,17 +137,27 @@ final class ChaosControlService implements HttpService {
     }
 
     private void createRun(ServerRequest request, ServerResponse response) {
-        bounded(request, response, () -> {
-            if (!request.headers().testContentType(MediaTypes.APPLICATION_JSON)) {
-                sendProblem(response, ChaosProblemJson.unsupportedMediaType(instance(request)));
-                return;
-            }
-            JsonObject body = requestBody(request);
-            ChaosRunPlan plan = ChaosRunPlanJson.parse(body, limits);
+        bounded(request, response, () -> plan(request, response).ifPresent(plan -> {
             ChaosRunView run = engine.create(plan, actor(request));
             response.header(HeaderNames.LOCATION, RUNS_PATH + run.id());
             sendJson(response, Status.CREATED_201, ChaosRunJson.toJson(run));
-        });
+        }));
+    }
+
+    private void validateRun(ServerRequest request, ServerResponse response) {
+        bounded(request, response, () -> plan(request, response).ifPresent(plan -> {
+            engine.validate(plan);
+            sendJson(response, Status.OK_200, ChaosRunJson.validation(plan));
+        }));
+    }
+
+    // Empty when the problem response was already sent.
+    private Optional<ChaosRunPlan> plan(ServerRequest request, ServerResponse response) {
+        if (!request.headers().testContentType(MediaTypes.APPLICATION_JSON)) {
+            sendProblem(response, ChaosProblemJson.unsupportedMediaType(instance(request)));
+            return Optional.empty();
+        }
+        return Optional.of(ChaosRunPlanJson.parse(requestBody(request), limits));
     }
 
     private void listRuns(ServerRequest request, ServerResponse response) {

@@ -68,7 +68,7 @@ final class ChaosProblemJson {
         return problem(415,
                        "unsupported-media-type",
                        "Unsupported media type",
-                       "Chaos run creation requires an application/json request body.",
+                       "Chaos run plans require an application/json request body.",
                        instance,
                        List.of());
     }

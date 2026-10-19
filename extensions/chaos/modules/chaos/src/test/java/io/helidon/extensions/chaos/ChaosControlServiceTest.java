@@ -15,10 +15,12 @@
  */
 package io.helidon.extensions.chaos;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
 
+import io.helidon.common.media.type.MediaType;
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.http.HeaderNames;
 import io.helidon.http.Status;
@@ -47,6 +49,7 @@ class ChaosControlServiceTest {
     private static final String RUNS = "/chaos/v1/runs";
     private static final String HALT = "/chaos/v1/halt";
     private static final String LIMITS = "/chaos/v1/limits";
+    private static final String VALIDATIONS = "/chaos/v1/validations";
     private static ChaosRunEngine engine;
     private static ChaosRuntimeRegistration registration;
     private static ChaosControlService service;
@@ -211,6 +214,39 @@ class ChaosControlServiceTest {
     }
 
     @Test
+    void validationReturnsNormalizedPlanWithoutCreatingRun() {
+        ClientResponseTyped<JsonObject> validated = client.post(VALIDATIONS)
+                .contentType(MediaTypes.APPLICATION_JSON)
+                .submit(validPlan("validated"), JsonObject.class);
+        assertThat(validated.status(), is(Status.OK_200));
+        assertJsonContentType(validated);
+        JsonObject body = validated.entity();
+        validated.close();
+        assertThat(body.objectValue("effective").orElseThrow().stringValue("worstCaseDuration").orElseThrow(),
+                   is("PT30S"));
+        assertThat(engine.activeRunCount(), is(0));
+
+        ClientResponseTyped<JsonObject> created = post(validPlan("validated"));
+        assertThat(body.objectValue("plan").orElseThrow().toString(),
+                   is(created.entity().objectValue("plan").orElseThrow().toString()));
+        created.close();
+    }
+
+    @Test
+    void validationAgreesWithCreateOnEveryError() {
+        JsonObject tooLong = JsonObject.builder().from(validPlan("too-long")).set("maximumDuration", "PT30M").build();
+        JsonObject unknownField = JsonObject.builder().from(validPlan("unknown")).set("extra", 1).build();
+        assertSameProblem(MediaTypes.TEXT_PLAIN, "not-json", 415);
+        assertSameProblem(MediaTypes.APPLICATION_JSON, "{", 400);
+        assertSameProblem(MediaTypes.APPLICATION_JSON, "", 400);
+        assertSameProblem(MediaTypes.APPLICATION_JSON, unknownField.toString(), 400);
+        assertSameProblem(MediaTypes.APPLICATION_JSON, tooLong.toString(), 422);
+
+        post(validPlan("active")).close();
+        assertSameProblem(MediaTypes.APPLICATION_JSON, validPlan("overlapping").toString(), 409);
+    }
+
+    @Test
     void rejectsUnsupportedMediaTypeAndInvalidPlan() {
         ClientResponseTyped<String> unsupported = client.post(RUNS)
                 .contentType(MediaTypes.TEXT_PLAIN)
@@ -267,6 +303,25 @@ class ChaosControlServiceTest {
         assertThat(body.stringValue("type").orElseThrow(), is("/chaos/v1/problems/" + type));
         assertThat(response.headers().contentType().orElseThrow().fullType(), is("application/problem+json"));
         response.close();
+    }
+
+    private void assertSameProblem(MediaType contentType, String body, int expectedStatus) {
+        ClientResponseTyped<String> validation = client.post(VALIDATIONS).contentType(contentType).submit(body, String.class);
+        ClientResponseTyped<String> creation = client.post(RUNS).contentType(contentType).submit(body, String.class);
+        assertThat(body, validation.status().code(), is(expectedStatus));
+        assertThat(body, creation.status().code(), is(expectedStatus));
+        JsonObject validationProblem = JsonParser.create(validation.entity()).readJsonObject();
+        JsonObject creationProblem = JsonParser.create(creation.entity()).readJsonObject();
+        for (String field : List.of("type", "title", "detail")) {
+            assertThat(body + " " + field,
+                       validationProblem.stringValue(field).orElseThrow(),
+                       is(creationProblem.stringValue(field).orElseThrow()));
+        }
+        assertThat(body,
+                   String.valueOf(validationProblem.arrayValue("violations").map(Object::toString)),
+                   is(String.valueOf(creationProblem.arrayValue("violations").map(Object::toString))));
+        validation.close();
+        creation.close();
     }
 
     private static void assertJsonContentType(ClientResponseTyped<?> response) {
