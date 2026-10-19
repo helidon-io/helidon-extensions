@@ -34,6 +34,11 @@ final class ChaosRuntimeBridge {
         return registration;
     }
 
+    static boolean reservationsPossible() {
+        ChaosRuntimeRegistration registration = REGISTRATION.get();
+        return registration != null && registration.reservationsPossible();
+    }
+
     static Optional<ChaosRunEngine.Reservation> reserveOutbound(String method,
                                                                  String scheme,
                                                                  String host,

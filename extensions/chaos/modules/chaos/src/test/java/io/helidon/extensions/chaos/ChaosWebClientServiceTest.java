@@ -484,6 +484,27 @@ class ChaosWebClientServiceTest {
         assertThrows(NullPointerException.class, () -> service.handle(chain(new AtomicInteger()), null));
     }
 
+    @Test
+    void proceedsWithoutReadingRequestWhenNoRunIsActive() {
+        ChaosRunEngine engine = engine();
+        ChaosRuntimeRegistration registration = ChaosRuntimeBridge.register(engine);
+        try {
+            AtomicInteger proceeds = new AtomicInteger();
+            WebClientServiceRequest unreadable = (WebClientServiceRequest) Proxy.newProxyInstance(
+                    ChaosWebClientServiceTest.class.getClassLoader(),
+                    new Class<?>[] {WebClientServiceRequest.class},
+                    (proxy, invoked, arguments) -> {
+                        throw new AssertionError("WebClientServiceRequest." + invoked.getName() + " must not be read");
+                    });
+
+            assertThat(new ChaosWebClientService("chaos").handle(chain(proceeds), unreadable), sameInstance(RESPONSE));
+
+            assertThat(proceeds.get(), is(1));
+        } finally {
+            registration.close();
+        }
+    }
+
     private static WebClientService.Chain chain(AtomicInteger proceeds) {
         return request -> {
             proceeds.incrementAndGet();

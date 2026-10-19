@@ -45,6 +45,11 @@ final class TestChaosScheduler implements ChaosScheduler {
         runDueTasks();
     }
 
+    // Moves time forward without running due tasks, as when a request arrives before a timer fires.
+    void advanceClockOnly(Duration duration) {
+        clock.advance(duration);
+    }
+
     void fireLast() {
         Task task = tasks.stream()
                 .filter(candidate -> !candidate.cancelled && !candidate.executed)

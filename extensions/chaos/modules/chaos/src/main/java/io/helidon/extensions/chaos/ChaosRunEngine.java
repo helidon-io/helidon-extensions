@@ -57,6 +57,8 @@ final class ChaosRunEngine implements AutoCloseable {
 
     private long sequence;
     private boolean closed;
+    private volatile boolean reservationsPossible;
+    private volatile boolean inboundWorkNeeded;
 
     private ChaosRunEngine(ChaosLimitsConfig limits,
                            Clock clock,
@@ -125,8 +127,31 @@ final class ChaosRunEngine implements AutoCloseable {
             runs.put(id, run);
             return run.view(now);
         } finally {
-            lock.unlock();
+            try {
+                publishRequestPathWork();
+            } finally {
+                lock.unlock();
+            }
         }
+    }
+
+    /**
+     * Whether any nonterminal run exists. Read without the lock; a stale {@code false} only lets a request
+     * proceed undisrupted.
+     *
+     * @return whether outbound reservations can succeed
+     */
+    boolean reservationsPossible() {
+        return reservationsPossible;
+    }
+
+    /**
+     * Whether inbound requests need the engine. Read without the lock.
+     *
+     * @return whether the inbound filter must consult the engine
+     */
+    boolean inboundWorkNeeded() {
+        return inboundWorkNeeded;
     }
 
     Optional<Reservation> reserveInbound(String method, String requestPath) {
@@ -156,7 +181,11 @@ final class ChaosRunEngine implements AutoCloseable {
             evictExpiredTerminalRuns();
             return Optional.ofNullable(runs.get(id)).map(run -> run.view(now));
         } finally {
-            lock.unlock();
+            try {
+                publishRequestPathWork();
+            } finally {
+                lock.unlock();
+            }
         }
     }
 
@@ -172,7 +201,11 @@ final class ChaosRunEngine implements AutoCloseable {
                     .map(run -> run.view(now))
                     .toList();
         } finally {
-            lock.unlock();
+            try {
+                publishRequestPathWork();
+            } finally {
+                lock.unlock();
+            }
         }
     }
 
@@ -192,7 +225,11 @@ final class ChaosRunEngine implements AutoCloseable {
             }
             return run.view(now);
         } finally {
-            lock.unlock();
+            try {
+                publishRequestPathWork();
+            } finally {
+                lock.unlock();
+            }
         }
     }
 
@@ -211,7 +248,11 @@ final class ChaosRunEngine implements AutoCloseable {
             }
             scheduler.close();
         } finally {
-            lock.unlock();
+            try {
+                publishRequestPathWork();
+            } finally {
+                lock.unlock();
+            }
         }
     }
 
@@ -229,6 +270,7 @@ final class ChaosRunEngine implements AutoCloseable {
     }
 
     private Optional<Reservation> reserve(BiFunction<ChaosRun, Instant, Optional<ChaosRun.Activation>> reserve) {
+        boolean runStopped = false;
         lock.lock();
         try {
             if (closed) {
@@ -236,14 +278,23 @@ final class ChaosRunEngine implements AutoCloseable {
             }
             Instant now = clock.instant();
             for (ChaosRun run : runs.values()) {
+                boolean wasRunning = run.running();
                 Optional<ChaosRun.Activation> activation = reserve.apply(run, now);
+                // A request can complete a run before its timer fires; the timer is then cancelled.
+                runStopped |= wasRunning && !run.running();
                 if (activation.isPresent()) {
                     return Optional.of(new Reservation(this, run.id(), activation.orElseThrow()));
                 }
             }
             return Optional.empty();
         } finally {
-            lock.unlock();
+            try {
+                if (runStopped) {
+                    publishRequestPathWork();
+                }
+            } finally {
+                lock.unlock();
+            }
         }
     }
 
@@ -255,7 +306,11 @@ final class ChaosRunEngine implements AutoCloseable {
                 run.terminate(state, reason, clock.instant());
             }
         } finally {
-            lock.unlock();
+            try {
+                publishRequestPathWork();
+            } finally {
+                lock.unlock();
+            }
         }
     }
 
@@ -267,8 +322,20 @@ final class ChaosRunEngine implements AutoCloseable {
                 run.release(stageIndex, clock.instant());
             }
         } finally {
-            lock.unlock();
+            try {
+                publishRequestPathWork();
+            } finally {
+                lock.unlock();
+            }
         }
+    }
+
+    // Called with the lock held, before every unlock that can change run state; reserve() calls it only when a
+    // run stopped during the call, so the request path stays cheap.
+    private void publishRequestPathWork() {
+        boolean active = !closed && runs.values().stream().anyMatch(run -> !run.terminal());
+        reservationsPossible = active;
+        inboundWorkNeeded = active;
     }
 
     private List<ChaosRun> activeRuns() {

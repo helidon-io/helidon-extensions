@@ -35,6 +35,14 @@ final class ChaosRuntimeRegistration implements AutoCloseable {
         return !closing.get();
     }
 
+    boolean reservationsPossible() {
+        return isActive() && engine.reservationsPossible();
+    }
+
+    boolean inboundWorkNeeded() {
+        return isActive() && engine.inboundWorkNeeded();
+    }
+
     Optional<ChaosRunEngine.Reservation> reserveInbound(String method, String requestPath) {
         if (!isActive()) {
             return Optional.empty();

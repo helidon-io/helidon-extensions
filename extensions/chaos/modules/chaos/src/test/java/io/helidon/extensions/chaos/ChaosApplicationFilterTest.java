@@ -15,6 +15,7 @@
  */
 package io.helidon.extensions.chaos;
 
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
@@ -30,6 +31,8 @@ import io.helidon.http.Status;
 import io.helidon.webclient.api.ClientResponseTyped;
 import io.helidon.webclient.api.WebClient;
 import io.helidon.webserver.http.HttpRouting;
+import io.helidon.webserver.http.RoutingRequest;
+import io.helidon.webserver.http.RoutingResponse;
 import io.helidon.webserver.http.ServerRequest;
 import io.helidon.webserver.http.ServerResponse;
 import io.helidon.webserver.testing.junit5.ServerTest;
@@ -186,6 +189,31 @@ class ChaosApplicationFilterTest {
                 .ifPresent(run -> OBSERVED_IN_FLIGHT.set((int) run.inFlight()));
         response.header(APPLICATION_HEADER, "reached");
         response.send("application");
+    }
+
+    @Test
+    void proceedsWithoutReadingRequestWhenNoRunIsActive() {
+        ChaosRunEngine idleEngine = ChaosRunEngine.create(ChaosLimitsConfig.builder().build());
+        try {
+            ChaosApplicationFilter filter = new ChaosApplicationFilter(new ChaosRuntimeRegistration(idleEngine));
+            AtomicInteger proceeds = new AtomicInteger();
+
+            filter.filter(proceeds::incrementAndGet, unreadable(RoutingRequest.class), unreadable(RoutingResponse.class));
+
+            assertThat(proceeds.get(), is(1));
+        } finally {
+            idleEngine.close();
+        }
+    }
+
+    private static <T> T unreadable(Class<T> type) {
+        return type.cast(Proxy.newProxyInstance(ChaosApplicationFilterTest.class.getClassLoader(),
+                                                new Class<?>[] {type},
+                                                (proxy, invoked, arguments) -> {
+                                                    throw new AssertionError(type.getSimpleName() + "."
+                                                                                     + invoked.getName()
+                                                                                     + " must not be read");
+                                                }));
     }
 
     private static ChaosRunPlan plan(ChaosHttpScope.PathMatch pathMatch,

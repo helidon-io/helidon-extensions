@@ -45,6 +45,9 @@ final class ChaosWebClientService implements WebClientService {
     public WebClientServiceResponse handle(Chain chain, WebClientServiceRequest request) {
         Objects.requireNonNull(chain, "chain is null");
         Objects.requireNonNull(request, "request is null");
+        if (!ChaosRuntimeBridge.reservationsPossible()) {
+            return chain.proceed(request);
+        }
 
         Method method = request.method();
         ClientUri uri = request.uri();

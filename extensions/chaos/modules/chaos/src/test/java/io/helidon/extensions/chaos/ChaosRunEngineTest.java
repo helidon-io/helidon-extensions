@@ -723,6 +723,67 @@ class ChaosRunEngineTest {
         assertThat(engine.list().getFirst().inFlight(), is(0L));
     }
 
+    @Test
+    void publishesNoRequestPathWorkWithoutRuns() {
+        assertThat(engine.reservationsPossible(), is(false));
+        assertThat(engine.inboundWorkNeeded(), is(false));
+    }
+
+    @Test
+    void publishesRequestPathWorkWhenRunIsCreated() {
+        engine.create(plan(10, 30, 20, 2, "/orders"), "alice");
+
+        assertThat(engine.reservationsPossible(), is(true));
+        assertThat(engine.inboundWorkNeeded(), is(true));
+    }
+
+    @Test
+    void clearsRequestPathWorkWhenRunCompletes() {
+        engine.create(plan(10, 30, 20, 2, "/orders"), "alice");
+
+        scheduler.advance(Duration.ofSeconds(10));
+
+        assertThat(engine.reservationsPossible(), is(false));
+        assertThat(engine.inboundWorkNeeded(), is(false));
+    }
+
+    @Test
+    void clearsRequestPathWorkWhenRequestCompletesRunBeforeTimer() {
+        engine.create(plan(10, 30, 20, 2, "/orders"), "alice");
+
+        scheduler.advanceClockOnly(Duration.ofSeconds(10));
+        assertThat(engine.reserveOutbound("GET", "https", "inventory.example.com", 443, "/v1/items"),
+                   is(Optional.empty()));
+
+        assertThat(engine.reservationsPossible(), is(false));
+        assertThat(engine.inboundWorkNeeded(), is(false));
+    }
+
+    @Test
+    void keepsRequestPathWorkUntilStoppedRunDrains() {
+        ChaosRunView created = engine.create(plan(10, 30, 20, 2, "/orders"), "alice");
+        ChaosRunEngine.Reservation reservation = engine.reserveInbound("GET", "/orders").orElseThrow();
+
+        engine.stop(created.id());
+        assertThat(engine.get(created.id()).orElseThrow().state(), is(STOPPING));
+        assertThat(engine.reservationsPossible(), is(true));
+        assertThat(engine.inboundWorkNeeded(), is(true));
+
+        reservation.close();
+        assertThat(engine.reservationsPossible(), is(false));
+        assertThat(engine.inboundWorkNeeded(), is(false));
+    }
+
+    @Test
+    void clearsRequestPathWorkWhenEngineCloses() {
+        engine.create(plan(10, 30, 20, 2, "/orders"), "alice");
+
+        engine.close();
+
+        assertThat(engine.reservationsPossible(), is(false));
+        assertThat(engine.inboundWorkNeeded(), is(false));
+    }
+
     private static ChaosLimitsConfig limits(int activeRuns, int retainedRuns, Duration retention) {
         return ChaosLimitsConfig.builder()
                 .maximumActiveRuns(activeRuns)

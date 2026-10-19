@@ -37,6 +37,10 @@ final class ChaosApplicationFilter implements Filter {
 
     @Override
     public void filter(FilterChain chain, RoutingRequest request, RoutingResponse response) {
+        if (!registration.inboundWorkNeeded()) {
+            chain.proceed();
+            return;
+        }
         String method = request.prologue().method().text();
         String path = request.path().absolute().path();
         Optional<ChaosRunEngine.Reservation> candidate = registration.reserveInbound(method, path);
