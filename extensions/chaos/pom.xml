@@ -41,6 +41,7 @@
 
     <properties>
         <helidon.version>4.5.4</helidon.version>
+        <!-- Java 21 has no unnamed bindings, so deliberately unused bindings keep a name (exception to guideline rule 1.5) -->
         <version.java>21</version.java>
     </properties>
 
