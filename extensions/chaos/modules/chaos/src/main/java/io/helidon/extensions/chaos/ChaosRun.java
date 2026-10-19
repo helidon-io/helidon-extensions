@@ -23,11 +23,9 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Predicate;
 
-import static io.helidon.extensions.chaos.ChaosRunState.COMPLETED;
+import static io.helidon.extensions.chaos.ChaosStopReason.STAGE_DURATION_COMPLETED;
 
 final class ChaosRun {
-    private static final String REASON_COMPLETED = "stage-duration-completed";
-
     private final UUID id;
     private final long sequence;
     private final ChaosRunPlan plan;
@@ -40,7 +38,7 @@ final class ChaosRun {
     private ChaosRunState state = ChaosRunState.RUNNING;
     private ChaosRunState drainedState;
     private Instant terminalAt;
-    private String terminalReason;
+    private ChaosStopReason terminalReason;
     private long matched;
     private long activated;
     private long skippedActivation;
@@ -130,19 +128,19 @@ final class ChaosRun {
 
     void refresh(Instant now) {
         if (running() && !now.isBefore(completesAt)) {
-            terminate(COMPLETED, REASON_COMPLETED, now);
+            terminate(STAGE_DURATION_COMPLETED, now);
         }
     }
 
-    void terminate(ChaosRunState terminalState, String reason, Instant now) {
+    void terminate(ChaosStopReason reason, Instant now) {
         cancelTasks();
         terminalReason = reason;
         if (inFlight == 0) {
-            state = terminalState;
+            state = reason.state();
             terminalAt = now;
         } else {
             state = ChaosRunState.STOPPING;
-            drainedState = terminalState;
+            drainedState = reason.state();
         }
     }
 
@@ -176,7 +174,7 @@ final class ChaosRun {
                                 expiresAt,
                                 current,
                                 Optional.ofNullable(terminalAt),
-                                Optional.ofNullable(terminalReason),
+                                Optional.ofNullable(terminalReason).map(ChaosStopReason::value),
                                 matched,
                                 activated,
                                 skippedActivation,

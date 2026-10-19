@@ -18,6 +18,7 @@ package io.helidon.extensions.chaos;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -31,9 +32,11 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
-import static io.helidon.extensions.chaos.ChaosRunState.COMPLETED;
-import static io.helidon.extensions.chaos.ChaosRunState.EXPIRED;
-import static io.helidon.extensions.chaos.ChaosRunState.STOPPED;
+import static io.helidon.extensions.chaos.ChaosStopReason.ENGINE_CLOSED;
+import static io.helidon.extensions.chaos.ChaosStopReason.HALTED;
+import static io.helidon.extensions.chaos.ChaosStopReason.MAXIMUM_DURATION_EXPIRED;
+import static io.helidon.extensions.chaos.ChaosStopReason.OPERATOR_STOPPED;
+import static io.helidon.extensions.chaos.ChaosStopReason.STAGE_DURATION_COMPLETED;
 
 /**
  * Bounded in-process lifecycle and activation engine.
@@ -43,9 +46,6 @@ import static io.helidon.extensions.chaos.ChaosRunState.STOPPED;
  * lifecycle races atomic while keeping request-path work bounded.</p>
  */
 final class ChaosRunEngine implements AutoCloseable {
-    private static final String REASON_COMPLETED = "stage-duration-completed";
-    private static final String REASON_EXPIRED = "maximum-duration-expired";
-    private static final String REASON_STOPPED = "operator-stopped";
     private static final int ID_ATTEMPTS = 16;
 
     private final ChaosLimitsConfig limits;
@@ -108,16 +108,12 @@ final class ChaosRunEngine implements AutoCloseable {
             ChaosRun run = new ChaosRun(id, ++sequence, plan, actor, now);
             Duration runDuration = plan.duration();
             ChaosScheduler.Cancellable completionTask = scheduler.schedule(runDuration,
-                                                                           () -> terminate(id,
-                                                                                           COMPLETED,
-                                                                                           REASON_COMPLETED));
+                                                                           () -> terminate(id, STAGE_DURATION_COMPLETED));
             Optional<ChaosScheduler.Cancellable> expirationTask = Optional.empty();
             try {
                 if (plan.maximumDuration().compareTo(runDuration) > 0) {
                     expirationTask = Optional.of(scheduler.schedule(plan.maximumDuration(),
-                                                                    () -> terminate(id,
-                                                                                    EXPIRED,
-                                                                                    REASON_EXPIRED)));
+                                                                    () -> terminate(id, MAXIMUM_DURATION_EXPIRED)));
                 }
                 run.tasks(completionTask, expirationTask);
             } catch (RuntimeException exception) {
@@ -221,9 +217,50 @@ final class ChaosRunEngine implements AutoCloseable {
                 throw new NotFoundException(id);
             }
             if (run.running()) {
-                run.terminate(STOPPED, REASON_STOPPED, now);
+                run.terminate(OPERATOR_STOPPED, now);
             }
             return run.view(now);
+        } finally {
+            try {
+                publishRequestPathWork();
+            } finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    int activeRunCount() {
+        lock.lock();
+        try {
+            refreshRuns(clock.instant());
+            return activeRuns().size();
+        } finally {
+            try {
+                publishRequestPathWork();
+            } finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    HaltResult haltAll() {
+        lock.lock();
+        try {
+            Instant now = clock.instant();
+            refreshRuns(now);
+            List<UUID> halted = new ArrayList<>();
+            for (ChaosRun run : runs.values()) {
+                if (run.running()) {
+                    run.terminate(HALTED, now);
+                    halted.add(run.id());
+                }
+            }
+            List<UUID> draining = runs.values()
+                    .stream()
+                    .filter(run -> !run.running() && !run.terminal())
+                    .map(ChaosRun::id)
+                    .toList();
+            return new HaltResult(List.copyOf(halted), draining);
         } finally {
             try {
                 publishRequestPathWork();
@@ -243,7 +280,7 @@ final class ChaosRunEngine implements AutoCloseable {
             closed = true;
             for (ChaosRun run : runs.values()) {
                 if (run.running()) {
-                    run.terminate(STOPPED, "engine-closed", clock.instant());
+                    run.terminate(ENGINE_CLOSED, clock.instant());
                 }
             }
             scheduler.close();
@@ -298,12 +335,12 @@ final class ChaosRunEngine implements AutoCloseable {
         }
     }
 
-    private void terminate(UUID id, ChaosRunState state, String reason) {
+    private void terminate(UUID id, ChaosStopReason reason) {
         lock.lock();
         try {
             ChaosRun run = runs.get(id);
             if (run != null && run.running()) {
-                run.terminate(state, reason, clock.instant());
+                run.terminate(reason, clock.instant());
             }
         } finally {
             try {
@@ -408,6 +445,15 @@ final class ChaosRunEngine implements AutoCloseable {
                 engine.release(runId, stageIndex);
             }
         }
+    }
+
+    /**
+     * Outcome of halting all runs.
+     *
+     * @param halted runs this call stopped, oldest first
+     * @param draining runs still waiting for in-flight work, oldest first
+     */
+    record HaltResult(List<UUID> halted, List<UUID> draining) {
     }
 
     /**

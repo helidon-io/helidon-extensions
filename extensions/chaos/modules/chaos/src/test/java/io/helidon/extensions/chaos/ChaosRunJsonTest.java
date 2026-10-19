@@ -18,6 +18,7 @@ package io.helidon.extensions.chaos;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -249,6 +250,27 @@ class ChaosRunJsonTest {
         assertThat(json.intValue("port").orElseThrow(), is(443));
         assertThat(json.objectValue("path").orElseThrow().stringValue("match").orElseThrow(), is("prefix"));
         assertThat(json.objectValue("path").orElseThrow().stringValue("value").orElseThrow(), is("/v1/items"));
+    }
+
+    @Test
+    void writesEveryDocumentedStopReason() {
+        List<String> documented = List.of("stage-duration-completed=COMPLETED",
+                                          "maximum-duration-expired=EXPIRED",
+                                          "operator-stopped=STOPPED",
+                                          "halted=STOPPED",
+                                          "breaker-tripped=STOPPED",
+                                          "breaker-failed=STOPPED",
+                                          "engine-closed=STOPPED");
+
+        assertThat(Arrays.stream(ChaosStopReason.values()).map(reason -> reason.value() + "=" + reason.state()).toList(),
+                   is(documented));
+        for (ChaosStopReason reason : ChaosStopReason.values()) {
+            JsonObject json = ChaosRunJson.toJson(view(reason.state(),
+                                                       Optional.of(CREATED.plusSeconds(4)),
+                                                       Optional.of(reason.value())));
+            assertThat(json.stringValue("state").orElseThrow(), is(reason.state().name()));
+            assertThat(json.stringValue("terminalReason").orElseThrow(), is(reason.value()));
+        }
     }
 
     @Test

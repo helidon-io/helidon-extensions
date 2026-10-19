@@ -75,7 +75,9 @@ final class ChaosControlService implements HttpService {
         rules.post("/runs", authorization, this::createRun)
                 .get("/runs", authorization, this::listRuns)
                 .get("/runs/{runId}", authorization, this::getRun)
-                .delete("/runs/{runId}", authorization, this::deleteRun);
+                .delete("/runs/{runId}", authorization, this::deleteRun)
+                .post("/halt", authorization, this::halt)
+                .get("/limits", authorization, this::limits);
     }
 
     @Override
@@ -166,6 +168,18 @@ final class ChaosControlService implements HttpService {
             Status status = run.state() == STOPPING ? Status.ACCEPTED_202 : Status.OK_200;
             sendJson(response, status, ChaosRunJson.toJson(run));
         });
+    }
+
+    private void halt(ServerRequest request, ServerResponse response) {
+        bounded(request,
+                response,
+                () -> sendJson(response, Status.OK_200, ChaosRunJson.toJson(engine.haltAll())));
+    }
+
+    private void limits(ServerRequest request, ServerResponse response) {
+        bounded(request,
+                response,
+                () -> sendJson(response, Status.OK_200, ChaosLimitsJson.toJson(limits, engine.activeRunCount())));
     }
 
     private void bounded(ServerRequest request, ServerResponse response, Operation operation) {

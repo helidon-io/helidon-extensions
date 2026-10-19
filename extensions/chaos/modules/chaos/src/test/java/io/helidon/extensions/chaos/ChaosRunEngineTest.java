@@ -784,6 +784,83 @@ class ChaosRunEngineTest {
         assertThat(engine.inboundWorkNeeded(), is(false));
     }
 
+    @Test
+    void haltStopsEveryActiveRunAndReportsDraining() {
+        ChaosRunEngine twoRunEngine = engine(limits(2, 8, Duration.ofMinutes(5)));
+        ChaosRunView idle = twoRunEngine.create(plan(10, 30, 20, 2, "/orders"), "alice");
+        ChaosRunView busy = twoRunEngine.create(plan(10, 30, 20, 2, "/payments"), "bob");
+        ChaosRunEngine.Reservation reservation = twoRunEngine.reserveInbound("GET", "/payments").orElseThrow();
+
+        ChaosRunEngine.HaltResult result = twoRunEngine.haltAll();
+
+        assertThat(result.halted(), is(List.of(idle.id(), busy.id())));
+        assertThat(result.draining(), is(List.of(busy.id())));
+        ChaosRunView halted = twoRunEngine.get(idle.id()).orElseThrow();
+        assertThat(halted.state(), is(STOPPED));
+        assertThat(halted.terminalReason().orElseThrow(), is("halted"));
+        ChaosRunView draining = twoRunEngine.get(busy.id()).orElseThrow();
+        assertThat(draining.state(), is(STOPPING));
+        assertThat(draining.terminalReason().orElseThrow(), is("halted"));
+
+        reservation.close();
+        assertThat(twoRunEngine.get(busy.id()).orElseThrow().state(), is(STOPPED));
+        assertThat(twoRunEngine.reservationsPossible(), is(false));
+    }
+
+    @Test
+    void haltIsIdempotent() {
+        ChaosRunView created = engine.create(plan(10, 30, 20, 2, "/orders"), "alice");
+        ChaosRunEngine.Reservation reservation = engine.reserveInbound("GET", "/orders").orElseThrow();
+        engine.haltAll();
+
+        ChaosRunEngine.HaltResult again = engine.haltAll();
+        assertThat(again.halted(), is(empty()));
+        assertThat(again.draining(), is(List.of(created.id())));
+
+        reservation.close();
+        ChaosRunEngine.HaltResult drained = engine.haltAll();
+        assertThat(drained.halted(), is(empty()));
+        assertThat(drained.draining(), is(empty()));
+        assertThat(engine.get(created.id()).orElseThrow().terminalReason().orElseThrow(), is("halted"));
+    }
+
+    @Test
+    void haltWithoutRunsReportsNothing() {
+        ChaosRunEngine.HaltResult result = engine.haltAll();
+
+        assertThat(result.halted(), is(empty()));
+        assertThat(result.draining(), is(empty()));
+    }
+
+    @Test
+    void haltDoesNotRelabelCompletedRuns() {
+        ChaosRunView created = engine.create(plan(10, 30, 20, 2, "/orders"), "alice");
+        scheduler.advance(Duration.ofSeconds(10));
+
+        ChaosRunEngine.HaltResult result = engine.haltAll();
+
+        assertThat(result.halted(), is(empty()));
+        assertThat(engine.get(created.id()).orElseThrow().terminalReason().orElseThrow(),
+                   is("stage-duration-completed"));
+    }
+
+    @Test
+    void countsRunningAndDrainingRunsAsActive() {
+        ChaosRunEngine twoRunEngine = engine(limits(2, 8, Duration.ofMinutes(5)));
+        assertThat(twoRunEngine.activeRunCount(), is(0));
+        ChaosRunView first = twoRunEngine.create(plan(10, 30, 20, 2, "/orders"), "alice");
+        ChaosRunView second = twoRunEngine.create(plan(10, 30, 20, 2, "/payments"), "bob");
+        ChaosRunEngine.Reservation reservation = twoRunEngine.reserveInbound("GET", "/payments").orElseThrow();
+        twoRunEngine.stop(second.id());
+        assertThat(twoRunEngine.activeRunCount(), is(2));
+
+        twoRunEngine.stop(first.id());
+        assertThat(twoRunEngine.activeRunCount(), is(1));
+
+        reservation.close();
+        assertThat(twoRunEngine.activeRunCount(), is(0));
+    }
+
     private static ChaosLimitsConfig limits(int activeRuns, int retainedRuns, Duration retention) {
         return ChaosLimitsConfig.builder()
                 .maximumActiveRuns(activeRuns)

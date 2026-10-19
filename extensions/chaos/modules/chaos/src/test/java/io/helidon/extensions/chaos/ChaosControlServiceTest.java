@@ -45,6 +45,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 @ServerTest
 class ChaosControlServiceTest {
     private static final String RUNS = "/chaos/v1/runs";
+    private static final String HALT = "/chaos/v1/halt";
+    private static final String LIMITS = "/chaos/v1/limits";
     private static ChaosRunEngine engine;
     private static ChaosRuntimeRegistration registration;
     private static ChaosControlService service;
@@ -142,6 +144,70 @@ class ChaosControlServiceTest {
             reservation.close();
         }
         assertThat(engine.get(secondId).orElseThrow().state(), is(STOPPED));
+    }
+
+    @Test
+    void haltStopsActiveRunsAndReportsDraining() {
+        ClientResponseTyped<JsonObject> created = post(validPlan("halt"));
+        String id = created.entity().stringValue("id").orElseThrow();
+        created.close();
+        ChaosRunEngine.Reservation reservation = engine.reserveInbound("GET", "/orders/42").orElseThrow();
+        try {
+            ClientResponseTyped<JsonObject> halted = client.post(HALT).request(JsonObject.class);
+            assertThat(halted.status(), is(Status.OK_200));
+            assertJsonContentType(halted);
+            assertThat(halted.entity().arrayValue("halted").orElseThrow().toString(), is("[\"" + id + "\"]"));
+            assertThat(halted.entity().arrayValue("draining").orElseThrow().toString(), is("[\"" + id + "\"]"));
+            halted.close();
+        } finally {
+            reservation.close();
+        }
+
+        ChaosRunView run = engine.get(UUID.fromString(id)).orElseThrow();
+        assertThat(run.state(), is(STOPPED));
+        assertThat(run.terminalReason().orElseThrow(), is("halted"));
+    }
+
+    @Test
+    void haltWithoutActiveRunsSucceeds() {
+        ClientResponseTyped<JsonObject> halted = client.post(HALT).request(JsonObject.class);
+
+        assertThat(halted.status(), is(Status.OK_200));
+        assertThat(halted.entity().arrayValue("halted").orElseThrow().toString(), is("[]"));
+        assertThat(halted.entity().arrayValue("draining").orElseThrow().toString(), is("[]"));
+        halted.close();
+    }
+
+    @Test
+    void limitsReportConfiguredValuesAndActiveRuns() {
+        JsonObject expected = JsonParser.create("""
+                {
+                  "maximumActiveRuns": 1,
+                  "maximumRunDuration": "PT15M",
+                  "maximumStagesPerRun": 16,
+                  "maximumActivationsPerDisruption": 10000,
+                  "maximumConcurrentActivationsPerDisruption": 64,
+                  "maximumLatency": "PT30S",
+                  "maximumResponseTimeout": "PT30S",
+                  "maximumSyntheticBodyBytes": 65536,
+                  "maximumControlRequestBytes": 65536,
+                  "maximumConcurrentControlRequests": 16,
+                  "maximumRetainedRuns": 32,
+                  "terminalRunRetention": "PT15M"
+                }
+                """).readJsonObject();
+
+        ClientResponseTyped<JsonObject> idle = client.get(LIMITS).request(JsonObject.class);
+        assertThat(idle.status(), is(Status.OK_200));
+        assertJsonContentType(idle);
+        assertThat(idle.entity().objectValue("limits").orElseThrow().toString(), is(expected.toString()));
+        assertThat(idle.entity().intValue("activeRuns").orElseThrow(), is(0));
+        idle.close();
+
+        post(validPlan("limits")).close();
+        ClientResponseTyped<JsonObject> active = client.get(LIMITS).request(JsonObject.class);
+        assertThat(active.entity().intValue("activeRuns").orElseThrow(), is(1));
+        active.close();
     }
 
     @Test

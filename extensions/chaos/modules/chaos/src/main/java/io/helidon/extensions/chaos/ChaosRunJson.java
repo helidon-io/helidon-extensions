@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 import io.helidon.extensions.chaos.ChaosActivation.PeriodicBurstActivation;
 import io.helidon.extensions.chaos.ChaosActivation.ProbabilityActivation;
@@ -55,6 +56,17 @@ final class ChaosRunJson {
 
     static JsonArray toJson(List<ChaosRunView> runs) {
         return JsonArray.create(runs.stream().map(ChaosRunJson::toJson).toList());
+    }
+
+    static JsonObject toJson(ChaosRunEngine.HaltResult result) {
+        return JsonObject.builder()
+                .set("halted", JsonArray.createStrings(ids(result.halted())))
+                .set("draining", JsonArray.createStrings(ids(result.draining())))
+                .build();
+    }
+
+    private static List<String> ids(List<UUID> ids) {
+        return ids.stream().map(UUID::toString).toList();
     }
 
     private static JsonObject plan(ChaosRunPlan plan) {

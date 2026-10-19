@@ -124,6 +124,8 @@ All resources are under the dedicated control listener:
 | `GET` | `/chaos/v1/runs` | List retained runs, newest first |
 | `GET` | `/chaos/v1/runs/{runId}` | Read normalized plan, lifecycle, actor, timestamps, and counters |
 | `DELETE` | `/chaos/v1/runs/{runId}` | Stop a run; returns `200`, or `202` while in-flight work drains |
+| `POST` | `/chaos/v1/halt` | Stop every active run; returns `200` |
+| `GET` | `/chaos/v1/limits` | Read the server-enforced limits and the number of active runs |
 
 Validation uses strict JSON. Request-shape errors return `400`; policy and limit violations return `422`; active-run or scope conflicts return `409`. Errors use `application/problem+json` without stack traces or internal configuration data.
 
@@ -498,6 +500,58 @@ curl --fail-with-body --user operator:test-only-password \
 # DELETE /chaos/v1/runs/{runId}
 curl --fail-with-body --request DELETE --user operator:test-only-password \
   http://127.0.0.1:9080/chaos/v1/runs/7bb7b42d-5056-4b88-a734-e309909d1721
+```
+
+### Stop reasons
+
+A terminal or draining run carries `terminalReason`, one of a closed list of stable values:
+
+| `terminalReason` | Final state | Meaning |
+|---|---|---|
+| `stage-duration-completed` | `COMPLETED` | All stages ran |
+| `maximum-duration-expired` | `EXPIRED` | The `maximumDuration` guard fired |
+| `operator-stopped` | `STOPPED` | `DELETE /chaos/v1/runs/{runId}` |
+| `halted` | `STOPPED` | `POST /chaos/v1/halt` |
+| `breaker-tripped` | `STOPPED` | Reserved for the local breaker; not produced yet |
+| `breaker-failed` | `STOPPED` | Reserved for the local breaker; not produced yet |
+| `engine-closed` | `STOPPED` | The server shut down |
+
+A run with in-flight work is `STOPPING` with its `terminalReason` already set, and reaches the final state when that
+work drains. Clients must treat an unknown value as "stopped for an unlisted reason", so the list can grow.
+
+### Halt all runs
+
+`POST /chaos/v1/halt` stops every active run with `terminalReason: "halted"`. It takes no request body and is
+idempotent.
+
+```json
+{"halted": ["7bb7b42d-5056-4b88-a734-e309909d1721"], "draining": ["7bb7b42d-5056-4b88-a734-e309909d1721"]}
+```
+
+`halted` lists the runs this call stopped. `draining` lists every run still in `STOPPING`, including runs stopped by
+earlier calls, so repeating the call shows what is left to drain.
+
+```bash
+curl --fail-with-body --request POST --user operator:test-only-password \
+  http://127.0.0.1:9080/chaos/v1/halt
+```
+
+### Read limits
+
+`GET /chaos/v1/limits` returns the effective limits (see [Server-enforced limits](#server-enforced-limits)) and the
+number of active runs, counting runs that are still draining:
+
+```json
+{
+  "limits": {
+    "maximumActiveRuns": 1, "maximumRunDuration": "PT15M", "maximumStagesPerRun": 16,
+    "maximumActivationsPerDisruption": 10000, "maximumConcurrentActivationsPerDisruption": 64,
+    "maximumLatency": "PT30S", "maximumResponseTimeout": "PT30S", "maximumSyntheticBodyBytes": 65536,
+    "maximumControlRequestBytes": 65536, "maximumConcurrentControlRequests": 16,
+    "maximumRetainedRuns": 32, "terminalRunRetention": "PT15M"
+  },
+  "activeRuns": 0
+}
 ```
 
 ## Server-enforced limits
