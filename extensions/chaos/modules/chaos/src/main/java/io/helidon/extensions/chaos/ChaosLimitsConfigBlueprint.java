@@ -37,7 +37,7 @@ interface ChaosLimitsConfigBlueprint {
     int maximumActiveRuns();
 
     /**
-     * Maximum guard duration of one run.
+     * Maximum declared duration of one run.
      *
      * @return maximum run duration
      */

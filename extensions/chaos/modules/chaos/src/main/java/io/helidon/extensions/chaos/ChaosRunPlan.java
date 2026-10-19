@@ -24,7 +24,7 @@ import java.util.Optional;
  * Immutable normalized plan for the first Chaos vertical slice.
  *
  * @param name diagnostic run name
- * @param maximumDuration run guard duration
+ * @param maximumDuration declared upper bound of the stage total
  * @param seed deterministic run seed
  * @param stages ordered run stages
  */

@@ -34,7 +34,6 @@ import java.util.function.Supplier;
 
 import static io.helidon.extensions.chaos.ChaosStopReason.ENGINE_CLOSED;
 import static io.helidon.extensions.chaos.ChaosStopReason.HALTED;
-import static io.helidon.extensions.chaos.ChaosStopReason.MAXIMUM_DURATION_EXPIRED;
 import static io.helidon.extensions.chaos.ChaosStopReason.OPERATOR_STOPPED;
 import static io.helidon.extensions.chaos.ChaosStopReason.STAGE_DURATION_COMPLETED;
 
@@ -107,19 +106,7 @@ final class ChaosRunEngine implements AutoCloseable {
             UUID id = nextId();
             ChaosRun run = new ChaosRun(id, ++sequence, plan, actor, now);
             Duration runDuration = plan.duration();
-            ChaosScheduler.Cancellable completionTask = scheduler.schedule(runDuration,
-                                                                           () -> terminate(id, STAGE_DURATION_COMPLETED));
-            Optional<ChaosScheduler.Cancellable> expirationTask = Optional.empty();
-            try {
-                if (plan.maximumDuration().compareTo(runDuration) > 0) {
-                    expirationTask = Optional.of(scheduler.schedule(plan.maximumDuration(),
-                                                                    () -> terminate(id, MAXIMUM_DURATION_EXPIRED)));
-                }
-                run.tasks(completionTask, expirationTask);
-            } catch (RuntimeException exception) {
-                completionTask.cancel();
-                throw exception;
-            }
+            run.completionTask(scheduler.schedule(runDuration, () -> terminate(id, STAGE_DURATION_COMPLETED)));
             runs.put(id, run);
             return run.view(now);
         } finally {

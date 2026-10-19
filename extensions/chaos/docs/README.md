@@ -509,7 +509,6 @@ A terminal or draining run carries `terminalReason`, one of a closed list of sta
 | `terminalReason` | Final state | Meaning |
 |---|---|---|
 | `stage-duration-completed` | `COMPLETED` | All stages ran |
-| `maximum-duration-expired` | `EXPIRED` | The `maximumDuration` guard fired |
 | `operator-stopped` | `STOPPED` | `DELETE /chaos/v1/runs/{runId}` |
 | `halted` | `STOPPED` | `POST /chaos/v1/halt` |
 | `breaker-tripped` | `STOPPED` | Reserved for the local breaker; not produced yet |

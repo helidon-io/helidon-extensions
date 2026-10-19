@@ -21,8 +21,6 @@ package io.helidon.extensions.chaos;
 enum ChaosStopReason {
     /** All stages ran. */
     STAGE_DURATION_COMPLETED("stage-duration-completed", ChaosRunState.COMPLETED),
-    /** The {@code maximumDuration} guard fired. */
-    MAXIMUM_DURATION_EXPIRED("maximum-duration-expired", ChaosRunState.EXPIRED),
     /** An operator stopped the run. */
     OPERATOR_STOPPED("operator-stopped", ChaosRunState.STOPPED),
     /** An operator halted all runs. */

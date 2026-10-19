@@ -47,7 +47,6 @@ final class ChaosRun {
     private long inFlight;
     private long completed;
     private ChaosScheduler.Cancellable completionTask;
-    private Optional<ChaosScheduler.Cancellable> expirationTask = Optional.empty();
 
     ChaosRun(UUID id,
              long sequence,
@@ -100,10 +99,8 @@ final class ChaosRun {
         return terminal() && terminalAt != null && !terminalAt.isAfter(instant);
     }
 
-    void tasks(ChaosScheduler.Cancellable completionTask,
-               Optional<ChaosScheduler.Cancellable> expirationTask) {
+    void completionTask(ChaosScheduler.Cancellable completionTask) {
         this.completionTask = completionTask;
-        this.expirationTask = expirationTask;
     }
 
     Optional<Activation> reserveInbound(String method, String requestPath, Instant now) {
@@ -246,7 +243,6 @@ final class ChaosRun {
         if (completionTask != null) {
             completionTask.cancel();
         }
-        expirationTask.ifPresent(ChaosScheduler.Cancellable::cancel);
     }
 
     record Activation(int stageIndex, ChaosEffectAction action) {

@@ -31,7 +31,7 @@ import java.util.UUID;
  * @param actor authenticated actor that created the run
  * @param createdAt creation time
  * @param startedAt activation time
- * @param expiresAt maximum-duration guard time
+ * @param expiresAt latest time the run can still be running, from its maximum duration
  * @param currentStage current stage while running
  * @param terminalAt terminal transition time, if terminal
  * @param terminalReason stable machine-readable terminal reason

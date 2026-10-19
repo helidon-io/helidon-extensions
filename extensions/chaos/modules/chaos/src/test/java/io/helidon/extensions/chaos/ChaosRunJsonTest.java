@@ -253,9 +253,14 @@ class ChaosRunJsonTest {
     }
 
     @Test
+    void runStatesAreTheDocumentedClosedList() {
+        assertThat(Arrays.stream(ChaosRunState.values()).map(ChaosRunState::name).toList(),
+                   is(List.of("RUNNING", "STOPPING", "STOPPED", "COMPLETED")));
+    }
+
+    @Test
     void writesEveryDocumentedStopReason() {
         List<String> documented = List.of("stage-duration-completed=COMPLETED",
-                                          "maximum-duration-expired=EXPIRED",
                                           "operator-stopped=STOPPED",
                                           "halted=STOPPED",
                                           "breaker-tripped=STOPPED",

@@ -39,7 +39,6 @@ import org.junit.jupiter.api.Test;
 
 import static io.helidon.extensions.chaos.ChaosHttpScope.PathMatch.PREFIX;
 import static io.helidon.extensions.chaos.ChaosRunState.COMPLETED;
-import static io.helidon.extensions.chaos.ChaosRunState.EXPIRED;
 import static io.helidon.extensions.chaos.ChaosRunState.RUNNING;
 import static io.helidon.extensions.chaos.ChaosRunState.STOPPED;
 import static io.helidon.extensions.chaos.ChaosRunState.STOPPING;
@@ -230,12 +229,15 @@ class ChaosRunEngineTest {
     }
 
     @Test
-    void expirationGuardWinsIfItsTaskFiresFirst() {
+    void maximumDurationSchedulesNoSeparateGuard() {
         ChaosRunView created = engine.create(plan(10, 30, 20, 2, "/orders"), "alice");
 
         scheduler.fireLast();
 
-        assertThat(engine.get(created.id()).orElseThrow().state(), is(EXPIRED));
+        ChaosRunView completed = engine.get(created.id()).orElseThrow();
+        assertThat(completed.state(), is(COMPLETED));
+        assertThat(completed.terminalReason().orElseThrow(), is("stage-duration-completed"));
+        assertThat(completed.terminalAt().orElseThrow(), is(STARTED_AT.plusSeconds(10)));
     }
 
     @Test

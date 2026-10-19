@@ -26,9 +26,5 @@ enum ChaosRunState {
     /** The run was explicitly stopped. */
     STOPPED,
     /** The run completed its stage duration. */
-    COMPLETED,
-    /** The maximum run duration guard expired. */
-    EXPIRED,
-    /** The run failed internally. */
-    FAILED
+    COMPLETED
 }
