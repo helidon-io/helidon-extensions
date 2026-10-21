@@ -333,6 +333,20 @@ containers, constrained-union property/request boundaries, and cycles in the eff
 local-plus-inherited validation graph fail before templates render.
 Non-participating recursive models remain supported.
 
+For generated abstract discriminator/allOf bases with constrained descendants, the
+fixed point also includes the base and its descendants. A nested weighted native
+`TypeValidator<Base>` service dispatches object checks to the concrete generated
+validator through `ServiceRegistry`, without eagerly constructing descendant
+validators. It preserves the caller's `ValidationContext`; property-only checks
+without an instance delegate to a nested native field-based property metadata
+validator, without allocating a metadata instance or copying values. Abstract-base
+accessors omit constraint and cascade annotations so Service Codegen does not try
+to instantiate a concrete interceptor that lacks abstract discriminator methods.
+Concrete children still repeat the complete inherited constraints. The dispatcher is part
+of the model template so model-only generation does not require supporting files.
+The recursion guard includes base-to-runtime-subtype edges as well as ordinary
+cascade edges. Constrained union interfaces remain unsupported.
+
 ## Testing Strategy
 
 The implementation is primarily covered by integration-style generator tests. These run

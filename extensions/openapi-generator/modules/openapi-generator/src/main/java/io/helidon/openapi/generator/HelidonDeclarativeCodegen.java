@@ -930,6 +930,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             ModelsMap modelsMap = entry.getValue();
             for (ModelMap modelContainer : modelsMap.getModels()) {
                 var model = modelContainer.getModel();
+                modelContainer.put("runtimePolymorphicValidation",
+                                   cascadingValidation.runtimePolymorphicTypes().contains(model.classname));
                 if (topLevelStringEnums.contains(model.classname)) {
                     continue;
                 }
@@ -938,6 +940,31 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 }
 
                 boolean modelHasValidation = cascadingValidation.participatingModels().contains(model.classname);
+                if (cascadingValidation.runtimePolymorphicTypes().contains(model.classname)) {
+                    Set<String> memberNames = new LinkedHashSet<>();
+                    memberNames.add(model.classname);
+                    // Inline enum types can occur inside Optional and container signatures.
+                    // Reserve every identifier, rather than only a complete rendered signature.
+                    for (CodegenProperty property : model.allVars) {
+                        for (String type : new String[] {property.datatypeWithEnum, property.dataType,
+                                                       property.enumName, property.complexType}) {
+                            if (type != null) {
+                                Collections.addAll(memberNames, type.split("[^A-Za-z0-9_$]+"));
+                            }
+                        }
+                    }
+                    String validatorName = "__RuntimeTypeValidator";
+                    while (memberNames.contains(validatorName)) {
+                        validatorName += "_";
+                    }
+                    model.vendorExtensions.put("x-runtime-type-validator-name", validatorName);
+                    memberNames.add(validatorName);
+                    String propertiesName = "__ValidationProperties";
+                    while (memberNames.contains(propertiesName)) {
+                        propertiesName += "_";
+                    }
+                    model.vendorExtensions.put("x-runtime-validation-properties-name", propertiesName);
+                }
                 List<CodegenProperty> renderVars = cascadingValidation.propertiesByModel().get(model.classname);
 
                 for (CodegenProperty prop : renderVars) {
@@ -982,6 +1009,13 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     validationSources.add(inheritedProperty);
                     return buildValidationAnnotations(AllOfValidationSupport.merge(model, validationSources));
                 });
+
+                if (cascadingValidation.runtimePolymorphicTypes().contains(model.classname)) {
+                    List<CodegenProperty> validationProperties = new ArrayList<>(renderVars);
+                    validationProperties.addAll(cascadingValidation.inheritedPropertiesByModel()
+                                                        .getOrDefault(model.classname, List.of()));
+                    model.vendorExtensions.put("x-runtime-validation-properties", validationProperties);
+                }
 
                 if (modelHasValidation) {
                     model.vendorExtensions.put("x-has-validations", Boolean.TRUE);

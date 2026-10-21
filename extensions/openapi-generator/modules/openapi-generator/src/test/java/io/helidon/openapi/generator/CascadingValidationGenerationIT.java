@@ -262,35 +262,61 @@ class CascadingValidationGenerationIT {
                    org.hamcrest.CoreMatchers.is(false));
     }
 
+    /** The generated allOf base must route native request validation to the concrete subtype. */
     @Test
-    void rejectsConstrainedAllOfPolymorphicRequestBoundaryBeforeRendering() {
+    void dispatchesConstrainedAllOfPolymorphicRequestBoundary() throws Exception {
         Path target = outputDir.resolve("constrained-allof-request");
-        RuntimeException error = assertThrows(RuntimeException.class,
-                                              () -> generate(target,
-                                                             "constrained-allof-request-validation.yaml",
-                                                             null));
-        String message = rootMessage(error);
-        assertThat(message, containsString("Unsupported cascading validation request entity"));
-        assertThat(message, containsString("polymorphic schema type(s) [ConstrainedBase]"));
-        assertThat(message, containsString("constrained runtime subtype(s) [ConstrainedChild]"));
-        assertThat(message, containsString("concrete request DTO"));
-        assertThat(Files.exists(apiFile(target, "ValidationApi.java")),
-                   org.hamcrest.CoreMatchers.is(false));
+        generate(target, "constrained-allof-request-validation.yaml", null);
+        assertThat(read(apiFile(target, "ValidationApi.java")),
+                   containsString("@Validation.Valid @Http.Entity ConstrainedBase constrainedBase"));
+        assertThat(read(modelFile(target, "ConstrainedBase.java")),
+                   containsString("implements io.helidon.validation.spi.TypeValidator<ConstrainedBase>"));
+        assertThat(read(modelFile(target, "ConstrainedChild.java")),
+                   containsString("@Validation.String.Length(value = 10)"));
     }
 
+    /** Nested base-typed properties require the same runtime dispatch as request entities. */
     @Test
-    void rejectsConstrainedAllOfPolymorphicPropertyBoundaryBeforeRendering() {
+    void dispatchesConstrainedAllOfPolymorphicPropertyBoundary() throws Exception {
         Path target = outputDir.resolve("constrained-allof-property");
-        IllegalArgumentException error = assertThrows(
-                IllegalArgumentException.class,
-                () -> generate(target, "constrained-allof-property-validation.yaml", null));
-        String message = error.getMessage();
-        assertThat(message, containsString("schema 'ConstrainedHolder', property 'value'"));
-        assertThat(message, containsString("polymorphic schema type(s) [ConstrainedBase]"));
-        assertThat(message, containsString("constrained runtime subtype(s) [ConstrainedChild]"));
-        assertThat(message, containsString("concrete property DTO"));
-        assertThat(Files.exists(modelFile(target, "ConstrainedHolder.java")),
-                   org.hamcrest.CoreMatchers.is(false));
+        generate(target, "constrained-allof-property-validation.yaml", null);
+        assertThat(read(modelFile(target, "ConstrainedHolder.java")),
+                   containsString("@Validation.Valid\n    public ConstrainedBase value()"));
+        assertThat(read(modelFile(target, "ConstrainedBase.java")),
+                   containsString("implements io.helidon.validation.spi.TypeValidator<ConstrainedBase>"));
+    }
+
+    /** Model-only consumers must not depend on a generated supporting-file dispatcher. */
+    @Test
+    void retainsRuntimeDispatchWithoutSupportingFilesOrApis() throws Exception {
+        Path target = outputDir.resolve("constrained-allof-models-only");
+        URL resource = getClass().getClassLoader().getResource("constrained-allof-property-validation.yaml");
+        CodegenConfigurator configurator = baseConfigurator(target, Paths.get(resource.toURI()).toString());
+        DefaultGenerator generator = new DefaultGenerator();
+        generator.setGeneratorPropertyDefault("apis", "false");
+        generator.setGeneratorPropertyDefault("supportingFiles", "false");
+        generator.setGeneratorPropertyDefault("models", "true");
+        generator.opts(configurator.toClientOptInput()).generate();
+
+        assertThat(read(modelFile(target, "ConstrainedBase.java")),
+                   containsString("implements io.helidon.validation.spi.TypeValidator<ConstrainedBase>"));
+        assertThat(read(modelFile(target, "ConstrainedChild.java")), containsString("@Validation.Validated"));
+        assertThat(Files.exists(target.resolve("pom.xml")), org.hamcrest.CoreMatchers.is(false));
+        assertThat(Files.exists(apiFile(target, "ValidationApi.java")), org.hamcrest.CoreMatchers.is(false));
+    }
+
+    /** A runtime subtype edge must not silently admit an otherwise hidden recursive cascade. */
+    @Test
+    void rejectsCyclesThroughRuntimeSubtypeDispatch() {
+        Path target = outputDir.resolve("runtime-polymorphic-cycle");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                                                       () -> generate(target,
+                                                                      "runtime-polymorphic-validation-cycle.yaml",
+                                                                      null));
+        assertThat(error.getMessage(), containsString("Unsupported recursive cascading validation graph"));
+        assertThat(error.getMessage(), containsString("RuntimeBase.<runtime subtype>"));
+        assertThat(error.getMessage(), containsString("RuntimeChild.parent"));
+        assertThat(Files.exists(modelFile(target, "RuntimeChild.java")), org.hamcrest.CoreMatchers.is(false));
     }
 
     @Test
