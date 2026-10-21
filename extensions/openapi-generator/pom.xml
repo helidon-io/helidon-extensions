@@ -44,8 +44,8 @@
     <properties>
         <openapi-generator.extension.version>4.0.0-SNAPSHOT</openapi-generator.extension.version>
         <!-- Compatibility baseline for building the generator -->
-        <helidon.version>4.5.0</helidon.version>
-        <version.java>21</version.java>
+        <helidon.version>27.0.1</helidon.version>
+        <version.java>27</version.java>
 
         <version.lib.openapi-generator>7.11.0</version.lib.openapi-generator>
         <version.lib.junit>5.11.4</version.lib.junit>
@@ -55,6 +55,8 @@
         <version.lib.commons-text>1.11.0</version.lib.commons-text>
         <version.lib.checker-qual>3.43.0</version.lib.checker-qual>
         <version.lib.smallrye-openapi>3.3.4</version.lib.smallrye-openapi>
+        <!-- Helidon 27.x BOMs no longer manage jsr305, so pin it explicitly for dependency convergence -->
+        <version.lib.jsr305>3.0.2</version.lib.jsr305>
     </properties>
 
     <dependencyManagement>
@@ -103,6 +105,11 @@
                 <groupId>org.checkerframework</groupId>
                 <artifactId>checker-qual</artifactId>
                 <version>${version.lib.checker-qual}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.code.findbugs</groupId>
+                <artifactId>jsr305</artifactId>
+                <version>${version.lib.jsr305}</version>
             </dependency>
             <dependency>
                 <groupId>io.smallrye</groupId>

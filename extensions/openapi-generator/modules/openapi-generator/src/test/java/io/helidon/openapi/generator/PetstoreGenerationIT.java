@@ -59,7 +59,7 @@ class PetstoreGenerationIT {
                 .setGeneratorName("helidon-declarative")
                 .setInputSpec(specPath)
                 .setOutputDir(outputDir.toString())
-                .addAdditionalProperty("helidonVersion", "4.4.1")
+                .addAdditionalProperty("helidonVersion", "27.0.1")
                 .addAdditionalProperty("apiPackage", "io.helidon.example.api")
                 .addAdditionalProperty("modelPackage", "io.helidon.example.model")
                 .addAdditionalProperty("invokerPackage", "io.helidon.example");
@@ -337,7 +337,7 @@ class PetstoreGenerationIT {
 
     @Test
     void pomXmlContainsHelidonVersion() throws IOException {
-        assertThat(read(outputDir.resolve("pom.xml").toFile()), containsString("4.4.1"));
+        assertThat(read(outputDir.resolve("pom.xml").toFile()), containsString("27.0.1"));
     }
 
     @Test
@@ -376,10 +376,49 @@ class PetstoreGenerationIT {
     }
 
     @Test
-    void pomXmlDefaultsCompilerSourceAndTargetToJava21() throws IOException {
+    void pomXmlDefaultsCompilerSourceAndTargetToJava27() throws IOException {
         String pom = read(outputDir.resolve("pom.xml").toFile());
-        assertThat(pom, containsString("<source>21</source>"));
-        assertThat(pom, containsString("<target>21</target>"));
+        assertThat(pom, containsString("<source>27</source>"));
+        assertThat(pom, containsString("<target>27</target>"));
+    }
+
+    @Test
+    void pomXmlDoesNotUseJacksonOrJsonbMediaModules() throws IOException {
+        String pom = read(outputDir.resolve("pom.xml").toFile());
+        assertThat(pom, not(containsString("helidon-http-media-jackson")));
+        assertThat(pom, not(containsString("helidon-http-media-jsonb")));
+        assertThat(pom, not(containsString("helidon-http-media-gson")));
+    }
+
+    @Test
+    void generatedSourcesDoNotUseJacksonOrJsonbLibraries() throws IOException {
+        String sources = read(modelFile("Pet.java"))
+                + read(modelFile("ApiError.java"))
+                + read(apiFile("PetsApi.java"))
+                + read(apiFile("PetsEndpoint.java"))
+                + read(apiFile("PetsClient.java"))
+                + read(javaFile("io/helidon/example/Main.java"));
+        assertThat(sources, not(containsString("com.fasterxml.jackson")));
+        assertThat(sources, not(containsString("jakarta.json.bind")));
+        assertThat(sources, not(containsString("org.eclipse.yasson")));
+        assertThat(sources, not(containsString("com.google.gson")));
+    }
+
+    @Test
+    void generatedModelsSuppressIncubatingAccessorStyleApi() throws IOException {
+        assertThat(read(modelFile("Pet.java")),
+                   containsString("@SuppressWarnings(\"helidon:api:incubating\")\n"
+                                          + "@Json.Entity(accessorStyle = io.helidon.common.AccessorStyle.RECORD)"));
+        assertThat(read(modelFile("ApiError.java")),
+                   containsString("@SuppressWarnings(\"helidon:api:incubating\")"));
+    }
+
+    @Test
+    void generatedMavenAndGradleBuildsDoNotGloballySuppressIncubatingApi() throws IOException {
+        assertThat(read(outputDir.resolve("pom.xml").toFile()),
+                   not(containsString("-Ahelidon.api.incubating")));
+        assertThat(read(outputDir.resolve("build.gradle").toFile()),
+                   not(containsString("-Ahelidon.api.incubating")));
     }
 
     @Test
@@ -407,9 +446,9 @@ class PetstoreGenerationIT {
     }
 
     @Test
-    void buildGradleDefaultsJavaToolchainToJava21() throws IOException {
+    void buildGradleDefaultsJavaToolchainToJava27() throws IOException {
         assertThat(read(outputDir.resolve("build.gradle").toFile()),
-                   containsString("languageVersion = JavaLanguageVersion.of(21)"));
+                   containsString("languageVersion = JavaLanguageVersion.of(27)"));
     }
 
     @Test

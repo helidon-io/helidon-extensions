@@ -52,7 +52,7 @@ class FtGenerationIT {
                 .setGeneratorName("helidon-declarative")
                 .setInputSpec(specPath)
                 .setOutputDir(outputDir.toString())
-                .addAdditionalProperty("helidonVersion", "4.4.1")
+                .addAdditionalProperty("helidonVersion", "27.0.1")
                 .addAdditionalProperty("apiPackage", "io.helidon.example.api")
                 .addAdditionalProperty("modelPackage", "io.helidon.example.model")
                 .addAdditionalProperty("invokerPackage", "io.helidon.example")

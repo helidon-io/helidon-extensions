@@ -136,7 +136,7 @@ class EnumOptionsGenerationTest {
                 .components(components).paths(new Paths().addPathItem("/modes", new PathItem().get(operation)));
         var codegen = new HelidonDeclarativeCodegen();
         codegen.setOutputDir(directory.toString());
-        codegen.additionalProperties().put("helidonVersion", "4.5.0");
+        codegen.additionalProperties().put("helidonVersion", "27.0.1");
         codegen.additionalProperties().put("enumCaseInsensitive", insensitive);
         codegen.additionalProperties().put("modelRegistryServices", services);
         var generator = new DefaultGenerator();

@@ -59,7 +59,7 @@ import org.openapitools.codegen.utils.ModelUtils;
 import static org.openapitools.codegen.utils.StringUtils.camelize;
 
 /**
- * openapi-generator SPI implementation that generates Helidon SE 4.x declarative code.
+ * openapi-generator SPI implementation that generates Helidon SE 27.x declarative code.
  *
  * <p>Register via SPI: {@code META-INF/services/org.openapitools.codegen.CodegenConfig}
  * pointing to this class. Use with {@code -g helidon-declarative}.</p>
@@ -115,9 +115,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
     static final String OPT_DISCRIMINATOR_REPRESENTATION = "discriminatorRepresentation";
     private static final String EXT_DISCRIMINATOR_REPRESENTATION =
             "x-helidon-discriminator-representation";
-    private static final String DEFAULT_HELIDON_VERSION = "v4";
+    private static final String DEFAULT_HELIDON_VERSION = "v27";
     private String helidonVersion = DEFAULT_HELIDON_VERSION;
-    private String javaVersion = "21";
+    private String javaVersion = "27";
     private boolean generateClient = true;
     private boolean generateErrorHandler = true;
     private boolean serverOpenApi = true;
@@ -184,7 +184,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
         // Generator options
         addOption(OPT_HELIDON_VERSION,
-                "Helidon version written into the generated pom.xml",
+                "Helidon 27.x version written into the generated Maven and Gradle builds",
                 helidonVersion);
         addOption(OPT_JAVA_VERSION,
                 "Java version used as the generated Maven source/target and Gradle toolchain version",
@@ -252,7 +252,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
 
     @Override
     public String getHelp() {
-        return "Generates a Helidon SE 4.x declarative server using @RestServer.Endpoint annotations.";
+        return "Generates a Helidon SE 27.x declarative server using @RestServer.Endpoint annotations.";
     }
 
     @Override
@@ -265,6 +265,7 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             helidonVersion = additionalProperties.get(OPT_HELIDON_VERSION).toString();
         }
         helidonVersion = HelidonVersionResolver.resolve(helidonVersion);
+        validateHelidonVersion(helidonVersion);
         if (additionalProperties.containsKey(OPT_JAVA_VERSION)) {
             javaVersion = normalizeJavaVersion(additionalProperties.get(OPT_JAVA_VERSION));
         }
@@ -356,6 +357,13 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             throw new IllegalArgumentException("javaVersion must be a positive integer, but was '" + text + "'");
         }
         return text;
+    }
+
+    private static void validateHelidonVersion(String version) {
+        if (!version.matches("27\\.\\d+\\.\\d+([.-].*)?")) {
+            throw new IllegalArgumentException("helidonVersion must be a Helidon 27.x release, but was '"
+                                                       + version + "'. This generator supports Helidon 27.x only.");
+        }
     }
 
     // Naming: use plain camelCase (no "Api" suffix) so classname = "Pets", not "PetsApi"

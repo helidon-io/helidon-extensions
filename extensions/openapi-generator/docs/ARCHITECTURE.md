@@ -247,6 +247,8 @@ Per schema:
 - `{Model}.java`
   - `@Json.Entity(accessorStyle = io.helidon.common.AccessorStyle.RECORD)` model class,
     so JSON binding treats all prefixless accessors consistently, including `is...` and `get...` schema properties
+  - `@SuppressWarnings("helidon:api:incubating")` on the model class, because
+    `AccessorStyle` is an incubating Helidon API; no project-wide compiler flag is used
   - prefixless accessor and mutator methods for schema properties
   - `@Json.BuilderInfo` and a generated `Builder` / `BuilderBase<B, T>`
     implementing `io.helidon.common.Builder`
@@ -382,6 +384,9 @@ validating fresh generator output on every `it-tests` run. Most harness modules
 skip test execution and verify that generated projects build successfully;
 `composed-schemas` also runs a checked-in JSON-binding round-trip test against
 the freshly generated model classes.
+
+The generated Gradle project is verified with Gradle 9.8.2 and JDK 27. It does
+not include a Gradle wrapper; the generated `build.gradle` is used directly.
 
 ## Packaging
 

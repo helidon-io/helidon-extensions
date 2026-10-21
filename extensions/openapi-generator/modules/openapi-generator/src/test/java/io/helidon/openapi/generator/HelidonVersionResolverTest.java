@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class HelidonVersionResolverTest {
 
     @Test
-    void defaultHelidonVersionOptionIsShorthandV4() {
+    void defaultHelidonVersionOptionIsShorthandV27() {
         HelidonDeclarativeCodegen codegen = new HelidonDeclarativeCodegen();
 
         String defaultVersion = codegen.cliOptions().stream()
@@ -46,43 +46,53 @@ class HelidonVersionResolverTest {
                 .orElseThrow()
                 .getDefault();
 
-        assertThat(defaultVersion, is("v4"));
+        assertThat(defaultVersion, is("v27"));
     }
 
     @Test
     void processOptsExposesConfiguredHelidonVersion() {
         HelidonDeclarativeCodegen codegen = new HelidonDeclarativeCodegen();
-        codegen.additionalProperties().put("helidonVersion", "4.5.0");
+        codegen.additionalProperties().put("helidonVersion", "27.0.1");
 
         codegen.processOpts();
 
-        assertThat(codegen.additionalProperties().get("helidonVersion"), is("4.5.0"));
+        assertThat(codegen.additionalProperties().get("helidonVersion"), is("27.0.1"));
+    }
+
+    @Test
+    void processOptsRejectsNonHelidon27Version() {
+        HelidonDeclarativeCodegen codegen = new HelidonDeclarativeCodegen();
+        codegen.additionalProperties().put("helidonVersion", "26.0.0");
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, codegen::processOpts);
+
+        assertThat(exception.getMessage(), containsString("Helidon 27.x"));
     }
 
     @Test
     void resolveHelidonVersionLeavesSpecificVersionAlone() {
         URI unusedEndpoint = URI.create("http://127.0.0.1:1/api/versions/");
 
-        assertThat(HelidonVersionResolver.resolve("4.5.0", unusedEndpoint), is("4.5.0"));
+        assertThat(HelidonVersionResolver.resolve("27.0.1", unusedEndpoint), is("27.0.1"));
     }
 
     @Test
     void resolveHelidonVersionFetchesVersionShorthand() throws Exception {
-        try (TestHttpEndpoint endpoint = TestHttpEndpoint.responding(200, "4.5.9\n")) {
-            String resolved = HelidonVersionResolver.resolve("v4", endpoint.baseUri());
+        try (TestHttpEndpoint endpoint = TestHttpEndpoint.responding(200, "27.0.9\n")) {
+            String resolved = HelidonVersionResolver.resolve("v27", endpoint.baseUri());
 
-            assertThat(resolved, is("4.5.9"));
-            assertThat(endpoint.requestLine(), containsString("GET /api/versions/v4 HTTP/1.1"));
+            assertThat(resolved, is("27.0.9"));
+            assertThat(endpoint.requestLine(), containsString("GET /api/versions/v27 HTTP/1.1"));
         }
     }
 
     @Test
     void resolveHelidonVersionFetchesLiveVersionShorthand() {
         String resolved = HelidonVersionResolver.resolve(
-                "v4",
+                "v27",
                 HelidonVersionResolver.RESOLUTION_URI);
 
-        assertThat("Resolved Helidon version: " + resolved, resolved.matches("4\\.\\d+\\.\\d+"), is(true));
+        assertThat("Resolved Helidon version: " + resolved, resolved.matches("27\\.\\d+\\.\\d+"), is(true));
     }
 
     @Test
@@ -90,9 +100,9 @@ class HelidonVersionResolverTest {
         try (TestHttpEndpoint endpoint = TestHttpEndpoint.responding(200, "\n")) {
             RuntimeException exception = assertThrows(
                     RuntimeException.class,
-                    () -> HelidonVersionResolver.resolve("v4", endpoint.baseUri()));
+                    () -> HelidonVersionResolver.resolve("v27", endpoint.baseUri()));
 
-            assertThat(exception.getMessage(), containsString("Failed to resolve Helidon version 'v4'"));
+            assertThat(exception.getMessage(), containsString("Failed to resolve Helidon version 'v27'"));
             assertThat(exception.getMessage(), containsString("Set helidonVersion to a specific Helidon release"));
             assertThat(exception.getCause(), is(notNullValue()));
         }
@@ -103,9 +113,9 @@ class HelidonVersionResolverTest {
         try (TestHttpEndpoint endpoint = TestHttpEndpoint.responding(404, "not found")) {
             RuntimeException exception = assertThrows(
                     RuntimeException.class,
-                    () -> HelidonVersionResolver.resolve("v4", endpoint.baseUri()));
+                    () -> HelidonVersionResolver.resolve("v27", endpoint.baseUri()));
 
-            assertThat(exception.getMessage(), containsString("Failed to resolve Helidon version 'v4'"));
+            assertThat(exception.getMessage(), containsString("Failed to resolve Helidon version 'v27'"));
             assertThat(exception.getMessage(), containsString("Set helidonVersion to a specific Helidon release"));
             assertThat(exception.getCause(), is(notNullValue()));
         }

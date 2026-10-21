@@ -32,7 +32,7 @@
 
     <name>Helidon Extensions OpenAPI Generator</name>
     <description>
-        An OpenAPI Generator SPI plugin that generates Helidon SE 4.4.x or later server code from an OpenAPI 3
+        An OpenAPI Generator SPI plugin that generates Helidon SE 27.x server code from an OpenAPI 3
         specification.
     </description>
 
