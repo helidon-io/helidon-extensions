@@ -43,7 +43,7 @@ class EnumDefaultGenerationIT {
                 .setGeneratorName("helidon-declarative")
                 .setInputSpec(inputSpec.toUri().toASCIIString())
                 .setOutputDir(outputDir.toString())
-                .addAdditionalProperty("helidonVersion", "4.5.0")
+                .addAdditionalProperty("helidonVersion", "27.0.1")
                 .addAdditionalProperty("modelPackage", "io.helidon.example.model");
         var generator = new DefaultGenerator();
         generator.setGeneratorPropertyDefault("supportingFiles", "false");

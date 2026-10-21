@@ -500,7 +500,7 @@ class BasePathGenerationTest {
         assertThat(parsed.getMessages().toString(), parsed.getOpenAPI(), notNullValue());
         var codegen = new HelidonDeclarativeCodegen();
         codegen.setOutputDir(directory.toString());
-        codegen.additionalProperties().put("helidonVersion", "4.5.0");
+        codegen.additionalProperties().put("helidonVersion", "27.0.1");
         codegen.additionalProperties().put("generateClient", client);
         codegen.additionalProperties().putAll(options);
         codegen.serverVariableOverrides().putAll(serverVariables);

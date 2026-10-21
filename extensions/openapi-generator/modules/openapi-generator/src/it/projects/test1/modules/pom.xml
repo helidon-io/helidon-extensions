@@ -32,9 +32,9 @@
     <name>OpenAPI Generator Maven Harness Parent</name>
 
     <properties>
-        <!-- Compatibility baseline; feature-specific modules override this when they require Helidon 4.5. -->
-        <helidon.version>4.5.0</helidon.version>
-        <maven.compiler.release>21</maven.compiler.release>
+        <!-- Compatibility baseline; feature-specific modules override this when they require a newer Helidon 27 release. -->
+        <helidon.version>27.0.1</helidon.version>
+        <maven.compiler.release>27</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <mainClass>io.helidon.example.Main</mainClass>
         <generated.project.dir>${project.build.directory}/generated-project</generated.project.dir>

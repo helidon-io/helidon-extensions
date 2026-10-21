@@ -154,7 +154,7 @@ class JsonStringEnumGenerationIT {
                 .setGeneratorName("helidon-declarative")
                 .setInputSpec(Paths.get(resource.toURI()).toAbsolutePath().toString())
                 .setOutputDir(invalidOutput.toString())
-                .addAdditionalProperty("helidonVersion", "4.5.0");
+                .addAdditionalProperty("helidonVersion", "27.0.1");
 
         RuntimeException error = org.junit.jupiter.api.Assertions.assertThrows(
                 RuntimeException.class,
@@ -187,8 +187,8 @@ class JsonStringEnumGenerationIT {
 
     @Test
     void generatedProjectUsesConfiguredHelidonRelease() throws IOException {
-        assertThat(read(outputDir.resolve("pom.xml")), containsString("<helidon.version>4.5.0</helidon.version>"));
-        assertThat(read(outputDir.resolve("build.gradle")), containsString("def helidonVersion = '4.5.0'"));
+        assertThat(read(outputDir.resolve("pom.xml")), containsString("<helidon.version>27.0.1</helidon.version>"));
+        assertThat(read(outputDir.resolve("build.gradle")), containsString("def helidonVersion = '27.0.1'"));
     }
 
     @Test
@@ -211,7 +211,7 @@ class JsonStringEnumGenerationIT {
                 .setGeneratorName("helidon-declarative")
                 .setInputSpec(Paths.get(resource.toURI()).toAbsolutePath().toString())
                 .setOutputDir(cookieOutput.toString())
-                .addAdditionalProperty("helidonVersion", "4.5.0");
+                .addAdditionalProperty("helidonVersion", "27.0.1");
 
         IllegalArgumentException error = org.junit.jupiter.api.Assertions.assertThrows(
                 IllegalArgumentException.class,
@@ -228,7 +228,7 @@ class JsonStringEnumGenerationIT {
                 .setGeneratorName("helidon-declarative")
                 .setInputSpec(specPath)
                 .setOutputDir(destination.toString())
-                .addAdditionalProperty("helidonVersion", "4.5.0")
+                .addAdditionalProperty("helidonVersion", "27.0.1")
                 .addAdditionalProperty("apiPackage", "io.helidon.example.api")
                 .addAdditionalProperty("modelPackage", "io.helidon.example.model")
                 .addAdditionalProperty("invokerPackage", "io.helidon.example");

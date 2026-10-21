@@ -210,7 +210,7 @@ final class CascadingValidationSupport {
                             + javaType + "': polymorphic schema type(s) " + polymorphicTypes
                             + " contain constrained runtime subtype(s) "
                             + constrainedRuntimeTypes(polymorphicTypes, unsupportedPolymorphicTypes) + ", "
-                            + "but Helidon 4.5 cannot dispatch a static @Validation.Valid boundary to the runtime "
+                            + "but Helidon 27 cannot dispatch a static @Validation.Valid boundary to the runtime "
                             + "subtype. Use a concrete property DTO or validate the polymorphic value in "
                             + "application logic.");
                 }
@@ -428,7 +428,7 @@ final class CascadingValidationSupport {
                     + parameter.baseName + "', mapped Java type '" + javaType + "': polymorphic schema type(s) "
                     + unsupportedPolymorphicTypes + " contain constrained runtime subtype(s) "
                     + constrainedRuntimeTypes(unsupportedPolymorphicTypes, analysis.unsupportedPolymorphicTypes)
-                    + ", but Helidon 4.5 cannot dispatch a static @Validation.Valid boundary to the runtime subtype. "
+                    + ", but Helidon 27 cannot dispatch a static @Validation.Valid boundary to the runtime subtype. "
                     + "Use a concrete request DTO or validate the polymorphic value in application logic.");
         }
         ValidationTypeSupport.unsupportedContainer(javaType, analysis.modelNames, analysis.participatingModels)

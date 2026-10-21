@@ -57,12 +57,13 @@ The module is packaged as a thin jar. Runtime dependencies are copied to
 `target/libs`, and the jar manifest points to them.
 
 In the examples below, `4.0.0-SNAPSHOT` is the version of this extension artifact.
-The separate `helidonVersion` option controls which Helidon version is written
-into generated Maven and Gradle projects.
+The separate `helidonVersion` option controls which Helidon 27.x version is
+written into generated Maven and Gradle projects. The generator supports Helidon
+27.x only; other versions are rejected with an explicit error.
 
 The `javaVersion` option controls the generated Maven compiler source and target
 values and the generated Gradle Java toolchain version, and its current default is
-`21`.
+`27` (the minimum Java version required by Helidon 27).
 
 For CI-style verification of generated Maven projects in this module, enable
 the `it-tests` Maven profile:
@@ -94,8 +95,8 @@ Add the generator as a dependency of `openapi-generator-maven-plugin`:
                 <inputSpec>${project.basedir}/src/main/resources/openapi.yaml</inputSpec>
                 <output>${project.build.directory}/generated-sources/openapi</output>
                 <configOptions>
-                    <helidonVersion>4.5.4</helidonVersion>
-                    <javaVersion>21</javaVersion>
+                    <helidonVersion>27.0.1</helidonVersion>
+                    <javaVersion>27</javaVersion>
                     <apiPackage>com.example.api</apiPackage>
                     <modelPackage>com.example.model</modelPackage>
                     <invokerPackage>com.example</invokerPackage>
@@ -122,7 +123,13 @@ mvn generate-sources
 In that example:
 
 - `4.0.0-SNAPSHOT` is the version of `helidon-extensions-openapi-generator`
-- `4.5.4` is the Helidon version used in the generated project
+- `27.0.1` is the Helidon version used in the generated project
+
+Generated model classes declare `@SuppressWarnings("helidon:api:incubating")`
+because they use `io.helidon.common.AccessorStyle`. The suppression is scoped to
+each generated model, so generated sources compile both as a standalone project
+and when the Maven plugin adds them to an existing project. The generator does
+not add a project-wide incubating compiler flag.
 
 ## CLI Usage
 
@@ -134,12 +141,12 @@ java -jar openapi-generator/modules/openapi-generator/target/helidon-extensions-
   -g helidon-declarative \
   -i /path/to/openapi.yaml \
   -o /path/to/output \
-  --additional-properties helidonVersion=4.5.4,javaVersion=21,apiPackage=com.example.api,modelPackage=com.example.model,invokerPackage=com.example
+  --additional-properties helidonVersion=27.0.1,javaVersion=27,apiPackage=com.example.api,modelPackage=com.example.model,invokerPackage=com.example
 ```
 
 Here again, the jar version (`4.0.0-SNAPSHOT`) is the generator version, while
-`helidonVersion=4.5.4` controls the generated Helidon dependencies and
-`javaVersion=21` controls the generated project Java compilation level.
+`helidonVersion=27.0.1` controls the generated Helidon dependencies and
+`javaVersion=27` controls the generated project Java compilation level.
 
 Example with the optional-list flag enabled:
 
@@ -149,7 +156,7 @@ java -jar openapi-generator/modules/openapi-generator/target/helidon-extensions-
   -g helidon-declarative \
   -i /path/to/openapi.yaml \
   -o /tmp/generated-openapi \
-  --additional-properties helidonVersion=4.5.4,avoidOptionalListParams=true
+  --additional-properties helidonVersion=27.0.1,avoidOptionalListParams=true
 ```
 
 ## Generator Options
@@ -158,8 +165,8 @@ Set these under Maven `<configOptions>` or CLI `--additional-properties`.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `helidonVersion` | `v4` | Helidon version written into generated Maven and Gradle builds; values starting with `v` are resolved to latest version of that major. |
-| `javaVersion` | `21` | Java version written into generated Maven compiler source/target and Gradle toolchain builds |
+| `helidonVersion` | `v27` | Helidon 27.x version written into generated Maven and Gradle builds; values starting with `v` are resolved to the latest version of that major. Other majors are rejected. |
+| `javaVersion` | `27` | Java version written into generated Maven compiler source/target and Gradle toolchain builds |
 | `apiPackage` | `io.helidon.example.api` | Package for generated API, endpoint, client, and error classes |
 | `modelPackage` | `io.helidon.example.model` | Package for generated model classes |
 | `invokerPackage` | `io.helidon.example` | Package for generated `Main.java` |
@@ -184,8 +191,8 @@ an explicitly declared discriminator property becomes a derived read-only access
 a discriminator used only for polymorphic routing remains metadata-only.
 
 If `helidonVersion` starts with a `v` it is assumed to identify a major version of Helidon, and 
-it will resolve to the latest release of that major version. For example, `v4` resolves to the latest version
-of Helidon 4.X.X. For repeatability it is recommended to use a specific version of Helidon and not
+it will resolve to the latest release of that major version. For example, `v27` resolves to the latest version
+of Helidon 27.X.X. For repeatability it is recommended to use a specific version of Helidon and not
 rely on this shorthand.
 
 ## Overriding the context path
@@ -291,7 +298,7 @@ normalize to the same Java identifier receive deterministic numeric suffixes.
 Helidon JSON remains the JSON implementation. A stateless generated
 `JsonConverter` preserves exact values and JSON `null` for entity and model
 binding. Enums used by path, query, or header parameters additionally receive a
-typed `Mapper<String, EnumType>`; request-entity-only enums do not. Helidon 4.5
+typed `Mapper<String, EnumType>`; request-entity-only enums do not. Helidon 27
 or later is required for declarative HTTP binding to translate a mapper failure
 for a client-supplied enum value into the standard HTTP 400 response.
 String-enum cookie parameters fail generation with an actionable diagnostic because
@@ -421,10 +428,10 @@ follow Helidon's standard HTTP rejection behavior.
 Arbitrary `Iterable` or custom container mappings cannot guarantee Helidon cascade
 semantics and are rejected before source rendering with an actionable diagnostic,
 including request-entity containers. Schema-declared nullable request entities or nullable
-nested request model values are rejected because Helidon 4.5 does not null-guard a direct
+nested request model values are rejected because Helidon 27 does not null-guard a direct
 `@Validation.Valid` validator call; use `Optional`, a supported container, or a required
 non-null property.
-Helidon 4.5 also does not convert a contract-violating JSON `null` at a non-nullable
+Helidon 27 also does not convert a contract-violating JSON `null` at a non-nullable
 `@Validation.Valid` boundary into a validation response. Rejecting that case requires a
 null guard in Helidon validation code generation and is outside this generator-only feature.
 Model properties and request entities whose union type has constrained concrete members
@@ -433,7 +440,7 @@ runtime subtype; use a concrete DTO or application validation.
 Recursive references are allowed when they do not participate in generated validation.
 A cycle between participating models, including one introduced by inherited `allOf`
 properties, is also rejected before rendering because Helidon
-4.5 creates eager `TypeValidator` dependencies for `@Validation.Valid` boundaries and
+27 creates eager `TypeValidator` dependencies for `@Validation.Valid` boundaries and
 cannot activate a recursive validator graph. Break the validation cycle, map the
 recursive boundary to a non-validating DTO, or validate that boundary in application
 logic.

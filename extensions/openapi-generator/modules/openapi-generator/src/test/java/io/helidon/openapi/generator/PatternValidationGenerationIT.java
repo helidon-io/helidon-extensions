@@ -120,7 +120,7 @@ class PatternValidationGenerationIT {
                 .setGeneratorName("helidon-declarative")
                 .setInputSpec(inputSpec.toUri().toASCIIString())
                 .setOutputDir(targetDir.toString())
-                .addAdditionalProperty("helidonVersion", "4.5.0")
+                .addAdditionalProperty("helidonVersion", "27.0.1")
                 .addAdditionalProperty("modelPackage", "io.helidon.example.model")
                 .addAdditionalProperty("apiPackage", "io.helidon.example.api");
         var generator = new DefaultGenerator();
