@@ -18,6 +18,7 @@ package io.helidon.openapi.generator;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -41,6 +42,37 @@ import org.openapitools.codegen.model.OperationsMap;
 final class CascadingValidationSupport {
 
     private CascadingValidationSupport() {
+    }
+
+    /**
+     * Reserves runtime validation helper names without colliding with model or inline enum types.
+     *
+     * @param model generated polymorphic base model
+     */
+    static void configureRuntimeValidationNames(CodegenModel model) {
+        Set<String> memberNames = new LinkedHashSet<>();
+        memberNames.add(model.classname);
+        // Inline enum types can occur inside Optional and container signatures.
+        // Reserve every identifier, rather than only a complete rendered signature.
+        for (CodegenProperty property : model.allVars) {
+            for (String type : new String[] {property.datatypeWithEnum, property.dataType,
+                                           property.enumName, property.complexType}) {
+                if (type != null) {
+                    Collections.addAll(memberNames, type.split("[^A-Za-z0-9_$]+"));
+                }
+            }
+        }
+        String validatorName = "__RuntimeTypeValidator";
+        while (memberNames.contains(validatorName)) {
+            validatorName += "_";
+        }
+        model.vendorExtensions.put("x-runtime-type-validator-name", validatorName);
+        memberNames.add(validatorName);
+        String propertiesName = "__ValidationProperties";
+        while (memberNames.contains(propertiesName)) {
+            propertiesName += "_";
+        }
+        model.vendorExtensions.put("x-runtime-validation-properties-name", propertiesName);
     }
 
     static Analysis analyze(List<CodegenModel> models,
