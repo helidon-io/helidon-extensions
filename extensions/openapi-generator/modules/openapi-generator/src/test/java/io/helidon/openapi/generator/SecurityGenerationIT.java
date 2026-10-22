@@ -71,7 +71,7 @@ class SecurityGenerationIT {
     @Test
     void endpointSecuredMethodMatchesInterfaceSignature() throws IOException {
         assertThat(read(apiFile("ItemsEndpoint.java")),
-                   containsString("public void createItem(@Http.Entity Item item)"));
+                   containsString("public void createItem(@Validation.Valid @Http.Entity Item item)"));
     }
 
     @Test

@@ -1744,6 +1744,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
      */
     private List<Map<String, Object>> buildValidationAnnotations(CodegenProperty prop) {
         List<Map<String, Object>> result = new ArrayList<>();
+        if (prop.required && !prop.isNullable) {
+            result.add(Map.of("annotation", "@Validation.NotNull"));
+        }
 
         if (prop.isString && !prop.vendorExtensions.containsKey("x-enum-wire-constraints-validated")) {
             // minLength / maxLength → @Validation.String.Length
