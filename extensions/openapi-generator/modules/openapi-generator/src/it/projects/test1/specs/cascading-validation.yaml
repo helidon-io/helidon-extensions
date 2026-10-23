@@ -19,6 +19,19 @@ info:
   title: Cascading Validation API
   version: "1.0"
 paths:
+  /validate-polymorphic:
+    post:
+      operationId: validatePolymorphic
+      tags: [validation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolymorphicRecord'
+      responses:
+        "204":
+          description: Valid
   /validate:
     post:
       operationId: validateGraph
@@ -77,6 +90,76 @@ paths:
           description: Valid
 components:
   schemas:
+    PolymorphicRecord:
+      type: object
+      required: [kind, compartmentId]
+      discriminator:
+        propertyName: kind
+        mapping:
+          CAPPED: '#/components/schemas/CappedRecord'
+          OPEN: '#/components/schemas/OpenRecord'
+          DEEP: '#/components/schemas/DeepRecord'
+      properties:
+        kind:
+          type: string
+        compartmentId:
+          type: string
+          minLength: 3
+        baseLeaf:
+          $ref: '#/components/schemas/ConstrainedLeaf'
+    CollectionRecord:
+      allOf:
+        - $ref: '#/components/schemas/PolymorphicRecord'
+        - type: object
+          properties:
+            values:
+              type: array
+              maxItems: 255
+              items:
+                type: string
+            label:
+              type: string
+              minLength: 2
+      discriminator:
+        propertyName: kind
+        mapping:
+          CAPPED: '#/components/schemas/CappedRecord'
+          DEEP: '#/components/schemas/DeepRecord'
+    CappedRecord:
+      allOf:
+        - $ref: '#/components/schemas/CollectionRecord'
+        - type: object
+    OpenRecord:
+      allOf:
+        - $ref: '#/components/schemas/PolymorphicRecord'
+        - type: object
+          properties:
+            note:
+              type: string
+    DeepRecord:
+      allOf:
+        - $ref: '#/components/schemas/CollectionRecord'
+        - type: object
+          properties:
+            suffix:
+              type: string
+              minLength: 2
+    PolymorphicHolder:
+      type: object
+      required: [direct]
+      properties:
+        direct:
+          $ref: '#/components/schemas/PolymorphicRecord'
+        nullableRecord:
+          $ref: '#/components/schemas/PolymorphicRecord'
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolymorphicRecord'
+        recordsByName:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/PolymorphicRecord'
     ValidationRoot:
       type: object
       required: [intermediate]

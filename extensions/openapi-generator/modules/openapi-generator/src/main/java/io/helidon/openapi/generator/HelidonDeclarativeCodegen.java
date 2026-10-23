@@ -930,6 +930,8 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
             ModelsMap modelsMap = entry.getValue();
             for (ModelMap modelContainer : modelsMap.getModels()) {
                 var model = modelContainer.getModel();
+                modelContainer.put("runtimePolymorphicValidation",
+                                   cascadingValidation.runtimePolymorphicTypes().contains(model.classname));
                 if (topLevelStringEnums.contains(model.classname)) {
                     continue;
                 }
@@ -938,6 +940,9 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                 }
 
                 boolean modelHasValidation = cascadingValidation.participatingModels().contains(model.classname);
+                if (cascadingValidation.runtimePolymorphicTypes().contains(model.classname)) {
+                    CascadingValidationSupport.configureRuntimeValidationNames(model);
+                }
                 List<CodegenProperty> renderVars = cascadingValidation.propertiesByModel().get(model.classname);
 
                 for (CodegenProperty prop : renderVars) {
@@ -982,6 +987,13 @@ public class HelidonDeclarativeCodegen extends AbstractJavaCodegen {
                     validationSources.add(inheritedProperty);
                     return buildValidationAnnotations(AllOfValidationSupport.merge(model, validationSources));
                 });
+
+                if (cascadingValidation.runtimePolymorphicTypes().contains(model.classname)) {
+                    List<CodegenProperty> validationProperties = new ArrayList<>(renderVars);
+                    validationProperties.addAll(cascadingValidation.inheritedPropertiesByModel()
+                                                        .getOrDefault(model.classname, List.of()));
+                    model.vendorExtensions.put("x-runtime-validation-properties", validationProperties);
+                }
 
                 if (modelHasValidation) {
                     model.vendorExtensions.put("x-has-validations", Boolean.TRUE);

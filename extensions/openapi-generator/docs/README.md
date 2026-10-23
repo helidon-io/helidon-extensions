@@ -427,7 +427,21 @@ non-null property.
 Helidon 4.5 also does not convert a contract-violating JSON `null` at a non-nullable
 `@Validation.Valid` boundary into a validation response. Rejecting that case requires a
 null guard in Helidon validation code generation and is outside this generator-only feature.
-Model properties and request entities whose union type has constrained concrete members
+Generated discriminator-based `allOf` bases with constrained descendants include a
+native `TypeValidator<Base>` dispatch service inside the base model. It resolves the
+validator for the concrete generated subtype lazily from the service registry and
+passes through the original validation context. Inherited and subtype constraints
+therefore apply to base-typed request entities, direct properties, and supported
+containers. Models-only generation includes this service even when supporting-file
+generation is disabled. Abstract-base property constraints are described on fields
+of a nested native validated metadata type, rather than intercepted abstract-model
+getters. Validation of a base property without an object instance delegates to that
+native property validator with the original value; no view instance or value copy
+is created. Concrete model accessors retain the inherited constraints. This dispatch supports the
+generated model hierarchy; it does not supply validators for arbitrary handwritten
+subclasses.
+
+Model properties and request entities whose `oneOf`/`anyOf` union type has constrained concrete members
 are rejected because Helidon cannot statically dispatch that validation boundary to a
 runtime subtype; use a concrete DTO or application validation.
 Recursive references are allowed when they do not participate in generated validation.

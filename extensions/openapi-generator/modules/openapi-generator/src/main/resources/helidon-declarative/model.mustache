@@ -438,27 +438,28 @@ import {{import}};
 
 {{/vendorExtensions.x-concrete-discriminator-accessors}}
 
+{{^vendorExtensions.x-runtime-type-validator-name}}
 {{#vendorExtensions.x-render-vars}}
 {{#vendorExtensions.x-validation-annotations}}    {{{annotation}}}
 {{/vendorExtensions.x-validation-annotations}}{{#vendorExtensions.x-cascade-validation}}    @Validation.Valid
-{{/vendorExtensions.x-cascade-validation}}    public {{#vendorExtensions.x-validation-datatype}}{{{vendorExtensions.x-validation-datatype}}}{{/vendorExtensions.x-validation-datatype}}{{^vendorExtensions.x-validation-datatype}}{{{datatypeWithEnum}}}{{/vendorExtensions.x-validation-datatype}} {{name}}() {
-        return {{name}};
-    }
-
-    public void {{name}}({{#vendorExtensions.x-nullable-direct-cascade-validation}}java.util.Optional<{{{datatypeWithEnum}}}>{{/vendorExtensions.x-nullable-direct-cascade-validation}}{{^vendorExtensions.x-nullable-direct-cascade-validation}}{{{datatypeWithEnum}}}{{/vendorExtensions.x-nullable-direct-cascade-validation}} {{name}}) {
-        this.{{name}} = {{#vendorExtensions.x-nullable-direct-cascade-validation}}{{name}} == null ? java.util.Optional.empty() : {{name}}{{/vendorExtensions.x-nullable-direct-cascade-validation}}{{^vendorExtensions.x-nullable-direct-cascade-validation}}{{name}}{{/vendorExtensions.x-nullable-direct-cascade-validation}};
-    }
-
+{{/vendorExtensions.x-cascade-validation}}{{>modelAccessors}}
 {{/vendorExtensions.x-render-vars}}
 {{#vendorExtensions.x-inherited-validation-vars}}
     @Override
 {{#vendorExtensions.x-validation-annotations}}    {{{annotation}}}
 {{/vendorExtensions.x-validation-annotations}}{{#vendorExtensions.x-cascade-validation}}    @Validation.Valid
-{{/vendorExtensions.x-cascade-validation}}    public {{#vendorExtensions.x-validation-datatype}}{{{vendorExtensions.x-validation-datatype}}}{{/vendorExtensions.x-validation-datatype}}{{^vendorExtensions.x-validation-datatype}}{{{datatypeWithEnum}}}{{/vendorExtensions.x-validation-datatype}} {{name}}() {
-        return super.{{name}}();
-    }
-
+{{/vendorExtensions.x-cascade-validation}}{{>modelInheritedAccessor}}
 {{/vendorExtensions.x-inherited-validation-vars}}
+{{/vendorExtensions.x-runtime-type-validator-name}}
+{{#vendorExtensions.x-runtime-type-validator-name}}
+{{#vendorExtensions.x-render-vars}}
+{{>modelAccessors}}
+{{/vendorExtensions.x-render-vars}}
+{{#vendorExtensions.x-inherited-validation-vars}}
+    @Override
+{{>modelInheritedAccessor}}
+{{/vendorExtensions.x-inherited-validation-vars}}
+{{/vendorExtensions.x-runtime-type-validator-name}}
 {{^vendorExtensions.x-extends-model}}
 {{^vendorExtensions.x-abstract-polymorphic-base}}
     /**
@@ -691,6 +692,9 @@ import {{import}};
     }
 
 {{/vendorExtensions.x-enum-wire-constraints-validated}}{{/isEnum}}{{/vendorExtensions.x-render-vars}}
+{{#vendorExtensions.x-runtime-type-validator-name}}
+{{>polymorphicValidation}}
+{{/vendorExtensions.x-runtime-type-validator-name}}
 }
 {{^modelRegistryServices}}{{#vendorExtensions.x-use-polymorphic-converter}}{{>polymorphicClassConverterFactory}}
 {{/vendorExtensions.x-use-polymorphic-converter}}{{/modelRegistryServices}}

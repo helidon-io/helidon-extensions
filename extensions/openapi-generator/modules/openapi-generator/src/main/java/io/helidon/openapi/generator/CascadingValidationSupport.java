@@ -18,6 +18,7 @@ package io.helidon.openapi.generator;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -43,6 +44,37 @@ final class CascadingValidationSupport {
     private CascadingValidationSupport() {
     }
 
+    /**
+     * Reserves runtime validation helper names without colliding with model or inline enum types.
+     *
+     * @param model generated polymorphic base model
+     */
+    static void configureRuntimeValidationNames(CodegenModel model) {
+        Set<String> memberNames = new LinkedHashSet<>();
+        memberNames.add(model.classname);
+        // Inline enum types can occur inside Optional and container signatures.
+        // Reserve every identifier, rather than only a complete rendered signature.
+        for (CodegenProperty property : model.allVars) {
+            for (String type : new String[] {property.datatypeWithEnum, property.dataType,
+                                           property.enumName, property.complexType}) {
+                if (type != null) {
+                    Collections.addAll(memberNames, type.split("[^A-Za-z0-9_$]+"));
+                }
+            }
+        }
+        String validatorName = "__RuntimeTypeValidator";
+        while (memberNames.contains(validatorName)) {
+            validatorName += "_";
+        }
+        model.vendorExtensions.put("x-runtime-type-validator-name", validatorName);
+        memberNames.add(validatorName);
+        String propertiesName = "__ValidationProperties";
+        while (memberNames.contains(propertiesName)) {
+            propertiesName += "_";
+        }
+        model.vendorExtensions.put("x-runtime-validation-properties-name", propertiesName);
+    }
+
     static Analysis analyze(List<CodegenModel> models,
                             Set<String> modelNames,
                             BiPredicate<CodegenModel, CodegenProperty> directlyConstrained) {
@@ -57,11 +89,39 @@ final class CascadingValidationSupport {
                 directlyConstrainedModels.add(model.classname);
             }
         }
-        Set<String> participating = participatingModels(models, propertiesByModel,
-                                                        modelNames, directlyConstrainedModels);
-        Set<String> modelSpecificValidation = modelSpecificValidationModels(propertiesByModel,
-                                                                             modelNames,
-                                                                             directlyConstrainedModels);
+        Set<String> validationRoots = new LinkedHashSet<>(directlyConstrainedModels);
+        Set<String> participating;
+        Map<String, Set<String>> unsupportedPolymorphicTypes;
+        Map<String, Set<String>> runtimeDispatch = new LinkedHashMap<>();
+        Map<String, CodegenModel> modelsByName = models.stream()
+                .collect(java.util.stream.Collectors.toMap(model -> model.classname, model -> model));
+        boolean changed;
+        do {
+            participating = participatingModels(models, propertiesByModel, modelNames, validationRoots);
+            Set<String> modelSpecificValidation = modelSpecificValidationModels(propertiesByModel,
+                                                                                 modelNames,
+                                                                                 validationRoots);
+            unsupportedPolymorphicTypes = unsupportedPolymorphicTypes(models, participating, modelSpecificValidation);
+            Set<String> participatingAtThisStep = participating;
+            changed = false;
+            for (CodegenModel model : models) {
+                if (Boolean.TRUE.equals(model.vendorExtensions.get("x-abstract-polymorphic-base"))
+                        && (participating.contains(model.classname)
+                        || unsupportedPolymorphicTypes.containsKey(model.classname))) {
+                    Set<String> descendants = models.stream()
+                            .filter(candidate -> participatingAtThisStep.contains(candidate.classname))
+                            .filter(candidate -> isDescendantOf(candidate, model.classname, modelsByName))
+                            .map(candidate -> candidate.classname)
+                            .collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
+                    runtimeDispatch.put(model.classname, immutableSortedSet(descendants));
+                    changed |= validationRoots.add(model.classname);
+                }
+            }
+        } while (changed);
+        // Union interfaces keep their existing fail-closed behavior. Only generated allOf hierarchies
+        // receive the runtime dispatch service, whose concrete validators also retain inherited constraints.
+        Map<String, Set<String>> remainingPolymorphicTypes = new LinkedHashMap<>(unsupportedPolymorphicTypes);
+        runtimeDispatch.keySet().forEach(remainingPolymorphicTypes::remove);
         Inheritance inheritance = inheritedValidationProperties(models,
                                                                  propertiesByModel,
                                                                  modelNames,
@@ -69,14 +129,13 @@ final class CascadingValidationSupport {
                                                                  directlyConstrained);
         Map<String, List<CodegenProperty>> effectiveProperties = effectiveProperties(propertiesByModel, inheritance);
         validateShapes(models, effectiveProperties, modelNames, participating);
-        validateAcyclicGraph(effectiveProperties, modelNames, participating);
-        Map<String, Set<String>> unsupportedPolymorphicTypes = unsupportedPolymorphicTypes(
-                models, participating, modelSpecificValidation);
-        validatePolymorphicProperties(models, effectiveProperties, unsupportedPolymorphicTypes);
+        validateAcyclicGraph(effectiveProperties, modelNames, participating, runtimeDispatch);
+        validatePolymorphicProperties(models, effectiveProperties, remainingPolymorphicTypes);
         return new Analysis(modelNames,
                             Map.copyOf(propertiesByModel),
                             participating,
-                            unsupportedPolymorphicTypes,
+                            Map.copyOf(remainingPolymorphicTypes),
+                            Set.copyOf(runtimeDispatch.keySet()),
                             inheritance.accessorsByModel,
                             inheritance.overriddenByModel);
     }
@@ -309,7 +368,19 @@ final class CascadingValidationSupport {
     static void validateAcyclicGraph(Map<String, List<CodegenProperty>> propertiesByModel,
                                      Set<String> modelNames,
                                      Set<String> participating) {
+        validateAcyclicGraph(propertiesByModel, modelNames, participating, Map.of());
+    }
+
+    private static void validateAcyclicGraph(Map<String, List<CodegenProperty>> propertiesByModel,
+                                            Set<String> modelNames,
+                                            Set<String> participating,
+                                            Map<String, Set<String>> runtimeDispatch) {
         Map<String, List<ValidationEdge>> graph = validationGraph(propertiesByModel, modelNames, participating);
+        runtimeDispatch.forEach((base, subtypes) -> {
+            List<ValidationEdge> edges = new ArrayList<>(graph.getOrDefault(base, List.of()));
+            subtypes.forEach(subtype -> edges.add(new ValidationEdge(base, "<runtime subtype>", base, subtype)));
+            graph.put(base, List.copyOf(edges));
+        });
         Map<String, VisitState> states = new HashMap<>();
         List<String> nodes = new ArrayList<>(participating);
         nodes.sort(Comparator.naturalOrder());
@@ -563,10 +634,11 @@ final class CascadingValidationSupport {
                     Map<String, List<CodegenProperty>> propertiesByModel,
                     Set<String> participatingModels,
                     Map<String, Set<String>> unsupportedPolymorphicTypes,
+                    Set<String> runtimePolymorphicTypes,
                     Map<String, List<CodegenProperty>> inheritedPropertiesByModel,
                     Map<String, Map<String, List<CodegenProperty>>> overriddenPropertiesByModel) {
         static Analysis empty() {
-            return new Analysis(Set.of(), Map.of(), Set.of(), Map.of(), Map.of(), Map.of());
+            return new Analysis(Set.of(), Map.of(), Set.of(), Map.of(), Set.of(), Map.of(), Map.of());
         }
     }
 
