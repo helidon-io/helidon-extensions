@@ -424,7 +424,20 @@ boundaries use type-use `@Validation.Valid`. Map keys are not cascade targets.
 Inherited `allOf` constraints and cascades are repeated on generated child overrides so
 the concrete child validator executes the complete parent contract. Constraints on a
 same-name child property are composed conjunctively with constraints from every `allOf`
-ancestor; combinations that cannot be represented by one Helidon annotation fail generation.
+ancestor. Required lists are combined even when a child does not redeclare the inherited
+property. A nullable child declaration cannot relax a non-null ancestor contract, and child
+requirements do not change optional parent or sibling contracts. Inherited nullable required
+properties receive JSON presence checks without a `NotNull` constraint. Explicit JSON property
+names preserve the schema wire name when Java escaping renames a member (for example,
+`object` becomes the Java member `_object`, while JSON still uses `object`).
+For Swagger 2 `allOf`, the generator reads the original input to recover required-only
+members discarded by the v2-to-v3 parser. That source must remain accessible; use a local
+original specification or OpenAPI 3 input if a remote source cannot be read again.
+Combinations that cannot be represented by one Helidon annotation fail generation. This
+includes strengthening an inherited `Optional<Model>` accessor to a required non-null model:
+keeping the Optional signature would let an empty value bypass `NotNull`, while changing its
+return type would break Java inheritance. Declare that required property in a concrete request
+DTO without the optional-model inheritance boundary instead.
 Request entities
 use the same boundary rules and add `helidon-webserver-validation` so invalid entities
 follow Helidon's standard HTTP rejection behavior.

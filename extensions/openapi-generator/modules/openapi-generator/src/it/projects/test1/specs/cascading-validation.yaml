@@ -19,6 +19,17 @@ info:
   title: Cascading Validation API
   version: "1.0"
 paths:
+  /required-composition:
+    post:
+      operationId: acceptRequiredComposition
+      tags: [requiredComposition]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RequiredCompositionEnvelope'}
+      responses:
+        '204': {description: Accepted}
   /required:
     post:
       operationId: acceptRequiredEnvelope
@@ -256,3 +267,88 @@ components:
         nullableLabel: {type: string, nullable: true}
         optionalLabel: {type: string, nullable: true}
         optionalPlain: {type: string}
+
+    RequiredCodeBase:
+      type: object
+      required: [kind, code]
+      discriminator:
+        propertyName: kind
+        mapping:
+          NULLABLE_CHILD: '#/components/schemas/NullableCodeChild'
+      properties:
+        kind: {type: string}
+        code: {type: string}
+    NullableCodeChild:
+      allOf:
+        - $ref: '#/components/schemas/RequiredCodeBase'
+        - type: object
+          properties:
+            code: {type: string, nullable: true}
+    OptionalCodeBase:
+      type: object
+      properties:
+        code: {type: string, minLength: 1}
+    StrengthenedCodeChild:
+      allOf:
+        - $ref: '#/components/schemas/OptionalCodeBase'
+        - type: object
+          required: [code]
+    OptionalCodeSibling:
+      allOf:
+        - $ref: '#/components/schemas/OptionalCodeBase'
+        - type: object
+    RequiredCodeGrandchild:
+      allOf:
+        - $ref: '#/components/schemas/StrengthenedCodeChild'
+        - type: object
+    NullableCodeBase:
+      type: object
+      required: [code]
+      properties:
+        code: {type: string, nullable: true}
+    NullableCodeControlChild:
+      allOf:
+        - $ref: '#/components/schemas/NullableCodeBase'
+        - type: object
+          properties:
+            code: {type: string, nullable: true}
+    RequiredCompositionEnvelope:
+      type: object
+      required: [strict, inherited, grandchild, nullable, object, nullableInherited]
+      properties:
+        nullableInherited: {$ref: '#/components/schemas/RequiredNullableCodeChild'}
+        object: {$ref: '#/components/schemas/NullableObjectChild'}
+        strict: {$ref: '#/components/schemas/NullableCodeChild'}
+        inherited: {$ref: '#/components/schemas/StrengthenedCodeChild'}
+        grandchild: {$ref: '#/components/schemas/RequiredCodeGrandchild'}
+        nullable: {$ref: '#/components/schemas/NullableCodeControlChild'}
+
+    CompositionLeaf:
+      type: object
+      required: [value]
+      properties:
+        value: {type: string}
+    RequiredObjectBase:
+      type: object
+      required: [details]
+      properties:
+        details: {$ref: '#/components/schemas/CompositionLeaf'}
+    NullableObjectChild:
+      allOf:
+        - $ref: '#/components/schemas/RequiredObjectBase'
+        - type: object
+          properties:
+            details:
+              allOf:
+                - $ref: '#/components/schemas/CompositionLeaf'
+              nullable: true
+
+    OptionalNullableCodeBase:
+      type: object
+      properties:
+        code: {type: string, nullable: true}
+    RequiredNullableCodeChild:
+      allOf:
+        - $ref: '#/components/schemas/OptionalNullableCodeBase'
+        - type: object
+          required: [code]

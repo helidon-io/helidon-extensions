@@ -328,6 +328,12 @@ by directly constrained models. It marks cascade boundaries at the nested model 
 supported wrappers, collections, map values, and arrays, and repeats inherited `allOf`
 validation on concrete child accessors. Same-name property constraints are merged across
 the raw `allOf` contract because OpenAPI Generator can discard an earlier member's bounds.
+For Swagger 2 it recovers required lists from the original input because v2-to-v3 conversion
+can discard required-only allOf members. It also unions inherited required lists and intersects nullability, including requirements
+that occur without a property redeclaration. Inherited validation properties are cloned per
+child so annotations cannot leak to parents or siblings. Effective flags control both native
+validation and accessor shape. Required narrowing of an inherited Optional model fails before
+rendering because neither an empty Optional nor an incompatible override preserves the contract.
 Map keys are ignored. Nullable direct-model and request boundaries, unsupported custom
 containers, constrained-union property/request boundaries, and cycles in the effective
 local-plus-inherited validation graph fail before templates render.
