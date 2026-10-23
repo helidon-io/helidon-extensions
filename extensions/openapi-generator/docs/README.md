@@ -431,8 +431,15 @@ properties receive JSON presence checks without a `NotNull` constraint. Explicit
 names preserve the schema wire name when Java escaping renames a member (for example,
 `object` becomes the Java member `_object`, while JSON still uses `object`).
 For Swagger 2 `allOf`, the generator reads the original input to recover required-only
-members discarded by the v2-to-v3 parser. That source must remain accessible; use a local
-original specification or OpenAPI 3 input if a remote source cannot be read again.
+members discarded by the v2-to-v3 parser. That source must remain accessible. Authenticated
+remote Swagger 2 `allOf` input currently fails this recovery, including documents without
+required-only members: OpenAPI Generator consumes `CodegenConfigurator.setAuth()` during
+parsing but does not expose that authentication or the original source content to the
+generator preprocessing hook. Fully addressing this limitation requires an upstream Swagger
+parser change to preserve the required lists during v2-to-v3 conversion. Until then, supply
+an authenticated download as a local original specification, keeping relative references
+resolvable, or use OpenAPI 3 input. Recovery fails explicitly rather than silently dropping
+inherited requirements. This limitation remains unresolved in this PR.
 Combinations that cannot be represented by one Helidon annotation fail generation. This
 includes strengthening an inherited `Optional<Model>` accessor to a required non-null model:
 keeping the Optional signature would let an empty value bypass `NotNull`, while changing its

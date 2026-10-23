@@ -30,7 +30,7 @@
     <name>OpenAPI Generator IT Swagger 2 Polymorphic Validation</name>
 
     <properties>
-        <helidon.version>4.5.0</helidon.version>
+        <helidon.version>4.5.6</helidon.version>
         <inputSpec>${project.basedir}/../../specs/swagger2-polymorphic-validation.yaml</inputSpec>
         <skipGeneratedTests>false</skipGeneratedTests>
     </properties>
