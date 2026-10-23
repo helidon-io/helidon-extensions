@@ -394,6 +394,7 @@ Extended extended = Extended.builder()
 
 The generator currently emits Helidon validation annotations for:
 
+- required, non-nullable model properties via `@Validation.NotNull`
 - string length and pattern
 - numeric minimum and maximum
 - exclusive integer and long bounds via adjusted inclusive bounds
@@ -402,7 +403,17 @@ The generator currently emits Helidon validation annotations for:
 
 For model classes, validation annotations are emitted on prefixless accessor
 methods rather than private fields so generated projects compile cleanly with the
-current validation API.
+current validation API. Required presence and nullability are independent: a
+required `nullable: true` (or Swagger 2 `x-nullable: true`) property must be present
+in JSON but may contain null. Optional properties do not receive `NotNull`. Zero,
+false, empty strings, and empty containers remain valid unless another constraint
+rejects them. Required-only models participate in native validation even when no
+length, size, or numeric constraint is declared.
+Use Helidon 4.5.6 or later for the complete HTTP rejection behavior. Helidon 4.5.0
+can return HTTP 500 for a missing required JSON property or a null required nested
+model, even though the request does not reach endpoint logic. The latter combines
+`NotNull` and cascading `Valid`; the framework must stop the cascade for null.
+Scalar `NotNull` validation alone does not repair these older framework behaviors.
 
 Validation participation is computed transitively across generated model references.
 Participating models receive `@Validation.Validated`. Required, non-null direct model
@@ -413,7 +424,27 @@ boundaries use type-use `@Validation.Valid`. Map keys are not cascade targets.
 Inherited `allOf` constraints and cascades are repeated on generated child overrides so
 the concrete child validator executes the complete parent contract. Constraints on a
 same-name child property are composed conjunctively with constraints from every `allOf`
-ancestor; combinations that cannot be represented by one Helidon annotation fail generation.
+ancestor. Required lists are combined even when a child does not redeclare the inherited
+property. A nullable child declaration cannot relax a non-null ancestor contract, and child
+requirements do not change optional parent or sibling contracts. Inherited nullable required
+properties receive JSON presence checks without a `NotNull` constraint. Explicit JSON property
+names preserve the schema wire name when Java escaping renames a member (for example,
+`object` becomes the Java member `_object`, while JSON still uses `object`).
+For Swagger 2 `allOf`, the generator reads the original input to recover required-only
+members discarded by the v2-to-v3 parser. That source must remain accessible. Authenticated
+remote Swagger 2 `allOf` input currently fails this recovery, including documents without
+required-only members: OpenAPI Generator consumes `CodegenConfigurator.setAuth()` during
+parsing but does not expose that authentication or the original source content to the
+generator preprocessing hook. Fully addressing this limitation requires an upstream Swagger
+parser change to preserve the required lists during v2-to-v3 conversion. Until then, supply
+an authenticated download as a local original specification, keeping relative references
+resolvable, or use OpenAPI 3 input. Recovery fails explicitly rather than silently dropping
+inherited requirements. This limitation remains unresolved in this PR.
+Combinations that cannot be represented by one Helidon annotation fail generation. This
+includes strengthening an inherited `Optional<Model>` accessor to a required non-null model:
+keeping the Optional signature would let an empty value bypass `NotNull`, while changing its
+return type would break Java inheritance. Declare that required property in a concrete request
+DTO without the optional-model inheritance boundary instead.
 Request entities
 use the same boundary rules and add `helidon-webserver-validation` so invalid entities
 follow Helidon's standard HTTP rejection behavior.
@@ -424,9 +455,10 @@ including request-entity containers. Schema-declared nullable request entities o
 nested request model values are rejected because Helidon 4.5 does not null-guard a direct
 `@Validation.Valid` validator call; use `Optional`, a supported container, or a required
 non-null property.
-Helidon 4.5 also does not convert a contract-violating JSON `null` at a non-nullable
-`@Validation.Valid` boundary into a validation response. Rejecting that case requires a
-null guard in Helidon validation code generation and is outside this generator-only feature.
+Top-level request-entity null handling is separate from model-property `NotNull`
+validation. Helidon 4.5 does not convert a contract-violating JSON `null` at a direct
+request-entity `@Validation.Valid` boundary into a validation response; that requires
+a null guard in Helidon validation code generation and is outside this feature.
 Generated discriminator-based `allOf` bases with constrained descendants include a
 native `TypeValidator<Base>` dispatch service inside the base model. It resolves the
 validator for the concrete generated subtype lazily from the service registry and
@@ -444,6 +476,9 @@ subclasses.
 Model properties and request entities whose `oneOf`/`anyOf` union type has constrained concrete members
 are rejected because Helidon cannot statically dispatch that validation boundary to a
 runtime subtype; use a concrete DTO or application validation.
+Required non-null properties are constraints for this check, including models with
+no other constraints. Consequently, a union-typed request with required-only member
+models also fails generation; use a concrete request DTO until union validation is supported.
 Recursive references are allowed when they do not participate in generated validation.
 A cycle between participating models, including one introduced by inherited `allOf`
 properties, is also rejected before rendering because Helidon

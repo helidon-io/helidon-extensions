@@ -44,12 +44,16 @@ final class AllOfValidationSupport {
     private AllOfValidationSupport() {
     }
 
-    static Snapshot snapshot(OpenAPI openAPI) {
+    static Snapshot snapshot(OpenAPI openAPI, String inputSpec) {
         if (openAPI == null) {
             return Snapshot.empty();
         }
         try {
-            return new Snapshot(Json.mapper().valueToTree(openAPI));
+            JsonNode root = Json.mapper().valueToTree(openAPI);
+            Map<String, Set<String>> originalRequired = "2.0".equals(root.path("x-original-swagger-version").asText())
+                    && !root.path("components").path("schemas").findValues("allOf").isEmpty()
+                    ? swaggerRequiredProperties(inputSpec) : Map.of();
+            return new Snapshot(root, originalRequired);
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("Cannot snapshot the parsed OpenAPI document for allOf metadata: "
                                                        + e.getMessage(), e);
@@ -92,7 +96,8 @@ final class AllOfValidationSupport {
             if (!schemas.isObject()) {
                 return Map.of();
             }
-            return collectValidationProperties(schemas, mapper, modelName, propertyFactory, constrained);
+            return collectValidationProperties(schemas, mapper, modelName, propertyFactory, constrained,
+                                               snapshot.requiredBySchema());
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("Cannot inspect allOf validation constraints in the parsed OpenAPI "
                                                        + "document: " + e.getMessage(), e);
@@ -104,6 +109,8 @@ final class AllOfValidationSupport {
         for (int i = 0; i < sources.size() - 1; i++) {
             CodegenProperty inherited = sources.get(i);
             ensureCompatibleTypes(model, merged, inherited);
+            merged.required |= inherited.required;
+            merged.isNullable &= inherited.isNullable;
             merged.minLength = larger(merged.minLength, inherited.minLength);
             merged.maxLength = smaller(merged.maxLength, inherited.maxLength);
             merged.minItems = larger(merged.minItems, inherited.minItems);
@@ -142,15 +149,23 @@ final class AllOfValidationSupport {
             ObjectMapper mapper,
             Function<String, String> modelName,
             PropertyFactory propertyFactory,
-            Predicate<CodegenProperty> constrained) {
+            Predicate<CodegenProperty> constrained,
+            Map<String, Set<String>> originalRequired) {
         Map<String, Map<String, List<CodegenProperty>>> result = new LinkedHashMap<>();
         schemas.fields().forEachRemaining(entry -> {
             if (!entry.getValue().path("allOf").isArray()) {
                 return;
             }
             Map<String, List<CodegenProperty>> properties = new LinkedHashMap<>();
-            collectValidationProperties(entry.getValue(), schemas, mapper, propertyFactory, constrained,
-                                        properties, new LinkedHashSet<>());
+            Set<String> required = new LinkedHashSet<>(originalRequired.getOrDefault(entry.getKey(), Set.of()));
+            collectValidationProperties(entry.getValue(), schemas, mapper, propertyFactory,
+                                        properties, required, new LinkedHashSet<>());
+            // allOf combines presence requirements from every member, including required-only members.
+            properties.replaceAll((name, values) -> {
+                values.forEach(property -> property.required = required.contains(name));
+                return values.stream().filter(property -> property.required || constrained.test(property)).toList();
+            });
+            properties.values().removeIf(List::isEmpty);
             if (!properties.isEmpty()) {
                 Map<String, List<CodegenProperty>> immutableProperties = new LinkedHashMap<>();
                 properties.forEach((name, values) -> immutableProperties.put(name, List.copyOf(values)));
@@ -164,8 +179,8 @@ final class AllOfValidationSupport {
                                                     JsonNode schemas,
                                                     ObjectMapper mapper,
                                                     PropertyFactory propertyFactory,
-                                                    Predicate<CodegenProperty> constrained,
                                                     Map<String, List<CodegenProperty>> result,
+                                                    Set<String> required,
                                                     Set<String> visitedRefs) {
         if (schema == null || !schema.isObject()) {
             return;
@@ -177,7 +192,7 @@ final class AllOfValidationSupport {
             referencedName = separator < 0 ? referencedName : referencedName.substring(separator + 1);
             if (visitedRefs.add(referencedName)) {
                 collectValidationProperties(schemas.get(referencedName), schemas, mapper, propertyFactory,
-                                            constrained, result, visitedRefs);
+                                            result, required, visitedRefs);
                 visitedRefs.remove(referencedName);
             }
             return;
@@ -185,17 +200,63 @@ final class AllOfValidationSupport {
         JsonNode allOf = schema.get("allOf");
         if (allOf != null && allOf.isArray()) {
             allOf.forEach(member -> collectValidationProperties(member, schemas, mapper, propertyFactory,
-                                                                constrained, result, visitedRefs));
+                                                                result, required, visitedRefs));
+        }
+        JsonNode requiredNames = schema.path("required");
+        if (requiredNames.isArray()) {
+            requiredNames.forEach(name -> required.add(name.asText()));
         }
         JsonNode properties = schema.get("properties");
         if (properties != null && properties.isObject()) {
             properties.fields().forEachRemaining(entry -> {
                 Schema<?> propertySchema = mapper.convertValue(entry.getValue(), Schema.class);
-                CodegenProperty property = propertyFactory.create(entry.getKey(), propertySchema);
-                if (constrained.test(property)) {
-                    result.computeIfAbsent(entry.getKey(), ignored -> new ArrayList<>()).add(property);
+                CodegenProperty property = propertyFactory.create(entry.getKey(), propertySchema).clone();
+                result.computeIfAbsent(entry.getKey(), ignored -> new ArrayList<>()).add(property);
+            });
+        }
+    }
+
+    private static Map<String, Set<String>> swaggerRequiredProperties(String inputSpec) {
+        if (inputSpec == null || inputSpec.isBlank()) {
+            throw new IllegalArgumentException("Swagger allOf required-list recovery needs the original input specification.");
+        }
+        try {
+            String content = InputSpecContentReader.read(inputSpec);
+            JsonNode root = inputSpec.toLowerCase().endsWith(".json") || content.stripLeading().startsWith("{")
+                    ? Json.mapper().readTree(content) : Yaml.mapper().readTree(content);
+            JsonNode schemas = root.path("definitions");
+            Map<String, Set<String>> result = new LinkedHashMap<>();
+            schemas.fields().forEachRemaining(entry -> {
+                Set<String> required = new LinkedHashSet<>();
+                collectRequiredNames(entry.getValue(), schemas, required, new LinkedHashSet<>());
+                if (!required.isEmpty()) {
+                    result.put(entry.getKey(), Set.copyOf(required));
                 }
             });
+            return Map.copyOf(result);
+        } catch (IOException | RuntimeException e) {
+            // A failed URL read can contain authentication material; keep the diagnostic source-independent.
+            throw new IllegalArgumentException("Cannot recover original Swagger allOf required lists. "
+                    + "Provide an accessible local input specification or OpenAPI 3 input.");
+        }
+    }
+
+    private static void collectRequiredNames(JsonNode schema, JsonNode schemas,
+                                              Set<String> required, Set<String> visited) {
+        if (schema == null || !schema.isObject()) {
+            return;
+        }
+        JsonNode names = schema.path("required");
+        if (names.isArray()) {
+            names.forEach(name -> required.add(name.asText()));
+        }
+        String ref = schema.path("$ref").asText();
+        if (!ref.isEmpty() && visited.add(ref)) {
+            collectRequiredNames(schemas.get(ref.substring(ref.lastIndexOf('/') + 1)), schemas, required, visited);
+        }
+        JsonNode allOf = schema.path("allOf");
+        if (allOf.isArray()) {
+            allOf.forEach(member -> collectRequiredNames(member, schemas, required, visited));
         }
     }
 
@@ -331,8 +392,8 @@ final class AllOfValidationSupport {
         CodegenProperty create(String name, Schema<?> schema);
     }
 
-    record Snapshot(JsonNode root) {
-        private static final Snapshot EMPTY = new Snapshot(null);
+    record Snapshot(JsonNode root, Map<String, Set<String>> requiredBySchema) {
+        private static final Snapshot EMPTY = new Snapshot(null, Map.of());
 
         static Snapshot empty() {
             return EMPTY;

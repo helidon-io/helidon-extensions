@@ -30,7 +30,8 @@
     <name>OpenAPI Generator IT Cascading Validation</name>
 
     <properties>
-        <helidon.version>4.5.0</helidon.version>
+        <!-- Complete required/null HTTP rejection requires the native 4.5.6 fixes. -->
+        <helidon.version>4.5.6</helidon.version>
         <inputSpec>${project.basedir}/../../specs/cascading-validation.yaml</inputSpec>
         <skipGeneratedTests>false</skipGeneratedTests>
     </properties>

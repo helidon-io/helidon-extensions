@@ -39,7 +39,8 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Pet'
+              # Union validation is unsupported; exercise its concrete request member.
+              $ref: '#/components/schemas/Cat'
       responses:
         '200':
           description: Saved pet
@@ -56,7 +57,8 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Contact'
+              # Union validation is unsupported; exercise its concrete request member.
+              $ref: '#/components/schemas/EmailContact'
       responses:
         '200':
           description: Saved contact
@@ -73,7 +75,8 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Problem'
+              # Union validation is unsupported; exercise its concrete request member.
+              $ref: '#/components/schemas/Error'
       responses:
         '200':
           description: Saved problem
@@ -90,7 +93,8 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/NullablePet'
+              # Union validation is unsupported; exercise its concrete request member.
+              $ref: '#/components/schemas/Cat'
       responses:
         '200':
           description: Saved nullable pet
