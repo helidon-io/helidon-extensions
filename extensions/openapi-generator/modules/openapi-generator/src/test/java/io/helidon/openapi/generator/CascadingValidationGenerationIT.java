@@ -286,6 +286,30 @@ class CascadingValidationGenerationIT {
                    containsString("implements io.helidon.validation.spi.TypeValidator<ConstrainedBase>"));
     }
 
+    /** Swagger 2 base-typed requests must retain native subtype dispatch and child constraints. */
+    @Test
+    void dispatchesSwagger2PolymorphicRequestBoundary() throws Exception {
+        Path target = outputDir.resolve("swagger2-polymorphic-request");
+        generate(target, "swagger2-polymorphic-validation.yaml", null);
+        assertThat(read(apiFile(target, "ValidationApi.java")),
+                   containsString("@Validation.Valid @Http.Entity ConstrainedBase constrainedBase"));
+        assertThat(read(modelFile(target, "ConstrainedBase.java")),
+                   containsString("implements io.helidon.validation.spi.TypeValidator<ConstrainedBase>"));
+        assertThat(read(modelFile(target, "ConstrainedChild.java")),
+                   containsString("@Validation.String.Length(min = 2, value = 10)"));
+    }
+
+    /** Swagger 2 nested properties need the same native subtype dispatch as request entities. */
+    @Test
+    void dispatchesSwagger2PolymorphicPropertyBoundary() throws Exception {
+        Path target = outputDir.resolve("swagger2-polymorphic-property");
+        generate(target, "swagger2-polymorphic-validation.yaml", null);
+        assertThat(read(modelFile(target, "ConstrainedHolder.java")),
+                   containsString("@Validation.Valid\n    public ConstrainedBase value()"));
+        assertThat(read(modelFile(target, "ConstrainedBase.java")),
+                   containsString("implements io.helidon.validation.spi.TypeValidator<ConstrainedBase>"));
+    }
+
     /** Model-only consumers must not depend on a generated supporting-file dispatcher. */
     @Test
     void retainsRuntimeDispatchWithoutSupportingFilesOrApis() throws Exception {
