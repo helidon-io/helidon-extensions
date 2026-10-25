@@ -49,17 +49,16 @@ class TestEurekaRegistrationState {
     void testStoppedRegistrationRejectsRenewalResult() throws Exception {
         var up = instanceInfo("UP");
         var renewed = instanceInfo("OUT_OF_SERVICE");
-        var down = instanceInfo("DOWN");
         var state = new EurekaRegistrationState();
         assertThat(state.update(null, up), is(true));
 
-        completeRenewalAfter(state, _ -> renewed, () -> assertThat(state.stop(_ -> down), is(true)));
+        completeRenewalAfter(state, _ -> renewed, () -> assertThat(state.stop(), is(true)));
 
-        assertThat("Renewal must preserve the shutdown snapshot", state.instanceInfo(), sameInstance(down));
+        assertThat("Renewal must preserve the stopped snapshot", state.instanceInfo(), sameInstance(up));
         assertThat(state.stopped(), is(true));
-        assertThat("Stopping is idempotent", state.stop(_ -> renewed), is(false));
-        assertThat(state.instanceInfo(), sameInstance(down));
-        assertThat("Stopped registrations cannot be updated", state.update(down, renewed), is(false));
+        assertThat("Stopping is idempotent", state.stop(), is(false));
+        assertThat(state.instanceInfo(), sameInstance(up));
+        assertThat("Stopped registrations cannot be updated", state.update(up, renewed), is(false));
     }
 
     @Test

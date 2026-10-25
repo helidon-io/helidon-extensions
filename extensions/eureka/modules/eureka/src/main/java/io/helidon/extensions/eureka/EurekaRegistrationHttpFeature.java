@@ -221,7 +221,7 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
     @Override // HttpFeature (ServerLifecycle)
     public void afterStop() {
         // Although users *should* not call this method, they might, from any thread. Proceed with caution.
-        if (!this.registration.stop(instanceInfo -> this.json(instanceInfo, DOWN))) {
+        if (!this.registration.stop()) {
             return;
         }
         Thread renewer = this.renewer; // volatile read
@@ -376,8 +376,8 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
             // Programming error internal to this class. Truly an illegal state.
             throw new IllegalStateException();
         }
-        JsonObject instanceInfo = this.registration.instanceInfo();
-        // afterStop has already marked this instance DOWN, as native Eureka does before unregistering it.
+        // Keep payload conversion within cancelAndClose's cleanup boundary.
+        JsonObject instanceInfo = json(this.registration.instanceInfo(), DOWN);
         // https://github.com/Netflix/eureka/blob/v2.0.4/eureka-client/src/main/java/com/netflix/appinfo/InstanceInfo.java#L55
         JsonObject instance = instanceInfo.objectValue("instance", null);
         return this.cancel(client, instance.stringValue("app", null), instance.stringValue("instanceId", null));

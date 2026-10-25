@@ -16,7 +16,6 @@
 package io.helidon.extensions.eureka;
 
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.UnaryOperator;
 
 import io.helidon.json.JsonObject;
 
@@ -39,10 +38,10 @@ final class EurekaRegistrationState {
                 && (expected == updated || state.compareAndSet(previous, new Snapshot(updated, false)));
     }
 
-    boolean stop(UnaryOperator<JsonObject> statusChange) {
+    boolean stop() {
         var previous = state.getAndUpdate(current -> current.stopped()
                 ? current
-                : new Snapshot(current.instanceInfo() == null ? null : statusChange.apply(current.instanceInfo()), true));
+                : new Snapshot(current.instanceInfo(), true));
         return !previous.stopped();
     }
 
