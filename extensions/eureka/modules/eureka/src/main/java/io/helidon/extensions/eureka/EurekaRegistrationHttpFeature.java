@@ -23,6 +23,7 @@ import java.net.URI;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 
 import io.helidon.http.Status;
 import io.helidon.json.JsonNull;
@@ -56,9 +57,9 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
 
 
     private final EurekaRegistrationConfig prototype;
+    private final EurekaRegistrationState registration = new EurekaRegistrationState();
+    private final ReentrantLock operationLock = new ReentrantLock();
 
-    private volatile JsonObject instanceInfo;
-    private volatile boolean stop;
     private volatile Thread renewer;
     private volatile Http1Client client;
 
@@ -220,11 +221,46 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
     @Override // HttpFeature (ServerLifecycle)
     public void afterStop() {
         // Although users *should* not call this method, they might, from any thread. Proceed with caution.
-        if (this.stop) { // volatile read
+        if (!this.registration.stop()) {
             return;
         }
-        this.stop = true; // volatile write
-        var client = this.client; // volatile read
+        Thread renewer = this.renewer; // volatile read
+        if (renewer != null) {
+            renewer.interrupt();
+        }
+        // Drain startup or an in-flight renewal before unregistering and closing the client.
+        this.operationLock.lock();
+        try {
+            this.cancelAndClose();
+        } finally {
+            this.operationLock.unlock();
+        }
+    }
+
+    /**
+     * Implements the {@link HttpFeature#setup(HttpRouting.Builder)} method by deliberately doing nothing.
+     *
+     * @param routingBuilder an {@link HttpRouting.Builder}; ignored
+     * @deprecated End users should not call this method.
+     */
+    @Deprecated // End users should not call this method
+    @Override // HttpFeature
+    public void setup(HttpRouting.Builder routingBuilder) {
+        // Nothing to do.
+    }
+
+    // for testing
+    void afterStart(int actualPort, boolean tls) {
+        this.operationLock.lock();
+        try {
+            this.start(actualPort, tls);
+        } finally {
+            this.operationLock.unlock();
+        }
+    }
+
+    private void cancelAndClose() {
+        var client = this.client;
         if (client == null) {
             // Registration never happened
             if (LOGGER.isLoggable(DEBUG)) {
@@ -232,10 +268,6 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
                            "No cancellation necessary; registration never occurred");
             }
             return;
-        }
-        Thread renewer = this.renewer; // volatile read
-        if (renewer != null) {
-            renewer.interrupt();
         }
         boolean canceled = false;
         RuntimeException e = null;
@@ -265,21 +297,8 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
         }
     }
 
-    /**
-     * Implements the {@link HttpFeature#setup(HttpRouting.Builder)} method by deliberately doing nothing.
-     *
-     * @param routingBuilder an {@link HttpRouting.Builder}; ignored
-     * @deprecated End users should not call this method.
-     */
-    @Deprecated // End users should not call this method
-    @Override // HttpFeature
-    public void setup(HttpRouting.Builder routingBuilder) {
-        // Nothing to do.
-    }
-
-    // for testing
-    void afterStart(int actualPort, boolean tls) {
-        if (this.stop) { // volatile read
+    private void start(int actualPort, boolean tls) {
+        if (this.registration.stopped()) {
             // Some other thread called this.afterStop() for some reason. This is technically a programming error, but
             // afterStop() is public, so there are many codepaths that might result in it being called for a variety of
             // reasons, some of which may? perhaps? be valid.
@@ -335,11 +354,14 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
             }
             var client = clientBuilder.sendExpectContinue(false) // Spring's version of Eureka server has trouble otherwise
                     .build();
-            this.instanceInfo = instanceInfo; // volatile write
+            if (!this.registration.update(null, instanceInfo)) {
+                client.closeResource();
+                return;
+            }
             this.client = client; // volatile write
             // Native Eureka registers the instance before it enters the renewal loop.
             this.register(instanceInfo);
-            this.createAndStartRenewalLoop(instanceInfo, client);
+            this.createAndStartRenewalLoop(instanceInfo);
         } else if (LOGGER.isLoggable(ERROR)) {
             LOGGER.log(ERROR,
                        "No baseUri was set on " + clientBuilder
@@ -350,17 +372,12 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
 
     // (Called only by the afterStop method.)
     private boolean cancel(Http1Client client) {
-        if (!this.stop) { // volatile read
+        if (!this.registration.stopped()) {
             // Programming error internal to this class. Truly an illegal state.
             throw new IllegalStateException();
         }
-        JsonObject instanceInfo = this.instanceInfo; // volatile read; never null here
-        // Native Eureka sets the status to DOWN, but then does not publish this status change, and instead simply
-        // forcibly unregisters the instance. I'm not sure what the status setting accomplishes, although buried in the
-        // sediment seems to be some kind of status change event system that pertains to Eureka's peer-to-peer
-        // replication machinery that we may simply not care about here. We'll follow suit in case this sequencing turns
-        // out to be important.
-        this.up(instanceInfo, false);
+        // Keep payload conversion within cancelAndClose's cleanup boundary.
+        JsonObject instanceInfo = json(this.registration.instanceInfo(), DOWN);
         // https://github.com/Netflix/eureka/blob/v2.0.4/eureka-client/src/main/java/com/netflix/appinfo/InstanceInfo.java#L55
         JsonObject instance = instanceInfo.objectValue("instance", null);
         return this.cancel(client, instance.stringValue("app", null), instance.stringValue("instanceId", null));
@@ -398,7 +415,7 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
         return false;
     }
 
-    private void createAndStartRenewalLoop(JsonObject instanceInfo, Http1Client client) {
+    private void createAndStartRenewalLoop(JsonObject instanceInfo) {
         if (LOGGER.isLoggable(DEBUG)) {
             LOGGER.log(DEBUG,
                        "Creating and starting Eureka lease renewal loop");
@@ -408,21 +425,32 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
         long sleepTimeInMilliSeconds = instanceInfo.objectValue("instance", null)
                 .objectValue("leaseInfo", null)
                 .intValue("renewalIntervalInSecs", 60) * 1000L;
+        // Publish UP before the first heartbeat can capture the startup snapshot.
+        this.up(instanceInfo);
         this.renewer = Thread.ofVirtual() // volatile write
                 .name("Eureka lease renewer")
                 .uncaughtExceptionHandler((t, e) -> {
                     if (LOGGER.isLoggable(ERROR)) {
                         LOGGER.log(ERROR, e.getMessage(), e);
                     }
-                    this.stop = true; // volatile write
+                    // afterStop must still cancel the registration and close the client if renewal fails.
                 })
                 .start(() -> {
                     // Simplest possible heartbeat loop; nothing more complicated is needed.
-                    while (!this.stop) { // volatile read
-                        JsonObject newInstanceInfo = this.renew();
-                        if (newInstanceInfo != this.instanceInfo) { // volatile read
-                            // The server gave us something new for some reason; use it.
-                            this.instanceInfo = newInstanceInfo; // volatile write
+                    while (!this.registration.stopped()) {
+                        this.operationLock.lock();
+                        try {
+                            if (this.registration.stopped()) {
+                                break;
+                            }
+                            JsonObject snapshot = this.registration.instanceInfo();
+                            JsonObject renewed = this.renew(snapshot);
+                            this.registration.update(snapshot, renewed);
+                        } finally {
+                            this.operationLock.unlock();
+                        }
+                        if (this.registration.stopped()) {
+                            break;
                         }
                         try {
                             sleep(sleepTimeInMilliSeconds);
@@ -439,8 +467,6 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
                                    "Eureka lease renewal loop stopped");
                     }
                 });
-        // Mark our status as up if it wasn't already
-        this.up(instanceInfo, true);
     }
 
     // PUT {baseUri}/v2/apps/{appName}/{id}?status={status}&lastDirtyTimestamp={lastDirtyTimestamp}
@@ -470,7 +496,7 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
 
     // POST {baseUri}/v2/apps/{payload.getJsonObject("instance").getString("app")}
     private boolean register(JsonObject payload) {
-        if (payload == null) {
+        if (payload == null || this.registration.stopped()) {
             return false;
         }
         try {
@@ -534,8 +560,7 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
      *         different status and/or other attributes depending on what the server supplied; never {@code null}
      * @see #heartbeat(String, String, String, Long)
      */
-    private JsonObject renew() {
-        JsonObject instanceInfo = this.instanceInfo;
+    private JsonObject renew(JsonObject instanceInfo) {
         // https://github.com/Netflix/eureka/blob/v2.0.4/eureka-client/src/main/java/com/netflix/appinfo/InstanceInfo.java#L55
         JsonObject instance = instanceInfo.objectValue("instance", null);
         try (var response =
@@ -564,6 +589,9 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
                 }
                 break;
             case Status s when s.code() == 404:
+                if (this.registration.stopped()) {
+                    break;
+                }
                 // (Can't test for equality with Status.NOT_FOUND_404 equality because the reason is not (always?!) set
                 // by the server.)
                 //
@@ -607,17 +635,19 @@ final class EurekaRegistrationHttpFeature implements HttpFeature {
         return instanceInfo;
     }
 
-    private boolean up(JsonObject oldInstanceInfo, boolean up) {
+    private boolean up(JsonObject oldInstanceInfo) {
         if (oldInstanceInfo == null) {
             return false;
         }
-        JsonObject instanceInfo = json(oldInstanceInfo, up ? UP : DOWN);
+        JsonObject instanceInfo = json(oldInstanceInfo, UP);
         if (instanceInfo == oldInstanceInfo) {
             return false;
         }
-        this.instanceInfo = instanceInfo; // volatile write
-        this.statusChange();
-        return true;
+        if (this.registration.update(oldInstanceInfo, instanceInfo)) {
+            this.statusChange();
+            return true;
+        }
+        return false;
     }
 
     private JsonObject json(JsonObject json, long lastDirtyTimestamp) {
