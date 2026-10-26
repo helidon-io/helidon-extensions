@@ -65,7 +65,7 @@ final class Neo4jUtil {
         }
     }
 
-    private static org.neo4j.driver.Config.TrustStrategy toInternalTrustStrategy(Neo4jConfig config) {
+    static org.neo4j.driver.Config.TrustStrategy toInternalTrustStrategy(Neo4jConfig config) {
         Neo4jTrust trust = config.trust();
 
         org.neo4j.driver.Config.TrustStrategy internalRepresentation;

@@ -97,6 +97,32 @@ The main settings are:
 
 Duration values use ISO-8601 syntax such as `PT1M` and `PT1H`.
 
+### TLS hostname verification
+
+For manually configured encrypted `bolt://` and `neo4j://` connections, TLS hostname verification is enabled
+by default. The certificate presented by the Neo4j server must match the server name used for each TLS
+connection. For direct `bolt://` connections this is the host in `neo4j.uri`; for routed `neo4j://` connections
+it also includes discovered cluster member addresses.
+
+Neo4j URI security schemes retain their driver-defined behavior: `bolt+s` and `neo4j+s` use trusted TLS with
+hostname verification, while `bolt+ssc` and `neo4j+ssc` use encrypted connections without hostname verification.
+
+If a trusted certificate does not match the connection address, hostname verification can be disabled without
+disabling certificate-chain trust:
+
+```yaml
+neo4j:
+  uri: bolt://localhost:7687
+  encrypted: true
+  trust:
+    strategy: TRUST_CUSTOM_CA_SIGNED_CERTIFICATES
+    certificate: /path/to/ca.pem
+    hostname-verification: false
+```
+
+Disabling hostname verification weakens TLS server identity checks. Do not use
+`TRUST_ALL_CERTIFICATES` outside constrained testing, because it disables server authentication.
+
 ## Minimal Usage
 
 In an imperative SE application, create the driver from configuration and use it directly:

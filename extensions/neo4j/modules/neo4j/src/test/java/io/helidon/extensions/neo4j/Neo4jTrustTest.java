@@ -16,16 +16,23 @@
 
 package io.helidon.extensions.neo4j;
 
+import java.io.IOException;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.neo4j.driver.Config.TrustStrategy;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class Neo4jTrustTest {
     private static final URI NEO4J_URI = URI.create("bolt://localhost:7687");
@@ -42,6 +49,8 @@ class Neo4jTrustTest {
 
         assertThat(defaults.trust().hostnameVerification(), is(true));
         assertThat(configured.trust().hostnameVerification(), is(true));
+        assertThat(Neo4jUtil.toInternalTrustStrategy(defaults).isHostnameVerificationEnabled(), is(true));
+        assertThat(Neo4jUtil.toInternalTrustStrategy(configured).isHostnameVerificationEnabled(), is(true));
     }
 
     @Test
@@ -52,6 +61,7 @@ class Neo4jTrustTest {
                 .buildPrototype();
 
         assertThat(config.trust().hostnameVerification(), is(false));
+        assertThat(Neo4jUtil.toInternalTrustStrategy(config).isHostnameVerificationEnabled(), is(false));
     }
 
     @Test
@@ -65,5 +75,23 @@ class Neo4jTrustTest {
                 .buildPrototype();
 
         assertThat(neo4jConfig.trust().hostnameVerification(), is(false));
+        assertThat(Neo4jUtil.toInternalTrustStrategy(neo4jConfig).isHostnameVerificationEnabled(), is(false));
+    }
+
+    @Test
+    void customCertificateKeepsHostnameVerificationEnabled(@TempDir Path tempDir) throws IOException {
+        Path certificate = Files.createFile(tempDir.resolve("ca.pem"));
+        Config config = Config.just(ConfigSources.create(Map.of(
+                "uri", NEO4J_URI.toString(),
+                "trust.strategy", "TRUST_CUSTOM_CA_SIGNED_CERTIFICATES",
+                "trust.certificate", certificate.toString())));
+
+        TrustStrategy strategy = Neo4jUtil.toInternalTrustStrategy(Neo4j.builder()
+                                                                         .config(config)
+                                                                         .buildPrototype());
+
+        assertEquals(TrustStrategy.Strategy.TRUST_CUSTOM_CA_SIGNED_CERTIFICATES, strategy.strategy());
+        assertEquals(List.of(certificate.toFile()), strategy.certFiles());
+        assertThat(strategy.isHostnameVerificationEnabled(), is(true));
     }
 }
