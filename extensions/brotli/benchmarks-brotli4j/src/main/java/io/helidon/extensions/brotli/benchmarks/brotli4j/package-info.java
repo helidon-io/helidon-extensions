@@ -15,6 +15,6 @@
  */
 
 /**
- * Stream lifecycle comparisons between Helidon Brotli and native Brotli4j.
+ * Stream lifecycle comparisons between Helidon Brotli, native Brotli4j, and JDK gzip.
  */
 package io.helidon.extensions.brotli.benchmarks.brotli4j;

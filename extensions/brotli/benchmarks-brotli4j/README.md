@@ -1,4 +1,4 @@
-# Java and native Brotli codec comparison
+# Java Brotli, native Brotli, and JDK gzip stream comparison
 
 This deployment-skipped tooling module is enabled only by `jmh-brotli4j`. It adds
 no native dependency to the codec, HTTP adapter, their BOM, or the existing
@@ -16,35 +16,37 @@ Keep the Java and native artifact versions aligned.
 
 ## Operations and fairness
 
-The primary methods are `javaEncode`, `nativeEncode`, `javaDecode` and
-`nativeDecodeDirect`. Encoding uses fresh entity streams; Java decoding uses a
-fresh input stream; native direct decoding uses Brotli4j's public one-shot array
-API. The separate `nativeDecode` method measures its input-stream API where it
-passes the fixture checks. The direct and streaming APIs perform different work
-and must be labeled separately in results. Every invocation creates its own
-codec state, destination and mutable encoder parameters. Only trial fixture byte
-arrays are shared, read-only, across workers.
+The primary methods are `javaEncode`, `nativeEncode`, `gzipEncode`,
+`javaDecode`, `gzipDecode`, and `nativeDecodeDirect`. Encoding uses fresh entity
+streams; Java and gzip decoding use fresh input streams; native direct decoding
+uses Brotli4j's public one-shot array API. The separate `nativeDecode` method
+measures its input-stream API where it passes the fixture checks. The direct
+and streaming APIs perform different work and must be labeled separately in
+results. Every invocation creates its own codec state and destination. Only
+trial fixture byte arrays are shared, read-only, across workers.
 
 Fixtures are 256 bytes (`SHORT`) or 1 MiB (`LONG`), with structured JSON text
 (`TEXT`) or deterministic bytes (`RANDOM`, SplittableRandom seed 7932). Both
-encoders explicitly use quality 0, window exponent 18 and a 64,000-byte input
-buffer. Brotli4j uses generic mode. The algorithms can produce different output
-sizes at the same settings; the fixture report records those sizes and ratios.
-Each encoder receives one `write(byte[])` call for the whole entity, then close,
-with no intermediate flush. Both use a default-capacity `ByteArrayOutputStream`
-and return its final copy, so compressible long entities do not pay an artificial
-1 MiB destination preallocation. Both stream decoders use the JDK's bulk `readAllBytes`.
+Brotli encoders explicitly use quality 0, window exponent 18 and a 64,000-byte
+input buffer; Brotli4j uses generic mode. JDK gzip uses the default DEFLATE
+level and a 64,000-byte stream buffer. These settings do not make different
+formats or compression levels equivalent, so report compressed size alongside
+speed. Each encoder receives one `write(byte[])` call for the whole entity,
+then close, with no intermediate flush. All use a default-capacity
+`ByteArrayOutputStream` and return its final copy, so compressible long entities
+do not pay an artificial 1 MiB destination preallocation.
 
-All decoders consume exactly the same native-produced compressed bytes. Trial
-setup loads JNI, creates fixtures and verifies each encoder's output with Java
-decoding and the native direct API. It separately captures native streaming
-success or failure for both encoders' output in the standalone CSV. These checks
-and native-library extraction/loading are outside timed operations. The decoder
-APIs have different internal buffering models: native streaming
-input buffering is set to 64,000 bytes; Helidon's single-byte read cache retains
-its default because the measured operation uses bulk `readAllBytes`. Returned
-arrays are consumed by JMH. No shared stream, custom dictionary, network I/O,
-one-time startup, or malformed native input is measured.
+Both Brotli decoders consume exactly the same native-produced compressed bytes;
+the JDK gzip decoder consumes gzip-produced bytes for the same raw fixture.
+Trial setup loads JNI, creates fixtures, verifies each Brotli encoder's output
+with Java decoding and the native direct API, and verifies the gzip roundtrip.
+It separately captures native streaming success or failure for both Brotli
+encoders' output in the standalone CSV. These checks and native-library
+extraction/loading are outside timed operations. Native streaming and gzip
+input buffering are set to 64,000 bytes; Helidon's single-byte read cache
+retains its default because the measured operation uses bulk `readAllBytes`.
+Returned arrays are consumed by JMH. No shared stream, custom dictionary,
+network I/O, one-time startup, or malformed input is measured.
 
 ### Native streaming limitation
 
@@ -80,9 +82,10 @@ cd extensions/brotli/benchmarks-brotli4j
 java --enable-native-access=ALL-UNNAMED -cp 'target/classes:target/dependency/*' io.helidon.extensions.brotli.benchmarks.brotli4j.BrotliComparisonBenchmark
 ```
 
-The standalone main prints CSV with four fixture cases, both compressed lengths,
-compressed/input ratios, SHA-256 hashes of the shared raw and compressed input,
-and the native streaming result/error for each encoder's output.
+The standalone main prints CSV with four fixture cases, all three compressed
+lengths and ratios, SHA-256 hashes of the shared raw input and each decoder's
+compressed input, and the native streaming result/error for each Brotli
+encoder's output.
 Keep that report alongside source revision, dependency/native binary hashes,
 JDK, host topology and benchmark settings. For controlled campaigns set
 `-Dcom.aayushatharva.brotli4j.native.workdir` to the campaign-owned scratch
@@ -93,12 +96,12 @@ set `-Dbrotli4j.library.path` to its absolute path, retaining the binary hash.
 ## Targeted throughput and allocation
 
 Run the primary include separately with `-t 1`, `-t 4` and `-t 8`. The example is
-one independent fork; alternate Java/native method order across two repetitions
+one independent fork; alternate method order across two repetitions
 to produce two independent forks per implementation and case. The full matrix
-is four methods x two sizes x two kinds x three thread counts = 48 cases.
+is six primary methods x two sizes x two kinds x three thread counts = 72 cases.
 
 ```shell
-java --enable-native-access=ALL-UNNAMED -cp 'target/classes:target/dependency/*' org.openjdk.jmh.Main 'io\.helidon\.extensions\.brotli\.benchmarks\.brotli4j\.BrotliComparisonBenchmark\.(javaEncode|nativeEncode|javaDecode|nativeDecodeDirect)$' -p size=SHORT,LONG -p kind=TEXT,RANDOM -t 1 -f 1 -wi 3 -i 4 -w 1s -r 1s -prof gc -foe true -jvmArgsAppend '--enable-native-access=ALL-UNNAMED -Xms1g -Xmx1g -XX:+UseG1GC -XX:ActiveProcessorCount=8' -rf json -rff comparison-1.json
+java --enable-native-access=ALL-UNNAMED -cp 'target/classes:target/dependency/*' org.openjdk.jmh.Main 'io\.helidon\.extensions\.brotli\.benchmarks\.brotli4j\.BrotliComparisonBenchmark\.(javaEncode|nativeEncode|gzipEncode|javaDecode|gzipDecode|nativeDecodeDirect)$' -p size=SHORT,LONG -p kind=TEXT,RANDOM -t 1 -f 1 -wi 3 -i 4 -w 1s -r 1s -prof gc -foe true -jvmArgsAppend '--enable-native-access=ALL-UNNAMED -Xms1g -Xmx1g -XX:+UseG1GC -XX:ActiveProcessorCount=8' -rf json -rff comparison-1.json
 ```
 
 For the additional valid streaming cells, use the exact method selector
@@ -109,7 +112,7 @@ identical. This adds nine cells and 18 independent forks. Do not include
 `LONG/TEXT` or merge native direct and native streaming columns.
 
 Use an explicitly recorded affinity of eight allowed, distinct physical cores
-for all thread counts, avoiding SMT siblings and keeping both implementations
+for all thread counts, avoiding SMT siblings and keeping every implementation
 on the same CPUs. Check the live workload's allowed CPU set before choosing it;
 do not infer eligibility from the machine-wide topology alone. Keep one host,
 JDK, heap/GC, fixtures, settings and complete dependency set for the comparison.
