@@ -171,7 +171,7 @@ to set stream options. Supply the underlying stream to the constructor.
 | --- | --- | --- | --- |
 | Output | `quality` | `0` | `0` |
 | Output | `window` | `18` | `10` through `24` |
-| Output | `cache-input-size` | `64000` bytes | A `Size` from `4` through `2147483647` bytes |
+| Output | `cache-input-size` | `64000` bytes | A `Size` from `4` through `536870911` bytes (less than 512 MiB) |
 | Input | `cache-buffer-size` | `256` bytes | A `Size` from `1` through `2147483647` bytes |
 | Input | `max-window-bits` | `24` | `10` through `24` |
 | Input | `verify-end-of-input` | `false` | `true` or `false` |

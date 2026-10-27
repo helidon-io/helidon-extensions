@@ -222,13 +222,24 @@ class BrotliConfigTest {
 
     @Test
     void rejectsConfiguredInputCacheOutsideSupportedRange() {
-        for (String size : List.of("-1", "0", "3", "2147483648", "9223372036854775808")) {
+        for (String size : List.of("-1", "0", "3", "536870912", "512 MiB", "536870913", "2147483647", "2147483648",
+                                   "9223372036854775808")) {
             var config = Config.just(ConfigSources.create(Map.of("cache-input-size", size)));
             var outputConfig = BrotliOutputStreamConfig.builder().config(config).build();
             assertThrows(IllegalArgumentException.class,
                          () -> new BrotliOutputStream(new ByteArrayOutputStream(), outputConfig),
                          "input cache size " + size);
         }
+    }
+
+    @Test
+    void acceptsLargestSupportedInputCache() throws IOException {
+        var outputConfig = BrotliOutputStreamConfig.builder().cacheInputSize(Size.create(536_870_911)).build();
+        var destination = new ByteArrayOutputStream();
+        try (var output = new BrotliOutputStream(destination, outputConfig)) {
+            output.write(DATA);
+        }
+        assertThat(destination.toByteArray(), is(COMPRESSED_DATA));
     }
 
     @Test

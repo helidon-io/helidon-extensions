@@ -32,6 +32,9 @@ public final class BrotliOutputStream extends OutputStream {
      */
     public static final BrotliOutputStreamConfig DEFAULT_CONFIG = BrotliOutputStreamConfig.builder().build();
 
+    // The output buffer's unsigned 32-bit bit cursor must not wrap before a full cache is flushed.
+    private static final int MAX_CACHE_INPUT_SIZE = (1 << 29) - 1;
+
     private final OutputStream outputStream;
     private final Encoder encoder;
     private final ByteInput input;
@@ -66,10 +69,10 @@ public final class BrotliOutputStream extends OutputStream {
         try {
             cacheInputSize = Math.toIntExact(config.cacheInputSize().toBytes());
         } catch (ArithmeticException e) {
-            throw new IllegalArgumentException("Input cache size must be between 4 and 2147483647 bytes", e);
+            throw new IllegalArgumentException("Input cache size must be between 4 and " + MAX_CACHE_INPUT_SIZE + " bytes", e);
         }
-        if (cacheInputSize < 4) {
-            throw new IllegalArgumentException("Input cache size must be at least 4");
+        if (cacheInputSize < 4 || cacheInputSize > MAX_CACHE_INPUT_SIZE) {
+            throw new IllegalArgumentException("Input cache size must be between 4 and " + MAX_CACHE_INPUT_SIZE + " bytes");
         }
         encoder = new Encoder(outputStream, config.quality(), config.window(), cacheInputSize);
         input = new ByteInput(cacheInputSize);
