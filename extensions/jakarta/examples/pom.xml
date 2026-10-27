@@ -36,6 +36,6 @@
         <module>jsonp</module>
         <module>jsonb</module>
         <module>dbclient-jsonp</module>
-        <module>jsonp-declarative</module>
+        <module>jsonb-declarative</module>
     </modules>
 </project>

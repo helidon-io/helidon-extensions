@@ -207,17 +207,19 @@ The extension owns examples for each selectable integration:
 - [JSON-P imperative client and server](../examples/jsonp/README.md)
 - [JSON-B imperative client and server](../examples/jsonb/README.md)
 - [DBClient JSON-P mapping](../examples/dbclient-jsonp/README.md)
-- [JSON-P declarative endpoint](../examples/jsonp-declarative/README.md)
+- [JSON-B declarative greeting server](../examples/jsonb-declarative/README.md)
 
 Each example declares its own Helidon SE parent, Jakarta EE 11 specification BOM, and Jakarta extension BOM.
 It can be copied outside this repository and built
 against installed or published dependencies. From an example directory, run `mvn clean verify` to build and test it.
-Then use the command in its README to launch the built application on the module path.
+Then use the launch commands in its README to run the built application.
 
-The HTTP examples start a loopback server on a dynamic port, make a real client request to `/echo`, print the result, and
-shut down. The declarative example generates its endpoint and service binding and uses automatic JSON-P discovery.
+The imperative HTTP examples start a loopback server on a dynamic port, make a real client request to `/echo`, print the
+result, and shut down. The declarative greeting server generates its endpoint and service binding and uses automatic
+JSON-B discovery. It stays running on port 8080 so you can request JSON greetings and update the greeting with curl;
+its README documents the endpoints and how to stop it.
 The DBClient example inserts a JSON-P object into an embedded H2 database using named SQL parameters and reads the row
-back as JSON. Every example performs a finite demonstration and exits; none requires an external database or container.
+back as JSON. None of the examples requires an external database or container.
 
 Each example selects only its own Jakarta integration module.
 
