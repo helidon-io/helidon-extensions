@@ -1,6 +1,7 @@
 # Jakarta examples
 
-Each example is an independent Maven application using the Helidon 28 application parent and Jakarta BOM.
+Each example is an independent Maven application using the Helidon 28 application parent,
+Jakarta EE 11 specification BOM, and Jakarta extension BOM.
 
 - [JSON-P imperative client and server](jsonp/README.md)
 - [JSON-B imperative client and server](jsonb/README.md)

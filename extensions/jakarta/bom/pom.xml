@@ -32,11 +32,6 @@
 
     <properties>
         <jakarta.extension.version>1.0.0-SNAPSHOT</jakarta.extension.version>
-        <helidon.version>28.0.0-SNAPSHOT</helidon.version>
-        <version.lib.jakarta.jsonp-api>2.1.3</version.lib.jakarta.jsonp-api>
-        <version.lib.jakarta.jsonb-api>3.0.3</version.lib.jakarta.jsonb-api>
-        <version.lib.parsson>1.1.9</version.lib.parsson>
-        <version.lib.yasson>3.0.5</version.lib.yasson>
     </properties>
 
     <dependencyManagement>
@@ -55,33 +50,6 @@
                 <groupId>io.helidon.extensions.jakarta</groupId>
                 <artifactId>helidon-extensions-jakarta-dbclient-jsonp</artifactId>
                 <version>${jakarta.extension.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>jakarta.json</groupId>
-                <artifactId>jakarta.json-api</artifactId>
-                <version>${version.lib.jakarta.jsonp-api}</version>
-            </dependency>
-            <dependency>
-                <groupId>jakarta.json.bind</groupId>
-                <artifactId>jakarta.json.bind-api</artifactId>
-                <version>${version.lib.jakarta.jsonb-api}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.eclipse.parsson</groupId>
-                <artifactId>parsson</artifactId>
-                <version>${version.lib.parsson}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.eclipse.yasson</groupId>
-                <artifactId>yasson</artifactId>
-                <version>${version.lib.yasson}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.helidon</groupId>
-                <artifactId>helidon-bom</artifactId>
-                <version>${helidon.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
             </dependency>
         </dependencies>
     </dependencyManagement>

@@ -16,17 +16,19 @@ All extension artifacts use group ID `io.helidon.extensions.jakarta`.
 
 | Artifact | Purpose | Required specification APIs |
 | --- | --- | --- |
-| `helidon-extensions-jakarta-bom` | Version alignment for the Jakarta modules, their JSON dependencies, and Helidon core modules. | None by itself. |
+| `helidon-extensions-jakarta-bom` | Version alignment for Jakarta extension modules only. | None by itself. |
 | `helidon-extensions-jakarta-http-media-jsonp` | Read and write Jakarta JSON-P objects and arrays over HTTP. | `jakarta.json:jakarta.json-api` |
 | `helidon-extensions-jakarta-http-media-jsonb` | Bind Java objects to and from JSON over HTTP. | `jakarta.json.bind:jakarta.json.bind-api` and `jakarta.json:jakarta.json-api` |
 | `helidon-extensions-jakarta-dbclient-jsonp` | Map DBClient rows and parameters to and from `jakarta.json.JsonObject`. | `jakarta.json:jakarta.json-api` |
 
-The BOM pins these versions:
+The Jakarta release root manages dependencies separately from the extension BOM. It imports
+[`jakarta.platform:jakarta.jakartaee-bom:11.0.0`](https://central.sonatype.com/artifact/jakarta.platform/jakarta.jakartaee-bom/11.0.0)
+for specification API versions and pins Parsson and Yasson directly. The JSON modules use:
 
 | Dependency | Version | Role |
 | --- | --- | --- |
 | `jakarta.json:jakarta.json-api` | `2.1.3` | [JSON-P 2.1](https://jakarta.ee/specifications/jsonp/2.1/) specification API. |
-| `jakarta.json.bind:jakarta.json.bind-api` | `3.0.3` | [JSON-B 3.0](https://jakarta.ee/specifications/jsonb/3.0/) specification API. |
+| `jakarta.json.bind:jakarta.json.bind-api` | `3.0.1` | [JSON-B 3.0](https://jakarta.ee/specifications/jsonb/3.0/) specification API. |
 | `org.eclipse.parsson:parsson` | `1.1.9` | Default JSON-P implementation. |
 | `org.eclipse.yasson:yasson` | `3.0.5` | Default JSON-B implementation. |
 
@@ -35,7 +37,9 @@ directly. Parsson and Yasson are runtime dependencies of their integrations. Yas
 JSON-B's optional CDI integration does not require adding CDI, Inject, Annotation, Resource, JAXB, or Activation APIs to
 ordinary JSON consumers. The JSON modules do not add those ancillary APIs.
 
-Import the Jakarta BOM and select one integration. For example, a JSON-P application can use:
+Applications manage Helidon and third-party dependency versions separately: importing the Jakarta extension BOM manages
+only the three extension modules. The following JSON-P application uses the Helidon application parent, the Jakarta EE 11
+specification BOM, and the Jakarta extension BOM:
 
 ```xml
 <parent>
@@ -47,10 +51,18 @@ Import the Jakarta BOM and select one integration. For example, a JSON-P applica
 
 <properties>
     <jakarta.extension.version>1.0.0-SNAPSHOT</jakarta.extension.version>
+    <version.lib.jakartaee-bom>11.0.0</version.lib.jakartaee-bom>
 </properties>
 
 <dependencyManagement>
     <dependencies>
+        <dependency>
+            <groupId>jakarta.platform</groupId>
+            <artifactId>jakarta.jakartaee-bom</artifactId>
+            <version>${version.lib.jakartaee-bom}</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
         <dependency>
             <groupId>io.helidon.extensions.jakarta</groupId>
             <artifactId>helidon-extensions-jakarta-bom</artifactId>
@@ -197,7 +209,8 @@ The extension owns examples for each selectable integration:
 - [DBClient JSON-P mapping](../examples/dbclient-jsonp/README.md)
 - [JSON-P declarative endpoint](../examples/jsonp-declarative/README.md)
 
-Each example declares its own Helidon SE parent and Jakarta BOM. It can be copied outside this repository and built
+Each example declares its own Helidon SE parent, Jakarta EE 11 specification BOM, and Jakarta extension BOM.
+It can be copied outside this repository and built
 against installed or published dependencies. From an example directory, run `mvn clean verify` to build, test, and launch
 its JPMS entry point. The example READMEs also document commands for launching the built applications directly.
 
