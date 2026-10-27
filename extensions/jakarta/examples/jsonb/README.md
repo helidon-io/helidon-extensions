@@ -8,13 +8,13 @@ The Helidon 28 and Jakarta extension artifacts must be available. For a source c
 from `extensions/jakarta` with `mvn clean install -Ptests -DskipTests`. This example has its own Helidon SE parent,
 imports the Jakarta BOM, and can then be built outside the extension reactor.
 
-Build, test, and run the module-path smoke check:
+Build and test the example:
 
 ```shell
 mvn clean verify
 ```
 
-Run the built example again on Linux or macOS:
+Run the built example on Linux or macOS:
 
 ```shell
 java --module-path target/classes:target/libs --module io.helidon.extensions.jakarta.examples.jsonb/io.helidon.extensions.jakarta.examples.jsonb.Main
