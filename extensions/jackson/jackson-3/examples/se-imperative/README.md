@@ -18,5 +18,4 @@ The response is HTTP 200 with JSON containing `"message":"Hello Jackson 3"`.
 Stop the server with Ctrl+C. `mvn test` checks a JavaBean client/server round trip on an ephemeral test port.
 
 `Greeting` is an ordinary JavaBean serialized and deserialized by Jackson 3.
-The compiler processor path contains the Helidon APT bundle and only the Jackson 3 extension processor.
 The server explicitly disables discovery and registers `JacksonSupport`; the test client discovers the extension.
