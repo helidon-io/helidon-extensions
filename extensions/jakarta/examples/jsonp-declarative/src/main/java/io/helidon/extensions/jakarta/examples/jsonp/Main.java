@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.helidon.extensions.jakarta.examples.declarative;
+package io.helidon.extensions.jakarta.examples.jsonp;
 
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.service.registry.Service;
