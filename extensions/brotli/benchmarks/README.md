@@ -4,17 +4,18 @@ These opt-in benchmarks exercise public stream APIs and the in-memory HTTP
 content-encoding wrappers. They are test tooling and are not deployed as an
 extension artifact. JMH 1.37 is pinned in this isolated benchmark module.
 
-After the normal repository artifact baseline, build only this module:
+Use JDK 27 for Maven and the benchmark JVM. After building the repository's
+prerequisite artifacts, build only this module:
 
 ```shell
-mvn_27 clean install -Pjmh -pl :helidon-extensions-brotli-benchmarks -DskipTests
-mvn_27 dependency:copy-dependencies -Pjmh -pl :helidon-extensions-brotli-benchmarks -DincludeScope=runtime
+mvn clean install -Pjmh -pl :helidon-extensions-brotli-benchmarks -DskipTests
+mvn dependency:copy-dependencies -Pjmh -pl :helidon-extensions-brotli-benchmarks -DincludeScope=runtime
 ```
 
 Run an explicit method selection from the repository root, using JDK 27:
 
 ```shell
-java -cp 'extensions/brotli/benchmarks/target/classes:extensions/brotli/benchmarks/target/dependency/*' org.openjdk.jmh.Main 'io.helidon.extensions.brotli.benchmarks.BrotliBenchmark.(encode|decode)' -p shape=TINY,CACHE_TEXT,CACHE_RANDOM,LARGE_TEXT,INTEROP -prof gc
+java -cp 'extensions/brotli/benchmarks/target/classes:extensions/brotli/benchmarks/target/dependency/*' org.openjdk.jmh.Main 'io\.helidon\.extensions\.brotli\.benchmarks\.BrotliBenchmark\.(encode|decode)$' -p shape=TINY,CACHE_TEXT,CACHE_RANDOM,LARGE_TEXT,INTEROP -prof gc
 ```
 
 The classpath separator above is for Unix shells; use `;` on Windows.

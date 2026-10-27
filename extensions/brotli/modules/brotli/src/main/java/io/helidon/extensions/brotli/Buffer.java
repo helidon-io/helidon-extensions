@@ -16,6 +16,8 @@
 
 package io.helidon.extensions.brotli;
 
+import java.util.Arrays;
+
 class Buffer {
     private final int maxBitIx;
 
@@ -80,8 +82,9 @@ class Buffer {
     }
 
     byte[] toByteArray() {
-        byte[] result = new byte[array.length];
-        for (int i = 0; i < array.length; i++) {
+        int length = byteIx();
+        byte[] result = new byte[length];
+        for (int i = 0; i < length; i++) {
             result[i] = (byte) array[i];
         }
         return result;
@@ -176,7 +179,17 @@ class Buffer {
     }
 
     void clear() {
-        array = new int[array.length];
+        Arrays.fill(array, 0);
+        bitIx = 0;
+    }
+
+    void clearWrittenBytes(int byteCount) {
+        // Only for sequential bit/byte writes; set() users must clear the entire array.
+        int clearLength = Math.min(array.length, byteCount);
+        if (clearLength < array.length) {
+            clearLength++;
+        }
+        Arrays.fill(array, 0, clearLength, 0);
         bitIx = 0;
     }
 

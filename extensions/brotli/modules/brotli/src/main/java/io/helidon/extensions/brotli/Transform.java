@@ -80,8 +80,8 @@ final class Transform {
         unpackTransforms(prefixSuffixStorage, prefixSuffixHeads, triplets);
     }
 
-    static Transform createRFCTransform() {
-        return new Transform(NUM_RFC_TRANSFORMS, 167, 50);
+    static Transform rfcTransform() {
+        return LazyHolder.INSTANCE;
     }
 
     int transformDictionaryWord(byte[] dest, int dstOffset, ByteBuffer src, int srcOffset, int length, int transformIndex) {
@@ -240,6 +240,13 @@ final class Transform {
                 uppercaseOffset += 3;
                 len -= 3;
             }
+        }
+    }
+
+    private static final class LazyHolder {
+        private static final Transform INSTANCE = new Transform(NUM_RFC_TRANSFORMS, 167, 50);
+
+        private LazyHolder() {
         }
     }
 }

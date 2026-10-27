@@ -20,7 +20,7 @@
 */
 package io.helidon.extensions.brotli;
 
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 
 import static io.helidon.extensions.brotli.Utils.convertBitDepthsToSymbols;
@@ -36,7 +36,7 @@ class HuffmanTree {
     private final List<HuffmanNode> nodes;
 
     HuffmanTree(int size) {
-        nodes = new LinkedList<>();
+        nodes = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             nodes.add(new HuffmanNode());
         }
@@ -156,14 +156,10 @@ class HuffmanTree {
             int ix = huffmanTree.get(i);
             storage.writeBit(codeLengthBitDepth.get(ix), codeLengthBitDepthSymbols.get(ix));
             switch (ix) {
-                case REPEAT_PREVIOUS_CODE_LENGTH:
-                    storage.writeBit(2, huffmanTreeExtraBits.get(i));
-                    break;
-                case REPEAT_ZERO_CODE_LENGTH:
-                    storage.writeBit(3, huffmanTreeExtraBits.get(i));
-                    break;
-                default:
-                    break;
+                case REPEAT_PREVIOUS_CODE_LENGTH -> storage.writeBit(2, huffmanTreeExtraBits.get(i));
+                case REPEAT_ZERO_CODE_LENGTH -> storage.writeBit(3, huffmanTreeExtraBits.get(i));
+                default -> {
+                }
             }
         }
 
