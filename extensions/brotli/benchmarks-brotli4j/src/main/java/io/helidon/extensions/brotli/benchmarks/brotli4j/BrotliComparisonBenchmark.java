@@ -27,6 +27,8 @@ import java.util.HexFormat;
 import java.util.Locale;
 import java.util.SplittableRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 import io.helidon.extensions.brotli.BrotliInputStream;
 import io.helidon.extensions.brotli.BrotliOutputStream;
@@ -49,7 +51,7 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 
 /**
- * Entity codec comparison with native Brotli4j at quality zero and window eighteen.
+ * Entity codec comparison with native Brotli4j and JDK gzip streams.
  */
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.SECONDS)
@@ -73,21 +75,24 @@ public class BrotliComparisonBenchmark {
      * @throws NoSuchAlgorithmException if SHA-256 is unavailable
      */
     public static void main(String[] args) throws IOException, NoSuchAlgorithmException {
-        System.out.println("size,kind,inputBytes,javaBytes,nativeBytes,javaRatio,nativeRatio,"
-                                   + "inputSha256,compressedSha256,javaOutputNativeStream,nativeOutputNativeStream");
+        System.out.println("size,kind,inputBytes,javaBytes,nativeBytes,gzipBytes,javaRatio,nativeRatio,gzipRatio,"
+                                   + "inputSha256,compressedSha256,gzipCompressedSha256,"
+                                   + "javaOutputNativeStream,nativeOutputNativeStream");
         var digest = MessageDigest.getInstance("SHA-256");
         for (String size : new String[] {"SHORT", "LONG"}) {
             for (String kind : new String[] {"TEXT", "RANDOM"}) {
                 var payload = new Payload();
                 payload.configure(size, kind);
                 payload.prepare();
-                System.out.printf(Locale.ROOT, "%s,%s,%d,%d,%d,%.8f,%.8f,%s,%s,%s,%s%n",
+                System.out.printf(Locale.ROOT, "%s,%s,%d,%d,%d,%d,%.8f,%.8f,%.8f,%s,%s,%s,%s,%s%n",
                                   size, kind, payload.data.length,
-                                  payload.javaEncodedLength, payload.nativeEncoded.length,
+                                  payload.javaEncodedLength, payload.nativeEncoded.length, payload.gzipEncoded.length,
                                   (double) payload.javaEncodedLength / payload.data.length,
                                   (double) payload.nativeEncoded.length / payload.data.length,
+                                  (double) payload.gzipEncoded.length / payload.data.length,
                                   HexFormat.of().formatHex(digest.digest(payload.data)),
                                   HexFormat.of().formatHex(digest.digest(payload.nativeEncoded)),
+                                  HexFormat.of().formatHex(digest.digest(payload.gzipEncoded)),
                                   csv(payload.javaOutputNativeStreamStatus),
                                   csv(payload.nativeOutputNativeStreamStatus));
             }
@@ -116,6 +121,18 @@ public class BrotliComparisonBenchmark {
     @Benchmark
     public byte[] nativeEncode(Payload payload) throws IOException {
         return encodeNative(payload.data);
+    }
+
+    /**
+     * Encode and close a fresh JDK gzip stream, retaining the encoded entity.
+     *
+     * @param payload immutable fixture
+     * @return encoded bytes consumed by JMH
+     * @throws IOException if encoding fails
+     */
+    @Benchmark
+    public byte[] gzipEncode(Payload payload) throws IOException {
+        return encodeGzip(payload.data);
     }
 
     /**
@@ -158,6 +175,18 @@ public class BrotliComparisonBenchmark {
         return decodeNativeDirect(payload.nativeEncoded, payload.data.length);
     }
 
+    /**
+     * Decode the gzip-produced stream with a fresh JDK gzip decoder.
+     *
+     * @param payload immutable fixture
+     * @return decoded bytes consumed by JMH
+     * @throws IOException if decoding fails
+     */
+    @Benchmark
+    public byte[] gzipDecode(Payload payload) throws IOException {
+        return decodeGzip(payload.gzipEncoded);
+    }
+
     private static byte[] encodeJava(byte[] data) throws IOException {
         var destination = new ByteArrayOutputStream();
         try (var output = BrotliOutputStream.builder()
@@ -182,6 +211,14 @@ public class BrotliComparisonBenchmark {
         return destination.toByteArray();
     }
 
+    private static byte[] encodeGzip(byte[] data) throws IOException {
+        var destination = new ByteArrayOutputStream();
+        try (var output = new GZIPOutputStream(destination, BUFFER_SIZE)) {
+            output.write(data);
+        }
+        return destination.toByteArray();
+    }
+
     private static byte[] decodeJava(byte[] encoded) throws IOException {
         try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
             return input.readAllBytes();
@@ -191,6 +228,12 @@ public class BrotliComparisonBenchmark {
     private static byte[] decodeNative(byte[] encoded) throws IOException {
         try (var input = new com.aayushatharva.brotli4j.decoder.BrotliInputStream(new ByteArrayInputStream(encoded),
                                                                              BUFFER_SIZE)) {
+            return input.readAllBytes();
+        }
+    }
+
+    private static byte[] decodeGzip(byte[] encoded) throws IOException {
+        try (var input = new GZIPInputStream(new ByteArrayInputStream(encoded), BUFFER_SIZE)) {
             return input.readAllBytes();
         }
     }
@@ -225,6 +268,7 @@ public class BrotliComparisonBenchmark {
 
         private byte[] data;
         private byte[] nativeEncoded;
+        private byte[] gzipEncoded;
         private int javaEncodedLength;
         private String javaOutputNativeStreamStatus;
         private String nativeOutputNativeStreamStatus;
@@ -266,11 +310,13 @@ public class BrotliComparisonBenchmark {
             };
             byte[] javaEncoded = encodeJava(data);
             nativeEncoded = encodeNative(data);
+            gzipEncoded = encodeGzip(data);
             javaEncodedLength = javaEncoded.length;
             verify("Java/Java", decodeJava(javaEncoded));
             verify("Java/native direct", decodeNativeDirect(javaEncoded, data.length));
             verify("native/Java", decodeJava(nativeEncoded));
             verify("native/native direct", decodeNativeDirect(nativeEncoded, data.length));
+            verify("gzip/gzip", decodeGzip(gzipEncoded));
             javaOutputNativeStreamStatus = streamStatus(javaEncoded);
             nativeOutputNativeStreamStatus = streamStatus(nativeEncoded);
         }
