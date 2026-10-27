@@ -165,8 +165,7 @@ standalone streams likewise need an application-owned decoded-byte limit.
 ### Stream configuration
 
 Pass a Helidon `Config` node to the configuration builder's `config(...)` method
-to set scalar options. Supply the underlying stream to the constructor and any
-shared dictionary chunks through the input configuration builder.
+to set stream options. Supply the underlying stream to the constructor.
 
 | Stream | Key | Default | Supported values |
 | --- | --- | --- | --- |
@@ -176,6 +175,7 @@ shared dictionary chunks through the input configuration builder.
 | Input | `cache-buffer-size` | `256` | A positive number of bytes |
 | Input | `max-window-bits` | `24` | `10` through `24` |
 | Input | `verify-end-of-input` | `false` | `true` or `false` |
+| Input | `dictionary-chunks` | Empty list | Ordered Base64 strings, at most 15 chunks; standalone decoding only |
 
 All keys are optional. For example, using `io.helidon.config.Config`,
 `io.helidon.config.ConfigSources`, and `java.util.Map`:
@@ -202,6 +202,18 @@ try (var decoded = new BrotliInputStream(input, decoderConfig)) {
 
 The `encoder` and `decoder` node names are application choices. Each configuration builder
 reads the keys directly from the supplied node; the stream constructors reject unsupported values.
+
+For standalone streams that use an attached dictionary, configure each chunk as
+a standard Base64 string. For example, `dictionary-chunks.0: YWJj` and
+`dictionary-chunks.1: ZGVmZ2g=` attach the bytes `abc` followed by `defgh`.
+The stream treats the chunks as one dictionary in that order. References must
+remain within the concatenated dictionary contents.
+
+A configured list replaces chunks previously supplied through the builder.
+An empty list clears them; an absent key preserves them. Malformed Base64 is
+rejected when `config(...)` is called, with the failing configuration key.
+The stream constructor enforces the 15-chunk limit. HTTP `BrotliEncoding`
+rejects attached dictionaries, including those supplied through configuration.
 
 The maximum input window is checked from the compressed header before its ring
 buffer is allocated. The default accepts the full standard Brotli window range.

@@ -130,6 +130,13 @@ class BrotliEncodingTest {
     }
 
     @Test
+    void configuredDictionariesFailWhenBuilt() {
+        var config = Config.just(ConfigSources.create(Map.of("input-stream.dictionary-chunks.0", "YWJj")));
+
+        assertThrows(IllegalArgumentException.class, () -> BrotliEncoding.builder().config(config).build());
+    }
+
+    @Test
     void encoderRemovesUncompressedLength() {
         var headers = WritableHeaders.create();
         headers.set(HeaderNames.CONTENT_LENGTH, "123");

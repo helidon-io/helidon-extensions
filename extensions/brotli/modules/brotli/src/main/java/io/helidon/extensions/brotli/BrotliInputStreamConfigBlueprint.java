@@ -26,6 +26,7 @@ import io.helidon.builder.api.Prototype;
  */
 @Prototype.Blueprint
 @Prototype.Configured
+@Prototype.CustomMethods(BrotliInputStreamConfigSupport.class)
 interface BrotliInputStreamConfigBlueprint {
     /**
      * Size of the buffer used for byte-by-byte reads, in bytes.
@@ -63,9 +64,18 @@ interface BrotliInputStreamConfigBlueprint {
      * The stream copies the chunk arrays when it is created.
      * References may span chunks but must stay within their concatenated contents;
      * references that continue into the decoded output are not supported.
+     * Configuration supplies an ordered list of Base64 strings under {@code dictionary-chunks}.
+     * A configured list replaces previously supplied chunks; an absent key preserves them.
+     * Malformed Base64 is rejected when the configuration is applied.
      *
      * @return dictionary chunks
      */
+    @Option.Configured(metadata = false)
+    @Prototype.Annotated("io.helidon.config.metadata.ConfiguredOption("
+                                + "key = \"dictionary-chunks\", "
+                                + "type = java.lang.String.class, "
+                                + "kind = io.helidon.config.metadata.ConfiguredOption.Kind.LIST, "
+                                + "description = \"Optional shared dictionary chunks encoded as Base64 strings, in order\")")
     @Option.Singular("dictionaryChunk")
     List<byte[]> dictionaryChunks();
 }
