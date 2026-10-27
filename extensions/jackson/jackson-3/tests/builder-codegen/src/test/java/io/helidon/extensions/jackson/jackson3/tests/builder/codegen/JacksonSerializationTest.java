@@ -86,6 +86,17 @@ public class JacksonSerializationTest {
     }
 
     @Test
+    void testCreatePropertyRoundTrip() {
+        String json = "{\"create\":\"required-value\"}";
+        CreateProperty result = mapper.readValue(json, CreateProperty.class);
+        assertThat(result.create(), is("required-value"));
+
+        String encoded = mapper.writeValueAsString(result);
+        assertThat(mapper.readTree(encoded), is(mapper.readTree(json)));
+        assertThat(mapper.readValue(encoded, CreateProperty.class), is(result));
+    }
+
+    @Test
     void testSerialization() throws JacksonException {
         var instance = DemoWorkflowArguments.builder()
                 .setEncrypted(true)

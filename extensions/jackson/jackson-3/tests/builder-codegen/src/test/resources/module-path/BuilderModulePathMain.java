@@ -20,6 +20,7 @@ import java.math.BigDecimal;
 import java.util.Objects;
 import java.util.Optional;
 
+import io.helidon.extensions.jackson.jackson3.tests.builder.codegen.CreateProperty;
 import io.helidon.extensions.jackson.jackson3.tests.builder.codegen.DemoWorkflowArguments;
 import io.helidon.extensions.jackson.jackson3.tests.builder.codegen.DeserializeOnly;
 import io.helidon.extensions.jackson.jackson3.tests.builder.codegen.GenericValue;
@@ -103,6 +104,14 @@ public final class BuilderModulePathMain {
 
         var deserializeOnly = mapper.readValue(countJson, DeserializeOnly.class);
         assertEquals(42, deserializeOnly.getCount(), "deserialize-only implicit bean-style property");
+
+        String createJson = "{\"create\":\"required-value\"}";
+        var createProperty = mapper.readValue(createJson, CreateProperty.class);
+        assertEquals("required-value", createProperty.create(), "property named create");
+        String encodedCreate = mapper.writeValueAsString(createProperty);
+        assertEquals(mapper.readTree(createJson), mapper.readTree(encodedCreate), "create property serialization");
+        var restoredCreate = mapper.readValue(encodedCreate, CreateProperty.class);
+        assertEquals(createProperty, restoredCreate, "create property round trip");
 
         genericRoundTrip(mapper, "displayName");
     }

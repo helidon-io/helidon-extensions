@@ -99,7 +99,7 @@ class JacksonBuilderExtension implements BuilderCodegenExtension {
                                          .property("setterVisibility", EnumValue.create(JSON_VISIBILITY, "PUBLIC_ONLY"))
                                          .build());
         classModel.addMethod(method -> {
-            method.name("create")
+            method.name("builder")
                     .accessModifier(AccessModifier.PUBLIC)
                     .isStatic(true)
                     .description("Create a new builder for Jackson deserialization.")

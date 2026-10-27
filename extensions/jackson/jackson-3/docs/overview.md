@@ -159,7 +159,7 @@ For a named application module, export generated model packages to Jackson:
 exports com.example.models to tools.jackson.databind;
 ```
 
-The processor generates a public `Builder.create()` factory annotated with `@JsonCreator`.
+The processor generates a public `Builder.builder()` factory annotated with `@JsonCreator`.
 It delegates to the model's existing `builder()` method, so Jackson can instantiate the builder
 without reflective access to its private constructor. Jackson-specific public mutators delegate to
 the normal builder setters and clear methods. They preserve property naming and optional values:
