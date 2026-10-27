@@ -20,7 +20,7 @@
 module io.helidon.extensions.brotli.http.encoding {
     requires static io.helidon.config.metadata;
 
-    requires io.helidon.extensions.brotli;
+    requires transitive io.helidon.extensions.brotli;
     requires io.helidon.http;
 
     requires transitive io.helidon.common;
