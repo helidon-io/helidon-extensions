@@ -20,6 +20,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Random;
@@ -36,6 +37,21 @@ class BrotliEncoderBufferTest {
     private static final byte[] FLUSHED_DATA = HexFormat.of().parseHex(
             "8325000080aaaaaaea9f0fa72b11f3e1c4ff77d5bfe7deea9e515ddec67057bc585858d8d858d5cb8ceae0c3871f83c1601"
                     + "c67b2aa0683c1603018cca1ce88549446e1b0d04eb2f70477f194e1c9f9071a03");
+
+    @Test
+    @DisplayName("Huffman ties preserve the established encoded bytes")
+    void preservesHuffmanTieOrder() throws Exception {
+        byte[] data = new byte[16_384];
+        Arrays.fill(data, (byte) 'A');
+        for (int i = 0; i < data.length; i += 7) {
+            data[i] = (byte) (i * 29);
+        }
+        byte[] encoded = encode(data, 64_000, false);
+        assertThat(encoded.length, is(804));
+        assertThat(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(encoded)),
+                   is("119fe527424dcbc4b08889dbf55b24f49b40ec8e6ebf82e3fc444e31c2124d09"));
+        assertThat(decode(encoded), is(data));
+    }
 
     @Test
     void scalarAndBulkWritesAgreeAtCacheBoundaries() throws IOException {
