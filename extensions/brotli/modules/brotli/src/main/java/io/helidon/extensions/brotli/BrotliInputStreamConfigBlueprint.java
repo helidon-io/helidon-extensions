@@ -70,12 +70,7 @@ interface BrotliInputStreamConfigBlueprint {
      *
      * @return dictionary chunks
      */
-    @Option.Configured(metadata = false)
-    @Prototype.Annotated("io.helidon.config.metadata.ConfiguredOption("
-                                + "key = \"dictionary-chunks\", "
-                                + "type = java.lang.String.class, "
-                                + "kind = io.helidon.config.metadata.ConfiguredOption.Kind.LIST, "
-                                + "description = \"Optional shared dictionary chunks encoded as Base64 strings, in order\")")
+    @Option.Configured
     @Option.Singular("dictionaryChunk")
     List<byte[]> dictionaryChunks();
 }
