@@ -79,16 +79,9 @@ class JacksonBuilderExtension implements BuilderCodegenExtension {
                 .from(TypeName.create(prototype.fqName() + ".Builder"))
                 .typeArguments(prototype.typeArguments())
                 .build();
-        String mutatorPrefix = "jackson";
-        for (OptionInfo option : options) {
-            while (option.setterName().startsWith(mutatorPrefix)) {
-                mutatorPrefix += "_";
-            }
-        }
-
         classModel.addAnnotation(Annotation.builder()
                                          .typeName(JSON_POJO_BUILDER)
-                                         .property("withPrefix", mutatorPrefix)
+                                         .property("withPrefix", mutatorPrefix(options))
                                          .build());
         var hidden = EnumValue.create(JSON_VISIBILITY, "NONE");
         classModel.addAnnotation(Annotation.builder()
@@ -116,9 +109,17 @@ class JacksonBuilderExtension implements BuilderCodegenExtension {
                     .addContent(TypeName.create(prototype.fqName()))
                     .addContentLine(".builder();");
         });
+    }
+
+    @Override
+    public void updateBuilderBase(PrototypeInfo prototypeInfo, List<OptionInfo> options, ClassBase.Builder<?, ?> classModel) {
+        if (!deserialize) {
+            return;
+        }
+        String mutatorPrefix = mutatorPrefix(options);
         for (OptionInfo option : options) {
             if (option.interfaceMethod().isPresent()) {
-                addJacksonMutator(option, builderType, mutatorPrefix, classModel);
+                addJacksonMutator(option, mutatorPrefix, classModel);
             }
         }
     }
@@ -139,8 +140,17 @@ class JacksonBuilderExtension implements BuilderCodegenExtension {
                                          .build());
     }
 
+    private static String mutatorPrefix(List<OptionInfo> options) {
+        String prefix = "jackson";
+        for (OptionInfo option : options) {
+            while (option.setterName().startsWith(prefix)) {
+                prefix += "_";
+            }
+        }
+        return prefix;
+    }
+
     private void addJacksonMutator(OptionInfo option,
-                                  TypeName builderType,
                                   String mutatorPrefix,
                                   ClassBase.Builder<?, ?> classModel) {
         String suffix = Character.toUpperCase(option.name().charAt(0)) + option.name().substring(1);
@@ -148,7 +158,7 @@ class JacksonBuilderExtension implements BuilderCodegenExtension {
             method.name(mutatorPrefix + suffix)
                     .accessModifier(AccessModifier.PUBLIC)
                     .description("Set " + option.name() + " during Jackson deserialization.")
-                    .returnType(builderType, "this builder")
+                    .returnType(TypeName.createFromGenericDeclaration("BUILDER"), "this builder")
                     .addParameter(parameter -> parameter.name("value")
                             .type(option.declaredType())
                             .description("the deserialized value"));
@@ -169,7 +179,7 @@ class JacksonBuilderExtension implements BuilderCodegenExtension {
             } else {
                 method.addContentLine(option.setterName() + "(value);");
             }
-            method.addContentLine("return this;");
+            method.addContentLine("return self();");
         });
     }
 

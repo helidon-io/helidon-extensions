@@ -97,6 +97,24 @@ public class JacksonSerializationTest {
     }
 
     @Test
+    void testPrivateSettersWithPresentOptional() {
+        String json = "{\"count\":42,\"label\":\"private-value\"}";
+        assertPrivateSettersRoundTrip(json, Optional.of("private-value"), json);
+    }
+
+    @Test
+    void testPrivateSettersWithMissingOptional() {
+        assertPrivateSettersRoundTrip("{\"count\":42}", Optional.of("default-private-label"),
+                                     "{\"count\":42,\"label\":\"default-private-label\"}");
+    }
+
+    @Test
+    void testPrivateSettersWithNullOptional() {
+        String json = "{\"count\":42,\"label\":null}";
+        assertPrivateSettersRoundTrip(json, Optional.empty(), json);
+    }
+
+    @Test
     void testSerialization() throws JacksonException {
         var instance = DemoWorkflowArguments.builder()
                 .setEncrypted(true)
@@ -112,5 +130,15 @@ public class JacksonSerializationTest {
         assertThat(restored.getWorkflowId(), is(instance.getWorkflowId()));
         assertThat(restored.isEncrypted(), is(instance.isEncrypted()));
         assertThat(restored.getLabel(), is(instance.getLabel()));
+    }
+
+    private void assertPrivateSettersRoundTrip(String json, Optional<String> expectedLabel, String expectedJson) {
+        PrivateSetters result = mapper.readValue(json, PrivateSetters.class);
+        assertThat(result.getCount(), is(42));
+        assertThat(result.getLabel(), is(expectedLabel));
+
+        String encoded = mapper.writeValueAsString(result);
+        assertThat(mapper.readTree(encoded), is(mapper.readTree(expectedJson)));
+        assertThat(mapper.readValue(encoded, PrivateSetters.class), is(result));
     }
 }

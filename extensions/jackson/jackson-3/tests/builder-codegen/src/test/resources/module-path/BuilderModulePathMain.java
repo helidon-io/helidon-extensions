@@ -25,6 +25,7 @@ import io.helidon.extensions.jackson.jackson3.tests.builder.codegen.DemoWorkflow
 import io.helidon.extensions.jackson.jackson3.tests.builder.codegen.DeserializeOnly;
 import io.helidon.extensions.jackson.jackson3.tests.builder.codegen.GenericValue;
 import io.helidon.extensions.jackson.jackson3.tests.builder.codegen.PlainBean;
+import io.helidon.extensions.jackson.jackson3.tests.builder.codegen.PrivateSetters;
 
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.MapperFeature;
@@ -113,7 +114,27 @@ public final class BuilderModulePathMain {
         var restoredCreate = mapper.readValue(encodedCreate, CreateProperty.class);
         assertEquals(createProperty, restoredCreate, "create property round trip");
 
+        String privatePresentJson = "{\"count\":42,\"label\":\"private-value\"}";
+        privateSettersRoundTrip(mapper, privatePresentJson, Optional.of("private-value"), privatePresentJson);
+        privateSettersRoundTrip(mapper, "{\"count\":42}", Optional.of("default-private-label"),
+                               "{\"count\":42,\"label\":\"default-private-label\"}");
+        String privateNullJson = "{\"count\":42,\"label\":null}";
+        privateSettersRoundTrip(mapper, privateNullJson, Optional.empty(), privateNullJson);
+
         genericRoundTrip(mapper, "displayName");
+    }
+
+    private static void privateSettersRoundTrip(ObjectMapper mapper,
+                                               String json,
+                                               Optional<String> expectedLabel,
+                                               String expectedJson) {
+        var result = mapper.readValue(json, PrivateSetters.class);
+        assertEquals(42, result.getCount(), "private setter count");
+        assertEquals(expectedLabel, result.getLabel(), "private setter optional");
+        String encoded = mapper.writeValueAsString(result);
+        assertEquals(mapper.readTree(expectedJson), mapper.readTree(encoded), "private setter serialization");
+        var restored = mapper.readValue(encoded, PrivateSetters.class);
+        assertEquals(result, restored, "private setter round trip");
     }
 
     private static void genericRoundTrip(ObjectMapper mapper, String propertyName) {
