@@ -21,16 +21,20 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
 import io.helidon.config.Config;
+import io.helidon.config.ConfigMappingException;
 import io.helidon.config.ConfigSources;
+import io.helidon.config.spi.ConfigNode;
 
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -109,6 +113,73 @@ class BrotliConfigTest {
             }
             assertThat(destination.toByteArray(), is(dictionary));
         }
+    }
+
+    @Test
+    void configuredDictionaryChunksPreserveOrderAndBinaryBytes() throws IOException {
+        var config = Config.just(ConfigSources.create(Map.of("decoder.dictionary-chunks.0", "AAEC",
+                                                            "decoder.dictionary-chunks.1", "/wBhYmM=",
+                                                            "decoder.cache-buffer-size", "1")));
+        var inputConfig = BrotliInputStreamConfig.builder().config(config.get("decoder")).build();
+        // Frozen eight-byte raw-prefix reference from BrotliDictionaryTest.
+        byte[] encoded = HexFormat.of().parseHex("e200000044501812d2");
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded), inputConfig)) {
+            assertThat(input.readAllBytes(), is(HexFormat.of().parseHex("000102ff00616263")));
+        }
+    }
+
+    @Test
+    void configuredDictionaryChunksReplaceProgrammaticChunks() throws IOException {
+        var config = Config.just(ConfigSources.create(Map.of("dictionary-chunks.0", "YWJj",
+                                                            "dictionary-chunks.1", "ZGVmZ2g=")));
+        var inputConfig = BrotliInputStreamConfig.builder()
+                .addDictionaryChunk("discarded".getBytes(StandardCharsets.US_ASCII))
+                .config(config)
+                .build();
+        assertThat(inputConfig.dictionaryChunks().size(), is(2));
+        byte[] encoded = HexFormat.of().parseHex("e200000044501812d2");
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded), inputConfig)) {
+            assertThat(input.readAllBytes(), is("abcdefgh".getBytes(StandardCharsets.US_ASCII)));
+        }
+    }
+
+    @Test
+    void emptyConfiguredDictionaryClearsProgrammaticChunks() throws IOException {
+        var node = ConfigNode.ObjectNode.builder()
+                .addList("dictionary-chunks", ConfigNode.ListNode.builder().build())
+                .build();
+        var config = Config.just(ConfigSources.create(node));
+        var inputConfig = BrotliInputStreamConfig.builder()
+                .addDictionaryChunk("discarded".getBytes(StandardCharsets.US_ASCII))
+                .config(config)
+                .build();
+        assertThat(inputConfig.dictionaryChunks().isEmpty(), is(true));
+        byte[] encoded = HexFormat.of().parseHex("620000004450081210");
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded), inputConfig)) {
+            assertThat(new String(input.readAllBytes(), StandardCharsets.US_ASCII), is("time"));
+        }
+    }
+
+    @Test
+    void rejectsMalformedConfiguredDictionaryChunk() {
+        var config = Config.just(ConfigSources.create(Map.of("dictionary-chunks.0", "YWJj",
+                                                            "dictionary-chunks.1", "not-base64!")));
+        ConfigMappingException failure = assertThrows(ConfigMappingException.class,
+                                                      () -> BrotliInputStreamConfig.builder().config(config).build());
+        assertThat(failure.getMessage(), containsString("dictionary-chunks.1"));
+        assertThat(failure.getCause(), instanceOf(IllegalArgumentException.class));
+    }
+
+    @Test
+    void rejectsExcessiveConfiguredDictionaryChunks() {
+        Map<String, String> properties = new HashMap<>();
+        for (int i = 0; i < 16; i++) {
+            properties.put("dictionary-chunks." + i, "AA==");
+        }
+        var config = Config.just(ConfigSources.create(properties));
+        var inputConfig = BrotliInputStreamConfig.builder().config(config).build();
+        assertThrows(IllegalArgumentException.class,
+                     () -> new BrotliInputStream(new ByteArrayInputStream(COMPRESSED_DATA), inputConfig));
     }
 
     @Test
