@@ -8,6 +8,8 @@ Each example is an independent Maven application using the Helidon 28 applicatio
 - [JSON-P declarative endpoint](jsonp-declarative/README.md)
 
 Every example terminates after a finite demonstration and needs no database or container.
-Build the release unit with `mvn_27 clean install -Ptests,examples` to build these applications
+Use JDK 27 with Maven: set `JAVA_HOME` to that JDK and put its `bin` directory on `PATH`.
+After following the [development build prerequisites](../docs/README.md#development-build), run
+`mvn clean install -Ptests,examples` from `extensions/jakarta` to build these applications
 and independently clone/build them using Maven Invoker. The standalone `verify` phase launches each
 application using a real `java --module-path` command after its classpath behavior tests.

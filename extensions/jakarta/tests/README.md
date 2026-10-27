@@ -10,8 +10,10 @@ deprecated core integration runtimes and unrelated Jakarta families or sibling m
 This checks that selecting one module does not depend on the extension reactor or another
 integration implementation.
 
-Run from the Jakarta release root after installing its production modules:
+Use JDK 27 with Maven: set `JAVA_HOME` to that JDK and put its `bin` directory on `PATH`.
+Follow the [development build prerequisites](../docs/README.md#development-build), then run
+from the Jakarta release root:
 
 ```shell
-mvn_27 clean install -Ptests
+mvn clean install -Ptests
 ```

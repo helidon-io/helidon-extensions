@@ -2,15 +2,16 @@
 
 Starts a loopback server on a dynamic port, POSTs a JSON-B entity using Helidon WebClient, prints the response, and stops. Tests exercise a custom JSON-B instance and JSON-B configuration properties.
 
-Requires Java 27, Maven, the Helidon 28 artifacts, and the Jakarta extension artifacts.
-For a source checkout, first install the Jakarta release unit from `extensions/jakarta` with
-`mvn_27 clean install -Ptests -DskipTests`. This example has its own Helidon SE parent,
+Requires JDK 27 and Maven, with `JAVA_HOME` set to that JDK and its `bin` directory on `PATH`.
+The Helidon 28 and Jakarta extension artifacts must be available. For a source checkout, follow the
+[development build prerequisites](../../docs/README.md#development-build), then install the Jakarta release unit
+from `extensions/jakarta` with `mvn clean install -Ptests -DskipTests`. This example has its own Helidon SE parent,
 imports the Jakarta BOM, and can then be built outside the extension reactor.
 
 Build, test, and run the module-path smoke check:
 
 ```shell
-mvn_27 clean verify
+mvn clean verify
 ```
 
 Run the built example again on Linux or macOS:

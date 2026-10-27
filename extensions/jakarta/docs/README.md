@@ -125,8 +125,10 @@ module example.jsonp {
 }
 ```
 
-The extension modules expose their Jakarta API dependencies transitively. Provider implementations are discovered using
-JPMS service declarations; the build also generates `META-INF/services` registrations for classpath applications.
+The JSON-P HTTP and DBClient modules re-export `jakarta.json`. The JSON-B HTTP module re-exports `jakarta.json.bind`;
+JSON-B applications that also use JSON-P types directly need `requires jakarta.json;` in their module declaration.
+Provider implementations are discovered using JPMS service declarations; the build also generates `META-INF/services`
+registrations for classpath applications.
 For JSON-B on the module path, export packages containing public model properties: Yasson uses a public method-handle
 lookup for their accessors. Also open model packages to `org.eclipse.yasson` when reflective binding needs access.
 The JSON-B example demonstrates both declarations.
@@ -220,6 +222,7 @@ The migration sources were copied from Helidon core revision
 configuration blueprints, and JSON-B test configuration. Build-time processors regenerate service and configuration
 metadata under the extension namespace.
 
+Use JDK 27 for Maven and the example Java launches: set `JAVA_HOME` to that JDK and put its `bin` directory on `PATH`.
 Make the shared repository parents available first by building the repository, or by installing its `parent/pom.xml` and
 root `pom.xml` as POM projects. Helidon `28.0.0-SNAPSHOT` dependencies must also be available from the configured snapshot
 repository or a local core build. Then, from `extensions/jakarta`, run:
