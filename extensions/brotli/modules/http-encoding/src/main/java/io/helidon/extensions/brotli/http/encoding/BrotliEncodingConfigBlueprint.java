@@ -18,6 +18,8 @@ package io.helidon.extensions.brotli.http.encoding;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
+import io.helidon.extensions.brotli.BrotliInputStreamConfig;
+import io.helidon.extensions.brotli.BrotliOutputStreamConfig;
 
 /**
  * Configuration of Brotli HTTP content encoding.
@@ -35,12 +37,22 @@ interface BrotliEncodingConfigBlueprint extends Prototype.Factory<BrotliEncoding
     String name();
 
     /**
-     * Largest Brotli window exponent accepted from the compressed stream header.
-     * Lower values limit decoder ring-buffer memory but reject streams that declare a larger window.
+     * Configuration for Brotli streams used to decode HTTP entities.
+     * HTTP decoding always verifies the end of the encoded entity, even when
+     * {@link BrotliInputStreamConfig#verifyEndOfInput()} is {@code false}.
      *
-     * @return maximum window exponent, from 10 through 24
+     * @return input stream configuration
      */
-    @Option.Configured
-    @Option.DefaultInt(24)
-    int maxWindowBits();
+    @Option.Configured("input-stream")
+    @Option.DefaultMethod("create")
+    BrotliInputStreamConfig inputStreamConfig();
+
+    /**
+     * Configuration for Brotli streams used to encode HTTP entities.
+     *
+     * @return output stream configuration
+     */
+    @Option.Configured("output-stream")
+    @Option.DefaultMethod("create")
+    BrotliOutputStreamConfig outputStreamConfig();
 }

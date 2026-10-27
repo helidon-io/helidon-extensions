@@ -25,7 +25,7 @@ import io.helidon.builder.api.Prototype;
  * Configuration of a Brotli decompression stream.
  */
 @Prototype.Blueprint
-@Prototype.Configured(value = "brotli-input-stream", root = false)
+@Prototype.Configured
 interface BrotliInputStreamConfigBlueprint {
     /**
      * Size of the buffer used for byte-by-byte reads, in bytes.
