@@ -178,7 +178,6 @@ final class Decoder {
     private int maxBackwardDistance;
     private int maxRingBufferSize;
     private int ringBufferSize;
-    private int expectedTotalSize;
     private int outputUsed;
     private int ringBufferBytesWritten;
     private int ringBufferBytesReady;
@@ -874,24 +873,16 @@ final class Decoder {
     }
 
     private void reallocateRingBuffer() {
-        int newSize = maxRingBufferSize;
-        if (newSize > expectedTotalSize) {
-            // Before the window is full, keep capacity above total output so growth cannot lose prior history.
-            int minimalNewSize = expectedTotalSize;
-            while ((newSize >> 1) > minimalNewSize) {
-                newSize >>= 1;
-            }
-        }
-        if (newSize <= ringBufferSize) {
-            return;
-        }
+        int newSize = ringBufferSize == 0 ? 1024 : ringBufferSize << 1;
         int ringBufferSizeWithSlack = newSize + MAX_TRANSFORMED_WORD_LENGTH;
         byte[] newBuffer = new byte[ringBufferSizeWithSlack];
         if (ringBuffer.length != 0) {
-            System.arraycopy(ringBuffer, 0, newBuffer, 0, ringBufferSize);
+            // Grow before the first wrap so the complete output history stays in order.
+            System.arraycopy(ringBuffer, 0, newBuffer, 0, pos);
         }
         ringBuffer = newBuffer;
         ringBufferSize = newSize;
+        ringBufferMask = newSize - 1;
     }
 
     private void readNextMetablockHeader() {
@@ -914,11 +905,7 @@ final class Decoder {
         if (isMetadata) {
             return;
         }
-        expectedTotalSize += metaBlockLength;
-        if (expectedTotalSize > 1 << 30) {
-            expectedTotalSize = 1 << 30;
-        }
-        if (ringBufferSize < maxRingBufferSize) {
+        if (ringBufferSize == 0) {
             reallocateRingBuffer();
         }
     }
@@ -1197,6 +1184,10 @@ final class Decoder {
     private void copyFromCompoundDictionary(int fence) {
         while (cdBrLength != cdBrCopied) {
             int space = fence - pos;
+            // A transformed word may have left output pending beyond this fence.
+            if (space <= 0) {
+                return;
+            }
             int chunkLength = cdChunkOffsets[cdBrIndex + 1] - cdChunkOffsets[cdBrIndex];
             int remChunkLength = chunkLength - cdBrOffset;
             int length = cdBrLength - cdBrCopied;
@@ -1232,12 +1223,16 @@ final class Decoder {
         if (pos >= maxBackwardDistance) {
             maxDistance = maxBackwardDistance;
         }
-        if (pos >= ringBufferSize) {
-            if (pos > ringBufferSize) {
-                System.arraycopy(ringBuffer, ringBufferSize, ringBuffer, 0, pos - ringBufferSize);
+        if (ringBufferSize != 0 && pos >= ringBufferSize) {
+            if (ringBufferSize < maxRingBufferSize) {
+                reallocateRingBuffer();
+            } else {
+                if (pos > ringBufferSize) {
+                    System.arraycopy(ringBuffer, ringBufferSize, ringBuffer, 0, pos - ringBufferSize);
+                }
+                pos &= ringBufferMask;
+                ringBufferBytesWritten = 0;
             }
-            pos &= ringBufferMask;
-            ringBufferBytesWritten = 0;
         }
         updateFence();
         runningState = nextRunningState;
