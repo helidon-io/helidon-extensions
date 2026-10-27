@@ -104,6 +104,16 @@ class BrotliDictionaryTest {
     }
 
     @Test
+    @DisplayName("RFC 7932 section 8 and RFC 9841 section 3.2: dictionary copies follow history growth")
+    void copiesAttachedDictionaryAfterStaticTransformAtGrowthBoundary() throws IOException {
+        byte[] prefix = new byte[1023];
+        Arrays.fill(prefix, (byte) 'A');
+        byte[] expected = Arrays.copyOf(prefix, prefix.length + 8);
+        System.arraycopy("timedefg".getBytes(StandardCharsets.US_ASCII), 0, expected, prefix.length, 8);
+        assertThat(decode(dictionaryCopiesAcrossGrowth(prefix), List.of(DICTIONARY), 1, 1), is(expected));
+    }
+
+    @Test
     @DisplayName("RFC 7932 section 9.2: attached dictionary copy cannot exceed the declared metablock")
     void rejectsAttachedDictionaryCopyBeyondMetablockBeforeReturningBytes() throws IOException {
         byte[] encoded = dictionaryReference(new byte[0], 4, 8, 1);
@@ -171,14 +181,51 @@ class BrotliDictionaryTest {
             case 8 -> 134;
             default -> throw new IllegalArgumentException("Unsupported fixture copy length: " + length);
         });
+        writeDistance(bits, distance, 1);
+        return bits.toByteArray();
+    }
+
+    private static byte[] dictionaryCopiesAcrossGrowth(byte[] prefix) {
+        var bits = new BitWriter();
+        bits.write(1, 0); // RFC 7932 section 9.1: WBITS=16.
+        bits.write(1, 0); // Nonfinal uncompressed prefix.
+        bits.write(2, 0);
+        bits.write(16, prefix.length - 1);
+        bits.write(1, 1);
+        bits.writeBytes(prefix);
+
+        bits.write(1, 0); // Nonfinal compressed block with two four-byte dictionary commands.
+        bits.write(2, 0);
+        bits.write(16, 7);
+        bits.write(1, 0);
+        bits.write(13, 0);
+        bits.writeSingleton(8, 'A');
+        bits.writeSingleton(10, 130);
+        writeDistance(bits, prefix.length + DICTIONARY.length + 1, 2);
+
+        // Metadata keeps enough valid input buffered while the first transformed word is pending output.
+        bits.write(1, 0);
+        bits.write(2, 3);
+        bits.write(1, 0);
+        bits.write(2, 1);
+        bits.write(8, 31);
+        bits.writeBytes(new byte[32]);
+        bits.write(1, 1); // Final empty block.
+        bits.write(1, 1);
+        return bits.toByteArray();
+    }
+
+    private static void writeDistance(BitWriter bits, int distance, int repetitions) {
         // Section 4: an explicit distance with NPOSTFIX=NDIRECT=0; alphabet size is 64.
         for (int code = 16; code < 64; code++) {
             int extraBits = 1 + ((code - 16) >>> 1);
             long base = ((2L + ((code - 16) & 1)) << extraBits) - 3;
             if (distance >= base && distance - base < (1L << extraBits)) {
                 bits.writeSingleton(6, code);
-                bits.write(extraBits, (int) (distance - base));
-                return bits.toByteArray();
+                for (int i = 0; i < repetitions; i++) {
+                    bits.write(extraBits, (int) (distance - base));
+                }
+                return;
             }
         }
         throw new IllegalArgumentException("Unsupported fixture distance: " + distance);

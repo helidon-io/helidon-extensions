@@ -30,7 +30,9 @@ import org.junit.jupiter.api.Test;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThan;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Regression tests for the <a href="https://www.rfc-editor.org/rfc/rfc7932.html">Brotli format (RFC 7932)</a>.
@@ -193,7 +195,7 @@ class BrotliConformanceTest {
     @DisplayName("RFC 7932 section 9.2: uncompressed blocks decode across input-buffer and EOF boundaries")
     void decodesUncompressedBlocksAtInputBoundary() throws IOException {
         int[][] schedules = {{Integer.MAX_VALUE, 8192, 256}, {1, 1, 1}, {7, 31, 17}, {4095, 4096, 256}};
-        for (int length : new int[] {1, 2, 3, 4, 5, 6, 7, 8, 4091, 4092, 4093}) {
+        for (int length : new int[] {1, 2, 3, 4, 5, 6, 7, 8, 4091, 4092, 4093, 16384}) {
             byte[] expected = new byte[length];
             Arrays.fill(expected, (byte) 'A');
             byte[] encoded = uncompressedBlock(length);
@@ -201,6 +203,29 @@ class BrotliConformanceTest {
                 String description = "payload length " + length + ", source/read/cache " + Arrays.toString(schedule);
                 assertThat(description, decode(encoded, schedule[0], schedule[1], schedule[2]), is(expected));
             }
+        }
+    }
+
+    @Test
+    @DisplayName("A declared metablock length cannot reserve an output window before decoding")
+    void truncatedMetablockDoesNotReserveOutputWindow() throws Exception {
+        // RFC 7932 section 9.2 defines the length field; the allocation bound is a decoder policy.
+        // Query public JDK management APIs without adding a dependency to the production JPMS module.
+        var managementFactory = Class.forName("java.lang.management.ManagementFactory");
+        Object allocationBean = managementFactory.getMethod("getThreadMXBean").invoke(null);
+        var threadMxBean = Class.forName("com.sun.management.ThreadMXBean");
+        assumeTrue(threadMxBean.isInstance(allocationBean), "Thread allocation measurements are unavailable");
+        assumeTrue((boolean) threadMxBean.getMethod("isThreadAllocatedMemoryEnabled").invoke(allocationBean),
+                   "Thread allocation measurements are disabled");
+        var getAllocatedBytes = threadMxBean.getMethod("getThreadAllocatedBytes", long.class);
+
+        byte[] encoded = {(byte) 0xCF, (byte) 0xFF, (byte) 0xFF, (byte) 0x7F};
+        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+            long threadId = Thread.currentThread().threadId();
+            long before = (long) getAllocatedBytes.invoke(allocationBean, threadId);
+            assertThrows(IOException.class, input::readAllBytes);
+            long allocated = (long) getAllocatedBytes.invoke(allocationBean, threadId) - before;
+            assertThat("bytes allocated before any decoded output", allocated, lessThan(1L << 20));
         }
     }
 
