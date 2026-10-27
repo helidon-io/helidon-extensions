@@ -43,11 +43,11 @@ import io.helidon.http.media.InstanceWriter;
 import io.helidon.http.media.MediaContext;
 import io.helidon.http.media.MediaSupport;
 
+import org.junit.jupiter.api.Test;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.MapperFeature;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
-import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.hasItems;
@@ -122,9 +122,6 @@ class JacksonMediaTest {
         assertThrows(JacksonRuntimeException.class,
                      () -> support.reader(BOOK_TYPE, headers).supplier().get()
                              .read(BOOK_TYPE, new ByteArrayInputStream("{".getBytes(StandardCharsets.UTF_8)), headers));
-    }
-
-    public record JavaTypes(Optional<String> value, Instant timestamp) {
     }
 
     @Test
@@ -386,6 +383,9 @@ class JacksonMediaTest {
         String result = new String(bytes, StandardCharsets.UTF_8);
         assertThat(result, containsString("\"title\""));
         assertThat(result, containsString("\"" + expectedTitle + "\""));
+    }
+
+    public record JavaTypes(Optional<String> value, Instant timestamp) {
     }
 
     public static class Book {
