@@ -172,7 +172,7 @@ public final class BuilderModulePathMain {
         try {
             GenericValue.<BigDecimal>builder().displayName((String) null);
             throw new AssertionError("The regular builder setter must still reject null");
-        } catch (NullPointerException expected) {
+        } catch (NullPointerException _) {
             // Jackson's null handling must not relax the ordinary builder API.
         }
     }
