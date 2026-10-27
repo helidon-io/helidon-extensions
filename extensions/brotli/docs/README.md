@@ -71,6 +71,11 @@ maximum window exponent defaults to `24` and accepts values from `10` through
 `24`. HTTP decoding always verifies the end of the encoded entity, even if
 the input configuration sets `verifyEndOfInput(false)`.
 
+Standard HTTP `br` uses Brotli's built-in dictionary. Attaching dictionary chunks
+through the input configuration causes `BrotliEncoding` construction to throw
+`IllegalArgumentException`. Attached dictionaries are supported only by the
+standalone decoder.
+
 The service-loaded provider accepts the same options under `input-stream` and
 `output-stream` in a `content-encodings` entry with `type: br`; for example,
 `input-stream.max-window-bits: 22` and `output-stream.window: 18`. The

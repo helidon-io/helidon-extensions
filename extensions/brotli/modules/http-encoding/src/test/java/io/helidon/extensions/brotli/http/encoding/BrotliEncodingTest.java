@@ -108,6 +108,28 @@ class BrotliEncodingTest {
     }
 
     @Test
+    void defaultDecoderUsesStandardStaticDictionary() throws IOException {
+        // RFC 7932 sections 8 and 13: standard br uses the built-in dictionary.
+        byte[] encoded = HexFormat.of().parseHex("620000004450081210");
+        try (var input = BrotliEncoding.create().decoder().apply(new ByteArrayInputStream(encoded))) {
+            assertThat(new String(input.readAllBytes(), StandardCharsets.US_ASCII), is("time"));
+        }
+    }
+
+    @Test
+    void attachedDictionariesFailWhenBuilt() {
+        var inputConfig = BrotliInputStreamConfig.builder()
+                .addDictionaryChunk("abcdefgh".getBytes(StandardCharsets.US_ASCII))
+                .build();
+        var config = BrotliEncodingConfig.builder().inputStreamConfig(inputConfig).buildPrototype();
+
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                                                       () -> BrotliEncoding.builder().inputStreamConfig(inputConfig).build());
+        assertThat(failure.getMessage(), is("HTTP br content encoding does not support attached dictionaries"));
+        assertThrows(IllegalArgumentException.class, () -> BrotliEncoding.create(config));
+    }
+
+    @Test
     void encoderRemovesUncompressedLength() {
         var headers = WritableHeaders.create();
         headers.set(HeaderNames.CONTENT_LENGTH, "123");

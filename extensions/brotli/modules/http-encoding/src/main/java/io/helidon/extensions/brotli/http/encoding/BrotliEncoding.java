@@ -55,6 +55,9 @@ public final class BrotliEncoding implements ContentEncoding, RuntimeType.Api<Br
         if (inputStreamConfig.maxWindowBits() < 10 || inputStreamConfig.maxWindowBits() > 24) {
             throw new IllegalArgumentException("Maximum Brotli window exponent must be between 10 and 24");
         }
+        if (!inputStreamConfig.dictionaryChunks().isEmpty()) {
+            throw new IllegalArgumentException("HTTP br content encoding does not support attached dictionaries");
+        }
     }
 
     /**
