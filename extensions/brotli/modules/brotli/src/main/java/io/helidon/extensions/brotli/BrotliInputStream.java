@@ -44,6 +44,9 @@ public final class BrotliInputStream extends InputStream implements RuntimeType.
         if (config.cacheBufferSize() <= 0) {
             throw new IllegalArgumentException("Cache buffer size must be strictly positive");
         }
+        if (config.maxWindowBits() < 10 || config.maxWindowBits() > 24) {
+            throw new IllegalArgumentException("Maximum Brotli window exponent must be between 10 and 24");
+        }
         var chunks = config.dictionaryChunks();
         if (chunks.size() > 15) {
             throw new IllegalArgumentException("At most 15 dictionary chunks are supported");
@@ -123,7 +126,8 @@ public final class BrotliInputStream extends InputStream implements RuntimeType.
         }
         try {
             if (decoder == null) {
-                decoder = new Decoder(config.inputStream(), chunkOffsets, dictionaryChunks, dictionarySize);
+                decoder = new Decoder(config.inputStream(), chunkOffsets, dictionaryChunks, dictionarySize,
+                                      config.maxWindowBits(), config.verifyEndOfInput());
             }
             decoder.decompress(destination, offset, length);
             int decoded = decoder.outputUsed();

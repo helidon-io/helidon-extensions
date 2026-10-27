@@ -24,6 +24,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Optional;
 import java.util.zip.GZIPInputStream;
@@ -40,6 +41,9 @@ import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.hamcrest.Matchers.lessThan;
 
 class BrotliEncodingHttpTest {
     private static final String ENTITY = """
@@ -114,6 +118,54 @@ class BrotliEncodingHttpTest {
         assertThat(response.statusCode(), is(200));
         assertThat(response.body(), is(ENTITY));
         assertThat(response.headers().firstValue("Content-Encoding"), is(Optional.empty()));
+    }
+
+    @Test
+    void serverAppliesPayloadLimitToDecodedBrotliBytes() throws IOException, InterruptedException {
+        int decodedLimit = 128;
+        assertThat(COMPRESSED_ENTITY.length, lessThan(decodedLimit));
+        assertThat(ENTITY.getBytes(StandardCharsets.UTF_8).length, greaterThan(decodedLimit));
+
+        var limitedServer = WebServer.builder()
+                .port(0)
+                .maxPayloadSize(decodedLimit)
+                .routing(routing -> routing.put("/consume", (req, res) -> {
+                    req.content().as(String.class);
+                    res.send();
+                }))
+                .build()
+                .start();
+        try {
+            var request = HttpRequest.newBuilder(URI.create("http://localhost:" + limitedServer.port() + "/consume"))
+                    .header("Content-Encoding", "br")
+                    .header("Content-Type", "text/plain")
+                    .PUT(HttpRequest.BodyPublishers.ofByteArray(COMPRESSED_ENTITY))
+                    .build();
+
+            var response = jdkClient.send(request, HttpResponse.BodyHandlers.discarding());
+            assertThat(response.statusCode(), is(413));
+        } finally {
+            limitedServer.stop();
+        }
+    }
+
+    @Test
+    void serverRejectsTrailingBrotliBytesAndKeepsServing() throws IOException, InterruptedException {
+        byte[] malformed = Arrays.copyOf(COMPRESSED_ENTITY, COMPRESSED_ENTITY.length + 5);
+        System.arraycopy("ABCDE".getBytes(StandardCharsets.US_ASCII), 0,
+                         malformed, COMPRESSED_ENTITY.length, 5);
+        var request = HttpRequest.newBuilder(baseUri.resolve("/echo"))
+                .timeout(Duration.ofSeconds(5))
+                .header("Content-Encoding", "br")
+                .PUT(HttpRequest.BodyPublishers.ofByteArray(malformed))
+                .build();
+
+        var response = jdkClient.send(request, HttpResponse.BodyHandlers.discarding());
+        assertThat(response.statusCode(), greaterThanOrEqualTo(400));
+
+        var healthy = client.get("/entity").request(String.class);
+        assertThat(healthy.status(), is(Status.OK_200));
+        assertThat(healthy.entity(), is(ENTITY));
     }
 
     @Test

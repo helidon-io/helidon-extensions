@@ -35,6 +35,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Independent streams exercising static dictionary addressing and word transformations from RFC 7932 section 8
@@ -89,6 +90,16 @@ class BrotliSharedDictionaryTest {
                 }));
             }
             assertAll(tasks.stream().map(task -> (Executable) task::get));
+        }
+    }
+
+    @Test
+    @DisplayName("RFC 7932 section 9.2: static dictionary copy cannot exceed the declared metablock")
+    void rejectsStaticDictionaryCopyBeyondMetablockBeforeReturningBytes() throws IOException {
+        // The first fixture decodes "time"; its metablock length is changed from four bytes to one.
+        byte[] encoded = HexFormat.of().parseHex("020000004450081210");
+        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+            assertThrows(IOException.class, () -> input.read(new byte[1]));
         }
     }
 

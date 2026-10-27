@@ -119,6 +119,8 @@ final class Decoder {
     private final int[] rings;
     private final int[] blockTrees;
     private final int[] distOffset;
+    private final int maxWindowBits;
+    private final boolean verifyEndOfInput;
 
     private RunningState runningState;
     private RunningState nextRunningState;
@@ -176,7 +178,8 @@ final class Decoder {
     private int ringBufferMask;
     private int j;
 
-    Decoder(InputStream input, int[] cdChunkOffsets, byte[][] cdChunks, int cdTotalSize) {
+    Decoder(InputStream input, int[] cdChunkOffsets, byte[][] cdChunks, int cdTotalSize,
+            int maxWindowBits, boolean verifyEndOfInput) {
         int maxDistanceAlphabetLimit = calculateDistanceAlphabetLimit(3, 15 << 3);
         this.ringBuffer = new byte[0];
         this.rings = new int[10];
@@ -188,6 +191,8 @@ final class Decoder {
         this.cdChunkOffsets = cdChunkOffsets;
         this.cdChunks = cdChunks;
         this.cdTotalSize = cdTotalSize;
+        this.maxWindowBits = maxWindowBits;
+        this.verifyEndOfInput = verifyEndOfInput;
         this.bitReader = new BitReader(input);
         this.blockTrees = new int[7 + 3 * (HUFFMAN_TABLE_SIZE_258 + HUFFMAN_TABLE_SIZE_26)];
         this.blockTrees[0] = 7;
@@ -287,6 +292,9 @@ final class Decoder {
             if (windowBits == -1) {
                 throw new BrotliException("Invalid 'windowBits' code");
             }
+            if (windowBits > maxWindowBits) {
+                throw new BrotliException("Brotli window exceeds configured maximum");
+            }
             maxRingBufferSize = 1 << windowBits;
             maxBackwardDistance = maxRingBufferSize - 16;
             runningState = BLOCK_START;
@@ -367,7 +375,7 @@ final class Decoder {
             throw new BrotliException("Invalid metablock length");
         }
         bitReader.jumpToByteBoundary();
-        bitReader.checkHealth(true);
+        bitReader.checkEndOfInput(verifyEndOfInput);
     }
 
     int outputUsed() {
@@ -1051,6 +1059,9 @@ final class Decoder {
                 throw new BrotliException("Invalid backward reference");
             }
             int len = transform.transformDictionaryWord(ringBuffer, pos, dictionaryData, offset, wordLength, transformIdx);
+            if (len > metaBlockLength) {
+                throw new BrotliException("Invalid metablock length");
+            }
             pos += len;
             metaBlockLength -= len;
             if (pos >= fence) {
@@ -1087,6 +1098,9 @@ final class Decoder {
         }
         if (length > cdTotalSize - address) {
             throw new BrotliException("Attached dictionary reference extends beyond the dictionary");
+        }
+        if (length > metaBlockLength) {
+            throw new BrotliException("Invalid metablock length");
         }
         if (cdBlockBits == -1) {
             initializeCompoundDictionary();
@@ -1168,17 +1182,28 @@ final class Decoder {
     }
 
     private void copyLoop() {
+        int available = fence - pos;
+        if (available <= 0) {
+            nextRunningState = COPY_LOOP;
+            runningState = INIT_WRITE;
+            return;
+        }
         int src = (pos - distance) & ringBufferMask;
         int dst = pos;
-        int remaining = copyLength - j;
+        // A small caller read must not expand the complete copy command before returning.
+        int remaining = Math.min(copyLength - j, available);
         int srcEnd = src + remaining;
         int dstEnd = dst + remaining;
         if ((srcEnd < ringBufferMask) && (dstEnd < ringBufferMask)) {
             if (remaining < 12 || (srcEnd > dst && dstEnd > src)) {
-                for (int k = 0; k < remaining; k += 4) {
+                int k = 0;
+                for (; k + 4 <= remaining; k += 4) {
                     ringBuffer[dst++] = ringBuffer[src++];
                     ringBuffer[dst++] = ringBuffer[src++];
                     ringBuffer[dst++] = ringBuffer[src++];
+                    ringBuffer[dst++] = ringBuffer[src++];
+                }
+                for (; k < remaining; k++) {
                     ringBuffer[dst++] = ringBuffer[src++];
                 }
             } else {
@@ -1188,7 +1213,7 @@ final class Decoder {
             metaBlockLength -= remaining;
             pos += remaining;
             if (pos >= fence) {
-                nextRunningState = MAIN_LOOP;
+                nextRunningState = j == copyLength ? MAIN_LOOP : COPY_LOOP;
                 runningState = INIT_WRITE;
             }
         } else {
@@ -1198,7 +1223,7 @@ final class Decoder {
                 pos++;
                 j++;
                 if (pos >= fence) {
-                    nextRunningState = COPY_LOOP;
+                    nextRunningState = j == copyLength ? MAIN_LOOP : COPY_LOOP;
                     runningState = INIT_WRITE;
                     break;
                 }

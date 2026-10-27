@@ -43,9 +43,14 @@ public final class BrotliEncoding implements ContentEncoding {
                                                                                     "br");
 
     private final String name;
+    private final int maxWindowBits;
 
-    BrotliEncoding(String name) {
+    BrotliEncoding(String name, int maxWindowBits) {
         this.name = Objects.requireNonNull(name, "name");
+        if (maxWindowBits < 10 || maxWindowBits > 24) {
+            throw new IllegalArgumentException("Maximum Brotli window exponent must be between 10 and 24");
+        }
+        this.maxWindowBits = maxWindowBits;
     }
 
     /**
@@ -54,7 +59,18 @@ public final class BrotliEncoding implements ContentEncoding {
      * @return Brotli content encoding
      */
     public static BrotliEncoding create() {
-        return new BrotliEncoding("br");
+        return new BrotliEncoding("br", 24);
+    }
+
+    /**
+     * Create Brotli content encoding with a maximum accepted decoder window.
+     * A lower value limits decoder memory but rejects streams with larger windows.
+     *
+     * @param maxWindowBits maximum window exponent, from 10 through 24
+     * @return Brotli content encoding
+     */
+    public static BrotliEncoding create(int maxWindowBits) {
+        return new BrotliEncoding("br", maxWindowBits);
     }
 
     @Override
@@ -74,7 +90,11 @@ public final class BrotliEncoding implements ContentEncoding {
 
     @Override
     public ContentDecoder decoder() {
-        return network -> BrotliInputStream.builder().inputStream(network).build();
+        return network -> BrotliInputStream.builder()
+                .inputStream(network)
+                .maxWindowBits(maxWindowBits)
+                .verifyEndOfInput(true)
+                .build();
     }
 
     @Override

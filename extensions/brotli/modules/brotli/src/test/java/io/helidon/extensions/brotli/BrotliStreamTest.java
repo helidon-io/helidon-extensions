@@ -77,6 +77,22 @@ class BrotliStreamTest {
     }
 
     @Test
+    void resumesIndependentLongCopyWithOneByteReads() throws IOException {
+        byte[] expected = INTEROP_TEXT.repeat(2000).getBytes(StandardCharsets.UTF_8);
+        byte[] actual = new byte[expected.length];
+        try (var stream = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(LONG_INTEROP_DATA)).build()) {
+            for (int i = 0; i < actual.length; i++) {
+                int count = stream.read(actual, i, 1);
+                if (count != 1) {
+                    assertThat("decoded byte index " + i, count, is(1));
+                }
+            }
+            assertThat(stream.read(), is(-1));
+        }
+        assertThat(actual, is(expected));
+    }
+
+    @Test
     void mixedReadsReturnRemainingBufferedBytesAtEndOfStream() throws IOException {
         try (var stream = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(COMPRESSED_DATA)).build()) {
             assertThat(stream.read(), is((int) DATA[0]));

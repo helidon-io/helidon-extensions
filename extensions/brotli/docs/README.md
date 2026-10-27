@@ -63,6 +63,10 @@ For explicit content-encoding registration, use
 `ContentEncoding` is accepted. It uses the same fixed codec defaults as the
 service-loaded provider.
 
+Use `BrotliEncoding.create(22)` to reject streams that declare a window larger
+than 4 MiB. The service-loaded provider can use the same setting through a
+`content-encodings` entry with `type: br` and `max-window-bits: 22`.
+
 ```java
 ContentEncodingContext encodings = ContentEncodingContext.builder()
         .addContentEncoding(BrotliEncoding.create())
@@ -103,13 +107,39 @@ try (var encoded = BrotliOutputStream.builder().outputStream(output).build()) {
     encoded.write(data);
 }
 
-try (var decoded = BrotliInputStream.builder().inputStream(input).build()) {
-    byte[] data = decoded.readAllBytes();
+try (var decoded = BrotliInputStream.builder()
+        .inputStream(input)
+        .verifyEndOfInput(true)
+        .build()) {
+    int decodedLimit = 1_048_576; // Choose a limit for the application.
+    byte[] data = decoded.readNBytes(decodedLimit + 1);
+    if (data.length > decodedLimit) {
+        throw new IOException("Decoded Brotli data exceeds the limit");
+    }
 }
 ```
 
 Closing either wrapper closes its underlying stream. Close the output wrapper
 to finish the Brotli stream before consuming its compressed bytes.
+
+### Resource limits
+
+Small Brotli inputs can expand into large entities. `BrotliInputStream` does not
+impose a decoded-byte limit; callers that materialize untrusted input should
+enforce one, as in the example above. The decoder may allocate up to a 16 MiB
+window from a compressed stream header before the body has been validated, so
+set `max-window-bits` when a smaller per-stream window is required and bound the
+number of concurrent decoders for untrusted inputs.
+When the source contains exactly one Brotli entity, enable
+`verify-end-of-input` to require EOF and reject trailing bytes. HTTP
+`br` decoding enables this check. The standalone default allows a progressive
+decoder to finish before an open source stream reaches EOF.
+
+For HTTP server requests, configure WebServer's `maxPayloadSize` to limit the
+decoded request size. Its default does not impose a payload-size limit.
+`maxBufferedEntitySize` applies when an entity is explicitly buffered; it does
+not limit direct streaming or all materializing readers. Client responses and
+standalone streams likewise need an application-owned decoded-byte limit.
 
 ### Stream configuration
 
@@ -123,6 +153,8 @@ dictionary chunks programmatically through the builder.
 | Output | `window` | `18` | `10` through `24` |
 | Output | `cache-input-size` | `64000` | At least `4` bytes |
 | Input | `cache-buffer-size` | `256` | A positive number of bytes |
+| Input | `max-window-bits` | `24` | `10` through `24` |
+| Input | `verify-end-of-input` | `false` | `true` or `false` |
 
 All keys are optional. For example, using `io.helidon.config.Config`,
 `io.helidon.config.ConfigSources`, and `java.util.Map`:
@@ -132,7 +164,9 @@ var config = Config.just(ConfigSources.create(Map.of(
         "encoder.quality", "0",
         "encoder.window", "16",
         "encoder.cache-input-size", "256",
-        "decoder.cache-buffer-size", "128")));
+        "decoder.cache-buffer-size", "128",
+        "decoder.max-window-bits", "22",
+        "decoder.verify-end-of-input", "true")));
 
 try (var encoded = BrotliOutputStream.builder()
         .outputStream(output)
@@ -151,6 +185,8 @@ try (var decoded = BrotliInputStream.builder()
 
 The `encoder` and `decoder` node names are application choices. Each builder
 reads the keys directly from the supplied node and rejects unsupported values.
+The maximum input window is checked from the compressed header before its ring
+buffer is allocated. The default accepts the full standard Brotli window range.
 
 ## Supported compression
 
