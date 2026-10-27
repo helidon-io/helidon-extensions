@@ -71,6 +71,6 @@ interface BrotliInputStreamConfigBlueprint {
      * @return dictionary chunks
      */
     @Option.Configured
-    @Option.Singular("dictionaryChunk")
+    @Option.Singular
     List<byte[]> dictionaryChunks();
 }
