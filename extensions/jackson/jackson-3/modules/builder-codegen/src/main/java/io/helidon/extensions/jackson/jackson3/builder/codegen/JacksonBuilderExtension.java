@@ -172,9 +172,10 @@ class JacksonBuilderExtension implements BuilderCodegenExtension {
             }
             if (option.declaredType().isOptional()) {
                 method.addContentLine("if (value == null || value.isEmpty()) {")
-                        .addContentLine("    clear" + suffix + "();")
+                        .addContentLine("clear" + suffix + "();")
+                        .decreaseContentPadding()
                         .addContentLine("} else {")
-                        .addContentLine("    " + option.setterName() + "(value.get());")
+                        .addContentLine(option.setterName() + "(value.get());")
                         .addContentLine("}");
             } else {
                 method.addContentLine(option.setterName() + "(value);");
