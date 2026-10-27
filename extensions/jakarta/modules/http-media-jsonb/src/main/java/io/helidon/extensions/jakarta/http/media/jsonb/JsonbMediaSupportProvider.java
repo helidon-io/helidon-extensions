@@ -46,7 +46,7 @@ public class JsonbMediaSupportProvider implements MediaSupportProvider, Weighted
 
     @Override
     public double weight() {
-        // very low weight, as this covers all, also lower than Jackson
+        // Low priority because JSON-B can handle arbitrary entity types.
         return 10;
     }
 

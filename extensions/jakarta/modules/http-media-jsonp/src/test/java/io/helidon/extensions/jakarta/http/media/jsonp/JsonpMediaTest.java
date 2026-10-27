@@ -52,13 +52,6 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-/*
-When adding/updating tests in this class, consider if it should be done
- in the following tests a well:
-    - JacksonMediaTest
-    - JsonbMediaTest
-    - GsonMediaTest
- */
 class JsonpMediaTest {
     private static final Charset ISO_8859_2 = Charset.forName("ISO-8859-2");
     private static final JsonBuilderFactory JSON = Json.createBuilderFactory(Map.of());
