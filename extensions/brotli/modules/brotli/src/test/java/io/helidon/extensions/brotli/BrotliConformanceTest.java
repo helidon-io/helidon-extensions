@@ -177,7 +177,7 @@ class BrotliConformanceTest {
         byte[] encoded = HexFormat.of().parseHex("0303806d792064617461034142434445");
         var source = new ByteArrayInputStream(encoded) {
             @Override
-            public synchronized int read(byte[] bytes, int offset, int length) {
+            public int read(byte[] bytes, int offset, int length) {
                 return super.read(bytes, offset, Math.min(length, 1));
             }
         };
