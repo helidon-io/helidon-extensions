@@ -112,7 +112,6 @@ final class Decoder {
     }
 
     private final BitReader bitReader;
-    private final Dictionary dictionary;
     private final byte[][] cdChunks;
     private final int[] cdChunkOffsets;
     private final int cdTotalSize;
@@ -195,7 +194,6 @@ final class Decoder {
         this.distRbIdx = 3;
         this.distExtraBits = new byte[maxDistanceAlphabetLimit];
         this.distOffset = new int[maxDistanceAlphabetLimit];
-        this.dictionary = new Dictionary();
         runningState = INITIALIZED;
     }
 
@@ -1036,16 +1034,17 @@ final class Decoder {
             initializeCompoundDictionaryCopy(-address - 1, copyLength);
             runningState = COPY_FROM_COMPOUND_DICTIONARY;
         } else {
+            var dictionary = Dictionary.instance();
             ByteBuffer dictionaryData = dictionary.data();
             int wordLength = copyLength;
             if (wordLength > Dictionary.MAX_DICTIONARY_WORD_LENGTH) {
                 throw new BrotliException("Invalid backward reference");
             }
-            int shift = dictionary.sizeBits()[wordLength];
+            int shift = dictionary.sizeBits(wordLength);
             if (shift == 0) {
                 throw new BrotliException("Invalid backward reference");
             }
-            int offset = dictionary.offsets()[wordLength];
+            int offset = dictionary.offset(wordLength);
             int mask = (1 << shift) - 1;
             int wordIdx = address & mask;
             int transformIdx = address >>> shift;

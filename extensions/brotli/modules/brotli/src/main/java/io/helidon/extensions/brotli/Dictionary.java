@@ -1322,30 +1322,35 @@ final class Dictionary {
     private final int[] offsets = new int[32];
     private final int[] sizeBits = new int[32];
 
-    Dictionary() {
-        ByteBuffer dictionaryData = ByteBuffer.allocateDirect(122784);
+    private Dictionary() {
+        ByteBuffer dictionaryData = ByteBuffer.allocate(122784);
         int[] dictionarySizeBits = new int[25];
         unpackDictionaryData(dictionaryData, dictionarySizeBits);
         dictionaryData = dictionaryData.flip().asReadOnlyBuffer();
         data = setData(dictionaryData, dictionarySizeBits);
     }
 
-    int[] offsets() {
-        return offsets;
+    static Dictionary instance() {
+        return LazyHolder.INSTANCE;
     }
 
-    int[] sizeBits() {
-        return sizeBits;
+    int offset(int length) {
+        return offsets[length];
+    }
+
+    int sizeBits(int length) {
+        return sizeBits[length];
     }
 
     ByteBuffer data() {
+        // Shared by all decoders; only absolute reads may be used.
         return data;
     }
 
     private ByteBuffer setData(ByteBuffer newData, int[] newSizeBits) {
         int minDictionaryWordLength = 4;
-        if (!newData.isDirect() || !newData.isReadOnly()) {
-            throw new BrotliException("newData must be a direct read-only byte buffer");
+        if (!newData.isReadOnly()) {
+            throw new BrotliException("newData must be a read-only byte buffer");
         }
         if (newSizeBits.length > MAX_DICTIONARY_WORD_LENGTH) {
             throw new BrotliException("sizeBits length must be at most " + MAX_DICTIONARY_WORD_LENGTH);
@@ -1417,5 +1422,12 @@ final class Dictionary {
         System.arraycopy(first, 0, result, 0, first.length);
         System.arraycopy(second, 0, result, first.length, second.length);
         return result;
+    }
+
+    private static final class LazyHolder {
+        private static final Dictionary INSTANCE = new Dictionary();
+
+        private LazyHolder() {
+        }
     }
 }

@@ -72,6 +72,12 @@
 
     <profiles>
         <profile>
+            <id>jmh</id>
+            <modules>
+                <module>benchmarks</module>
+            </modules>
+        </profile>
+        <profile>
             <id>tests</id>
             <modules>
                 <module>tests</module>
