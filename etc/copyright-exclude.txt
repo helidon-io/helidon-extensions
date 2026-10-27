@@ -78,3 +78,5 @@ service.loader
 .repo
 reflection.proto
 manifest
+# Immutable original core fixture bytes; provenance is verified by the compatibility test.
+extensions/jackson/jackson-2/tests/compatibility/src/test/resources/legacy/
