@@ -176,10 +176,9 @@ class BrotliDecoderOptimizationTest {
             for (int length = 0; length < encoded.length; length++) {
                 for (int sourceChunk : new int[] {1, Integer.MAX_VALUE}) {
                     String description = fixture.name() + ", prefix " + length + ", source chunk " + sourceChunk;
-                    try (var input = BrotliInputStream.builder()
-                            .inputStream(new ChunkedInputStream(Arrays.copyOf(encoded, length), sourceChunk))
-                            .verifyEndOfInput(true)
-                            .build()) {
+                    var inputConfig = BrotliInputStreamConfig.builder().verifyEndOfInput(true).build();
+                    try (var input = new BrotliInputStream(new ChunkedInputStream(Arrays.copyOf(encoded, length), sourceChunk),
+                                                           inputConfig)) {
                         assertThrows(IOException.class, input::readAllBytes, description);
                     }
                 }
@@ -193,11 +192,11 @@ class BrotliDecoderOptimizationTest {
         for (ReadSchedule schedule : SCHEDULES) {
             String description = fixture.name() + ", " + schedule;
             var destination = new ByteArrayOutputStream();
-            try (var input = BrotliInputStream.builder()
-                    .inputStream(new ChunkedInputStream(encoded, schedule.sourceChunk()))
+            var inputConfig = BrotliInputStreamConfig.builder()
                     .cacheBufferSize(schedule.cacheSize())
                     .verifyEndOfInput(true)
-                    .build()) {
+                    .build();
+            try (var input = new BrotliInputStream(new ChunkedInputStream(encoded, schedule.sourceChunk()), inputConfig)) {
                 if (schedule.readChunk() == 1) {
                     for (int value; (value = input.read()) != -1;) {
                         destination.write(value);

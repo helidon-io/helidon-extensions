@@ -59,7 +59,7 @@ class BrotliConformanceTest {
     void rejectsNonzeroMetadataPadding() throws IOException {
         // Window 16, one-byte metadata, and a final empty block; bit 7 of the second byte is illegal fill.
         byte[] encoded = HexFormat.of().parseHex("2c800003");
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
             assertThrows(IOException.class, input::readAllBytes);
         }
     }
@@ -78,7 +78,7 @@ class BrotliConformanceTest {
     void finishesCompressedBlockAfterFlush() throws IOException {
         byte[] data = repetitiveData(76);
         var destination = new ByteArrayOutputStream();
-        try (var output = BrotliOutputStream.builder().outputStream(destination).build()) {
+        try (var output = new BrotliOutputStream(destination)) {
             output.write(data);
             output.flush();
         }
@@ -94,7 +94,8 @@ class BrotliConformanceTest {
             for (int length : new int[] {76, 128, 64_000}) {
                 byte[] data = repetitiveData(length);
                 var destination = new ByteArrayOutputStream();
-                try (var output = BrotliOutputStream.builder().outputStream(destination).window(window).build()) {
+                var outputConfig = BrotliOutputStreamConfig.builder().window(window).build();
+                try (var output = new BrotliOutputStream(destination, outputConfig)) {
                     output.write(data);
                     output.flush();
                     output.flush();
@@ -111,7 +112,8 @@ class BrotliConformanceTest {
         byte[] data = repetitiveData(256);
         for (int cacheSize : new int[] {4, 5, 7, 76, 77}) {
             var destination = new ByteArrayOutputStream();
-            try (var output = BrotliOutputStream.builder().outputStream(destination).cacheInputSize(cacheSize).build()) {
+            var outputConfig = BrotliOutputStreamConfig.builder().cacheInputSize(cacheSize).build();
+            try (var output = new BrotliOutputStream(destination, outputConfig)) {
                 output.write(data);
                 output.flush();
             }
@@ -131,7 +133,7 @@ class BrotliConformanceTest {
             offset += counts[symbol];
         }
         var destination = new ByteArrayOutputStream();
-        try (var output = BrotliOutputStream.builder().outputStream(destination).build()) {
+        try (var output = new BrotliOutputStream(destination)) {
             output.write(data);
         }
         assertThat(decode(destination.toByteArray()), is(data));
@@ -143,7 +145,7 @@ class BrotliConformanceTest {
         // Establish distance 1, then apply short code 4 (last distance minus 1), resolving to zero.
         // Google Brotli 1.2.1 rejects this handcrafted stream.
         byte[] encoded = HexFormat.of().parseHex("82000000445001824811c800");
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
             assertThrows(IOException.class, input::readAllBytes);
         }
     }
@@ -153,7 +155,7 @@ class BrotliConformanceTest {
     void rejectsHistoricNativeDecoderCrashVector() throws IOException {
         // Mozilla bug 1246742, attachment 8717115: a 20-byte stream that underflowed the native decoder.
         byte[] encoded = HexFormat.of().parseHex("728a8a92aa8a8a3800002492e2c08a8a1f012101");
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
             IOException failure = assertThrows(IOException.class, () -> input.transferTo(OutputStream.nullOutputStream()));
             assertThat(failure.getCause(), instanceOf(BrotliException.class));
         }
@@ -164,7 +166,7 @@ class BrotliConformanceTest {
     void rejectsBufferedTrailingData() throws IOException {
         // A complete "my data" stream followed by the five extra bytes in Envoy's regression case.
         byte[] encoded = HexFormat.of().parseHex("0303806d792064617461034142434445");
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
             IOException failure = assertThrows(IOException.class, input::readAllBytes);
             assertThat(failure.getCause(), instanceOf(BrotliException.class));
         }
@@ -179,10 +181,7 @@ class BrotliConformanceTest {
                 return super.read(bytes, offset, Math.min(length, 1));
             }
         };
-        try (var input = BrotliInputStream.builder()
-                .inputStream(source)
-                .verifyEndOfInput(true)
-                .build()) {
+        try (var input = new BrotliInputStream(source, BrotliInputStreamConfig.builder().verifyEndOfInput(true).build())) {
             IOException failure = assertThrows(IOException.class, input::readAllBytes);
             assertThat(failure.getCause(), instanceOf(BrotliException.class));
             assertThat(failure.getCause().getMessage(), is("Unused bytes after end"));
@@ -220,7 +219,7 @@ class BrotliConformanceTest {
         var getAllocatedBytes = threadMxBean.getMethod("getThreadAllocatedBytes", long.class);
 
         byte[] encoded = {(byte) 0xCF, (byte) 0xFF, (byte) 0xFF, (byte) 0x7F};
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
             long threadId = Thread.currentThread().threadId();
             long before = (long) getAllocatedBytes.invoke(allocationBean, threadId);
             assertThrows(IOException.class, input::readAllBytes);
@@ -235,7 +234,7 @@ class BrotliConformanceTest {
         byte[] encoded = uncompressedBlock(8);
         for (int length = 0; length < encoded.length; length++) {
             byte[] truncated = Arrays.copyOf(encoded, length);
-            try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(truncated)).build()) {
+            try (var input = new BrotliInputStream(new ByteArrayInputStream(truncated))) {
                 assertThrows(IOException.class, input::readAllBytes, "encoded prefix length " + length);
             }
         }
@@ -246,7 +245,7 @@ class BrotliConformanceTest {
     void rejectsNonzeroTerminalPadding() throws IOException {
         byte[] encoded = uncompressedBlock(8);
         encoded[encoded.length - 1] |= (byte) 0x80;
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
             assertThrows(IOException.class, input::readAllBytes);
         }
     }
@@ -280,10 +279,8 @@ class BrotliConformanceTest {
 
     private static byte[] decode(byte[] encoded, int sourceChunk, int readChunk, int cacheSize) throws IOException {
         var destination = new ByteArrayOutputStream();
-        try (var input = BrotliInputStream.builder()
-                .inputStream(new ChunkedInputStream(encoded, sourceChunk))
-                .cacheBufferSize(cacheSize)
-                .build()) {
+        var config = BrotliInputStreamConfig.builder().cacheBufferSize(cacheSize).build();
+        try (var input = new BrotliInputStream(new ChunkedInputStream(encoded, sourceChunk), config)) {
             if (readChunk == 1) {
                 for (int value; (value = input.read()) != -1;) {
                     destination.write(value);

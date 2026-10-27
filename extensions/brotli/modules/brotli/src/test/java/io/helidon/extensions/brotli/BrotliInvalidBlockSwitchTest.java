@@ -48,7 +48,7 @@ class BrotliInvalidBlockSwitchTest {
                     }
                 };
             }
-            try (var stream = BrotliInputStream.builder().inputStream(source).build()) {
+            try (var stream = new BrotliInputStream(source)) {
                 IOException failure = assertThrows(IOException.class,
                                                    () -> stream.transferTo(OutputStream.nullOutputStream()),
                                                    "one byte at a time: " + oneByteAtATime);

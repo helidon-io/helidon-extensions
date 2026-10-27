@@ -75,10 +75,8 @@ class BrotliEncoderBufferTest {
         System.arraycopy(data, 0, padded, 4, data.length);
         for (int cache : new int[] {77, 64_000}) {
             var destination = new ByteArrayOutputStream();
-            try (var output = BrotliOutputStream.builder()
-                    .outputStream(destination)
-                    .cacheInputSize(cache)
-                    .build()) {
+            var outputConfig = BrotliOutputStreamConfig.builder().cacheInputSize(cache).build();
+            try (var output = new BrotliOutputStream(destination, outputConfig)) {
                 int offset = 0;
                 while (offset < data.length) {
                     output.write(padded[offset + 4] | 0x1000);
@@ -103,7 +101,7 @@ class BrotliEncoderBufferTest {
             padded[i + 4] = pattern[i % pattern.length];
         }
         var destination = new ByteArrayOutputStream();
-        try (var output = BrotliOutputStream.builder().outputStream(destination).build()) {
+        try (var output = new BrotliOutputStream(destination)) {
             output.flush();
             output.write(padded, 4, 31);
             output.write(padded, 35, 31);
@@ -121,10 +119,7 @@ class BrotliEncoderBufferTest {
     void physicalGrowthDoesNotChangeLogicalFlushBoundary() throws IOException {
         byte[] data = alphabet(78);
         var destination = new ByteArrayOutputStream();
-        try (var output = BrotliOutputStream.builder()
-                .outputStream(destination)
-                .cacheInputSize(77)
-                .build()) {
+        try (var output = new BrotliOutputStream(destination, BrotliOutputStreamConfig.builder().cacheInputSize(77).build())) {
             output.write(data, 0, 32);
             assertThat(destination.size(), is(0));
             output.write(data, 32, 45);
@@ -142,10 +137,8 @@ class BrotliEncoderBufferTest {
     void emptyClosePreservesFrozenStream() throws IOException {
         for (int cache : new int[] {4, 77, 64_000}) {
             var destination = new ByteArrayOutputStream();
-            try (var output = BrotliOutputStream.builder()
-                    .outputStream(destination)
-                    .cacheInputSize(cache)
-                    .build()) {
+            var outputConfig = BrotliOutputStreamConfig.builder().cacheInputSize(cache).build();
+            try (var output = new BrotliOutputStream(destination, outputConfig)) {
                 output.write(new byte[0]);
                 output.flush();
             }
@@ -167,8 +160,8 @@ class BrotliEncoderBufferTest {
         var expected = new ByteArrayOutputStream();
         var bulkDestination = new ByteArrayOutputStream();
         var scalarDestination = new ByteArrayOutputStream();
-        try (var bulk = BrotliOutputStream.builder().outputStream(bulkDestination).build();
-             var scalar = BrotliOutputStream.builder().outputStream(scalarDestination).build()) {
+        try (var bulk = new BrotliOutputStream(bulkDestination);
+             var scalar = new BrotliOutputStream(scalarDestination)) {
             for (byte[] section : sections) {
                 expected.write(section);
                 bulk.write(section);
@@ -287,10 +280,7 @@ class BrotliEncoderBufferTest {
 
     private static byte[] encode(byte[] data, int cache, boolean scalar) throws IOException {
         var destination = new ByteArrayOutputStream();
-        try (var output = BrotliOutputStream.builder()
-                .outputStream(destination)
-                .cacheInputSize(cache)
-                .build()) {
+        try (var output = new BrotliOutputStream(destination, BrotliOutputStreamConfig.builder().cacheInputSize(cache).build())) {
             if (scalar) {
                 for (byte value : data) {
                     output.write(value);
@@ -303,7 +293,7 @@ class BrotliEncoderBufferTest {
     }
 
     private static byte[] decode(byte[] encoded) throws IOException {
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
             return input.readAllBytes();
         }
     }

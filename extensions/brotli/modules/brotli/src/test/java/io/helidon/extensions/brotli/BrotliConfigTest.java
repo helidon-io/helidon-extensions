@@ -42,20 +42,19 @@ class BrotliConfigTest {
     @Test
     void emptyConfigurationPreservesDefaults() throws IOException {
         var destination = new ByteArrayOutputStream();
-        try (var output = BrotliOutputStream.builder().outputStream(destination).config(Config.empty()).build()) {
-            assertThat(output.prototype().quality(), is(0));
-            assertThat(output.prototype().window(), is(18));
-            assertThat(output.prototype().cacheInputSize(), is(64_000));
+        var outputConfig = BrotliOutputStreamConfig.builder().config(Config.empty()).build();
+        assertThat(outputConfig.quality(), is(0));
+        assertThat(outputConfig.window(), is(18));
+        assertThat(outputConfig.cacheInputSize(), is(64_000));
+        try (var output = new BrotliOutputStream(destination, outputConfig)) {
             output.write(DATA);
         }
         assertThat(destination.toByteArray(), is(COMPRESSED_DATA));
-        try (var input = BrotliInputStream.builder()
-                .inputStream(new ByteArrayInputStream(COMPRESSED_DATA))
-                .config(Config.empty())
-                .build()) {
-            assertThat(input.prototype().cacheBufferSize(), is(256));
-            assertThat(input.prototype().maxWindowBits(), is(24));
-            assertThat(input.prototype().verifyEndOfInput(), is(false));
+        var inputConfig = BrotliInputStreamConfig.builder().config(Config.empty()).build();
+        assertThat(inputConfig.cacheBufferSize(), is(256));
+        assertThat(inputConfig.maxWindowBits(), is(24));
+        assertThat(inputConfig.verifyEndOfInput(), is(false));
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(COMPRESSED_DATA), inputConfig)) {
             assertThat(input.readAllBytes(), is(DATA));
         }
     }
@@ -70,23 +69,19 @@ class BrotliConfigTest {
                                                             "decoder.verify-end-of-input", "true")));
         byte[] expected = "Configuration-driven Brotli stream. ".repeat(80).getBytes(StandardCharsets.UTF_8);
         var destination = new ByteArrayOutputStream();
-        try (var output = BrotliOutputStream.builder()
-                .outputStream(destination)
-                .config(config.get("encoder"))
-                .build()) {
-            assertThat(output.prototype().quality(), is(0));
-            assertThat(output.prototype().window(), is(10));
-            assertThat(output.prototype().cacheInputSize(), is(17));
+        var outputConfig = BrotliOutputStreamConfig.builder().config(config.get("encoder")).build();
+        assertThat(outputConfig.quality(), is(0));
+        assertThat(outputConfig.window(), is(10));
+        assertThat(outputConfig.cacheInputSize(), is(17));
+        try (var output = new BrotliOutputStream(destination, outputConfig)) {
             output.write(expected);
         }
         var restored = new ByteArrayOutputStream();
-        try (var input = BrotliInputStream.builder()
-                .inputStream(new ByteArrayInputStream(destination.toByteArray()))
-                .config(config.get("decoder"))
-                .build()) {
-            assertThat(input.prototype().cacheBufferSize(), is(3));
-            assertThat(input.prototype().maxWindowBits(), is(10));
-            assertThat(input.prototype().verifyEndOfInput(), is(true));
+        var inputConfig = BrotliInputStreamConfig.builder().config(config.get("decoder")).build();
+        assertThat(inputConfig.cacheBufferSize(), is(3));
+        assertThat(inputConfig.maxWindowBits(), is(10));
+        assertThat(inputConfig.verifyEndOfInput(), is(true));
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(destination.toByteArray()), inputConfig)) {
             restored.write(input.read());
             restored.writeBytes(input.readNBytes(7));
             restored.writeBytes(input.readAllBytes());
@@ -103,11 +98,11 @@ class BrotliConfigTest {
         // Frozen raw-prefix reference from the RFC 9841 section 3.2 cases in BrotliDictionaryTest.
         byte[] encoded = HexFormat.of().parseHex("e200000044501812d2");
         var config = Config.just(ConfigSources.create(Map.of("cache-buffer-size", "1")));
-        try (var input = BrotliInputStream.builder()
-                .inputStream(new ByteArrayInputStream(encoded))
+        var inputConfig = BrotliInputStreamConfig.builder()
                 .dictionaryChunks(List.of(dictionary))
                 .config(config)
-                .build()) {
+                .build();
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded), inputConfig)) {
             var destination = new ByteArrayOutputStream();
             for (int value; (value = input.read()) != -1;) {
                 destination.write(value);
@@ -119,16 +114,18 @@ class BrotliConfigTest {
     @Test
     void rejectsUnsupportedConfiguredQuality() {
         var config = Config.just(ConfigSources.create(Map.of("quality", "1")));
+        var outputConfig = BrotliOutputStreamConfig.builder().config(config).build();
         assertThrows(IllegalArgumentException.class,
-                     () -> BrotliOutputStream.builder().outputStream(new ByteArrayOutputStream()).config(config).build());
+                     () -> new BrotliOutputStream(new ByteArrayOutputStream(), outputConfig));
     }
 
     @Test
     void rejectsConfiguredWindowOutsideSupportedRange() {
         for (int window : new int[] {9, 25}) {
             var config = Config.just(ConfigSources.create(Map.of("window", Integer.toString(window))));
+            var outputConfig = BrotliOutputStreamConfig.builder().config(config).build();
             assertThrows(IllegalArgumentException.class,
-                         () -> BrotliOutputStream.builder().outputStream(new ByteArrayOutputStream()).config(config).build(),
+                         () -> new BrotliOutputStream(new ByteArrayOutputStream(), outputConfig),
                          "window " + window);
         }
     }
@@ -136,29 +133,26 @@ class BrotliConfigTest {
     @Test
     void rejectsConfiguredInputCacheBelowMinimum() {
         var config = Config.just(ConfigSources.create(Map.of("cache-input-size", "3")));
+        var outputConfig = BrotliOutputStreamConfig.builder().config(config).build();
         assertThrows(IllegalArgumentException.class,
-                     () -> BrotliOutputStream.builder().outputStream(new ByteArrayOutputStream()).config(config).build());
+                     () -> new BrotliOutputStream(new ByteArrayOutputStream(), outputConfig));
     }
 
     @Test
     void rejectsNonpositiveConfiguredReadCache() {
         var config = Config.just(ConfigSources.create(Map.of("cache-buffer-size", "0")));
+        var inputConfig = BrotliInputStreamConfig.builder().config(config).build();
         assertThrows(IllegalArgumentException.class,
-                     () -> BrotliInputStream.builder()
-                             .inputStream(new ByteArrayInputStream(COMPRESSED_DATA))
-                             .config(config)
-                             .build());
+                     () -> new BrotliInputStream(new ByteArrayInputStream(COMPRESSED_DATA), inputConfig));
     }
 
     @Test
     void rejectsConfiguredMaximumWindowOutsideSupportedRange() {
         for (int maxWindowBits : new int[] {9, 25}) {
             var config = Config.just(ConfigSources.create(Map.of("max-window-bits", Integer.toString(maxWindowBits))));
+            var inputConfig = BrotliInputStreamConfig.builder().config(config).build();
             assertThrows(IllegalArgumentException.class,
-                         () -> BrotliInputStream.builder()
-                                 .inputStream(new ByteArrayInputStream(COMPRESSED_DATA))
-                                 .config(config)
-                                 .build(),
+                         () -> new BrotliInputStream(new ByteArrayInputStream(COMPRESSED_DATA), inputConfig),
                          "maximum window " + maxWindowBits);
         }
     }
@@ -167,10 +161,8 @@ class BrotliConfigTest {
     void rejectsDeclaredWindowAboveConfiguredMaximumBeforeReadingBody() throws IOException {
         // WBITS=24 and a final metablock claiming 16 MiB, with no compressed body.
         byte[] header = HexFormat.of().parseHex("9fffffff");
-        try (var input = BrotliInputStream.builder()
-                .inputStream(new ByteArrayInputStream(header))
-                .maxWindowBits(22)
-                .build()) {
+        var inputConfig = BrotliInputStreamConfig.builder().maxWindowBits(22).build();
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(header), inputConfig)) {
             IOException failure = assertThrows(IOException.class, input::read);
             assertThat(failure.getCause(), instanceOf(BrotliException.class));
             assertThat(failure.getCause().getMessage(), is("Brotli window exceeds configured maximum"));

@@ -75,8 +75,8 @@ class BrotliFlushTest {
     void emptyAndRepeatedFlushesDoNotAddEncodedData() throws IOException {
         var destination = new ByteArrayOutputStream();
         var source = new PublishedInputStream();
-        try (var input = BrotliInputStream.builder().inputStream(source).build()) {
-            try (var output = BrotliOutputStream.builder().outputStream(destination).build()) {
+        try (var input = new BrotliInputStream(source)) {
+            try (var output = new BrotliOutputStream(destination)) {
                 output.flush();
                 output.flush();
                 assertThat(destination.size(), is(0));
@@ -101,12 +101,9 @@ class BrotliFlushTest {
     private static void assertFlushedPayloads(int window, int cacheSize, byte[][] payloads) throws IOException {
         var destination = new ByteArrayOutputStream();
         var source = new PublishedInputStream();
-        try (var input = BrotliInputStream.builder().inputStream(source).cacheBufferSize(17).build()) {
-            try (var output = BrotliOutputStream.builder()
-                    .outputStream(destination)
-                    .window(window)
-                    .cacheInputSize(cacheSize)
-                    .build()) {
+        var outputConfig = BrotliOutputStreamConfig.builder().window(window).cacheInputSize(cacheSize).build();
+        try (var input = new BrotliInputStream(source, BrotliInputStreamConfig.builder().cacheBufferSize(17).build())) {
+            try (var output = new BrotliOutputStream(destination, outputConfig)) {
                 for (int i = 0; i < payloads.length; i++) {
                     byte[] data = payloads[i];
                     output.write(data);

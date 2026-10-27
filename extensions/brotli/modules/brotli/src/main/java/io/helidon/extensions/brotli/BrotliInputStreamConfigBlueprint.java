@@ -16,7 +16,6 @@
 
 package io.helidon.extensions.brotli;
 
-import java.io.InputStream;
 import java.util.List;
 
 import io.helidon.builder.api.Option;
@@ -27,14 +26,7 @@ import io.helidon.builder.api.Prototype;
  */
 @Prototype.Blueprint
 @Prototype.Configured(value = "brotli-input-stream", root = false)
-interface BrotliInputStreamConfigBlueprint extends Prototype.Factory<BrotliInputStream> {
-    /**
-     * Stream containing Brotli-compressed data. Closing the decoder closes this stream.
-     *
-     * @return compressed input
-     */
-    InputStream inputStream();
-
+interface BrotliInputStreamConfigBlueprint {
     /**
      * Size of the buffer used for byte-by-byte reads, in bytes.
      *

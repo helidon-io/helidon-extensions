@@ -54,9 +54,35 @@ class BrotliStreamTest {
                     + "f14b00c46101809e2800");
 
     @Test
+    void constructorsRejectNullArguments() {
+        var compressed = new ByteArrayInputStream(COMPRESSED_DATA);
+        var destination = new ByteArrayOutputStream();
+        assertThrows(NullPointerException.class, () -> new BrotliInputStream(null));
+        assertThrows(NullPointerException.class, () -> new BrotliInputStream(compressed, null));
+        assertThrows(NullPointerException.class, () -> new BrotliOutputStream(null));
+        assertThrows(NullPointerException.class, () -> new BrotliOutputStream(destination, null));
+    }
+
+    @Test
+    void defaultConfigurationsCanBeReusedWithDifferentStreams() throws IOException {
+        var outputConfig = BrotliOutputStream.DEFAULT_CONFIG;
+        var inputConfig = BrotliInputStream.DEFAULT_CONFIG;
+        for (int i = 0; i < 2; i++) {
+            var destination = new ByteArrayOutputStream();
+            try (var output = new BrotliOutputStream(destination, outputConfig)) {
+                output.write(DATA);
+            }
+            assertThat(destination.toByteArray(), is(COMPRESSED_DATA));
+            try (var input = new BrotliInputStream(new ByteArrayInputStream(destination.toByteArray()), inputConfig)) {
+                assertThat(input.readAllBytes(), is(DATA));
+            }
+        }
+    }
+
+    @Test
     void writesKnownBrotliStream() throws IOException {
         var destination = new ByteArrayOutputStream();
-        try (var stream = BrotliOutputStream.builder().outputStream(destination).build()) {
+        try (var stream = new BrotliOutputStream(destination)) {
             stream.write(DATA);
         }
         assertThat(destination.toByteArray(), is(COMPRESSED_DATA));
@@ -64,14 +90,14 @@ class BrotliStreamTest {
 
     @Test
     void decodesIndependentQualityElevenStream() throws IOException {
-        try (var stream = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(INTEROP_DATA)).build()) {
+        try (var stream = new BrotliInputStream(new ByteArrayInputStream(INTEROP_DATA))) {
             assertThat(new String(stream.readAllBytes(), StandardCharsets.UTF_8), is(INTEROP_TEXT));
         }
     }
 
     @Test
     void decodesIndependentLongCopyStream() throws IOException {
-        try (var stream = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(LONG_INTEROP_DATA)).build()) {
+        try (var stream = new BrotliInputStream(new ByteArrayInputStream(LONG_INTEROP_DATA))) {
             assertThat(new String(stream.readAllBytes(), StandardCharsets.UTF_8), is(INTEROP_TEXT.repeat(2000)));
         }
     }
@@ -80,7 +106,7 @@ class BrotliStreamTest {
     void resumesIndependentLongCopyWithOneByteReads() throws IOException {
         byte[] expected = INTEROP_TEXT.repeat(2000).getBytes(StandardCharsets.UTF_8);
         byte[] actual = new byte[expected.length];
-        try (var stream = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(LONG_INTEROP_DATA)).build()) {
+        try (var stream = new BrotliInputStream(new ByteArrayInputStream(LONG_INTEROP_DATA))) {
             for (int i = 0; i < actual.length; i++) {
                 int count = stream.read(actual, i, 1);
                 if (count != 1) {
@@ -94,7 +120,7 @@ class BrotliStreamTest {
 
     @Test
     void mixedReadsReturnRemainingBufferedBytesAtEndOfStream() throws IOException {
-        try (var stream = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(COMPRESSED_DATA)).build()) {
+        try (var stream = new BrotliInputStream(new ByteArrayInputStream(COMPRESSED_DATA))) {
             assertThat(stream.read(), is((int) DATA[0]));
             byte[] remaining = new byte[32];
             assertThat(stream.read(remaining), is(DATA.length - 1));
@@ -111,12 +137,10 @@ class BrotliStreamTest {
             byte[] data = new byte[size];
             new Random(size).nextBytes(data);
             var destination = new ByteArrayOutputStream();
-            try (var stream = BrotliOutputStream.builder().outputStream(destination).build()) {
+            try (var stream = new BrotliOutputStream(destination)) {
                 stream.write(data);
             }
-            try (var stream = BrotliInputStream.builder()
-                    .inputStream(new ByteArrayInputStream(destination.toByteArray()))
-                    .build()) {
+            try (var stream = new BrotliInputStream(new ByteArrayInputStream(destination.toByteArray()))) {
                 assertThat("payload size " + size, stream.readAllBytes(), is(data));
             }
         }
@@ -125,15 +149,13 @@ class BrotliStreamTest {
     @Test
     void flushesAndContinuesWriting() throws IOException {
         var destination = new ByteArrayOutputStream();
-        try (var stream = BrotliOutputStream.builder().outputStream(destination).build()) {
+        try (var stream = new BrotliOutputStream(destination)) {
             stream.write(DATA, 0, 4);
             stream.flush();
             stream.flush();
             stream.write(DATA, 4, 3);
         }
-        try (var stream = BrotliInputStream.builder()
-                .inputStream(new ByteArrayInputStream(destination.toByteArray()))
-                .build()) {
+        try (var stream = new BrotliInputStream(new ByteArrayInputStream(destination.toByteArray()))) {
             assertThat(stream.readAllBytes(), is(DATA));
         }
     }
@@ -141,7 +163,7 @@ class BrotliStreamTest {
     @Test
     void flushingBeforeAnyInputDoesNotFinishTheStream() throws IOException {
         var destination = new ByteArrayOutputStream();
-        try (var stream = BrotliOutputStream.builder().outputStream(destination).build()) {
+        try (var stream = new BrotliOutputStream(destination)) {
             stream.flush();
             stream.flush();
             stream.write(DATA);
@@ -152,7 +174,7 @@ class BrotliStreamTest {
     @Test
     void truncatedStreamIsRejected() throws IOException {
         byte[] truncated = Arrays.copyOf(COMPRESSED_DATA, COMPRESSED_DATA.length - 2);
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(truncated)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(truncated))) {
             assertThrows(IOException.class, input::readAllBytes);
         }
     }
@@ -161,13 +183,11 @@ class BrotliStreamTest {
     void compressesRepetitivePayloadAcrossCacheBoundaries() throws IOException {
         byte[] data = INTEROP_TEXT.repeat(2000).getBytes(StandardCharsets.UTF_8);
         var destination = new ByteArrayOutputStream();
-        try (var stream = BrotliOutputStream.builder().outputStream(destination).build()) {
+        try (var stream = new BrotliOutputStream(destination)) {
             stream.write(data);
         }
         assertThat(destination.size(), lessThan(data.length));
-        try (var stream = BrotliInputStream.builder()
-                .inputStream(new ByteArrayInputStream(destination.toByteArray()))
-                .build()) {
+        try (var stream = new BrotliInputStream(new ByteArrayInputStream(destination.toByteArray()))) {
             assertThat(stream.readAllBytes(), is(data));
         }
     }
@@ -175,7 +195,7 @@ class BrotliStreamTest {
     @Test
     void propagatesOutputFailureAndClosesDestination() throws IOException {
         var destination = new FailingOutputStream();
-        var stream = BrotliOutputStream.builder().outputStream(destination).build();
+        var stream = new BrotliOutputStream(destination);
         stream.write(DATA);
         IOException failure = assertThrows(IOException.class, stream::close);
         assertThat(failure.getMessage(), is("destination failed"));
@@ -184,18 +204,19 @@ class BrotliStreamTest {
 
     @Test
     void rejectsUnsupportedCompressionQuality() {
+        var outputConfig = BrotliOutputStreamConfig.builder().quality(1).build();
         assertThrows(IllegalArgumentException.class,
-                     () -> BrotliOutputStream.builder().outputStream(new ByteArrayOutputStream()).quality(1).build());
+                     () -> new BrotliOutputStream(new ByteArrayOutputStream(), outputConfig));
     }
 
     @Test
     void validatesInputAndOutputRanges() throws IOException {
-        try (var stream = BrotliOutputStream.builder().outputStream(new ByteArrayOutputStream()).build()) {
+        try (var stream = new BrotliOutputStream(new ByteArrayOutputStream())) {
             assertThrows(IndexOutOfBoundsException.class, () -> stream.write(DATA, -1, 1));
             assertThrows(IndexOutOfBoundsException.class, () -> stream.write(DATA, 0, -1));
             assertThrows(IndexOutOfBoundsException.class, () -> stream.write(DATA, Integer.MAX_VALUE, 1));
         }
-        try (var stream = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(COMPRESSED_DATA)).build()) {
+        try (var stream = new BrotliInputStream(new ByteArrayInputStream(COMPRESSED_DATA))) {
             assertThrows(IndexOutOfBoundsException.class, () -> stream.read(new byte[1], -1, 1));
             assertThrows(IndexOutOfBoundsException.class, () -> stream.read(new byte[1], 0, -1));
             assertThrows(IndexOutOfBoundsException.class, () -> stream.read(new byte[1], Integer.MAX_VALUE, 1));
@@ -205,7 +226,7 @@ class BrotliStreamTest {
     @Test
     void closingIsIdempotentAndPreventsFurtherIo() throws IOException {
         var destination = new ByteArrayOutputStream();
-        var output = BrotliOutputStream.builder().outputStream(destination).build();
+        var output = new BrotliOutputStream(destination);
         output.write(DATA);
         output.close();
         byte[] compressed = destination.toByteArray();
@@ -214,7 +235,7 @@ class BrotliStreamTest {
         assertThrows(IOException.class, () -> output.write(1));
         assertThrows(IOException.class, output::flush);
 
-        var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(compressed)).build();
+        var input = new BrotliInputStream(new ByteArrayInputStream(compressed));
         input.close();
         input.close();
         assertThrows(IOException.class, input::read);
@@ -222,7 +243,7 @@ class BrotliStreamTest {
 
     @Test
     void malformedInputFailsDuringRead() throws IOException {
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(new byte[] {1})).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(new byte[] {1}))) {
             assertThrows(IOException.class, input::readAllBytes);
         }
     }

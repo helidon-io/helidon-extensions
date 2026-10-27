@@ -83,11 +83,11 @@ class Encoder {
     private boolean eof;
     private boolean started;
 
-    Encoder(BrotliOutputStreamConfig builder) {
-        output = new BitBuffer(builder.cacheInputSize());
-        quality = builder.quality();
-        window = builder.window();
-        outputManager = new OutputStreamManager(builder);
+    Encoder(OutputStream outputStream, BrotliOutputStreamConfig config) {
+        output = new BitBuffer(config.cacheInputSize());
+        quality = config.quality();
+        window = config.window();
+        outputManager = new OutputStreamManager(outputStream);
         storage = new BitBuffer(0);
         isInitialized = false;
         eof = false;
@@ -936,8 +936,8 @@ class Encoder {
         private int lastByte;
         private boolean isFinished;
 
-        OutputStreamManager(BrotliOutputStreamConfig builder) {
-            outputStream = builder.outputStream();
+        OutputStreamManager(OutputStream outputStream) {
+            this.outputStream = outputStream;
         }
 
         void flushToOutputStream(BitBuffer output) {

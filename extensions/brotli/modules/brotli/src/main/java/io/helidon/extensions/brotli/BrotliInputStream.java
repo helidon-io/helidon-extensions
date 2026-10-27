@@ -19,15 +19,18 @@ package io.helidon.extensions.brotli;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Objects;
-import java.util.function.Consumer;
-
-import io.helidon.builder.api.RuntimeType;
 
 /**
  * Input stream that decompresses Brotli data without a native library.
  * Closing this stream closes the underlying input stream.
  */
-public final class BrotliInputStream extends InputStream implements RuntimeType.Api<BrotliInputStreamConfig> {
+public final class BrotliInputStream extends InputStream {
+    /**
+     * Default configuration used by the one-argument constructor.
+     */
+    public static final BrotliInputStreamConfig DEFAULT_CONFIG = BrotliInputStreamConfig.builder().build();
+
+    private final InputStream inputStream;
     private final BrotliInputStreamConfig config;
     private final byte[] buffer;
     private final byte[][] dictionaryChunks;
@@ -39,8 +42,24 @@ public final class BrotliInputStream extends InputStream implements RuntimeType.
     private int bufferOffset;
     private boolean closed;
 
-    private BrotliInputStream(BrotliInputStreamConfig config) {
-        this.config = Objects.requireNonNull(config);
+    /**
+     * Create a decoder with the default configuration.
+     *
+     * @param inputStream stream containing Brotli-compressed data
+     */
+    public BrotliInputStream(InputStream inputStream) {
+        this(inputStream, DEFAULT_CONFIG);
+    }
+
+    /**
+     * Create a decoder with the provided configuration.
+     *
+     * @param inputStream stream containing Brotli-compressed data
+     * @param config decoder configuration
+     */
+    public BrotliInputStream(InputStream inputStream, BrotliInputStreamConfig config) {
+        this.inputStream = Objects.requireNonNull(inputStream, "inputStream");
+        this.config = Objects.requireNonNull(config, "config");
         if (config.cacheBufferSize() <= 0) {
             throw new IllegalArgumentException("Cache buffer size must be strictly positive");
         }
@@ -61,41 +80,6 @@ public final class BrotliInputStream extends InputStream implements RuntimeType.
         }
         dictionarySize = totalSize;
         buffer = new byte[config.cacheBufferSize()];
-        Objects.requireNonNull(config.inputStream());
-    }
-
-    /**
-     * Create a builder for a Brotli input stream.
-     *
-     * @return a new builder
-     */
-    public static BrotliInputStreamConfig.Builder builder() {
-        return BrotliInputStreamConfig.builder();
-    }
-
-    /**
-     * Create a Brotli input stream from its configuration.
-     *
-     * @param config stream configuration
-     * @return a new stream
-     */
-    public static BrotliInputStream create(BrotliInputStreamConfig config) {
-        return new BrotliInputStream(config);
-    }
-
-    /**
-     * Create a Brotli input stream customizing its configuration.
-     *
-     * @param consumer configuration consumer
-     * @return a new stream
-     */
-    public static BrotliInputStream create(Consumer<BrotliInputStreamConfig.Builder> consumer) {
-        return builder().update(Objects.requireNonNull(consumer)).build();
-    }
-
-    @Override
-    public BrotliInputStreamConfig prototype() {
-        return config;
     }
 
     @Override
@@ -126,7 +110,7 @@ public final class BrotliInputStream extends InputStream implements RuntimeType.
         }
         try {
             if (decoder == null) {
-                decoder = new Decoder(config.inputStream(), chunkOffsets, dictionaryChunks, dictionarySize,
+                decoder = new Decoder(inputStream, chunkOffsets, dictionaryChunks, dictionarySize,
                                       config.maxWindowBits(), config.verifyEndOfInput());
             }
             decoder.decompress(destination, offset, length);
@@ -142,7 +126,7 @@ public final class BrotliInputStream extends InputStream implements RuntimeType.
         if (!closed) {
             closed = true;
             if (decoder == null) {
-                config.inputStream().close();
+                inputStream.close();
             } else {
                 decoder.close();
             }

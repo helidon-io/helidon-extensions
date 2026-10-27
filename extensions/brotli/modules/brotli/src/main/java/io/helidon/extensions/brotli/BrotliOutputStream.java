@@ -20,25 +20,42 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.util.Objects;
-import java.util.function.Consumer;
-
-import io.helidon.builder.api.RuntimeType;
 
 /**
  * Output stream that compresses data using Brotli without a native library.
  * Closing this stream finishes the Brotli stream and closes the underlying output stream.
  * Only compression quality {@code 0} is currently supported.
  */
-public final class BrotliOutputStream extends OutputStream implements RuntimeType.Api<BrotliOutputStreamConfig> {
-    private final BrotliOutputStreamConfig config;
+public final class BrotliOutputStream extends OutputStream {
+    /**
+     * Default configuration used by the one-argument constructor.
+     */
+    public static final BrotliOutputStreamConfig DEFAULT_CONFIG = BrotliOutputStreamConfig.builder().build();
+
+    private final OutputStream outputStream;
     private final Encoder encoder;
     private final ByteInput input;
 
     private boolean closed;
 
-    private BrotliOutputStream(BrotliOutputStreamConfig config) {
-        this.config = Objects.requireNonNull(config);
-        Objects.requireNonNull(config.outputStream());
+    /**
+     * Create an encoder with the default configuration.
+     *
+     * @param outputStream destination for Brotli-compressed data
+     */
+    public BrotliOutputStream(OutputStream outputStream) {
+        this(outputStream, DEFAULT_CONFIG);
+    }
+
+    /**
+     * Create an encoder with the provided configuration.
+     *
+     * @param outputStream destination for Brotli-compressed data
+     * @param config encoder configuration
+     */
+    public BrotliOutputStream(OutputStream outputStream, BrotliOutputStreamConfig config) {
+        this.outputStream = Objects.requireNonNull(outputStream, "outputStream");
+        Objects.requireNonNull(config, "config");
         if (config.quality() != 0) {
             throw new IllegalArgumentException("Only Brotli compression quality 0 is supported");
         }
@@ -48,42 +65,8 @@ public final class BrotliOutputStream extends OutputStream implements RuntimeTyp
         if (config.cacheInputSize() < 4) {
             throw new IllegalArgumentException("Input cache size must be at least 4");
         }
-        encoder = new Encoder(config);
+        encoder = new Encoder(outputStream, config);
         input = new ByteInput(config.cacheInputSize());
-    }
-
-    /**
-     * Create a builder for a Brotli output stream.
-     *
-     * @return a new builder
-     */
-    public static BrotliOutputStreamConfig.Builder builder() {
-        return BrotliOutputStreamConfig.builder();
-    }
-
-    /**
-     * Create a Brotli output stream from its configuration.
-     *
-     * @param config stream configuration
-     * @return a new stream
-     */
-    public static BrotliOutputStream create(BrotliOutputStreamConfig config) {
-        return new BrotliOutputStream(config);
-    }
-
-    /**
-     * Create a Brotli output stream customizing its configuration.
-     *
-     * @param consumer configuration consumer
-     * @return a new stream
-     */
-    public static BrotliOutputStream create(Consumer<BrotliOutputStreamConfig.Builder> consumer) {
-        return builder().update(Objects.requireNonNull(consumer)).build();
-    }
-
-    @Override
-    public BrotliOutputStreamConfig prototype() {
-        return config;
     }
 
     @Override
@@ -118,7 +101,7 @@ public final class BrotliOutputStream extends OutputStream implements RuntimeTyp
                 encoder.compress(input);
                 input.clear();
             }
-            config.outputStream().flush();
+            outputStream.flush();
         } catch (UncheckedIOException e) {
             throw e.getCause();
         }
@@ -134,7 +117,7 @@ public final class BrotliOutputStream extends OutputStream implements RuntimeTyp
             encoder.close(input);
         } catch (UncheckedIOException e) {
             try {
-                config.outputStream().close();
+                outputStream.close();
             } catch (IOException closeFailure) {
                 e.getCause().addSuppressed(closeFailure);
             }
