@@ -153,6 +153,27 @@ for third-party API changes outside this integration.
 
 ## Builder generation
 
+For a named application module, export generated model packages to Jackson:
+
+```java
+exports com.example.models to tools.jackson.databind;
+```
+
+The processor generates a public `Builder.create()` factory annotated with `@JsonCreator`.
+It delegates to the model's existing `builder()` method, so Jackson can instantiate the builder
+without reflective access to its private constructor. Jackson-specific public mutators delegate to
+the normal builder setters and clear methods. They preserve property naming and optional values:
+a missing property retains its default, while an explicit JSON `null` clears an optional value.
+The ordinary builder setters retain their null checks. Jackson only discovers the annotated model
+properties, so unrelated builder methods such as `from` are not treated as JSON properties.
+Generated models can be serialized and deserialized without opening their exported model package
+with `opens` or `--add-opens`. Regenerate Jackson 3 models to obtain these methods.
+
+With Jackson 3.2.4, a custom mapper that disables `MapperFeature.CAN_OVERRIDE_ACCESS_MODIFIERS`
+also needs a module read edge from Jackson to the model module, for example
+`--add-reads tools.jackson.databind=com.example.application`. This is not needed by the default
+mapper and does not open the model package.
+
 Use a Helidon blueprint with Jackson databind extension annotations:
 
 ```java

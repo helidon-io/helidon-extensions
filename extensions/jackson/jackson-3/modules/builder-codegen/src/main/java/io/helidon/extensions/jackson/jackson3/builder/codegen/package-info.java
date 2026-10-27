@@ -18,6 +18,8 @@
  * Extension for code generation for {@code Blueprint} annotated interfaces that adds support for serialization
  * and deserialization of prototypes using Jackson.
  * <p>
- * This extension uses POJO builder annotation with prefix aligned with the generated prototype.
+ * This extension uses a POJO builder annotation with a prefix aligned with the generated Jackson mutators.
+ * Deserialization uses a public annotated builder factory that delegates to the prototype's {@code builder()} method,
+ * allowing named modules to export their model packages without opening them for access to private builder constructors.
  */
 package io.helidon.extensions.jackson.jackson3.builder.codegen;
