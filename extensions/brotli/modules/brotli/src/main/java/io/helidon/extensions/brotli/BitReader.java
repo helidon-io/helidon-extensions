@@ -28,119 +28,65 @@ import java.io.InputStream;
  */
 final class BitReader {
     private static final int CAPACITY = 4096;
-    private static final int SLACK = 64;
-    private static final int BUFFER_SIZE = CAPACITY + SLACK;
-    private static final int SAFEGUARD = 36;
-    private static final int WATERLINE = CAPACITY - SAFEGUARD;
-    private static final int HALF_BITNESS = 32;
-    private static final int HALF_SIZE = 4;
-    private static final int HALVES_CAPACITY = CAPACITY / HALF_SIZE;
-    private static final int HALF_BUFFER_SIZE = BUFFER_SIZE / HALF_SIZE;
-    private static final int HALF_WATERLINE = WATERLINE / HALF_SIZE;
-    private static final int LOG_HALF_SIZE = 2;
 
-    private final byte[] byteBuffer;
-    private final int[] intBuffer;
+    private final byte[] byteBuffer = new byte[CAPACITY];
 
-    private long accumulator64;
-    private int halfOffset;
-    private int tailBytes;
-    private boolean endOfStreamReached;
+    private long accumulator;
+    private int bitCount;
     private int bitOffset;
+    private int byteOffset;
+    private int byteLimit;
+    private boolean endOfStreamReached;
     private InputStream input;
 
     BitReader(InputStream input) {
         this.input = input;
-        this.byteBuffer = new byte[BUFFER_SIZE];
-        accumulator64 = 0;
-        intBuffer = new int[HALF_BUFFER_SIZE];
-        bitOffset = 64;
-        halfOffset = HALVES_CAPACITY;
-        endOfStreamReached = false;
-        prepare();
     }
 
     /**
-     * Fills up the input buffer.
-     *
-     * <p> No-op if there are at least 36 bytes present after current position.
-     *
-     * <p> After encountering the end of the input stream, 64 additional zero bytes are copied to the
-     * buffer.
+     * Number of input bits already available, without another underlying read.
      */
-    void readMoreInput() {
-        if (halfOffset > HALF_WATERLINE) {
-            if (endOfStreamReached) {
-                if (halfAvailable() >= -2) {
-                    return;
-                }
-                throw new BrotliException("No more input");
-            }
-            int readOffset = halfOffset << LOG_HALF_SIZE;
-            int bytesInBuffer = CAPACITY - readOffset;
-            // Move unused bytes to the head of the buffer.
-            System.arraycopy(byteBuffer, readOffset, byteBuffer, 0, CAPACITY - readOffset);
-            halfOffset = 0;
-            while (bytesInBuffer < CAPACITY) {
-                int spaceLeft = CAPACITY - bytesInBuffer;
-                int len = readInput(input, byteBuffer, bytesInBuffer, spaceLeft);
-                // EOF is -1 in Java, but 0 in C#.
-                if (len <= 0) {
-                    endOfStreamReached = true;
-                    tailBytes = bytesInBuffer;
-                    bytesInBuffer += HALF_SIZE - 1;
-                    break;
-                }
-                bytesInBuffer += len;
-            }
-            bytesToNibbles(bytesInBuffer);
-        }
+    int bufferedBits() {
+        return bitCount + ((byteLimit - byteOffset) << 3);
     }
 
     void checkHealth(boolean endOfStream) {
-        if (!endOfStreamReached) {
-            return;
-        }
-        int byteOffset = (halfOffset << LOG_HALF_SIZE) + ((bitOffset + 7) >> 3) - 8;
-        if (byteOffset > tailBytes) {
-            throw new BrotliException("Read after end");
-        }
-        if ((endOfStream) && (byteOffset != tailBytes)) {
+        if (endOfStream && bufferedBits() != 0) {
             throw new BrotliException("Unused bytes after end");
         }
     }
 
-    void fillBitWindow() {
-        if (bitOffset >= HALF_BITNESS) {
-            accumulator64 = ((long) intBuffer[halfOffset++] << HALF_BITNESS)
-                    | (accumulator64 >>> HALF_BITNESS);
-            bitOffset -= HALF_BITNESS;
-        }
-    }
-
+    /**
+     * Peeks at buffered bits only. A prefix-code lookup must verify its selected
+     * code length before consuming the zero-extended result.
+     */
     int peekBits() {
-        return (int) (accumulator64 >>> bitOffset);
+        fillFromBuffer();
+        return (int) accumulator;
     }
 
     /**
-     * Fetches bits from accumulator.
-     * WARNING: accumulator MUST contain at least the specified amount of bits,
-     * otherwise BitReader will become broken.
+     * Obtains only the input needed for the requested number of bits.
      */
-    int readBits(int n) {
-        int val = peekBits() & ((1 << n) - 1);
-        bitOffset += n;
-        return val;
-    }
-
-    void reload() {
-        if (bitOffset == 64) {
-            prepare();
+    void ensureBits(int count) {
+        fillFromBuffer();
+        while (bitCount < count) {
+            if (!readInput()) {
+                throw new BrotliException("Unexpected end of input");
+            }
+            fillFromBuffer();
         }
     }
 
+    int readBits(int count) {
+        ensureBits(count);
+        int value = (int) (accumulator & ((1L << count) - 1));
+        incrementBitOffset(count);
+        return value;
+    }
+
     void jumpToByteBoundary() {
-        int padding = (64 - bitOffset) & 7;
+        int padding = (-bitOffset) & 7;
         if (padding != 0) {
             int paddingBits = readBits(padding);
             if (paddingBits != 0) {
@@ -149,65 +95,39 @@ final class BitReader {
         }
     }
 
-    void copyRawBytes(byte[] data, int offset, int length) {
+    int copyRawBytes(byte[] data, int offset, int length) {
         if ((bitOffset & 7) != 0) {
             throw new BrotliException("Unaligned copyBytes");
         }
-
-        // Drain accumulator.
-        while ((bitOffset != 64) && (length != 0)) {
-            data[offset++] = (byte) peekBits();
-            bitOffset += 8;
+        int copied = 0;
+        while (bitCount >= 8 && length != 0) {
+            data[offset++] = (byte) accumulator;
+            incrementBitOffset(8);
+            copied++;
             length--;
         }
-        if (length == 0) {
-            return;
-        }
-
-        // Get data from shadow buffer with "sizeof(int)" granularity.
-        int copyNibbles = Math.min(halfAvailable(), length >> LOG_HALF_SIZE);
-        if (copyNibbles > 0) {
-            int readOffset = halfOffset << LOG_HALF_SIZE;
-            int delta = copyNibbles << LOG_HALF_SIZE;
-            System.arraycopy(byteBuffer, readOffset, data, offset, delta);
-            offset += delta;
-            length -= delta;
-            halfOffset += copyNibbles;
-        }
-        if (length == 0) {
-            return;
-        }
-
-        // Read tail bytes.
-        if (halfAvailable() > 0) {
-            // length = 1..3
-            fillBitWindow();
-            while (length != 0) {
-                data[offset++] = (byte) peekBits();
-                bitOffset += 8;
-                length--;
+        if (length != 0) {
+            if (byteOffset == byteLimit) {
+                // Return available plaintext before a read that might wait for its producer.
+                if (copied != 0) {
+                    return copied;
+                }
+                if (!readInput()) {
+                    throw new BrotliException("Unexpected end of input");
+                }
             }
-            checkHealth(false);
-            return;
+            int count = Math.min(length, byteLimit - byteOffset);
+            System.arraycopy(byteBuffer, byteOffset, data, offset, count);
+            byteOffset += count;
+            copied += count;
         }
-
-        // Now it is possible to copy bytes directly.
-        while (length > 0) {
-            int len = readInput(input, data, offset, length);
-            if (len == -1) {
-                throw new BrotliException("Unexpected end of input");
-            }
-            offset += len;
-            length -= len;
-        }
+        return copied;
     }
 
     void incrementBitOffset(int value) {
-        this.bitOffset += value;
-    }
-
-    int bitOffset() {
-        return this.bitOffset;
+        accumulator >>>= value;
+        bitCount -= value;
+        bitOffset = (bitOffset + value) & 7;
     }
 
     void close() throws IOException {
@@ -217,37 +137,32 @@ final class BitReader {
         }
     }
 
-    private void prepare() {
-        readMoreInput();
-        checkHealth(false);
-        fillBitWindow();
-        fillBitWindow();
+    private void fillFromBuffer() {
+        while (bitCount <= 56 && byteOffset < byteLimit) {
+            accumulator |= (long) (byteBuffer[byteOffset++] & 0xFF) << bitCount;
+            bitCount += 8;
+        }
     }
 
-    private int halfAvailable() {
-        int limit = HALVES_CAPACITY;
+    private boolean readInput() {
         if (endOfStreamReached) {
-            limit = (tailBytes + (HALF_SIZE - 1)) >> LOG_HALF_SIZE;
+            return false;
         }
-        return limit - halfOffset;
-    }
-
-    /**
-     * Translates bytes to halves (int/short).
-     */
-    private void bytesToNibbles(int byteLen) {
-        int halfLen = byteLen >> LOG_HALF_SIZE;
-        for (int i = 0; i < halfLen; ++i) {
-            intBuffer[i] = ((byteBuffer[i * 4] & 0xFF))
-                    | ((byteBuffer[(i * 4) + 1] & 0xFF) << 8)
-                    | ((byteBuffer[(i * 4) + 2] & 0xFF) << 16)
-                    | ((byteBuffer[(i * 4) + 3] & 0xFF) << 24);
-        }
-    }
-
-    private int readInput(InputStream src, byte[] dst, int offset, int length) {
         try {
-            return src.read(dst, offset, length);
+            int count = input.read(byteBuffer, 0, byteBuffer.length);
+            if (count == 0) {
+                int value = input.read();
+                if (value != -1) {
+                    byteBuffer[0] = (byte) value;
+                    count = 1;
+                } else {
+                    count = -1;
+                }
+            }
+            byteOffset = 0;
+            byteLimit = Math.max(count, 0);
+            endOfStreamReached = count == -1;
+            return count > 0;
         } catch (IOException e) {
             throw new BrotliException("Failed to read input", e);
         }

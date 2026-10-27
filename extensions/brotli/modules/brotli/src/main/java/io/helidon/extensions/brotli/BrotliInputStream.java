@@ -119,11 +119,7 @@ public final class BrotliInputStream extends InputStream implements RuntimeType.
         if (copied > 0) {
             System.arraycopy(buffer, bufferOffset, destination, offset, copied);
             bufferOffset += copied;
-            offset += copied;
-            length -= copied;
-            if (length == 0) {
-                return copied;
-            }
+            return copied;
         }
         try {
             if (decoder == null) {
@@ -131,7 +127,7 @@ public final class BrotliInputStream extends InputStream implements RuntimeType.
             }
             decoder.decompress(destination, offset, length);
             int decoded = decoder.outputUsed();
-            return decoded + copied == 0 ? -1 : decoded + copied;
+            return decoded == 0 ? -1 : decoded;
         } catch (RuntimeException e) {
             throw new IOException("Brotli stream decoding failed", e);
         }

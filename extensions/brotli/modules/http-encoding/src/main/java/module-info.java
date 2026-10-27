@@ -18,11 +18,12 @@
  * Pure Java Brotli HTTP content encoding.
  */
 module io.helidon.extensions.brotli.http.encoding {
-    requires io.helidon.common;
-    requires io.helidon.config;
     requires io.helidon.extensions.brotli;
     requires io.helidon.http;
-    requires io.helidon.http.encoding;
+
+    requires transitive io.helidon.common;
+    requires transitive io.helidon.config;
+    requires transitive io.helidon.http.encoding;
 
     exports io.helidon.extensions.brotli.http.encoding;
 

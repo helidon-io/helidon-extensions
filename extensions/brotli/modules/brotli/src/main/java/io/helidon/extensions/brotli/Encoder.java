@@ -600,6 +600,15 @@ class Encoder {
 
                 brotliCompressFragmentFast(blockSize, isLast);
 
+                if (forceFlush && !isLast && (storage.bitIx() & 7) != 0) {
+                    // RFC 7932 section 11.2: empty metadata aligns the next block without ending the stream.
+                    storage.writeBit(6, 6);
+                    int padding = (-storage.bitIx()) & 7;
+                    if (padding != 0) {
+                        storage.writeBit(padding, 0);
+                    }
+                }
+
                 if (blockSize != 0) {
                     inputBuffer.increaseBitIx(blockSize);
                     inputBuffer.decreaseAvailable(blockSize);
