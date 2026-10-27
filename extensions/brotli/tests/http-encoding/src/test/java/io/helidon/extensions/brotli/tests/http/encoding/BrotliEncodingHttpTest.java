@@ -1,0 +1,192 @@
+/*
+ * Copyright (c) 2026 Oracle and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.helidon.extensions.brotli.tests.http.encoding;
+
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.HexFormat;
+import java.util.Optional;
+import java.util.zip.GZIPInputStream;
+
+import io.helidon.extensions.brotli.http.encoding.BrotliEncoding;
+import io.helidon.http.HeaderNames;
+import io.helidon.http.Status;
+import io.helidon.webclient.http1.Http1Client;
+import io.helidon.webserver.WebServer;
+
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.MatcherAssert.assertThat;
+
+class BrotliEncodingHttpTest {
+    private static final String ENTITY = """
+            Helidon Brotli interoperability fixture.
+            The quick brown fox jumps over the lazy dog.
+            Compression and decompression must preserve every byte.
+            Helidon Brotli interoperability fixture.
+            The quick brown fox jumps over the lazy dog.
+            Compression and decompression must preserve every byte.
+            """;
+    // Fixed independent fixture generated with Google's Brotli CLI, quality 11.
+    private static final byte[] COMPRESSED_ENTITY = HexFormat.of().parseHex(
+            "a1d808006e9c1c6bb7e3562a2051a9732a1ba16ac494db69f617ca3afa1e"
+                    + "b6bbc1017b719c0740810fbcf9803caa63ce66dc94afa39bc644cb2837d8"
+                    + "2c662c6697cdc3767d49f14370584c19b131d12f0047efff81c62d5e34b5"
+                    + "4f85f268282c2d13a3e821d7290a03");
+
+    private static WebServer server;
+    private static Http1Client client;
+    private static HttpClient jdkClient;
+    private static URI baseUri;
+
+    @BeforeAll
+    static void startServer() {
+        server = WebServer.builder()
+                .port(0)
+                .routing(routing -> routing
+                        .put("/echo", (req, res) -> res.send(req.content().as(String.class)))
+                        .get("/entity", (req, res) -> {
+                            res.header(HeaderNames.CONTENT_LENGTH, String.valueOf(ENTITY.getBytes(StandardCharsets.UTF_8).length));
+                            res.send(ENTITY);
+                        })
+                        .get("/fixture", (req, res) -> {
+                            res.header(HeaderNames.CONTENT_ENCODING, "br");
+                            res.send(COMPRESSED_ENTITY);
+                        }))
+                .build()
+                .start();
+        baseUri = URI.create("http://localhost:" + server.port());
+        client = Http1Client.builder().baseUri(baseUri).build();
+        jdkClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5))
+                .version(HttpClient.Version.HTTP_1_1)
+                .build();
+    }
+
+    @AfterAll
+    static void stopServer() {
+        if (client != null) {
+            client.closeResource();
+        }
+        if (jdkClient != null) {
+            jdkClient.close();
+        }
+        if (server != null) {
+            server.stop();
+        }
+    }
+
+    @Test
+    void serverDecodesIndependentCompressedRequest() throws IOException, InterruptedException {
+        var request = HttpRequest.newBuilder(baseUri.resolve("/echo"))
+                .timeout(Duration.ofSeconds(10))
+                .header("Content-Encoding", "br")
+                .header("Accept-Encoding", "identity")
+                .PUT(HttpRequest.BodyPublishers.ofByteArray(COMPRESSED_ENTITY))
+                .build();
+
+        var response = jdkClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+        assertThat(response.statusCode(), is(200));
+        assertThat(response.body(), is(ENTITY));
+        assertThat(response.headers().firstValue("Content-Encoding"), is(Optional.empty()));
+    }
+
+    @Test
+    void clientDecodesIndependentCompressedResponse() {
+        var response = client.get("/fixture").request(String.class);
+
+        assertThat(response.status(), is(Status.OK_200));
+        assertThat(response.entity(), is(ENTITY));
+        assertThat(response.headers().get(HeaderNames.CONTENT_ENCODING).get(), is("br"));
+    }
+
+    @Test
+    void serverNegotiatesBrotliWithCorrectContentLength() throws IOException, InterruptedException {
+        var request = HttpRequest.newBuilder(baseUri.resolve("/entity"))
+                .timeout(Duration.ofSeconds(10))
+                .header("Accept-Encoding", "br")
+                .build();
+
+        var response = jdkClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+
+        assertThat(response.statusCode(), is(200));
+        assertThat(response.headers().firstValue("Content-Encoding"), is(Optional.of("br")));
+        // Helidon can buffer the encoded entity and advertise its compressed length.
+        response.headers().firstValueAsLong("Content-Length")
+                .ifPresent(contentLength -> assertThat(contentLength, is((long) response.body().length)));
+        try (var decoded = BrotliEncoding.create().decoder().apply(new ByteArrayInputStream(response.body()))) {
+            assertThat(decoded.readAllBytes(), is(ENTITY.getBytes(StandardCharsets.UTF_8)));
+        }
+    }
+
+    @Test
+    void clientExplicitlyEncodesRequestAndAutomaticallyDecodesResponse() {
+        var encoder = BrotliEncoding.create().encoder();
+        var request = client.put("/echo").header(HeaderNames.ACCEPT_ENCODING, "br");
+        encoder.headers(request.headers());
+
+        var response = request.outputStream(out -> {
+            try (var encoded = encoder.apply(out)) {
+                encoded.write(ENTITY.getBytes(StandardCharsets.UTF_8));
+            }
+        }, String.class);
+
+        assertThat(response.status(), is(Status.OK_200));
+        assertThat(response.entity(), is(ENTITY));
+        assertThat(response.headers().get(HeaderNames.CONTENT_ENCODING).get(), is("br"));
+    }
+
+    @Test
+    void negotiationPreservesGzipWhenBrotliIsRejected() throws IOException, InterruptedException {
+        var request = HttpRequest.newBuilder(baseUri.resolve("/entity"))
+                .timeout(Duration.ofSeconds(10))
+                .header("Accept-Encoding", "br;q=0, gzip")
+                .build();
+
+        var response = jdkClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+
+        assertThat(response.statusCode(), is(200));
+        assertThat(response.headers().firstValue("Content-Encoding"), is(Optional.of("gzip")));
+        try (var decoded = new GZIPInputStream(new ByteArrayInputStream(response.body()))) {
+            assertThat(decoded.readAllBytes(), is(ENTITY.getBytes(StandardCharsets.UTF_8)));
+        }
+    }
+
+    @Test
+    void rejectedBrotliUsesIdentity() throws IOException, InterruptedException {
+        var request = HttpRequest.newBuilder(baseUri.resolve("/entity"))
+                .timeout(Duration.ofSeconds(10))
+                .header("Accept-Encoding", "br;q=0")
+                .build();
+
+        var response = jdkClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+        assertThat(response.statusCode(), is(200));
+        assertThat(response.headers().firstValue("Content-Encoding"), is(Optional.empty()));
+        assertThat(response.body(), is(ENTITY));
+    }
+}
