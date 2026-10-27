@@ -31,9 +31,17 @@
     <properties>
         <mainClass>io.helidon.extensions.jakarta.examples.declarative.Main</mainClass>
         <jakarta.extension.version>1.0.0-SNAPSHOT</jakarta.extension.version>
+        <version.lib.jakartaee-bom>11.0.0</version.lib.jakartaee-bom>
     </properties>
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>jakarta.platform</groupId>
+                <artifactId>jakarta.jakartaee-bom</artifactId>
+                <version>${version.lib.jakartaee-bom}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.jakarta</groupId>
                 <artifactId>helidon-extensions-jakarta-bom</artifactId>

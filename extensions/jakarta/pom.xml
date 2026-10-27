@@ -33,6 +33,9 @@
     <properties>
         <jakarta.extension.version>1.0.0-SNAPSHOT</jakarta.extension.version>
         <helidon.version>28.0.0-SNAPSHOT</helidon.version>
+        <version.lib.jakartaee-bom>11.0.0</version.lib.jakartaee-bom>
+        <version.lib.parsson>1.1.9</version.lib.parsson>
+        <version.lib.yasson>3.0.5</version.lib.yasson>
     </properties>
 
     <modules>
@@ -42,6 +45,23 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.eclipse.parsson</groupId>
+                <artifactId>parsson</artifactId>
+                <version>${version.lib.parsson}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.yasson</groupId>
+                <artifactId>yasson</artifactId>
+                <version>${version.lib.yasson}</version>
+            </dependency>
+            <dependency>
+                <groupId>jakarta.platform</groupId>
+                <artifactId>jakarta.jakartaee-bom</artifactId>
+                <version>${version.lib.jakartaee-bom}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.jakarta</groupId>
                 <artifactId>helidon-extensions-jakarta-bom</artifactId>
