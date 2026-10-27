@@ -22,6 +22,8 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Random;
 
+import io.helidon.common.Size;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -101,8 +103,8 @@ class BrotliFlushTest {
     private static void assertFlushedPayloads(int window, int cacheSize, byte[][] payloads) throws IOException {
         var destination = new ByteArrayOutputStream();
         var source = new PublishedInputStream();
-        var outputConfig = BrotliOutputStreamConfig.builder().window(window).cacheInputSize(cacheSize).build();
-        try (var input = new BrotliInputStream(source, BrotliInputStreamConfig.builder().cacheBufferSize(17).build())) {
+        var outputConfig = BrotliOutputStreamConfig.builder().window(window).cacheInputSize(Size.create(cacheSize)).build();
+        try (var input = new BrotliInputStream(source, BrotliInputStreamConfig.builder().cacheBufferSize(Size.create(17)).build())) {
             try (var output = new BrotliOutputStream(destination, outputConfig)) {
                 for (int i = 0; i < payloads.length; i++) {
                     byte[] data = payloads[i];

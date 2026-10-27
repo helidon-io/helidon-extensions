@@ -18,6 +18,7 @@ package io.helidon.extensions.brotli;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
+import io.helidon.common.Size;
 
 /**
  * Configuration of a Brotli compression stream.
@@ -45,11 +46,11 @@ interface BrotliOutputStreamConfigBlueprint {
     int window();
 
     /**
-     * Size of the uncompressed input cache, in bytes.
+     * Size of the uncompressed input cache.
      *
-     * @return input cache size, at least 4
+     * @return input cache size, from 4 through {@link Integer#MAX_VALUE} bytes
      */
     @Option.Configured
-    @Option.DefaultInt(64_000)
-    int cacheInputSize();
+    @Option.Default("64 kB")
+    Size cacheInputSize();
 }

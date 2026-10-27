@@ -23,6 +23,8 @@ import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 
+import io.helidon.common.Size;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -193,7 +195,7 @@ class BrotliDecoderOptimizationTest {
             String description = fixture.name() + ", " + schedule;
             var destination = new ByteArrayOutputStream();
             var inputConfig = BrotliInputStreamConfig.builder()
-                    .cacheBufferSize(schedule.cacheSize())
+                    .cacheBufferSize(Size.create(schedule.cacheSize()))
                     .verifyEndOfInput(true)
                     .build();
             try (var input = new BrotliInputStream(new ChunkedInputStream(encoded, schedule.sourceChunk()), inputConfig)) {

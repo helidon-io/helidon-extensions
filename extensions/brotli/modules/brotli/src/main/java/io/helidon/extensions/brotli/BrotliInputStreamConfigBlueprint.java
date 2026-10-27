@@ -20,6 +20,7 @@ import java.util.List;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
+import io.helidon.common.Size;
 
 /**
  * Configuration of a Brotli decompression stream.
@@ -29,13 +30,13 @@ import io.helidon.builder.api.Prototype;
 @Prototype.CustomMethods(BrotliInputStreamConfigSupport.class)
 interface BrotliInputStreamConfigBlueprint {
     /**
-     * Size of the buffer used for byte-by-byte reads, in bytes.
+     * Size of the buffer used for byte-by-byte reads.
      *
-     * @return strictly positive buffer size
+     * @return buffer size, from 1 through {@link Integer#MAX_VALUE} bytes
      */
     @Option.Configured
-    @Option.DefaultInt(256)
-    int cacheBufferSize();
+    @Option.Default("256")
+    Size cacheBufferSize();
 
     /**
      * Largest Brotli window exponent accepted from the compressed stream header.

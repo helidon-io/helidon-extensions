@@ -171,11 +171,17 @@ to set stream options. Supply the underlying stream to the constructor.
 | --- | --- | --- | --- |
 | Output | `quality` | `0` | `0` |
 | Output | `window` | `18` | `10` through `24` |
-| Output | `cache-input-size` | `64000` | At least `4` bytes |
-| Input | `cache-buffer-size` | `256` | A positive number of bytes |
+| Output | `cache-input-size` | `64000` bytes | A `Size` from `4` through `2147483647` bytes |
+| Input | `cache-buffer-size` | `256` bytes | A `Size` from `1` through `2147483647` bytes |
 | Input | `max-window-bits` | `24` | `10` through `24` |
 | Input | `verify-end-of-input` | `false` | `true` or `false` |
 | Input | `dictionary-chunks` | Empty list | Ordered Base64 strings, at most 15 chunks; standalone decoding only |
+
+The cache options use `io.helidon.common.Size`. Configuration accepts a byte count,
+such as `64000`, or a value with a unit, such as `64 kB` or `4 KiB`.
+For programmatic configuration, use `cacheInputSize(Size.parse("64 kB"))` or
+`cacheBufferSize(Size.create(256))`. The stream constructors reject sizes outside
+the supported ranges before allocating a cache.
 
 All keys are optional. For example, using `io.helidon.config.Config`,
 `io.helidon.config.ConfigSources`, and `java.util.Map`:
@@ -184,8 +190,8 @@ All keys are optional. For example, using `io.helidon.config.Config`,
 var config = Config.just(ConfigSources.create(Map.of(
         "encoder.quality", "0",
         "encoder.window", "16",
-        "encoder.cache-input-size", "256",
-        "decoder.cache-buffer-size", "128",
+        "encoder.cache-input-size", "64 kB",
+        "decoder.cache-buffer-size", "4 KiB",
         "decoder.max-window-bits", "22",
         "decoder.verify-end-of-input", "true")));
 

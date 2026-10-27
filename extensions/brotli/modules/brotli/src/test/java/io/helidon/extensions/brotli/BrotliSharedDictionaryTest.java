@@ -27,6 +27,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import io.helidon.common.Size;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
@@ -107,7 +109,7 @@ class BrotliSharedDictionaryTest {
         String description = fixture.name() + ", cache size " + cacheSize + ", read size " + readSize;
         var destination = new ByteArrayOutputStream();
         byte[] encoded = HexFormat.of().parseHex(fixture.encoded());
-        var inputConfig = BrotliInputStreamConfig.builder().cacheBufferSize(cacheSize).build();
+        var inputConfig = BrotliInputStreamConfig.builder().cacheBufferSize(Size.create(cacheSize)).build();
         try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded), inputConfig)) {
             if (readSize == 1) {
                 for (int value; (value = input.read()) != -1;) {

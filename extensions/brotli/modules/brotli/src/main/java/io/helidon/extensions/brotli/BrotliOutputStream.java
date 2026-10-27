@@ -62,11 +62,17 @@ public final class BrotliOutputStream extends OutputStream {
         if (config.window() < 10 || config.window() > 24) {
             throw new IllegalArgumentException("Brotli window must be between 10 and 24");
         }
-        if (config.cacheInputSize() < 4) {
+        int cacheInputSize;
+        try {
+            cacheInputSize = Math.toIntExact(config.cacheInputSize().toBytes());
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException("Input cache size must be between 4 and 2147483647 bytes", e);
+        }
+        if (cacheInputSize < 4) {
             throw new IllegalArgumentException("Input cache size must be at least 4");
         }
-        encoder = new Encoder(outputStream, config);
-        input = new ByteInput(config.cacheInputSize());
+        encoder = new Encoder(outputStream, config.quality(), config.window(), cacheInputSize);
+        input = new ByteInput(cacheInputSize);
     }
 
     @Override

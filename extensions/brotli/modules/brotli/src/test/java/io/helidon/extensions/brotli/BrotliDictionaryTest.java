@@ -23,6 +23,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
+import io.helidon.common.Size;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -127,7 +129,7 @@ class BrotliDictionaryTest {
         var destination = new ByteArrayOutputStream();
         var inputConfig = BrotliInputStreamConfig.builder()
                 .dictionaryChunks(chunks)
-                .cacheBufferSize(cacheSize)
+                .cacheBufferSize(Size.create(cacheSize))
                 .build();
         try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded), inputConfig)) {
             if (readSize == 1) {
