@@ -152,7 +152,7 @@ jobs:
           run: |
             mvn --version
             EXTRA_PROFILES=""
-            if [[ "${{ matrix.extension.id }}" == jackson/* ]]; then
+            if [[ "${{ matrix.extension.id }}" == jackson/* || "${{ matrix.extension.id }}" == jakarta ]]; then
               EXTRA_PROFILES=",docs"
             fi
             mvn ${MVN_ARGS} \

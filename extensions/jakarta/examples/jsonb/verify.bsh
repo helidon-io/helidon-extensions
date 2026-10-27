@@ -1,0 +1,36 @@
+/*
+ * Copyright (c) 2026 Oracle and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+String tree = java.nio.file.Files.readString(new File(basedir, "target/runtime-dependencies.txt").toPath());
+if (!tree.contains(":helidon-extensions-jakarta-http-media-jsonb:")) {
+    throw new IllegalStateException("Selected integration is missing: " + tree);
+}
+String[] forbidden = {
+    ":helidon-http-media-jsonp:",
+    ":helidon-http-media-jsonb:",
+    ":helidon-dbclient-jsonp:",
+    ":helidon-data-jakarta-persistence",
+    ":helidon-transaction-",
+    ":helidon-extensions-jakarta-data-persistence",
+    ":helidon-extensions-jakarta-transaction-",
+    ":helidon-extensions-jakarta-http-media-jsonp:",
+    ":helidon-extensions-jakarta-dbclient-jsonp:"
+};
+for (String artifact : forbidden) {
+    if (tree.contains(artifact)) {
+        throw new IllegalStateException("Unrelated integration " + artifact + " in runtime tree: " + tree);
+    }
+}
+return true;

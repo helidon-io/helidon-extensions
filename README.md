@@ -22,6 +22,7 @@ See README for individual extensions.
 * [gson](extensions/gson/docs/README.md)
 * [Jackson 2 and Jackson 3](extensions/jackson/README.md)
 * [toml](extensions/toml/docs/README.md)
+* [Jakarta JSON integrations (Helidon 28)](extensions/jakarta/docs/README.md)
 * [Chaos](extensions/chaos/docs/README.md)
 * [Messaging connectors](extensions/messaging/README.md)
 

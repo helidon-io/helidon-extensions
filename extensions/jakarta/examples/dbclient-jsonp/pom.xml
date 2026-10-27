@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Copyright (c) 2026 Oracle and/or its affiliates.
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.helidon.applications</groupId>
+        <artifactId>helidon-se</artifactId>
+        <version>28.0.0-SNAPSHOT</version>
+        <relativePath/>
+    </parent>
+    <groupId>io.helidon.extensions.jakarta.examples</groupId>
+    <artifactId>helidon-extensions-jakarta-examples-dbclient-jsonp</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <name>Helidon Extensions Jakarta DBClient JSON-P Example</name>
+    <properties>
+        <mainClass>io.helidon.extensions.jakarta.examples.dbclientjsonp.Main</mainClass>
+        <jakarta.extension.version>1.0.0-SNAPSHOT</jakarta.extension.version>
+    </properties>
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>io.helidon.extensions.jakarta</groupId>
+                <artifactId>helidon-extensions-jakarta-bom</artifactId>
+                <version>${jakarta.extension.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>io.helidon.extensions.jakarta</groupId>
+            <artifactId>helidon-extensions-jakarta-dbclient-jsonp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.json</groupId>
+            <artifactId>jakarta.json-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.helidon.common</groupId>
+            <artifactId>helidon-common-mapper</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.hamcrest</groupId>
+            <artifactId>hamcrest-all</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-libs</id>
+                    </execution>
+                    <execution>
+                        <id>consumer-runtime-tree</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>tree</goal>
+                        </goals>
+                        <configuration>
+                            <scope>runtime</scope>
+                            <outputFile>${project.build.directory}/runtime-dependencies.txt</outputFile>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>module-path-consumer</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>${java.home}/bin/java</executable>
+                            <longClasspath>false</longClasspath>
+                            <longModulepath>false</longModulepath>
+                            <arguments combine.self="override">
+                                <argument>--module-path</argument>
+                                <argument>${project.build.outputDirectory}${path.separator}${project.build.directory}/libs</argument>
+                                <argument>--module</argument>
+                                <argument>io.helidon.extensions.jakarta.examples.dbclientjsonp/${mainClass}</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

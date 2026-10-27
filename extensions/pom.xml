@@ -48,5 +48,6 @@
         <module>gson</module>
         <module>jackson</module>
         <module>toml</module>
+        <module>jakarta</module>
     </modules>
 </project>
