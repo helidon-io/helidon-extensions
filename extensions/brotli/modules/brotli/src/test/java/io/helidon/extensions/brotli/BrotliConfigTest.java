@@ -31,6 +31,7 @@ import io.helidon.config.ConfigSources;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -53,6 +54,8 @@ class BrotliConfigTest {
                 .config(Config.empty())
                 .build()) {
             assertThat(input.prototype().cacheBufferSize(), is(256));
+            assertThat(input.prototype().maxWindowBits(), is(24));
+            assertThat(input.prototype().verifyEndOfInput(), is(false));
             assertThat(input.readAllBytes(), is(DATA));
         }
     }
@@ -62,7 +65,9 @@ class BrotliConfigTest {
         var config = Config.just(ConfigSources.create(Map.of("encoder.quality", "0",
                                                             "encoder.window", "10",
                                                             "encoder.cache-input-size", "17",
-                                                            "decoder.cache-buffer-size", "3")));
+                                                            "decoder.cache-buffer-size", "3",
+                                                            "decoder.max-window-bits", "10",
+                                                            "decoder.verify-end-of-input", "true")));
         byte[] expected = "Configuration-driven Brotli stream. ".repeat(80).getBytes(StandardCharsets.UTF_8);
         var destination = new ByteArrayOutputStream();
         try (var output = BrotliOutputStream.builder()
@@ -80,6 +85,8 @@ class BrotliConfigTest {
                 .config(config.get("decoder"))
                 .build()) {
             assertThat(input.prototype().cacheBufferSize(), is(3));
+            assertThat(input.prototype().maxWindowBits(), is(10));
+            assertThat(input.prototype().verifyEndOfInput(), is(true));
             restored.write(input.read());
             restored.writeBytes(input.readNBytes(7));
             restored.writeBytes(input.readAllBytes());
@@ -141,5 +148,32 @@ class BrotliConfigTest {
                              .inputStream(new ByteArrayInputStream(COMPRESSED_DATA))
                              .config(config)
                              .build());
+    }
+
+    @Test
+    void rejectsConfiguredMaximumWindowOutsideSupportedRange() {
+        for (int maxWindowBits : new int[] {9, 25}) {
+            var config = Config.just(ConfigSources.create(Map.of("max-window-bits", Integer.toString(maxWindowBits))));
+            assertThrows(IllegalArgumentException.class,
+                         () -> BrotliInputStream.builder()
+                                 .inputStream(new ByteArrayInputStream(COMPRESSED_DATA))
+                                 .config(config)
+                                 .build(),
+                         "maximum window " + maxWindowBits);
+        }
+    }
+
+    @Test
+    void rejectsDeclaredWindowAboveConfiguredMaximumBeforeReadingBody() throws IOException {
+        // WBITS=24 and a final metablock claiming 16 MiB, with no compressed body.
+        byte[] header = HexFormat.of().parseHex("9fffffff");
+        try (var input = BrotliInputStream.builder()
+                .inputStream(new ByteArrayInputStream(header))
+                .maxWindowBits(22)
+                .build()) {
+            IOException failure = assertThrows(IOException.class, input::read);
+            assertThat(failure.getCause(), instanceOf(BrotliException.class));
+            assertThat(failure.getCause().getMessage(), is("Brotli window exceeds configured maximum"));
+        }
     }
 }

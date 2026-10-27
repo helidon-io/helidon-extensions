@@ -50,8 +50,8 @@ final class BitReader {
         return bitCount + ((byteLimit - byteOffset) << 3);
     }
 
-    void checkHealth(boolean endOfStream) {
-        if (endOfStream && bufferedBits() != 0) {
+    void checkEndOfInput(boolean verifyEndOfInput) {
+        if (bufferedBits() != 0 || (verifyEndOfInput && readInput())) {
             throw new BrotliException("Unused bytes after end");
         }
     }

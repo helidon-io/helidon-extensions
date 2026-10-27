@@ -45,6 +45,28 @@ interface BrotliInputStreamConfigBlueprint extends Prototype.Factory<BrotliInput
     int cacheBufferSize();
 
     /**
+     * Largest Brotli window exponent accepted from the compressed stream header.
+     * Lower values limit decoder ring-buffer memory but reject streams that declare a larger window.
+     *
+     * @return maximum window exponent, from 10 through 24
+     */
+    @Option.Configured
+    @Option.DefaultInt(24)
+    int maxWindowBits();
+
+    /**
+     * Whether to require underlying input EOF when the Brotli stream ends,
+     * rejecting trailing bytes. Enable this for a bounded entity stream that must be
+     * fully consumed. The default allows progressive reads to finish before the
+     * underlying input closes.
+     *
+     * @return whether the underlying input must end with the Brotli stream
+     */
+    @Option.Configured
+    @Option.DefaultBoolean(false)
+    boolean verifyEndOfInput();
+
+    /**
      * Optional shared dictionary chunks, in order. At most 15 chunks may be attached.
      * The stream copies the chunk arrays when it is created.
      * References may span chunks but must stay within their concatenated contents;

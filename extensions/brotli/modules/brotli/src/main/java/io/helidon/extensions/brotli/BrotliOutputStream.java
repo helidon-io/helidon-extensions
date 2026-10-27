@@ -109,8 +109,9 @@ public final class BrotliOutputStream extends OutputStream implements RuntimeTyp
         ensureOpen();
         try {
             if (input.byteIx() > 0) {
+                int inputBytes = input.byteIx();
                 encoder.compress(input);
-                input.clear();
+                input.clearWrittenBytes(inputBytes);
             }
             config.outputStream().flush();
         } catch (UncheckedIOException e) {

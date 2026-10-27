@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Attached raw-prefix dictionary address mapping from RFC 9841 section 3.2, using the command and block syntax of
@@ -102,6 +103,18 @@ class BrotliDictionaryTest {
         }
     }
 
+    @Test
+    @DisplayName("RFC 7932 section 9.2: attached dictionary copy cannot exceed the declared metablock")
+    void rejectsAttachedDictionaryCopyBeyondMetablockBeforeReturningBytes() throws IOException {
+        byte[] encoded = dictionaryReference(new byte[0], 4, 8, 1);
+        try (var input = BrotliInputStream.builder()
+                .inputStream(new ByteArrayInputStream(encoded))
+                .dictionaryChunks(List.of(DICTIONARY))
+                .build()) {
+            assertThrows(IOException.class, () -> input.read(new byte[1]));
+        }
+    }
+
     private static byte[] decode(byte[] encoded, List<byte[]> chunks, int cacheSize, int readSize) throws IOException {
         var destination = new ByteArrayOutputStream();
         try (var input = BrotliInputStream.builder()
@@ -129,6 +142,10 @@ class BrotliDictionaryTest {
     }
 
     private static byte[] dictionaryReference(byte[] prefix, int length, int distance) {
+        return dictionaryReference(prefix, length, distance, length);
+    }
+
+    private static byte[] dictionaryReference(byte[] prefix, int length, int distance, int declaredLength) {
         var bits = new BitWriter();
         bits.write(1, 0); // RFC 7932 section 9.1: WBITS=16.
         if (prefix.length != 0) {
@@ -143,7 +160,7 @@ class BrotliDictionaryTest {
         bits.write(1, 1); // ISLAST=1.
         bits.write(1, 0); // ISLASTEMPTY=0.
         bits.write(2, 0); // MNIBBLES=4.
-        bits.write(16, length - 1);
+        bits.write(16, declaredLength - 1);
         // One block type per alphabet, NPOSTFIX=NDIRECT=0, context mode 0, one tree per context map.
         bits.write(13, 0);
         // Section 3.4: singleton trees consume no symbol bits. The literal tree is unused.

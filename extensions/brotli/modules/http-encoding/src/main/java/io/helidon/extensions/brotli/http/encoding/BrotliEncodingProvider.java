@@ -41,7 +41,8 @@ public final class BrotliEncodingProvider implements ContentEncodingProvider, We
     @Override
     public ContentEncoding create(Config config, String name) {
         Objects.requireNonNull(config, "config");
-        return new BrotliEncoding(name);
+        int maxWindowBits = config.get("max-window-bits").asInt().orElse(24);
+        return new BrotliEncoding(name, maxWindowBits);
     }
 
     @Override

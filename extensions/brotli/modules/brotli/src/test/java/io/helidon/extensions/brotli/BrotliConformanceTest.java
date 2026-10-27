@@ -19,6 +19,7 @@ package io.helidon.extensions.brotli;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HexFormat;
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -141,6 +143,49 @@ class BrotliConformanceTest {
         byte[] encoded = HexFormat.of().parseHex("82000000445001824811c800");
         try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
             assertThrows(IOException.class, input::readAllBytes);
+        }
+    }
+
+    @Test
+    @DisplayName("CVE-2016-1624/CVE-2016-1968: malformed backward copy is rejected")
+    void rejectsHistoricNativeDecoderCrashVector() throws IOException {
+        // Mozilla bug 1246742, attachment 8717115: a 20-byte stream that underflowed the native decoder.
+        byte[] encoded = HexFormat.of().parseHex("728a8a92aa8a8a3800002492e2c08a8a1f012101");
+        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+            IOException failure = assertThrows(IOException.class, () -> input.transferTo(OutputStream.nullOutputStream()));
+            assertThat(failure.getCause(), instanceOf(BrotliException.class));
+        }
+    }
+
+    @Test
+    @DisplayName("CVE-2024-32976: trailing data after a complete Brotli stream is rejected")
+    void rejectsBufferedTrailingData() throws IOException {
+        // A complete "my data" stream followed by the five extra bytes in Envoy's regression case.
+        byte[] encoded = HexFormat.of().parseHex("0303806d792064617461034142434445");
+        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+            IOException failure = assertThrows(IOException.class, input::readAllBytes);
+            assertThat(failure.getCause(), instanceOf(BrotliException.class));
+        }
+    }
+
+    @Test
+    void verifiedInputEndRejectsIncrementallyDeliveredTrailingData() throws IOException {
+        byte[] encoded = HexFormat.of().parseHex("0303806d792064617461034142434445");
+        var source = new ByteArrayInputStream(encoded) {
+            @Override
+            public synchronized int read(byte[] bytes, int offset, int length) {
+                return super.read(bytes, offset, Math.min(length, 1));
+            }
+        };
+        try (var input = BrotliInputStream.builder()
+                .inputStream(source)
+                .verifyEndOfInput(true)
+                .build()) {
+            IOException failure = assertThrows(IOException.class, input::readAllBytes);
+            assertThat(failure.getCause(), instanceOf(BrotliException.class));
+            assertThat(failure.getCause().getMessage(), is("Unused bytes after end"));
+            assertThat(source.available(), is(4));
+            assertThrows(IOException.class, input::read);
         }
     }
 

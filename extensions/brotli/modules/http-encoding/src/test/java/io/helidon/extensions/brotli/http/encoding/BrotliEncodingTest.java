@@ -18,8 +18,10 @@ package io.helidon.extensions.brotli.http.encoding;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Set;
 
@@ -33,8 +35,11 @@ import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class BrotliEncodingTest {
+    private static final byte[] LARGE_WINDOW_HEADER = HexFormat.of().parseHex("9fffffff");
+
     @Test
     void defaultEncodingUsesBr() {
         var encoding = BrotliEncoding.create();
@@ -90,12 +95,61 @@ class BrotliEncodingTest {
     }
 
     @Test
-    void providerIsConfigurable() {
-        var config = Config.just(ConfigSources.create(Map.of("content-encodings.0.type", "br")));
+    void providerIsConfigurable() throws IOException {
+        var config = Config.just(ConfigSources.create(Map.of("content-encodings.0.type", "br",
+                                                            "content-encodings.0.max-window-bits", "22")));
         var context = ContentEncodingContext.create(config);
 
         assertThat(context.contentEncodingSupported("br"), is(true));
         assertThat(context.prototype().contentEncodings().getFirst().type(), is("br"));
         assertThat(context.prototype().contentEncodings().getFirst().name(), is("0"));
+        try (var input = context.decoder("br").apply(new ByteArrayInputStream(LARGE_WINDOW_HEADER))) {
+            IOException failure = assertThrows(IOException.class, input::read);
+            assertThat(failure.getCause().getMessage(), is("Brotli window exceeds configured maximum"));
+        }
+    }
+
+    @Test
+    void programmaticDecoderWindowLimitRejectsLargeHeader() throws IOException {
+        var encoding = BrotliEncoding.create(22);
+        try (var input = encoding.decoder().apply(new ByteArrayInputStream(LARGE_WINDOW_HEADER))) {
+            IOException failure = assertThrows(IOException.class, input::read);
+            assertThat(failure.getCause().getMessage(), is("Brotli window exceeds configured maximum"));
+        }
+        assertThrows(IllegalArgumentException.class, () -> BrotliEncoding.create(9));
+    }
+
+    @Test
+    void httpDecoderRejectsIncrementalTrailingDataWithoutDraining() throws IOException {
+        byte[] encoded = HexFormat.of().parseHex("0303806d792064617461034142434445");
+        var source = new ByteArrayInputStream(encoded) {
+            @Override
+            public synchronized int read(byte[] bytes, int offset, int length) {
+                return super.read(bytes, offset, Math.min(length, 1));
+            }
+        };
+        try (var input = BrotliEncoding.create().decoder().apply(source)) {
+            IOException failure = assertThrows(IOException.class, input::readAllBytes);
+            assertThat(failure.getCause().getMessage(), is("Unused bytes after end"));
+            assertThat(source.available(), is(4));
+            assertThrows(IOException.class, input::read);
+        }
+    }
+
+    @Test
+    void httpDecoderReturnsPlaintextBeforeSourceEof() throws IOException {
+        byte[] encoded = HexFormat.of().parseHex("0303806d79206461746103");
+        var source = new FilterInputStream(new ByteArrayInputStream(encoded)) {
+            @Override
+            public int read(byte[] bytes, int offset, int length) throws IOException {
+                if (in.available() == 0) {
+                    throw new IOException("Decoder waited for source EOF");
+                }
+                return super.read(bytes, offset, length);
+            }
+        };
+        try (var input = BrotliEncoding.create().decoder().apply(source)) {
+            assertThat(input.read(), is((int) 'm'));
+        }
     }
 }
