@@ -22,6 +22,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HexFormat;
 
+import io.helidon.common.Size;
+
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -97,7 +99,8 @@ class BrotliStreamingTest {
         byte[] encoded = uncompressedStream(DATA);
         int headerLength = encoded.length - DATA.length - 1;
         var source = new ReleasedPrefixInputStream(encoded, headerLength + 3, Integer.MAX_VALUE);
-        try (var input = new BrotliInputStream(source, BrotliInputStreamConfig.builder().cacheBufferSize(1).build())) {
+        var config = BrotliInputStreamConfig.builder().cacheBufferSize(Size.create(1)).build();
+        try (var input = new BrotliInputStream(source, config)) {
             assertThat(input.readNBytes(3), is(Arrays.copyOf(DATA, 3)));
 
             source.releaseThrough(encoded.length);

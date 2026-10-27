@@ -25,6 +25,7 @@ import java.util.HexFormat;
 import java.util.Map;
 import java.util.Set;
 
+import io.helidon.common.Size;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.extensions.brotli.BrotliInputStreamConfig;
@@ -70,9 +71,9 @@ class BrotliEncodingTest {
     void builderUsesComponentConfiguration() throws IOException {
         var config = Config.just(ConfigSources.create(Map.of("name", "configured-brotli",
                                                             "input-stream.max-window-bits", "10",
-                                                            "input-stream.cache-buffer-size", "17",
+                                                            "input-stream.cache-buffer-size", "2 KiB",
                                                             "output-stream.window", "10",
-                                                            "output-stream.cache-input-size", "32")));
+                                                            "output-stream.cache-input-size", "4 KiB")));
         var encoding = BrotliEncoding.builder().config(config).build();
         byte[] entity = "Brotli with a small window".getBytes(StandardCharsets.UTF_8);
         var compressed = new ByteArrayOutputStream();
@@ -82,9 +83,9 @@ class BrotliEncodingTest {
 
         assertThat(encoding.name(), is("configured-brotli"));
         assertThat(encoding.prototype().inputStreamConfig().maxWindowBits(), is(10));
-        assertThat(encoding.prototype().inputStreamConfig().cacheBufferSize(), is(17));
+        assertThat(encoding.prototype().inputStreamConfig().cacheBufferSize(), is(Size.create(2048)));
         assertThat(encoding.prototype().outputStreamConfig().window(), is(10));
-        assertThat(encoding.prototype().outputStreamConfig().cacheInputSize(), is(32));
+        assertThat(encoding.prototype().outputStreamConfig().cacheInputSize(), is(Size.create(4096)));
         try (var input = encoding.decoder().apply(new ByteArrayInputStream(compressed.toByteArray()))) {
             assertThat(input.readAllBytes(), is(entity));
         }

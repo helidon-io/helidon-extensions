@@ -83,10 +83,10 @@ class Encoder {
     private boolean eof;
     private boolean started;
 
-    Encoder(OutputStream outputStream, BrotliOutputStreamConfig config) {
-        output = new BitBuffer(config.cacheInputSize());
-        quality = config.quality();
-        window = config.window();
+    Encoder(OutputStream outputStream, int quality, int window, int cacheInputSize) {
+        output = new BitBuffer(cacheInputSize);
+        this.quality = quality;
+        this.window = window;
         outputManager = new OutputStreamManager(outputStream);
         storage = new BitBuffer(0);
         isInitialized = false;

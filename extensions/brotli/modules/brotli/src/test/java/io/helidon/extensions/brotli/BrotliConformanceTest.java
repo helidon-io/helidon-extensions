@@ -24,6 +24,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HexFormat;
 
+import io.helidon.common.Size;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -112,7 +114,7 @@ class BrotliConformanceTest {
         byte[] data = repetitiveData(256);
         for (int cacheSize : new int[] {4, 5, 7, 76, 77}) {
             var destination = new ByteArrayOutputStream();
-            var outputConfig = BrotliOutputStreamConfig.builder().cacheInputSize(cacheSize).build();
+            var outputConfig = BrotliOutputStreamConfig.builder().cacheInputSize(Size.create(cacheSize)).build();
             try (var output = new BrotliOutputStream(destination, outputConfig)) {
                 output.write(data);
                 output.flush();
@@ -279,7 +281,7 @@ class BrotliConformanceTest {
 
     private static byte[] decode(byte[] encoded, int sourceChunk, int readChunk, int cacheSize) throws IOException {
         var destination = new ByteArrayOutputStream();
-        var config = BrotliInputStreamConfig.builder().cacheBufferSize(cacheSize).build();
+        var config = BrotliInputStreamConfig.builder().cacheBufferSize(Size.create(cacheSize)).build();
         try (var input = new BrotliInputStream(new ChunkedInputStream(encoded, sourceChunk), config)) {
             if (readChunk == 1) {
                 for (int value; (value = input.read()) != -1;) {

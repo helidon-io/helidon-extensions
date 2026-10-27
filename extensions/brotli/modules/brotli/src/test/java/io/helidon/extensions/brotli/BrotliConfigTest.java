@@ -26,6 +26,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
+import io.helidon.common.Size;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigMappingException;
 import io.helidon.config.ConfigSources;
@@ -49,13 +50,13 @@ class BrotliConfigTest {
         var outputConfig = BrotliOutputStreamConfig.builder().config(Config.empty()).build();
         assertThat(outputConfig.quality(), is(0));
         assertThat(outputConfig.window(), is(18));
-        assertThat(outputConfig.cacheInputSize(), is(64_000));
+        assertThat(outputConfig.cacheInputSize(), is(Size.create(64_000)));
         try (var output = new BrotliOutputStream(destination, outputConfig)) {
             output.write(DATA);
         }
         assertThat(destination.toByteArray(), is(COMPRESSED_DATA));
         var inputConfig = BrotliInputStreamConfig.builder().config(Config.empty()).build();
-        assertThat(inputConfig.cacheBufferSize(), is(256));
+        assertThat(inputConfig.cacheBufferSize(), is(Size.create(256)));
         assertThat(inputConfig.maxWindowBits(), is(24));
         assertThat(inputConfig.verifyEndOfInput(), is(false));
         try (var input = new BrotliInputStream(new ByteArrayInputStream(COMPRESSED_DATA), inputConfig)) {
@@ -76,13 +77,13 @@ class BrotliConfigTest {
         var outputConfig = BrotliOutputStreamConfig.builder().config(config.get("encoder")).build();
         assertThat(outputConfig.quality(), is(0));
         assertThat(outputConfig.window(), is(10));
-        assertThat(outputConfig.cacheInputSize(), is(17));
+        assertThat(outputConfig.cacheInputSize(), is(Size.create(17)));
         try (var output = new BrotliOutputStream(destination, outputConfig)) {
             output.write(expected);
         }
         var restored = new ByteArrayOutputStream();
         var inputConfig = BrotliInputStreamConfig.builder().config(config.get("decoder")).build();
-        assertThat(inputConfig.cacheBufferSize(), is(3));
+        assertThat(inputConfig.cacheBufferSize(), is(Size.create(3)));
         assertThat(inputConfig.maxWindowBits(), is(10));
         assertThat(inputConfig.verifyEndOfInput(), is(true));
         try (var input = new BrotliInputStream(new ByteArrayInputStream(destination.toByteArray()), inputConfig)) {
@@ -94,6 +95,24 @@ class BrotliConfigTest {
         byte[] actual = restored.toByteArray();
         assertThat("decoded length", actual.length, is(expected.length));
         assertThat("first differing byte index", Arrays.mismatch(actual, expected), is(-1));
+    }
+
+    @Test
+    void configuredCacheSizesAcceptUnits() throws IOException {
+        var config = Config.just(ConfigSources.create(Map.of("encoder.cache-input-size", "4 KiB",
+                                                            "decoder.cache-buffer-size", "2 KiB")));
+        byte[] expected = "Configured cache sizes with units. ".repeat(400).getBytes(StandardCharsets.UTF_8);
+        var destination = new ByteArrayOutputStream();
+        var outputConfig = BrotliOutputStreamConfig.builder().config(config.get("encoder")).build();
+        assertThat(outputConfig.cacheInputSize(), is(Size.create(4096)));
+        try (var output = new BrotliOutputStream(destination, outputConfig)) {
+            output.write(expected);
+        }
+        var inputConfig = BrotliInputStreamConfig.builder().config(config.get("decoder")).build();
+        assertThat(inputConfig.cacheBufferSize(), is(Size.create(2048)));
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(destination.toByteArray()), inputConfig)) {
+            assertThat(input.readAllBytes(), is(expected));
+        }
     }
 
     @Test
@@ -202,19 +221,25 @@ class BrotliConfigTest {
     }
 
     @Test
-    void rejectsConfiguredInputCacheBelowMinimum() {
-        var config = Config.just(ConfigSources.create(Map.of("cache-input-size", "3")));
-        var outputConfig = BrotliOutputStreamConfig.builder().config(config).build();
-        assertThrows(IllegalArgumentException.class,
-                     () -> new BrotliOutputStream(new ByteArrayOutputStream(), outputConfig));
+    void rejectsConfiguredInputCacheOutsideSupportedRange() {
+        for (String size : List.of("-1", "0", "3", "2147483648", "9223372036854775808")) {
+            var config = Config.just(ConfigSources.create(Map.of("cache-input-size", size)));
+            var outputConfig = BrotliOutputStreamConfig.builder().config(config).build();
+            assertThrows(IllegalArgumentException.class,
+                         () -> new BrotliOutputStream(new ByteArrayOutputStream(), outputConfig),
+                         "input cache size " + size);
+        }
     }
 
     @Test
-    void rejectsNonpositiveConfiguredReadCache() {
-        var config = Config.just(ConfigSources.create(Map.of("cache-buffer-size", "0")));
-        var inputConfig = BrotliInputStreamConfig.builder().config(config).build();
-        assertThrows(IllegalArgumentException.class,
-                     () -> new BrotliInputStream(new ByteArrayInputStream(COMPRESSED_DATA), inputConfig));
+    void rejectsConfiguredReadCacheOutsideSupportedRange() {
+        for (String size : List.of("-1", "0", "2147483648", "9223372036854775808")) {
+            var config = Config.just(ConfigSources.create(Map.of("cache-buffer-size", size)));
+            var inputConfig = BrotliInputStreamConfig.builder().config(config).build();
+            assertThrows(IllegalArgumentException.class,
+                         () -> new BrotliInputStream(new ByteArrayInputStream(COMPRESSED_DATA), inputConfig),
+                         "read cache size " + size);
+        }
     }
 
     @Test

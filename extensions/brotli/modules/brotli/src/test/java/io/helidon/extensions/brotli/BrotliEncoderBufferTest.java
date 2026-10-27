@@ -25,6 +25,8 @@ import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Random;
 
+import io.helidon.common.Size;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -75,7 +77,7 @@ class BrotliEncoderBufferTest {
         System.arraycopy(data, 0, padded, 4, data.length);
         for (int cache : new int[] {77, 64_000}) {
             var destination = new ByteArrayOutputStream();
-            var outputConfig = BrotliOutputStreamConfig.builder().cacheInputSize(cache).build();
+            var outputConfig = BrotliOutputStreamConfig.builder().cacheInputSize(Size.create(cache)).build();
             try (var output = new BrotliOutputStream(destination, outputConfig)) {
                 int offset = 0;
                 while (offset < data.length) {
@@ -119,7 +121,8 @@ class BrotliEncoderBufferTest {
     void physicalGrowthDoesNotChangeLogicalFlushBoundary() throws IOException {
         byte[] data = alphabet(78);
         var destination = new ByteArrayOutputStream();
-        try (var output = new BrotliOutputStream(destination, BrotliOutputStreamConfig.builder().cacheInputSize(77).build())) {
+        var config = BrotliOutputStreamConfig.builder().cacheInputSize(Size.create(77)).build();
+        try (var output = new BrotliOutputStream(destination, config)) {
             output.write(data, 0, 32);
             assertThat(destination.size(), is(0));
             output.write(data, 32, 45);
@@ -137,7 +140,7 @@ class BrotliEncoderBufferTest {
     void emptyClosePreservesFrozenStream() throws IOException {
         for (int cache : new int[] {4, 77, 64_000}) {
             var destination = new ByteArrayOutputStream();
-            var outputConfig = BrotliOutputStreamConfig.builder().cacheInputSize(cache).build();
+            var outputConfig = BrotliOutputStreamConfig.builder().cacheInputSize(Size.create(cache)).build();
             try (var output = new BrotliOutputStream(destination, outputConfig)) {
                 output.write(new byte[0]);
                 output.flush();
@@ -157,7 +160,7 @@ class BrotliEncoderBufferTest {
         for (int window = 10; window <= 24; window++) {
             for (int cache : new int[] {4, 77, 64_000}) {
                 var destination = new ByteArrayOutputStream();
-                var outputConfig = BrotliOutputStreamConfig.builder().window(window).cacheInputSize(cache).build();
+                var outputConfig = BrotliOutputStreamConfig.builder().window(window).cacheInputSize(Size.create(cache)).build();
                 try (var output = new BrotliOutputStream(destination, outputConfig)) {
                     output.write(new byte[0]);
                     output.flush();
@@ -306,7 +309,8 @@ class BrotliEncoderBufferTest {
 
     private static byte[] encode(byte[] data, int cache, boolean scalar) throws IOException {
         var destination = new ByteArrayOutputStream();
-        try (var output = new BrotliOutputStream(destination, BrotliOutputStreamConfig.builder().cacheInputSize(cache).build())) {
+        var config = BrotliOutputStreamConfig.builder().cacheInputSize(Size.create(cache)).build();
+        try (var output = new BrotliOutputStream(destination, config)) {
             if (scalar) {
                 for (byte value : data) {
                     output.write(value);

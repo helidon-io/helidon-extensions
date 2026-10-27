@@ -60,7 +60,13 @@ public final class BrotliInputStream extends InputStream {
     public BrotliInputStream(InputStream inputStream, BrotliInputStreamConfig config) {
         this.inputStream = Objects.requireNonNull(inputStream, "inputStream");
         this.config = Objects.requireNonNull(config, "config");
-        if (config.cacheBufferSize() <= 0) {
+        int cacheBufferSize;
+        try {
+            cacheBufferSize = Math.toIntExact(config.cacheBufferSize().toBytes());
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException("Cache buffer size must be between 1 and 2147483647 bytes", e);
+        }
+        if (cacheBufferSize <= 0) {
             throw new IllegalArgumentException("Cache buffer size must be strictly positive");
         }
         if (config.maxWindowBits() < 10 || config.maxWindowBits() > 24) {
@@ -79,7 +85,7 @@ public final class BrotliInputStream extends InputStream {
             chunkOffsets[i + 1] = totalSize;
         }
         dictionarySize = totalSize;
-        buffer = new byte[config.cacheBufferSize()];
+        buffer = new byte[cacheBufferSize];
     }
 
     @Override
