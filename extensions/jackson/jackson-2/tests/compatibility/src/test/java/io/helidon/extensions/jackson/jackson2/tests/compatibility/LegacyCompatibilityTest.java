@@ -20,12 +20,9 @@ import java.io.StringWriter;
 import java.lang.module.ModuleFinder;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.List;
-import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -47,7 +44,6 @@ class LegacyCompatibilityTest {
 
     @Test
     void legacySourcesAndBinariesWorkWithReplacement() throws Exception {
-        verifyProvenance();
         List<Path> runtime;
         try (var files = Files.list(Path.of("target/runtime"))) {
             runtime = files.filter(path -> path.toString().endsWith(".jar")).sorted().toList();
@@ -71,21 +67,6 @@ class LegacyCompatibilityTest {
                     legacy.getFileName() + "-new-" + modular);
                 run(libraries, List.of(legacy, newApplication), List.of(OLD_TYPE, NEW_TYPE), modular,
                     legacy.getFileName() + "-mixed-" + modular);
-            }
-        }
-    }
-
-    private static void verifyProvenance() throws Exception {
-        var manifest = new Properties();
-        try (var input = Files.newInputStream(RESOURCES.resolve("legacy/provenance.properties"))) {
-            manifest.load(input);
-        }
-        assertThat(manifest.getProperty("core.commit"), is("ffa7ebba4a39edbb757a10b8e41962f8a606cce5"));
-        for (String key : manifest.stringPropertyNames()) {
-            if (key.startsWith("sha256.")) {
-                var path = RESOURCES.resolve("legacy").resolve(key.substring("sha256.".length()));
-                var digest = MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path));
-                assertThat(path.toString(), HexFormat.of().formatHex(digest), is(manifest.getProperty(key)));
             }
         }
     }

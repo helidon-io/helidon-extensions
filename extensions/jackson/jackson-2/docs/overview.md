@@ -121,7 +121,7 @@ For named application modules, open model packages to `com.fasterxml.jackson.dat
 so Jackson can access generated builder constructors. For an unchanged legacy module
 that only exports its model package, use `--add-opens <module>/<model-package>=com.fasterxml.jackson.databind`.
 This requires no source, descriptor, or binary rewrite; see the
-[frozen compatibility fixture](https://github.com/helidon-io/helidon-extensions/tree/main/extensions/jackson/jackson-2/tests/compatibility).
+[legacy compatibility fixture](https://github.com/helidon-io/helidon-extensions/tree/main/extensions/jackson/jackson-2/tests/compatibility).
 
 Use a Helidon blueprint with Jackson databind extension annotations:
 
