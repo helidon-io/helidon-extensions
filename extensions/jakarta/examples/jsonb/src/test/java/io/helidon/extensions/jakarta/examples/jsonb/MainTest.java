@@ -65,9 +65,9 @@ class MainTest {
                         .mediaSupportsDiscoverServices(false)
                         .addMediaSupport(support))
                 .routing(routing -> routing
-                        .get("/server-write", (req, res) -> res.send(new Greeting("server-write")))
+                        .get("/server-write", (_, res) -> res.send(new Greeting("server-write")))
                         .post("/server-read", (req, res) -> res.send(req.content().as(Greeting.class).getMessage()))
-                        .get("/client-read", (req, res) -> {
+                        .get("/client-read", (_, res) -> {
                             res.headers().contentType(MediaTypes.APPLICATION_JSON);
                             res.send("{\"Message\":\"client-read\"}");
                         })
