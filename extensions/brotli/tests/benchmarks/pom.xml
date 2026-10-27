@@ -19,22 +19,20 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.helidon.extensions.brotli</groupId>
-        <artifactId>helidon-extensions-brotli-project</artifactId>
+        <groupId>io.helidon.extensions.brotli.tests</groupId>
+        <artifactId>helidon-extensions-brotli-tests-project</artifactId>
         <version>27.0.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>helidon-extensions-brotli-benchmarks-brotli4j</artifactId>
-    <name>Helidon Extensions Brotli4j Comparison Benchmarks</name>
-    <description>Opt-in Java and native Brotli stream comparison tooling.</description>
+    <artifactId>helidon-extensions-brotli-benchmarks</artifactId>
+    <name>Helidon Extensions Brotli Benchmarks</name>
+    <description>Opt-in public-API Brotli JMH benchmarks.</description>
 
     <properties>
         <jmh.version>1.37</jmh.version>
-        <brotli4j.version>1.24.0</brotli4j.version>
-        <brotli4j.native.artifactId>native-linux-x86_64</brotli4j.native.artifactId>
         <!-- JMH tooling runs on the class path and does not provide JPMS services. -->
         <helidon.services.skip>true</helidon.services.skip>
-        <maven.deploy.skip>true</maven.deploy.skip>
+        <spotbugs.skip>false</spotbugs.skip>
     </properties>
 
     <dependencyManagement>
@@ -58,15 +56,8 @@
             <artifactId>helidon-extensions-brotli</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.aayushatharva.brotli4j</groupId>
-            <artifactId>brotli4j</artifactId>
-            <version>${brotli4j.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.aayushatharva.brotli4j</groupId>
-            <artifactId>${brotli4j.native.artifactId}</artifactId>
-            <version>${brotli4j.version}</version>
-            <scope>runtime</scope>
+            <groupId>io.helidon.extensions.brotli</groupId>
+            <artifactId>helidon-extensions-brotli-http-encoding</artifactId>
         </dependency>
         <dependency>
             <groupId>org.openjdk.jmh</groupId>
@@ -88,13 +79,6 @@
                     <excludeFilterFiles>
                         <excludeFilterFile>${project.basedir}/spotbugs-exclude.xml</excludeFilterFile>
                     </excludeFilterFiles>
-                </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-javadoc-plugin</artifactId>
-                <configuration>
-                    <excludePackageNames>io.helidon.extensions.brotli.benchmarks.brotli4j.jmh_generated</excludePackageNames>
                 </configuration>
             </plugin>
             <plugin>

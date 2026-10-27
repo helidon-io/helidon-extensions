@@ -72,18 +72,6 @@
 
     <profiles>
         <profile>
-            <id>jmh-brotli4j</id>
-            <modules>
-                <module>benchmarks-brotli4j</module>
-            </modules>
-        </profile>
-        <profile>
-            <id>jmh</id>
-            <modules>
-                <module>benchmarks</module>
-            </modules>
-        </profile>
-        <profile>
             <id>tests</id>
             <modules>
                 <module>tests</module>
