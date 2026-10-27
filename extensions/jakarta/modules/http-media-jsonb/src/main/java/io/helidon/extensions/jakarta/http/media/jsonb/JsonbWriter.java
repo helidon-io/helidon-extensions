@@ -1,0 +1,121 @@
+/*
+ * Copyright (c) 2022, 2026 Oracle and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.helidon.extensions.jakarta.http.media.jsonb;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.UncheckedIOException;
+import java.io.Writer;
+import java.nio.charset.Charset;
+import java.util.Optional;
+
+import io.helidon.common.GenericType;
+import io.helidon.http.Headers;
+import io.helidon.http.WritableHeaders;
+import io.helidon.http.media.ByteArrayInstanceWriter;
+import io.helidon.http.media.EntityWriterBase;
+import io.helidon.http.media.InstanceWriter;
+
+import jakarta.json.bind.Jsonb;
+
+class JsonbWriter<T> extends EntityWriterBase<T> {
+    private final Jsonb jsonb;
+
+    JsonbWriter(JsonbSupportConfig config, Jsonb jsonb) {
+        super(config);
+        this.jsonb = jsonb;
+    }
+
+    @Override
+    public boolean supportsInstanceWriter() {
+        return true;
+    }
+
+    @Override
+    public InstanceWriter instanceWriter(GenericType<T> type, T object, WritableHeaders<?> requestHeaders) {
+        return ByteArrayInstanceWriter.create(toBytes(type,
+                                                      object,
+                                                      clientRequestContentTypeAndCharset(requestHeaders)));
+    }
+
+    @Override
+    public InstanceWriter instanceWriter(GenericType<T> type,
+                                         T object,
+                                         Headers requestHeaders,
+                                         WritableHeaders<?> responseHeaders) {
+        var charset = serverResponseContentTypeAndCharset(requestHeaders, responseHeaders);
+        return ByteArrayInstanceWriter.create(toBytes(type, object, charset));
+    }
+
+    @Override
+    public void write(GenericType<T> type,
+                      T object,
+                      OutputStream outputStream,
+                      Headers requestHeaders,
+                      WritableHeaders<?> responseHeaders) {
+
+        var charset = serverResponseContentTypeAndCharset(requestHeaders, responseHeaders);
+
+        if (charset.isPresent()) {
+            Charset characterSet = charset.get();
+            write(type, object, new OutputStreamWriter(outputStream, characterSet));
+        } else {
+            write(type, object, outputStream);
+        }
+
+    }
+
+    @Override
+    public void write(GenericType<T> type, T object, OutputStream outputStream, WritableHeaders<?> headers) {
+        var charset = clientRequestContentTypeAndCharset(headers);
+
+        if (charset.isPresent()) {
+            write(type, object, new OutputStreamWriter(outputStream, charset.get()));
+        } else {
+            write(type, object, outputStream);
+        }
+    }
+
+    private void write(GenericType<T> type, T object, Writer out) {
+        try (out) {
+            jsonb.toJson(object, type.type(), out);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private void write(GenericType<T> type, T object, OutputStream out) {
+        try (out) {
+            jsonb.toJson(object, type.type(), out);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private byte[] toBytes(GenericType<T> type, T object, Optional<Charset> charset) {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+        if (charset.isPresent()) {
+            write(type, object, new OutputStreamWriter(baos, charset.get()));
+        } else {
+            write(type, object, baos);
+        }
+        return baos.toByteArray();
+    }
+}

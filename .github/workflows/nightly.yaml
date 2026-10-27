@@ -87,5 +87,5 @@ jobs:
               -f extensions/${{ matrix.extension.id }}/pom.xml \
               -Dorg.slf4j.simpleLogger.showThreadName=true \
               -Dsurefire.reportNameSuffix=latest-java \
-              -Ptests \
+              -Ptests,docs \
               verify
