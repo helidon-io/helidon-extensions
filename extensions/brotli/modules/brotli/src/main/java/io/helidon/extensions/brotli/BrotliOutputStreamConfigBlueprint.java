@@ -46,9 +46,10 @@ interface BrotliOutputStreamConfigBlueprint {
     int window();
 
     /**
-     * Size of the uncompressed input cache.
+     * Size of the uncompressed input cache. The size must be less than 512 MiB
+     * to fit the encoder's bit cursor. Unsupported sizes fail when a stream is constructed.
      *
-     * @return input cache size, from 4 through {@link Integer#MAX_VALUE} bytes
+     * @return input cache size, from 4 through 536870911 bytes
      */
     @Option.Configured
     @Option.Default("64 kB")
