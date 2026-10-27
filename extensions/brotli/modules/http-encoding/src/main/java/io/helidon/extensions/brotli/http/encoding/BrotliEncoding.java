@@ -19,7 +19,9 @@ package io.helidon.extensions.brotli.http.encoding;
 import java.io.OutputStream;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 
+import io.helidon.builder.api.RuntimeType;
 import io.helidon.extensions.brotli.BrotliInputStream;
 import io.helidon.extensions.brotli.BrotliOutputStream;
 import io.helidon.http.Header;
@@ -36,21 +38,29 @@ import io.helidon.http.encoding.ContentEncoding;
  * The content coding identifier is {@code br}. Compression uses the codec's
  * supported quality level, {@code 0}.
  */
-public final class BrotliEncoding implements ContentEncoding {
+public final class BrotliEncoding implements ContentEncoding, RuntimeType.Api<BrotliEncodingConfig> {
     private static final Header CONTENT_ENCODING_BROTLI = HeaderValues.createCached(HeaderNames.CONTENT_ENCODING,
                                                                                     false,
                                                                                     false,
                                                                                     "br");
 
-    private final String name;
-    private final int maxWindowBits;
+    private final BrotliEncodingConfig config;
 
-    BrotliEncoding(String name, int maxWindowBits) {
-        this.name = Objects.requireNonNull(name, "name");
-        if (maxWindowBits < 10 || maxWindowBits > 24) {
+    private BrotliEncoding(BrotliEncodingConfig config) {
+        this.config = Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(config.name(), "name");
+        if (config.maxWindowBits() < 10 || config.maxWindowBits() > 24) {
             throw new IllegalArgumentException("Maximum Brotli window exponent must be between 10 and 24");
         }
-        this.maxWindowBits = maxWindowBits;
+    }
+
+    /**
+     * Create a builder for Brotli content encoding.
+     *
+     * @return a new builder
+     */
+    public static BrotliEncodingConfig.Builder builder() {
+        return BrotliEncodingConfig.builder();
     }
 
     /**
@@ -59,18 +69,32 @@ public final class BrotliEncoding implements ContentEncoding {
      * @return Brotli content encoding
      */
     public static BrotliEncoding create() {
-        return new BrotliEncoding("br", 24);
+        return builder().build();
     }
 
     /**
-     * Create Brotli content encoding with a maximum accepted decoder window.
-     * A lower value limits decoder memory but rejects streams with larger windows.
+     * Create Brotli content encoding from its configuration.
      *
-     * @param maxWindowBits maximum window exponent, from 10 through 24
+     * @param config encoding configuration
      * @return Brotli content encoding
      */
-    public static BrotliEncoding create(int maxWindowBits) {
-        return new BrotliEncoding("br", maxWindowBits);
+    public static BrotliEncoding create(BrotliEncodingConfig config) {
+        return new BrotliEncoding(config);
+    }
+
+    /**
+     * Create Brotli content encoding customizing its configuration.
+     *
+     * @param consumer configuration consumer
+     * @return Brotli content encoding
+     */
+    public static BrotliEncoding create(Consumer<BrotliEncodingConfig.Builder> consumer) {
+        return builder().update(Objects.requireNonNull(consumer, "consumer")).build();
+    }
+
+    @Override
+    public BrotliEncodingConfig prototype() {
+        return config;
     }
 
     @Override
@@ -91,8 +115,8 @@ public final class BrotliEncoding implements ContentEncoding {
     @Override
     public ContentDecoder decoder() {
         return network -> BrotliInputStream.builder()
-                .inputStream(network)
-                .maxWindowBits(maxWindowBits)
+                .inputStream(Objects.requireNonNull(network, "network"))
+                .maxWindowBits(config.maxWindowBits())
                 .verifyEndOfInput(true)
                 .build();
     }
@@ -102,11 +126,14 @@ public final class BrotliEncoding implements ContentEncoding {
         return new ContentEncoder() {
             @Override
             public OutputStream apply(OutputStream network) {
-                return BrotliOutputStream.builder().outputStream(network).build();
+                return BrotliOutputStream.builder()
+                        .outputStream(Objects.requireNonNull(network, "network"))
+                        .build();
             }
 
             @Override
             public void headers(WritableHeaders<?> headers) {
+                Objects.requireNonNull(headers, "headers");
                 headers.add(CONTENT_ENCODING_BROTLI);
                 headers.remove(HeaderNames.CONTENT_LENGTH);
             }
@@ -115,7 +142,7 @@ public final class BrotliEncoding implements ContentEncoding {
 
     @Override
     public String name() {
-        return name;
+        return config.name();
     }
 
     @Override

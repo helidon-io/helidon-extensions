@@ -27,6 +27,7 @@ import java.util.Set;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
+import io.helidon.extensions.brotli.BrotliOutputStream;
 import io.helidon.http.HeaderNames;
 import io.helidon.http.WritableHeaders;
 import io.helidon.http.encoding.ContentEncodingContext;
@@ -49,6 +50,52 @@ class BrotliEncodingTest {
         assertThat(encoding.name(), is("br"));
         assertThat(encoding.supportsEncoding(), is(true));
         assertThat(encoding.supportsDecoding(), is(true));
+        assertThat(encoding.prototype().maxWindowBits(), is(24));
+        assertThat(BrotliEncoding.builder().build().name(), is("br"));
+    }
+
+    @Test
+    void builderUsesProgrammaticName() {
+        var encoding = BrotliEncoding.builder().name("custom-brotli").build();
+
+        assertThat(encoding.name(), is("custom-brotli"));
+        assertThat(encoding.type(), is("br"));
+        assertThat(encoding.ids(), is(Set.of("br")));
+    }
+
+    @Test
+    void builderUsesComponentConfiguration() throws IOException {
+        var config = Config.just(ConfigSources.create(Map.of("name", "configured-brotli",
+                                                            "max-window-bits", "10")));
+        var encoding = BrotliEncoding.builder().config(config).build();
+        byte[] entity = "Brotli with a small window".getBytes(StandardCharsets.UTF_8);
+        var compressed = new ByteArrayOutputStream();
+        try (var output = BrotliOutputStream.builder().outputStream(compressed).window(10).build()) {
+            output.write(entity);
+        }
+
+        assertThat(encoding.name(), is("configured-brotli"));
+        assertThat(encoding.prototype().maxWindowBits(), is(10));
+        try (var input = encoding.decoder().apply(new ByteArrayInputStream(compressed.toByteArray()))) {
+            assertThat(input.readAllBytes(), is(entity));
+        }
+        try (var input = encoding.decoder().apply(new ByteArrayInputStream(LARGE_WINDOW_HEADER))) {
+            IOException failure = assertThrows(IOException.class, input::read);
+            assertThat(failure.getCause().getMessage(), is("Brotli window exceeds configured maximum"));
+        }
+    }
+
+    @Test
+    void defaultDecoderAcceptsMaximumWindow() throws IOException {
+        byte[] entity = "Brotli with a maximum window".getBytes(StandardCharsets.UTF_8);
+        var compressed = new ByteArrayOutputStream();
+        try (var output = BrotliOutputStream.builder().outputStream(compressed).window(24).build()) {
+            output.write(entity);
+        }
+
+        try (var input = BrotliEncoding.create().decoder().apply(new ByteArrayInputStream(compressed.toByteArray()))) {
+            assertThat(input.readAllBytes(), is(entity));
+        }
     }
 
     @Test
@@ -79,7 +126,8 @@ class BrotliEncodingTest {
     @Test
     void providerUsesConfiguredName() {
         var provider = new BrotliEncodingProvider();
-        var encoding = provider.create(Config.empty(), "configured-brotli");
+        var config = Config.just(ConfigSources.create(Map.of("name", "ignored-name")));
+        var encoding = provider.create(config, "configured-brotli");
 
         assertThat(provider.configKey(), is("br"));
         assertThat(encoding.name(), is("configured-brotli"));
@@ -111,12 +159,36 @@ class BrotliEncodingTest {
 
     @Test
     void programmaticDecoderWindowLimitRejectsLargeHeader() throws IOException {
-        var encoding = BrotliEncoding.create(22);
+        var encoding = BrotliEncoding.builder().maxWindowBits(22).build();
         try (var input = encoding.decoder().apply(new ByteArrayInputStream(LARGE_WINDOW_HEADER))) {
             IOException failure = assertThrows(IOException.class, input::read);
             assertThat(failure.getCause().getMessage(), is("Brotli window exceeds configured maximum"));
         }
-        assertThrows(IllegalArgumentException.class, () -> BrotliEncoding.create(9));
+    }
+
+    @Test
+    void invalidWindowLimitsFailWhenBuilt() {
+        for (int maxWindowBits : new int[] {9, 25}) {
+            var config = Config.just(ConfigSources.create(Map.of("max-window-bits", Integer.toString(maxWindowBits))));
+            assertThrows(IllegalArgumentException.class,
+                         () -> BrotliEncoding.builder().maxWindowBits(maxWindowBits).build(),
+                         "programmatic maximum window " + maxWindowBits);
+            assertThrows(IllegalArgumentException.class,
+                         () -> BrotliEncoding.builder().config(config).build(),
+                         "configured maximum window " + maxWindowBits);
+        }
+    }
+
+    @Test
+    void factoriesUseEncodingConfiguration() {
+        var config = BrotliEncodingConfig.builder().name("prototype-brotli").maxWindowBits(10).buildPrototype();
+        var encoding = BrotliEncoding.create(config);
+        var customized = BrotliEncoding.create(builder -> builder.name("customized-brotli").maxWindowBits(22));
+
+        assertThat(encoding.name(), is("prototype-brotli"));
+        assertThat(encoding.prototype().maxWindowBits(), is(10));
+        assertThat(customized.name(), is("customized-brotli"));
+        assertThat(customized.prototype().maxWindowBits(), is(22));
     }
 
     @Test
