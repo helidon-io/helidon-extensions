@@ -164,8 +164,9 @@ It delegates to the model's existing `builder()` method, so Jackson can instanti
 without reflective access to its private constructor. Jackson-specific public mutators delegate to
 the normal builder setters and clear methods. They preserve property naming and optional values:
 a missing property retains its default, while an explicit JSON `null` clears an optional value.
-The ordinary builder setters retain their null checks. Jackson only discovers the annotated model
-properties, so unrelated builder methods such as `from` are not treated as JSON properties.
+The ordinary builder setters retain their null checks. Jackson discovers the generated mutators
+using their dedicated prefix, including properties without explicit annotations. Unrelated builder
+methods such as `from` are not treated as JSON properties.
 Generated models can be serialized and deserialized without opening their exported model package
 with `opens` or `--add-opens`. Regenerate Jackson 3 models to obtain these methods.
 

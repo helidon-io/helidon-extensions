@@ -69,6 +69,23 @@ public class JacksonSerializationTest {
     }
 
     @Test
+    void testImplicitBeanProperties() {
+        String json = "{\"count\":42}";
+        PlainBean result = mapper.readValue(json, PlainBean.class);
+        assertThat(result.getCount(), is(42));
+
+        String encoded = mapper.writeValueAsString(result);
+        assertThat(mapper.readTree(encoded), is(mapper.readTree(json)));
+        assertThat(mapper.readValue(encoded, PlainBean.class).getCount(), is(42));
+    }
+
+    @Test
+    void testDeserializationOnlyImplicitBeanProperty() {
+        DeserializeOnly result = mapper.readValue("{\"count\":42}", DeserializeOnly.class);
+        assertThat(result.getCount(), is(42));
+    }
+
+    @Test
     void testSerialization() throws JacksonException {
         var instance = DemoWorkflowArguments.builder()
                 .setEncrypted(true)

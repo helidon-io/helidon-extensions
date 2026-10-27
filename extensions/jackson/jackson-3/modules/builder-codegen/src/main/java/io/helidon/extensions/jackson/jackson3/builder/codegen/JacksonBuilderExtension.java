@@ -96,7 +96,7 @@ class JacksonBuilderExtension implements BuilderCodegenExtension {
                                          .property("fieldVisibility", hidden)
                                          .property("getterVisibility", hidden)
                                          .property("isGetterVisibility", hidden)
-                                         .property("setterVisibility", hidden)
+                                         .property("setterVisibility", EnumValue.create(JSON_VISIBILITY, "PUBLIC_ONLY"))
                                          .build());
         classModel.addMethod(method -> {
             method.name("create")
@@ -116,11 +116,9 @@ class JacksonBuilderExtension implements BuilderCodegenExtension {
                     .addContent(TypeName.create(prototype.fqName()))
                     .addContentLine(".builder();");
         });
-        if (serialize) {
-            for (OptionInfo option : options) {
-                if (option.interfaceMethod().isPresent()) {
-                    addJacksonMutator(option, builderType, mutatorPrefix, classModel);
-                }
+        for (OptionInfo option : options) {
+            if (option.interfaceMethod().isPresent()) {
+                addJacksonMutator(option, builderType, mutatorPrefix, classModel);
             }
         }
     }
@@ -154,10 +152,12 @@ class JacksonBuilderExtension implements BuilderCodegenExtension {
                     .addParameter(parameter -> parameter.name("value")
                             .type(option.declaredType())
                             .description("the deserialized value"));
-            for (Annotation annotation : option.interfaceMethod().orElseThrow().annotations()) {
-                if (annotation.typeName().packageName().startsWith(JACKSON_PACKAGE_PREFIX)
-                        || annotation.typeName().packageName().equals(JACKSON_ANNOTATION_PACKAGE)) {
-                    method.addAnnotation(annotation);
+            if (serialize) {
+                for (Annotation annotation : option.interfaceMethod().orElseThrow().annotations()) {
+                    if (annotation.typeName().packageName().startsWith(JACKSON_PACKAGE_PREFIX)
+                            || annotation.typeName().packageName().equals(JACKSON_ANNOTATION_PACKAGE)) {
+                        method.addAnnotation(annotation);
+                    }
                 }
             }
             if (option.declaredType().isOptional()) {

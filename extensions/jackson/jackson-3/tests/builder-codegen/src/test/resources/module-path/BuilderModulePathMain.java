@@ -21,7 +21,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 import io.helidon.extensions.jackson.jackson3.tests.builder.codegen.DemoWorkflowArguments;
+import io.helidon.extensions.jackson.jackson3.tests.builder.codegen.DeserializeOnly;
 import io.helidon.extensions.jackson.jackson3.tests.builder.codegen.GenericValue;
+import io.helidon.extensions.jackson.jackson3.tests.builder.codegen.PlainBean;
 
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.MapperFeature;
@@ -90,6 +92,17 @@ public final class BuilderModulePathMain {
         assertEquals(Optional.empty(), nullLabel.getLabel(), "null bean-style optional");
         var emptyRestored = mapper.readValue(mapper.writeValueAsString(nullLabel), DemoWorkflowArguments.class);
         assertEquals(nullLabel, emptyRestored, "empty bean-style optional round trip");
+
+        String countJson = "{\"count\":42}";
+        var plainBean = mapper.readValue(countJson, PlainBean.class);
+        assertEquals(42, plainBean.getCount(), "implicit bean-style property");
+        String plainJson = mapper.writeValueAsString(plainBean);
+        assertEquals(mapper.readTree(countJson), mapper.readTree(plainJson), "implicit bean-style serialization");
+        var plainRestored = mapper.readValue(plainJson, PlainBean.class);
+        assertEquals(plainBean, plainRestored, "implicit bean-style round trip");
+
+        var deserializeOnly = mapper.readValue(countJson, DeserializeOnly.class);
+        assertEquals(42, deserializeOnly.getCount(), "deserialize-only implicit bean-style property");
 
         genericRoundTrip(mapper, "displayName");
     }
