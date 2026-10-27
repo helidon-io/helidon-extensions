@@ -14,16 +14,18 @@
  * limitations under the License.
  */
 
-package io.helidon.extensions.jakarta.examples.jsonp;
+/**
+ * Declarative Jakarta JSON-B greeting server.
+ */
+module io.helidon.extensions.jakarta.examples.declarative {
+    requires io.helidon.webserver;
+    requires io.helidon.service.registry;
+    requires io.helidon.config.yaml;
+    requires io.helidon.logging.common;
+    requires io.helidon.extensions.jakarta.http.media.jsonb;
+    requires jakarta.json.bind;
 
-import org.junit.jupiter.api.Test;
+    exports io.helidon.extensions.jakarta.examples.jsonb;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
-
-class MainTest {
-    @Test
-    void discoveredJsonpSupportsGeneratedEndpoint() {
-        assertThat(Main.exchange().getString("message"), is("Hello declarative Jakarta"));
-    }
+    opens io.helidon.extensions.jakarta.examples.jsonb to org.eclipse.yasson;
 }
