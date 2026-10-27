@@ -18,9 +18,12 @@ package io.helidon.extensions.jakarta.examples.jsonb;
 
 import java.util.Map;
 
+import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.extensions.jakarta.http.media.jsonb.JsonbSupport;
+import io.helidon.webclient.api.WebClient;
+import io.helidon.webserver.WebServer;
 
 import jakarta.json.bind.JsonbBuilder;
 import jakarta.json.bind.JsonbConfig;
@@ -42,9 +45,7 @@ class MainTest {
         try (var jsonb = JsonbBuilder.create(new JsonbConfig()
                 .withPropertyNamingStrategy(PropertyNamingStrategy.UPPER_CAMEL_CASE))) {
             var support = JsonbSupport.builder().jsonb(jsonb).build();
-            assertThat(jsonb.toJson(new Greeting("custom")), is("{\"Message\":\"custom\"}"));
-            var response = Main.roundTrip(support, new Greeting("custom"));
-            assertThat(response.getMessage(), is("custom"));
+            assertCustomHttpRepresentation(support);
         }
     }
 
@@ -53,8 +54,62 @@ class MainTest {
         var config = Config.create(ConfigSources.create(Map.of(
                 "properties.jsonb.property-naming-strategy", PropertyNamingStrategy.UPPER_CAMEL_CASE)));
         var support = JsonbSupport.builder().config(config).build();
-        assertThat(support.prototype().jsonb().toJson(new Greeting("configured")), is("{\"Message\":\"configured\"}"));
-        var response = Main.roundTrip(support, new Greeting("configured"));
-        assertThat(response.getMessage(), is("configured"));
+        assertCustomHttpRepresentation(support);
+    }
+
+    private static void assertCustomHttpRepresentation(JsonbSupport support) {
+        WebServer server = WebServer.builder()
+                .host("127.0.0.1")
+                .port(0)
+                .mediaContext(context -> context
+                        .mediaSupportsDiscoverServices(false)
+                        .addMediaSupport(support))
+                .routing(routing -> routing
+                        .get("/server-write", (req, res) -> res.send(new Greeting("server-write")))
+                        .post("/server-read", (req, res) -> res.send(req.content().as(Greeting.class).getMessage()))
+                        .get("/client-read", (req, res) -> {
+                            res.headers().contentType(MediaTypes.APPLICATION_JSON);
+                            res.send("{\"Message\":\"client-read\"}");
+                        })
+                        .post("/client-write", (req, res) -> res.send(req.content().as(String.class))))
+                .build()
+                .start();
+        try {
+            WebClient client = WebClient.builder()
+                    .baseUri("http://127.0.0.1:" + server.port())
+                    .mediaContext(context -> context
+                            .mediaSupportsDiscoverServices(false)
+                            .addMediaSupport(support))
+                    .build();
+
+            var serverJson = client.get("/server-write")
+                    .accept(MediaTypes.APPLICATION_JSON)
+                    .request(String.class)
+                    .entity();
+            assertThat("Server serialization uses the custom property name",
+                       serverJson, is("{\"Message\":\"server-write\"}"));
+
+            var serverMessage = client.post("/server-read")
+                    .contentType(MediaTypes.APPLICATION_JSON)
+                    .submit("{\"Message\":\"server-read\"}", String.class)
+                    .entity();
+            assertThat("Server deserialization reads the custom property name", serverMessage, is("server-read"));
+
+            var clientGreeting = client.get("/client-read")
+                    .accept(MediaTypes.APPLICATION_JSON)
+                    .request(Greeting.class)
+                    .entity();
+            assertThat("Client deserialization reads the custom property name",
+                       clientGreeting.getMessage(), is("client-read"));
+
+            var clientJson = client.post("/client-write")
+                    .contentType(MediaTypes.APPLICATION_JSON)
+                    .submit(new Greeting("client-write"), String.class)
+                    .entity();
+            assertThat("Client serialization uses the custom property name",
+                       clientJson, is("{\"Message\":\"client-write\"}"));
+        } finally {
+            server.stop();
+        }
     }
 }
