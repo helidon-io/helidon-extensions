@@ -19,6 +19,7 @@ package io.helidon.extensions.brotli;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.util.Arrays;
 
 import static io.helidon.extensions.brotli.Context.LOG2_TABLE;
 import static io.helidon.extensions.brotli.Encoder.BrotliEncoderCompressState.EMIT_COMMANDS;
@@ -26,7 +27,6 @@ import static io.helidon.extensions.brotli.Encoder.BrotliEncoderCompressState.EM
 import static io.helidon.extensions.brotli.Encoder.BrotliEncoderCompressState.FOR;
 import static io.helidon.extensions.brotli.Encoder.BrotliEncoderCompressState.NEXT_BLOCK;
 import static io.helidon.extensions.brotli.Encoder.BrotliEncoderCompressState.TRAWL;
-import static io.helidon.extensions.brotli.HuffmanTree.buildAndStoreHuffmanTree;
 
 class Encoder {
     /**
@@ -38,22 +38,27 @@ class Encoder {
     private static final int HASH_MUL_32 = 0x1E35A7BD;
     private static final int FIRST_BLOCK_SIZE = 98304;
 
-    private final Buffer output;
-    private final Buffer cmdDepth;
-    private final Buffer cmdBits;
-    private final Buffer cmdCode;
-    private final Buffer smallTable;
+    private final BitBuffer output;
+    private final BitBuffer storage;
     private final OutputStreamManager outputManager;
     private final int quality;
     private final int window;
 
-    private Buffer inputBuffer;
-    private Buffer storage;
+    private Buffer cmdDepth;
+    private Buffer cmdBits;
+    private BitBuffer cmdCode;
+    private Buffer smallTable;
+    private ByteInput inputBuffer;
     private Buffer table;
     private Buffer largeTable;
     private int lastBytes;
     private int lastBytesBits;
     private int[] cmdHisto;
+    private int[] histogram;
+    private HuffmanTree literalTree;
+    private HuffmanTree commandTree;
+    private Buffer commandDepth;
+    private Buffer commandBits;
     private int input;
     private int ip;
     private int ipEnd;
@@ -79,16 +84,11 @@ class Encoder {
     private boolean started;
 
     Encoder(BrotliOutputStreamConfig builder) {
-        output = new Buffer(builder.cacheInputSize());
+        output = new BitBuffer(builder.cacheInputSize());
         quality = builder.quality();
         window = builder.window();
         outputManager = new OutputStreamManager(builder);
-        cmdDepth = new Buffer(128);
-        cmdBits = new Buffer(128);
-        cmdCode = new Buffer(512);
-        storage = new Buffer();
-        smallTable = new Buffer(1024);
-        largeTable = new Buffer();
+        storage = new BitBuffer(0);
         isInitialized = false;
         eof = false;
     }
@@ -98,13 +98,12 @@ class Encoder {
      *
      * @param input input data
      */
-    void compress(Buffer input) {
+    void compress(ByteInput input) {
         if (input == null) {
             return;
         }
         inputBuffer = input;
-        inputBuffer.available(input.byteIx());
-        inputBuffer.bitIx(0);
+        inputBuffer.position(0);
         checkInitialization();
         if (quality == QUALITY_LEVEL_0) {
             brotliCompressStreamFast(eof);
@@ -112,7 +111,7 @@ class Encoder {
         }
     }
 
-    void close(Buffer input) throws IOException {
+    void close(ByteInput input) throws IOException {
         if (eof) {
             return;
         }
@@ -130,16 +129,23 @@ class Encoder {
      * Check that state is properly initialized.
      */
     private void checkInitialization() {
-        if (isInitialized) {
-            return;
-        }
-        if (output.bitIx() == 0) {
-            if (quality == QUALITY_LEVEL_0) {
-                initCommandPrefixCodes();
-            }
+        if (!isInitialized) {
             encodeWindowBit();
+            isInitialized = true;
         }
-        isInitialized = true;
+        if (cmdDepth == null && inputBuffer.remaining() != 0) {
+            cmdDepth = new Buffer(128);
+            cmdBits = new Buffer(128);
+            cmdCode = new BitBuffer(512);
+            smallTable = new Buffer(1024);
+            largeTable = new Buffer();
+            cmdHisto = new int[128];
+            histogram = new int[256];
+            litDepth = new Buffer(256);
+            litBits = new Buffer(256);
+            literalTree = new HuffmanTree(513);
+            initCommandPrefixCodes();
+        }
     }
 
     private void initCommandPrefixCodes() {
@@ -231,8 +237,8 @@ class Encoder {
      * @param bits                  Table containing bits of prefix codes.
      * @return Returns the literal ratio for the given input.
      */
-    private int buildAndStoreLiteralPrefixCode(Buffer input, int index, int inputSize, Buffer depths, Buffer bits) {
-        int[] histogram = new int[256];
+    private int buildAndStoreLiteralPrefixCode(ByteInput input, int index, int inputSize, Buffer depths, Buffer bits) {
+        Arrays.fill(histogram, 0);
         int histogramTotal;
         int i;
 
@@ -258,7 +264,7 @@ class Encoder {
                 histogramTotal += adjust;
             }
         }
-        buildAndStoreHuffmanTree(storage, histogram, histogramTotal, depths, bits);
+        literalTree.buildAndStoreHuffmanTree(storage, histogram, histogramTotal, depths, bits);
         int literalRatio = 0;
         for (i = 0; i < 256; ++i) {
             if (histogram[i] != 0) {
@@ -380,10 +386,10 @@ class Encoder {
      * @param depths            Table containing length of the prefix code.
      * @param bits              Table containing prefix code bits.
      */
-    private void emitLiterals(int startIx, Buffer input, int len, Buffer depths, Buffer bits) {
-        int[] array = input.toArray();
+    private void emitLiterals(int startIx, ByteInput input, int len, Buffer depths, Buffer bits) {
+        byte[] array = input.array();
         for (int j = startIx; j < (startIx + len); j++) {
-            int lit = array[j];
+            int lit = array[j] & 0xFF;
             storage.writeBit(depths.get(lit), bits.get(lit));
         }
     }
@@ -471,8 +477,9 @@ class Encoder {
         }
     }
 
-    private boolean shouldMergeBlock(Buffer data, int index, int length, Buffer depths) {
-        int[] histo = new int[256];
+    private boolean shouldMergeBlock(ByteInput data, int index, int length, Buffer depths) {
+        int[] histo = histogram;
+        Arrays.fill(histo, 0);
         int kSampleRate = 43;
         int i;
         for (i = 0; i < length; i += kSampleRate) {
@@ -486,7 +493,7 @@ class Encoder {
         return r >= 0.0;
     }
 
-    private void updateBits(int bits, int pos, Buffer array) {
+    private void updateBits(int bits, int pos, BitBuffer array) {
         int nBits = 20;
         while (nBits > 0) {
             int bytePos = pos >> 3;
@@ -512,10 +519,17 @@ class Encoder {
      * @param bits                   Table containing bits of prefix code.
      * @param storage                storage buffer further copied to brotli stream.
      */
-    private void buildAndStoreCommandPrefixCode(int[] histogram, Buffer depth, Buffer bits, Buffer storage) {
-        HuffmanTree tree = new HuffmanTree(129);
-        Buffer cmdDepth = new Buffer(HuffmanTree.NUM_COMMAND_SYMBOLS);
-        Buffer cmdBits = new Buffer(64);
+    private void buildAndStoreCommandPrefixCode(int[] histogram, Buffer depth, Buffer bits, BitBuffer storage) {
+        if (commandTree == null) {
+            commandTree = new HuffmanTree(129);
+            commandDepth = new Buffer(HuffmanTree.NUM_COMMAND_SYMBOLS);
+            commandBits = new Buffer(64);
+        }
+        commandDepth.clear();
+        commandBits.clear();
+        HuffmanTree tree = commandTree;
+        Buffer cmdDepth = commandDepth;
+        Buffer cmdBits = commandBits;
 
         tree.createHuffmanTree(histogram, 0, 64, 15, depth, 0);
         tree.createHuffmanTree(histogram, 64, 64, 14, depth, 64);
@@ -533,7 +547,7 @@ class Encoder {
         bits.writeBuffer(cmdBits, 40, 8, 48);
         bits.writeBuffer(cmdBits, 56, 8, 56);
         Utils.convertBitDepthsToSymbols(depth, 64, bits, 64);
-        cmdDepth.writeArray(new int[64], 0, 64, 0);
+        cmdDepth.clear();
         cmdDepth.writeBuffer(depth, 0, 8, 0);
         cmdDepth.writeBuffer(depth, 8, 8, 64);
         cmdDepth.writeBuffer(depth, 16, 8, 128);
@@ -554,8 +568,8 @@ class Encoder {
      * @param lastBlock         Is it the last block to be emitted ?
      */
     private void brotliCompressStreamFast(boolean lastBlock) {
-        if (inputBuffer.availableSpace() == 0) {
-            storage = new Buffer(2);
+        if (inputBuffer.remaining() == 0) {
+            storage.clear();
             outputManager.resetLastFlushPosition();
             if (started) {
                 if (lastBlock) {
@@ -582,12 +596,11 @@ class Encoder {
             if (injectFlushOrPushOutput(output, storage)) {
                 continue;
             }
-            if (inputBuffer.availableSpace() != 0) {
-                int blockSize = Math.min(1 << window, inputBuffer.availableSpace());
-                boolean isLast = inputBuffer.availableSpace() == blockSize && lastBlock;
-                boolean forceFlush = inputBuffer.availableSpace() == blockSize;
-                int maxOutputSize = 2 * blockSize + 503;
-                storage = new Buffer(maxOutputSize);
+            if (inputBuffer.remaining() != 0) {
+                int blockSize = Math.min(1 << window, inputBuffer.remaining());
+                boolean isLast = inputBuffer.remaining() == blockSize && lastBlock;
+                boolean forceFlush = inputBuffer.remaining() == blockSize;
+                storage.clear();
                 storage.writeByte(lastBytes & 255);
                 storage.writeByte(lastBytes >> 8);
                 storage.bitIx(lastBytesBits);
@@ -610,8 +623,7 @@ class Encoder {
                 }
 
                 if (blockSize != 0) {
-                    inputBuffer.increaseBitIx(blockSize);
-                    inputBuffer.decreaseAvailable(blockSize);
+                    inputBuffer.advance(blockSize);
                 }
                 lastBytes = storage.get16Bits((storage.bitIx() >> 3));
                 lastBytesBits = storage.bitIx() & 7;
@@ -623,7 +635,6 @@ class Encoder {
             break;
         }
         outputManager.flushToOutputStream(output);
-        outputManager.checkFlushComplete(inputBuffer);
     }
 
     /**
@@ -636,7 +647,7 @@ class Encoder {
      */
     private void brotliCompressFragmentFast(int blockSize, boolean isLast) {
         int initialStorageBit = storage.bitIx();
-        int initialInputPosition = inputBuffer.bitIx();
+        int initialInputPosition = inputBuffer.position();
         if (blockSize == 0) {
             storage.writeBit(2, 3);
             return;
@@ -658,8 +669,8 @@ class Encoder {
      */
     private void brotliCompressFragmentFastImpl(int size, boolean isLast) {
         final int shift = 64 - log2FloorNonZero(table.capacity());
-        cmdHisto = new int[128];
-        input = inputBuffer.bitIx();
+        Arrays.fill(cmdHisto, 0);
+        input = inputBuffer.position();
         ip = input;
         ipEnd = input;
         baseIp = input;
@@ -669,8 +680,8 @@ class Encoder {
         blockSize = Math.min(inputSize, FIRST_BLOCK_SIZE);
         totalBlockSize = blockSize;
         lenStorageIx = storage.bitIx() + 3;
-        litDepth = new Buffer(256);
-        litBits = new Buffer(256);
+        litDepth.clear();
+        litBits.clear();
         ipLimit = 0;
         nextHash = 0;
         nextIp = 0;
@@ -872,17 +883,21 @@ class Encoder {
         compressState = EMIT_REMAINDER;
     }
 
-    private boolean injectFlushOrPushOutput(Buffer output, Buffer storage) {
+    private boolean injectFlushOrPushOutput(BitBuffer output, BitBuffer storage) {
         boolean result = outputManager.injectFlushOrPushOutput(output, storage, lastBytes, lastBytesBits);
         lastBytes = outputManager.lastByte();
         lastBytesBits = outputManager.lastBytesBit();
         return result;
     }
 
-    private int findMatchLengthWithLimit(Buffer buffer, int s1, int s2, int limit) {
+    private int findMatchLengthWithLimit(ByteInput buffer, int s1, int s2, int limit) {
+        byte[] array = buffer.array();
+        if (limit >= Long.BYTES) {
+            int mismatch = Arrays.mismatch(array, s1, s1 + limit, array, s2, s2 + limit);
+            return mismatch < 0 ? limit : mismatch;
+        }
         int matched = 0;
         int s2Limit = s2 + limit;
-        int[] array = buffer.toArray();
         while (s2 < s2Limit && array[s1 + matched] == array[s2]) {
             ++s2;
             ++matched;
@@ -925,15 +940,14 @@ class Encoder {
             outputStream = builder.outputStream();
         }
 
-        void flushToOutputStream(Buffer output) {
+        void flushToOutputStream(BitBuffer output) {
             if (output.bitIx() == 0) {
                 return;
             }
             try {
-                outputStream.write(output.toByteArray(), 0, output.byteIx());
+                outputStream.write(output.array(), 0, output.byteIx());
                 outputStream.flush();
-                output.clearWrittenBytes(output.byteIx());
-                output.available(output.capacity());
+                output.clear();
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
@@ -943,7 +957,7 @@ class Encoder {
          *  Injects padding bits or pushes compressed data to output.
          *  Returns false if nothing is done.
          */
-        boolean injectFlushOrPushOutput(Buffer output, Buffer storage, int lastBytes, int lastBytesBits) {
+        boolean injectFlushOrPushOutput(BitBuffer output, BitBuffer storage, int lastBytes, int lastBytesBits) {
             lastByte = lastBytes;
             lastBytesBit = lastBytesBits;
             if (output.availableSpace() == 0) {
@@ -953,26 +967,17 @@ class Encoder {
             if (lastFlushPosition < storage.byteIx() && output.availableSpace() > 0) {
                 int copyLength = Math.min(output.availableSpace(), storage.byteIx() - lastFlushPosition);
                 output.writeBuffer(storage, lastFlushPosition, copyLength);
-                output.decreaseAvailable(copyLength);
                 lastFlushPosition += copyLength;
                 return true;
             }
 
             if (isFinished && lastBytesBits != 0) {
                 output.writeByte(lastBytes);
-                output.decreaseAvailable(1);
                 lastByte = 0;
                 lastBytesBit = 0;
                 return true;
             }
             return false;
-        }
-
-        void checkFlushComplete(Buffer input) {
-            if (input.availableSpace() != 0) {
-                return;
-            }
-            input.bitIx(0);
         }
 
         void close() throws IOException {

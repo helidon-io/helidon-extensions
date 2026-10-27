@@ -22,12 +22,16 @@ package io.helidon.extensions.brotli;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
 
 /**
  * Bit reading helpers.
  */
 final class BitReader {
     private static final int CAPACITY = 4096;
+    private static final VarHandle INTS = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
 
     private final byte[] byteBuffer = new byte[CAPACITY];
 
@@ -61,7 +65,7 @@ final class BitReader {
      * code length before consuming the zero-extended result.
      */
     int peekBits() {
-        fillFromBuffer();
+        fillFromBuffer(32);
         return (int) accumulator;
     }
 
@@ -69,12 +73,13 @@ final class BitReader {
      * Obtains only the input needed for the requested number of bits.
      */
     void ensureBits(int count) {
-        fillFromBuffer();
+        int minimumBits = Math.max(count, 32);
+        fillFromBuffer(minimumBits);
         while (bitCount < count) {
             if (!readInput()) {
                 throw new BrotliException("Unexpected end of input");
             }
-            fillFromBuffer();
+            fillFromBuffer(minimumBits);
         }
     }
 
@@ -137,8 +142,14 @@ final class BitReader {
         }
     }
 
-    private void fillFromBuffer() {
-        while (bitCount <= 56 && byteOffset < byteLimit) {
+    private void fillFromBuffer(int minimumBits) {
+        if (bitCount < minimumBits && bitCount <= 32 && byteLimit - byteOffset >= Integer.BYTES) {
+            long word = Integer.toUnsignedLong((int) INTS.get(byteBuffer, byteOffset));
+            accumulator |= word << bitCount;
+            byteOffset += Integer.BYTES;
+            bitCount += Integer.SIZE;
+        }
+        while (bitCount < minimumBits && bitCount <= 56 && byteOffset < byteLimit) {
             accumulator |= (long) (byteBuffer[byteOffset++] & 0xFF) << bitCount;
             bitCount += 8;
         }

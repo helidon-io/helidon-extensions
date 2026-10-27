@@ -18,59 +18,28 @@ package io.helidon.extensions.brotli;
 
 import java.util.Arrays;
 
-class Buffer {
-    private final int maxBitIx;
+/**
+ * Integer-valued Huffman and hash tables.
+ */
+final class Buffer {
+    private final int[] array;
 
-    private int[] array;
     private int bitIx;
-    private int available;
 
     Buffer(int capacity) {
-        this.array = new int[capacity];
-        this.bitIx = 0;
-        this.maxBitIx = capacity * 8;
-        this.available = capacity;
-    }
-
-    Buffer(int[] init) {
-        this(init.length);
-        this.array = init;
+        array = new int[capacity];
     }
 
     Buffer() {
         this(0);
     }
 
-    int bitIx() {
-        return bitIx;
-    }
-
     int byteIx() {
-        return bitIx / 8;
-    }
-
-    int maxBitIx() {
-        return maxBitIx;
+        return bitIx >>> 3;
     }
 
     int capacity() {
         return array.length;
-    }
-
-    int availableSpace() {
-        return this.available;
-    }
-
-    void decreaseAvailable(int value) {
-        available -= value;
-    }
-
-    void available(int value) {
-        available = value;
-    }
-
-    int[] toArray() {
-        return array;
     }
 
     int get(int position) {
@@ -81,100 +50,19 @@ class Buffer {
         array[position] = value;
     }
 
-    byte[] toByteArray() {
-        int length = byteIx();
-        byte[] result = new byte[length];
-        for (int i = 0; i < length; i++) {
-            result[i] = (byte) array[i];
-        }
-        return result;
+    void writeBuffer(Buffer source, int offset, int length, int destination) {
+        System.arraycopy(source.array, offset, array, destination, length);
     }
 
-    void writeBuffer(Buffer buffer, int start, int length) {
-        int[] source = buffer.toArray();
-        for (int i = start; i < (start + length); i++) {
-            if (i < buffer.capacity()) {
-                writeByte(source[i]);
-            }
-        }
-    }
-
-    void writeBuffer(Buffer buffer, int start, int length, int destOffset) {
-        writeArray(buffer.toArray(), start, length, destOffset);
-    }
-
-    void writeArray(int[] source, int sourceOffSet, int length, int destOffset) {
-        //System.arraycopy(source, sourceOffSet, array, destOffset, length);
-        for (int i = sourceOffSet; i < (sourceOffSet + length); i++) {
-            array[destOffset++] = source[i];
-        }
-    }
-
-    void bitIx(int bitIx) {
-        this.bitIx = bitIx;
-    }
-
-    void increaseBitIx(int value) {
-        bitIx += value;
-    }
-
-    void applyMask(int position, int mask) {
-        array[position] &= mask;
-    }
-
-    long get64Bits(int index) {
-        int position = 0;
-        long result = 0;
-        for (int i = index; i < index + 8; i++) {
-            if (i < array.length) {
-                result |= ((long) array[i] << position);
-            }
-            position += 8;
-        }
-        return result;
-    }
-
-    int get32Bits(int index) {
-        int position = 0;
-        int result = 0;
-        for (int i = index; i < index + 4; i++) {
-            if (i < array.length) {
-                result |= (array[i] << position);
-            }
-            position += 8;
-        }
-        return result;
-    }
-
-    int get16Bits(int index) {
-        int position = 0;
-        int result = 0;
-        for (int i = index; i < index + 2; i++) {
-            if (i < array.length) {
-                result |= (array[i] << position);
-            }
-            position += 8;
-        }
-        return result;
+    void writeArray(int[] source, int offset, int length, int destination) {
+        System.arraycopy(source, offset, array, destination, length);
     }
 
     void reverse(int start, int end) {
-        --end;
-        while (start < end) {
-            int tmp = this.get(start);
-            this.set(start, this.get(end));
-            this.set(end, tmp);
-            ++start;
-            --end;
-        }
-    }
-
-    boolean isMatch(int ip, int candidate) {
-        if ((ip + 4) < this.capacity() && (candidate + 4) < this.capacity()) {
-            return this.get32Bits(ip) == this.get32Bits(candidate)
-                    && this.get(ip + 4) == this.get(candidate + 4);
-        } else {
-            return this.get32Bits(ip) == this.get32Bits(candidate);
+        for (int left = start, right = end - 1; left < right; left++, right--) {
+            int value = array[left];
+            array[left] = array[right];
+            array[right] = value;
         }
     }
 
@@ -183,46 +71,8 @@ class Buffer {
         bitIx = 0;
     }
 
-    void clearWrittenBytes(int byteCount) {
-        // Only for sequential bit/byte writes; set() users must clear the entire array.
-        int clearLength = Math.min(array.length, byteCount);
-        if (clearLength < array.length) {
-            clearLength++;
-        }
-        Arrays.fill(array, 0, clearLength, 0);
-        bitIx = 0;
-    }
-
-    void writeByte(int b) {
-        writeBit(8, b);
-    }
-
-    void writeBit(int nBit, long bits) {
-        write(nBit, bits);
-    }
-
-    void writeBit(int nBit, int bits) {
-        write(nBit, bits);
-    }
-
-    void writeBit(boolean bit) {
-        write(1, bit ? 1 : 0);
-    }
-
-    private void write(int nBit, long bits) {
-        int offset = bitIx >> 3;
-        int bitsReservedInFirstByte = bitIx & 7;
-        bits <<= bitsReservedInFirstByte;
-        array[offset++] |= (int) (bits & 0xFF);
-        for (int bitsLeftToWrite = nBit + bitsReservedInFirstByte;
-             bitsLeftToWrite >= 9;
-             bitsLeftToWrite -= 8) {
-            bits >>= 8;
-            array[offset++] = (int) (bits & 0xFF);
-        }
-        if (offset < array.length) {
-            array[offset] = 0;
-        }
-        bitIx += nBit;
+    void writeByte(int value) {
+        array[byteIx()] = value & 0xFF;
+        bitIx += Byte.SIZE;
     }
 }
