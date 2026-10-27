@@ -66,6 +66,9 @@ final class Decoder {
     private static final int HUFFMAN_TABLE_BITS = 8;
     private static final int HUFFMAN_TABLE_SIZE_26 = 396;
     private static final int HUFFMAN_TABLE_SIZE_258 = 632;
+    private static final int BLOCK_TREE_OFFSETS = 7;
+    private static final int BLOCK_TREE_CAPACITY = BLOCK_TREE_OFFSETS
+            + 3 * (HUFFMAN_TABLE_SIZE_258 + HUFFMAN_TABLE_SIZE_26);
     private static final int CODE_LENGTH_CODES = 18;
     private static final int NUM_DISTANCE_SHORT_CODES = 16;
     private static final int MAX_TRANSFORMED_WORD_LENGTH = 37;
@@ -82,8 +85,16 @@ final class Decoder {
      */
     private static final int MAX_ALLOWED_DISTANCE = 0x7FFFFFFC;
     private static final short[] CMD_LOOKUP = new short[NUM_COMMAND_CODES * 4];
+    private static final DistanceLut DEFAULT_DISTANCE_LUT = new DistanceLut(NUM_DISTANCE_SHORT_CODES + 2 * MAX_DISTANCE_BITS);
 
     static {
+        // RFC 7932 section 4: NPOSTFIX = 0 and NDIRECT = 0 have a fixed distance alphabet.
+        for (int code = NUM_DISTANCE_SHORT_CODES; code < DEFAULT_DISTANCE_LUT.extraBits.length; code++) {
+            int bits = 1 + ((code - NUM_DISTANCE_SHORT_CODES) >>> 1);
+            DEFAULT_DISTANCE_LUT.extraBits[code] = (byte) bits;
+            DEFAULT_DISTANCE_LUT.offsets[code] = ((2 + (code & 1)) << bits) - 3;
+        }
+
         short[] insertLengthOffsets = new short[24];
         short[] copyLengthOffsets = new short[24];
         copyLengthOffsets[0] = 2;
@@ -115,22 +126,31 @@ final class Decoder {
     private final byte[][] cdChunks;
     private final int[] cdChunkOffsets;
     private final int cdTotalSize;
-    private final byte[] distExtraBits;
     private final int[] rings;
-    private final int[] blockTrees;
-    private final int[] distOffset;
     private final int maxWindowBits;
     private final boolean verifyEndOfInput;
 
     private RunningState runningState;
     private RunningState nextRunningState;
+    private DistanceLut distanceLut;
+    private DistanceLut customDistanceLut;
     private byte[] ringBuffer;
     private byte[] contextModes;
     private byte[] contextMap;
     private byte[] distContextMap;
+    private int[] blockTrees;
     private int[] literalTreeGroup;
     private int[] commandTreeGroup;
     private int[] distanceTreeGroup;
+    private int[] huffmanSorted;
+    private int[] huffmanCounts;
+    private int[] huffmanOffsets;
+    private int[] huffmanCodeLengths;
+    private int[] codeLengthDepths;
+    private int[] codeLengthTable;
+    private int[] simpleSymbols;
+    private int[] contextMapTable;
+    private int[] moveToFrontSymbols;
     private int metaBlockLength;
     private int inputEnd;
     private int literalBlockLength;
@@ -180,7 +200,6 @@ final class Decoder {
 
     Decoder(InputStream input, int[] cdChunkOffsets, byte[][] cdChunks, int cdTotalSize,
             int maxWindowBits, boolean verifyEndOfInput) {
-        int maxDistanceAlphabetLimit = calculateDistanceAlphabetLimit(3, 15 << 3);
         this.ringBuffer = new byte[0];
         this.rings = new int[10];
         this.rings[0] = 16;
@@ -194,78 +213,10 @@ final class Decoder {
         this.maxWindowBits = maxWindowBits;
         this.verifyEndOfInput = verifyEndOfInput;
         this.bitReader = new BitReader(input);
-        this.blockTrees = new int[7 + 3 * (HUFFMAN_TABLE_SIZE_258 + HUFFMAN_TABLE_SIZE_26)];
-        this.blockTrees[0] = 7;
+        this.blockTrees = new int[BLOCK_TREE_OFFSETS];
+        this.blockTrees[0] = BLOCK_TREE_OFFSETS;
         this.distRbIdx = 3;
-        this.distExtraBits = new byte[maxDistanceAlphabetLimit];
-        this.distOffset = new int[maxDistanceAlphabetLimit];
         runningState = INITIALIZED;
-    }
-
-    /**
-     * Builds Huffman lookup table assuming code lengths are in symbol order.
-     *
-     * @return number of slots used by resulting Huffman table
-     */
-    static int buildHuffmanTable(int[] tableGroup, int tableIdx, int rootBits, int[] codeLengths, int codeLengthsSize) {
-        int tableOffset = tableGroup[tableIdx];
-        int key;
-        int[] sorted = new int[codeLengthsSize];
-        int[] count = new int[MAX_LENGTH + 1];
-        int[] offset = new int[MAX_LENGTH + 1];
-        int symbol;
-
-        for (symbol = 0; symbol < codeLengthsSize; symbol++) {
-            count[codeLengths[symbol]]++;
-        }
-        offset[1] = 0;
-        for (int len = 1; len < MAX_LENGTH; len++) {
-            offset[len + 1] = offset[len] + count[len];
-        }
-        for (symbol = 0; symbol < codeLengthsSize; symbol++) {
-            if (codeLengths[symbol] != 0) {
-                sorted[offset[codeLengths[symbol]]++] = symbol;
-            }
-        }
-
-        int tableBits = rootBits;
-        int tableSize = 1 << tableBits;
-        int totalSize = tableSize;
-        if (offset[MAX_LENGTH] == 1) {
-            for (key = 0; key < totalSize; key++) {
-                tableGroup[tableOffset + key] = sorted[0];
-            }
-            return totalSize;
-        }
-        key = 0;
-        symbol = 0;
-        for (int len = 1, step = 2; len <= rootBits; len++, step <<= 1) {
-            for (; count[len] > 0; count[len]--) {
-                replicateValue(tableGroup, tableOffset + key, step, tableSize,
-                        len << 16 | sorted[symbol++]);
-                key = getNextKey(key, len);
-            }
-        }
-
-        int mask = totalSize - 1;
-        int low = -1;
-        int currentOffset = tableOffset;
-        for (int len = rootBits + 1, step = 2; len <= MAX_LENGTH; len++, step <<= 1) {
-            for (; count[len] > 0; count[len]--) {
-                if ((key & mask) != low) {
-                    currentOffset += tableSize;
-                    tableBits = nextTableBitSize(count, len, rootBits);
-                    tableSize = 1 << tableBits;
-                    totalSize += tableSize;
-                    low = key & mask;
-                    tableGroup[tableOffset + low] = (tableBits + rootBits) << 16 | (currentOffset - tableOffset - low);
-                }
-                replicateValue(tableGroup, currentOffset + (key >> rootBits), step, tableSize,
-                        (len - rootBits) << 16 | sorted[symbol++]);
-                key = getNextKey(key, len);
-            }
-        }
-        return totalSize;
     }
 
     void close() throws IOException {
@@ -427,6 +378,80 @@ final class Decoder {
         return len - rootBits;
     }
 
+    private static int[] reuseScratch(int[] scratch, int size) {
+        return scratch == null || scratch.length < size ? new int[size] : scratch;
+    }
+
+    private static byte[] reuseScratch(byte[] scratch, int size) {
+        return scratch == null || scratch.length < size ? new byte[size] : scratch;
+    }
+
+    /**
+     * Builds a Huffman lookup table from code lengths in symbol order.
+     * Scratch is private to this decoder and is initialized for every table.
+     *
+     * @return number of slots used by the resulting Huffman table
+     */
+    private int buildHuffmanTable(int[] tableGroup, int tableIdx, int rootBits, int[] codeLengths, int codeLengthsSize) {
+        int tableOffset = tableGroup[tableIdx];
+        huffmanSorted = reuseScratch(huffmanSorted, codeLengthsSize);
+        huffmanCounts = reuseScratch(huffmanCounts, MAX_LENGTH + 1);
+        huffmanOffsets = reuseScratch(huffmanOffsets, MAX_LENGTH + 1);
+        int[] sorted = huffmanSorted;
+        int[] count = huffmanCounts;
+        int[] offset = huffmanOffsets;
+        Arrays.fill(count, 0);
+        for (int symbol = 0; symbol < codeLengthsSize; symbol++) {
+            count[codeLengths[symbol]]++;
+        }
+        offset[1] = 0;
+        for (int len = 1; len < MAX_LENGTH; len++) {
+            offset[len + 1] = offset[len] + count[len];
+        }
+        for (int symbol = 0; symbol < codeLengthsSize; symbol++) {
+            if (codeLengths[symbol] != 0) {
+                sorted[offset[codeLengths[symbol]]++] = symbol;
+            }
+        }
+
+        int tableBits = rootBits;
+        int tableSize = 1 << tableBits;
+        int totalSize = tableSize;
+        if (offset[MAX_LENGTH] == 1) {
+            Arrays.fill(tableGroup, tableOffset, tableOffset + totalSize, sorted[0]);
+            return totalSize;
+        }
+        int key = 0;
+        int symbol = 0;
+        for (int len = 1, step = 2; len <= rootBits; len++, step <<= 1) {
+            for (; count[len] > 0; count[len]--) {
+                replicateValue(tableGroup, tableOffset + key, step, tableSize,
+                        len << 16 | sorted[symbol++]);
+                key = getNextKey(key, len);
+            }
+        }
+
+        int mask = totalSize - 1;
+        int low = -1;
+        int currentOffset = tableOffset;
+        for (int len = rootBits + 1, step = 2; len <= MAX_LENGTH; len++, step <<= 1) {
+            for (; count[len] > 0; count[len]--) {
+                if ((key & mask) != low) {
+                    currentOffset += tableSize;
+                    tableBits = nextTableBitSize(count, len, rootBits);
+                    tableSize = 1 << tableBits;
+                    totalSize += tableSize;
+                    low = key & mask;
+                    tableGroup[tableOffset + low] = (tableBits + rootBits) << 16 | (currentOffset - tableOffset - low);
+                }
+                replicateValue(tableGroup, currentOffset + (key >> rootBits), step, tableSize,
+                        (len - rootBits) << 16 | sorted[symbol++]);
+                key = getNextKey(key, len);
+            }
+        }
+        return totalSize;
+    }
+
     private int calculateDistanceAlphabetSize(int postFix, int direct, int maxDistBits) {
         return NUM_DISTANCE_SHORT_CODES + direct + 2 * (maxDistBits << postFix);
     }
@@ -579,7 +604,8 @@ final class Decoder {
     }
 
     private void inverseMoveToFrontTransform(byte[] v, int vLen) {
-        int[] mtf = new int[256];
+        moveToFrontSymbols = reuseScratch(moveToFrontSymbols, 256);
+        int[] mtf = moveToFrontSymbols;
         for (int i = 0; i < 256; i++) {
             mtf[i] = i;
         }
@@ -598,8 +624,10 @@ final class Decoder {
         int repeat = 0;
         int repeatCodeLen = 0;
         int space = 32768;
-        int[] table = new int[32 + 1];
+        codeLengthTable = reuseScratch(codeLengthTable, 32 + 1);
+        int[] table = codeLengthTable;
         int tableIdx = table.length - 1;
+        table[tableIdx] = 0;
         buildHuffmanTable(table, tableIdx, 5, codeLengthCodeLengths, CODE_LENGTH_CODES);
 
         while (symbol < numSymbols && space > 0) {
@@ -659,8 +687,13 @@ final class Decoder {
      * Reads up to 4 symbols directly and applies predefined histograms.
      */
     private int readSimpleHuffmanCode(int alphabetSizeMax, int alphabetSizeLimit, int[] tableGroup, int tableIdx) {
-        int[] codeLengths = new int[alphabetSizeLimit];
-        int[] symbols = new int[4];
+        int histogramId = readSimpleHuffmanSymbols(alphabetSizeMax, alphabetSizeLimit);
+        return buildSimpleHuffmanTable(tableGroup, tableIdx, histogramId);
+    }
+
+    private int readSimpleHuffmanSymbols(int alphabetSizeMax, int alphabetSizeLimit) {
+        simpleSymbols = reuseScratch(simpleSymbols, 4);
+        int[] symbols = simpleSymbols;
         int maxBits = 1 + log2floor(alphabetSizeMax - 1);
         int numSymbols = bitReader.readBits(2) + 1;
         int histogramId = numSymbols;
@@ -676,39 +709,52 @@ final class Decoder {
         if (numSymbols == 4) {
             histogramId += bitReader.readBits(1);
         }
+        return histogramId;
+    }
 
+    private int buildSimpleHuffmanTable(int[] tableGroup, int tableIdx, int histogramId) {
+        int[] symbols = simpleSymbols;
+        int tableOffset = tableGroup[tableIdx];
+        int tableSize = 1 << HUFFMAN_TABLE_BITS;
         switch (histogramId) {
-            case 1 -> codeLengths[symbols[0]] = 1;
+            case 1 -> Arrays.fill(tableGroup, tableOffset, tableOffset + tableSize, symbols[0]);
             case 2 -> {
-                codeLengths[symbols[0]] = 1;
-                codeLengths[symbols[1]] = 1;
+                Arrays.sort(symbols, 0, 2);
+                replicateValue(tableGroup, tableOffset, 2, tableSize, 1 << 16 | symbols[0]);
+                replicateValue(tableGroup, tableOffset + 1, 2, tableSize, 1 << 16 | symbols[1]);
             }
             case 3 -> {
-                codeLengths[symbols[0]] = 1;
-                codeLengths[symbols[1]] = 2;
-                codeLengths[symbols[2]] = 2;
+                Arrays.sort(symbols, 1, 3);
+                replicateValue(tableGroup, tableOffset, 2, tableSize, 1 << 16 | symbols[0]);
+                replicateValue(tableGroup, tableOffset + 1, 4, tableSize, 2 << 16 | symbols[1]);
+                replicateValue(tableGroup, tableOffset + 3, 4, tableSize, 2 << 16 | symbols[2]);
             }
             case 4 -> {
-                codeLengths[symbols[0]] = 2;
-                codeLengths[symbols[1]] = 2;
-                codeLengths[symbols[2]] = 2;
-                codeLengths[symbols[3]] = 2;
+                Arrays.sort(symbols, 0, 4);
+                replicateValue(tableGroup, tableOffset, 4, tableSize, 2 << 16 | symbols[0]);
+                replicateValue(tableGroup, tableOffset + 2, 4, tableSize, 2 << 16 | symbols[1]);
+                replicateValue(tableGroup, tableOffset + 1, 4, tableSize, 2 << 16 | symbols[2]);
+                replicateValue(tableGroup, tableOffset + 3, 4, tableSize, 2 << 16 | symbols[3]);
             }
             case 5 -> {
-                codeLengths[symbols[0]] = 1;
-                codeLengths[symbols[1]] = 2;
-                codeLengths[symbols[2]] = 3;
-                codeLengths[symbols[3]] = 3;
+                Arrays.sort(symbols, 2, 4);
+                replicateValue(tableGroup, tableOffset, 2, tableSize, 1 << 16 | symbols[0]);
+                replicateValue(tableGroup, tableOffset + 1, 4, tableSize, 2 << 16 | symbols[1]);
+                replicateValue(tableGroup, tableOffset + 3, 8, tableSize, 3 << 16 | symbols[2]);
+                replicateValue(tableGroup, tableOffset + 7, 8, tableSize, 3 << 16 | symbols[3]);
             }
-            default -> {
-            }
+            default -> throw new BrotliException("Invalid simple Huffman histogram");
         }
-        return buildHuffmanTable(tableGroup, tableIdx, HUFFMAN_TABLE_BITS, codeLengths, alphabetSizeLimit);
+        return tableSize;
     }
 
     private int readComplexHuffmanCode(int alphabetSizeLimit, int skip, int[] tableGroup, int tableIdx) {
-        int[] codeLengths = new int[alphabetSizeLimit];
-        int[] codeLengthCodeLengths = new int[CODE_LENGTH_CODES];
+        huffmanCodeLengths = reuseScratch(huffmanCodeLengths, alphabetSizeLimit);
+        int[] codeLengths = huffmanCodeLengths;
+        Arrays.fill(codeLengths, 0, alphabetSizeLimit, 0);
+        codeLengthDepths = reuseScratch(codeLengthDepths, CODE_LENGTH_CODES);
+        int[] codeLengthCodeLengths = codeLengthDepths;
+        Arrays.fill(codeLengthCodeLengths, 0);
         int space = 32;
         int numCodes = 0;
         for (int i = skip; i < CODE_LENGTH_CODES && space > 0; i++) {
@@ -755,8 +801,10 @@ final class Decoder {
         }
         int alphabetSize = numTrees + maxRunLengthPrefix;
         int tableSize = Context.MAX_HUFFMAN_TABLE_SIZE[(alphabetSize + 31) >> 5];
-        int[] table = new int[tableSize + 1];
+        contextMapTable = reuseScratch(contextMapTable, tableSize + 1);
+        int[] table = contextMapTable;
         int tableIdx = table.length - 1;
+        table[tableIdx] = 0;
         readHuffmanCode(alphabetSize, alphabetSize, table, tableIdx);
         for (int i = 0; i < contextMapSize;) {
             int code = readSymbol(table, tableIdx);
@@ -828,12 +876,10 @@ final class Decoder {
     private void reallocateRingBuffer() {
         int newSize = maxRingBufferSize;
         if (newSize > expectedTotalSize) {
+            // Before the window is full, keep capacity above total output so growth cannot lose prior history.
             int minimalNewSize = expectedTotalSize;
             while ((newSize >> 1) > minimalNewSize) {
                 newSize >>= 1;
-            }
-            if ((inputEnd == 0) && newSize < 16384 && maxRingBufferSize >= 16384) {
-                newSize = 16384;
             }
         }
         if (newSize <= ringBufferSize) {
@@ -854,9 +900,6 @@ final class Decoder {
             runningState = INIT_WRITE;
             return;
         }
-        literalTreeGroup = new int[0];
-        commandTreeGroup = new int[0];
-        distanceTreeGroup = new int[0];
         decodeMetaBlockLength();
         if ((metaBlockLength == 0) && !isMetadata) {
             return;
@@ -887,6 +930,9 @@ final class Decoder {
             blockTrees[2 * treeType + 2] = offset;
             return 1 << 28;
         }
+        if (blockTrees.length == BLOCK_TREE_OFFSETS) {
+            blockTrees = Arrays.copyOf(blockTrees, BLOCK_TREE_CAPACITY);
+        }
 
         int blockTypeAlphabetSize = numBlockTypes + 2;
         offset += readHuffmanCode(blockTypeAlphabetSize, blockTypeAlphabetSize, blockTrees, 2 * treeType);
@@ -900,6 +946,18 @@ final class Decoder {
     }
 
     private void calculateDistanceLut(int alphabetSizeLimit) {
+        if (distancePostfixBits == 0 && numDirectDistanceCodes == 0
+                && alphabetSizeLimit == DEFAULT_DISTANCE_LUT.extraBits.length) {
+            distanceLut = DEFAULT_DISTANCE_LUT;
+            return;
+        }
+        // Retain custom capacity across default metablocks without ever modifying the shared default tables.
+        if (customDistanceLut == null || customDistanceLut.extraBits.length < alphabetSizeLimit) {
+            customDistanceLut = new DistanceLut(alphabetSizeLimit);
+        }
+        distanceLut = customDistanceLut;
+        byte[] distExtraBits = distanceLut.extraBits;
+        int[] distOffset = distanceLut.offsets;
         int postfix = 1 << distancePostfixBits;
         int bits = 1;
         int half = 0;
@@ -935,7 +993,7 @@ final class Decoder {
         distanceBlockLength = readMetablockPartition(2, numDistanceBlockTypes);
         distancePostfixBits = bitReader.readBits(2);
         numDirectDistanceCodes = bitReader.readBits(4) << distancePostfixBits;
-        contextModes = new byte[numLiteralBlockTypes];
+        contextModes = reuseScratch(contextModes, numLiteralBlockTypes);
         for (int i = 0; i < numLiteralBlockTypes;) {
             int limit = Math.min(i + 96, numLiteralBlockTypes);
             for (; i < limit; ++i) {
@@ -943,7 +1001,7 @@ final class Decoder {
             }
         }
 
-        contextMap = new byte[numLiteralBlockTypes << LITERAL_CONTEXT_BITS];
+        contextMap = reuseScratch(contextMap, numLiteralBlockTypes << LITERAL_CONTEXT_BITS);
         int numLiteralTrees = decodeContextMap(numLiteralBlockTypes << LITERAL_CONTEXT_BITS, contextMap);
         trivialLiteralContext = 1;
         for (int j = 0; j < numLiteralBlockTypes << LITERAL_CONTEXT_BITS; j++) {
@@ -953,13 +1011,13 @@ final class Decoder {
             }
         }
 
-        distContextMap = new byte[numDistanceBlockTypes << DISTANCE_CONTEXT_BITS];
+        distContextMap = reuseScratch(distContextMap, numDistanceBlockTypes << DISTANCE_CONTEXT_BITS);
         int numDistTrees = decodeContextMap(numDistanceBlockTypes << DISTANCE_CONTEXT_BITS, distContextMap);
 
-        literalTreeGroup = decodeHuffmanTreeGroup(NUM_LITERAL_CODES, NUM_LITERAL_CODES,
-            numLiteralTrees);
-        commandTreeGroup = decodeHuffmanTreeGroup(NUM_COMMAND_CODES, NUM_COMMAND_CODES,
-            numCommandBlockTypes);
+        literalTreeGroup = decodeHuffmanTreeGroup(literalTreeGroup, NUM_LITERAL_CODES, NUM_LITERAL_CODES,
+                                                 numLiteralTrees);
+        commandTreeGroup = decodeHuffmanTreeGroup(commandTreeGroup, NUM_COMMAND_CODES, NUM_COMMAND_CODES,
+                                                 numCommandBlockTypes);
         int distanceAlphabetSizeMax = calculateDistanceAlphabetSize(
                 distancePostfixBits,
                 numDirectDistanceCodes,
@@ -971,8 +1029,8 @@ final class Decoder {
                     MAX_LARGE_WINDOW_DISTANCE_BITS);
             distanceAlphabetSizeLimit = calculateDistanceAlphabetLimit(distancePostfixBits, numDirectDistanceCodes);
         }
-        distanceTreeGroup = decodeHuffmanTreeGroup(distanceAlphabetSizeMax, distanceAlphabetSizeLimit,
-            numDistTrees);
+        distanceTreeGroup = decodeHuffmanTreeGroup(distanceTreeGroup, distanceAlphabetSizeMax, distanceAlphabetSizeLimit,
+                                                  numDistTrees);
         calculateDistanceLut(distanceAlphabetSizeLimit);
 
         contextMapSlice = 0;
@@ -1019,13 +1077,31 @@ final class Decoder {
         }
     }
 
-    private int[] decodeHuffmanTreeGroup(int alphabetSizeMax, int alphabetSizeLimit, int n) {
+    private int[] decodeHuffmanTreeGroup(int[] group, int alphabetSizeMax, int alphabetSizeLimit, int n) {
         int maxTableSize = Context.MAX_HUFFMAN_TABLE_SIZE[(alphabetSizeLimit + 31) >> 5];
-        int[] group = new int[n + n * maxTableSize];
+        if (n == 1) {
+            return decodeSingleHuffmanTree(group, alphabetSizeMax, alphabetSizeLimit, maxTableSize);
+        }
+        group = reuseScratch(group, n + n * maxTableSize);
         int next = n;
         for (int i = 0; i < n; ++i) {
             group[i] = next;
             next += readHuffmanCode(alphabetSizeMax, alphabetSizeLimit, group, i);
+        }
+        return group;
+    }
+
+    private int[] decodeSingleHuffmanTree(int[] group, int alphabetSizeMax, int alphabetSizeLimit, int maxTableSize) {
+        int simpleCodeOrSkip = bitReader.readBits(2);
+        if (simpleCodeOrSkip == 1) {
+            int histogramId = readSimpleHuffmanSymbols(alphabetSizeMax, alphabetSizeLimit);
+            group = reuseScratch(group, 1 + (1 << HUFFMAN_TABLE_BITS));
+            group[0] = 1;
+            buildSimpleHuffmanTable(group, 0, histogramId);
+        } else {
+            group = reuseScratch(group, 1 + maxTableSize);
+            group[0] = 1;
+            readComplexHuffmanCode(alphabetSizeLimit, simpleCodeOrSkip, group, 0);
         }
         return group;
     }
@@ -1188,48 +1264,39 @@ final class Decoder {
             runningState = INIT_WRITE;
             return;
         }
-        int src = (pos - distance) & ringBufferMask;
-        int dst = pos;
         // A small caller read must not expand the complete copy command before returning.
         int remaining = Math.min(copyLength - j, available);
-        int srcEnd = src + remaining;
-        int dstEnd = dst + remaining;
-        if ((srcEnd < ringBufferMask) && (dstEnd < ringBufferMask)) {
-            if (remaining < 12 || (srcEnd > dst && dstEnd > src)) {
-                int k = 0;
-                for (; k + 4 <= remaining; k += 4) {
-                    ringBuffer[dst++] = ringBuffer[src++];
-                    ringBuffer[dst++] = ringBuffer[src++];
-                    ringBuffer[dst++] = ringBuffer[src++];
-                    ringBuffer[dst++] = ringBuffer[src++];
+        while (remaining > 0) {
+            int src = (pos - distance) & ringBufferMask;
+            int count = Math.min(remaining, ringBufferSize - src);
+            if (count < 12) {
+                for (int i = 0; i < count; i++) {
+                    ringBuffer[pos + i] = ringBuffer[src + i];
                 }
-                for (; k < remaining; k++) {
-                    ringBuffer[dst++] = ringBuffer[src++];
+            } else if (distance == 1) {
+                Arrays.fill(ringBuffer, pos, pos + count, ringBuffer[src]);
+            } else if (src < pos && src + count > pos) {
+                // First copy the existing pattern, then double already decoded bytes.
+                // A single memmove would preserve old bytes instead of implementing an overlapping LZ copy.
+                int copied = pos - src;
+                System.arraycopy(ringBuffer, src, ringBuffer, pos, copied);
+                while (copied < count) {
+                    int length = Math.min(copied, count - copied);
+                    System.arraycopy(ringBuffer, pos, ringBuffer, pos + copied, length);
+                    copied += length;
                 }
             } else {
-                System.arraycopy(ringBuffer, src, ringBuffer, dst, srcEnd - src);
+                System.arraycopy(ringBuffer, src, ringBuffer, pos, count);
             }
-            j += remaining;
-            metaBlockLength -= remaining;
-            pos += remaining;
-            if (pos >= fence) {
-                nextRunningState = j == copyLength ? MAIN_LOOP : COPY_LOOP;
-                runningState = INIT_WRITE;
-            }
-        } else {
-            while (j < copyLength) {
-                ringBuffer[pos] = ringBuffer[(pos - distance) & ringBufferMask];
-                metaBlockLength--;
-                pos++;
-                j++;
-                if (pos >= fence) {
-                    nextRunningState = j == copyLength ? MAIN_LOOP : COPY_LOOP;
-                    runningState = INIT_WRITE;
-                    break;
-                }
-            }
+            j += count;
+            metaBlockLength -= count;
+            pos += count;
+            remaining -= count;
         }
-        if (runningState == COPY_LOOP) {
+        if (pos >= fence) {
+            nextRunningState = j == copyLength ? MAIN_LOOP : COPY_LOOP;
+            runningState = INIT_WRITE;
+        } else {
             runningState = MAIN_LOOP;
         }
     }
@@ -1306,9 +1373,10 @@ final class Decoder {
                     throw new BrotliException("Invalid backward distance: " + distance);
                 }
             } else {
-                int extraBits = distExtraBits[distanceCode];
+                DistanceLut lut = distanceLut;
+                int extraBits = lut.extraBits[distanceCode];
                 int bits = bitReader.readBits(extraBits);
-                distance = distOffset[distanceCode] + (bits << distancePostfixBits);
+                distance = lut.offsets[distanceCode] + (bits << distancePostfixBits);
             }
         }
         if (maxDistance != maxBackwardDistance && pos < maxBackwardDistance) {
@@ -1374,6 +1442,16 @@ final class Decoder {
             step = step >> 1;
         }
         return result + i;
+    }
+
+    private static final class DistanceLut {
+        private final byte[] extraBits;
+        private final int[] offsets;
+
+        private DistanceLut(int size) {
+            extraBits = new byte[size];
+            offsets = new int[size];
+        }
     }
 
     enum RunningState {

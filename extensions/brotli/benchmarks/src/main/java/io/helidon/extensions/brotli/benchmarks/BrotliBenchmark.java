@@ -75,6 +75,18 @@ public class BrotliBenchmark {
         "a2000000445010126cc119", "a2000000445010121e1f", "8200000044500c121f02"
     };
     private static final String[] DICTIONARY_TEXT = {"time", "down", "Time", "TIME", "time ", "как", "КАК", "中国", "años"};
+    // RFC 7932 sections 4 and 9.2: 64 compressed metablocks alternate NDIRECT = 0, 1, 0, 2.
+    // Google Brotli 1.2.1 independently verified the complete stream and its plaintext.
+    private static final String DISTANCE_HEADER_HEX = (
+            "7000104142434445464748780000002228840949"
+                    + "7000104142434445464748780000022228840989"
+                    + "7000104142434445464748780000002228840949"
+                    + "7000104142434445464748780000042228840989").repeat(16) + "06";
+    private static final String DISTANCE_HEADER_TEXT = (
+            "ABCDEFGHDEFGHDEFGHDEFGHD"
+                    + "ABCDEFGHEFGHEFGHEFGHEFGH"
+                    + "ABCDEFGHDEFGHDEFGHDEFGHD"
+                    + "ABCDEFGHFGHFGHFGHFGHFGHF").repeat(16);
 
     /**
      * Encode an entity, including the stream and destination lifecycle.
@@ -209,6 +221,19 @@ public class BrotliBenchmark {
         }
     }
 
+    /**
+     * Decode one complete entity whose metablocks repeatedly change their distance alphabet.
+     * Metrics include the stream lifecycle and all 64 compressed metablocks.
+     *
+     * @param state independently verified mixed-header fixture
+     * @return decoded entity bytes
+     * @throws IOException if decoding fails
+     */
+    @Benchmark
+    public byte[] decodeDistanceHeaderTransitions(DistanceHeaderPayload state) throws IOException {
+        return decompress(state.encoded);
+    }
+
     private static byte[] compress(byte[] data) throws IOException {
         var destination = new ByteArrayOutputStream();
         try (var output = BrotliOutputStream.builder().outputStream(destination).build()) {
@@ -321,6 +346,28 @@ public class BrotliBenchmark {
                 if (!Arrays.equals(decompress(encoded[i]), expected)) {
                     throw new IllegalStateException("Dictionary fixture failed at index " + i);
                 }
+            }
+        }
+    }
+
+    /**
+     * A single entity with default and nondefault distance alphabets across 64 compressed metablocks.
+     */
+    @State(Scope.Thread)
+    public static class DistanceHeaderPayload {
+        private byte[] encoded;
+
+        /**
+         * Verify the complete external fixture outside timed operations.
+         *
+         * @throws IOException if decoding fails
+         */
+        @Setup(Level.Trial)
+        public void prepare() throws IOException {
+            encoded = HexFormat.of().parseHex(DISTANCE_HEADER_HEX);
+            byte[] expected = DISTANCE_HEADER_TEXT.getBytes(StandardCharsets.US_ASCII);
+            if (!Arrays.equals(decompress(encoded), expected)) {
+                throw new IllegalStateException("Distance-header fixture failed");
             }
         }
     }

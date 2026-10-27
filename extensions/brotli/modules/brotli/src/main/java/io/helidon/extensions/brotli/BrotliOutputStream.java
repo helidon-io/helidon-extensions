@@ -32,7 +32,7 @@ import io.helidon.builder.api.RuntimeType;
 public final class BrotliOutputStream extends OutputStream implements RuntimeType.Api<BrotliOutputStreamConfig> {
     private final BrotliOutputStreamConfig config;
     private final Encoder encoder;
-    private final Buffer input;
+    private final ByteInput input;
 
     private boolean closed;
 
@@ -49,7 +49,7 @@ public final class BrotliOutputStream extends OutputStream implements RuntimeTyp
             throw new IllegalArgumentException("Input cache size must be at least 4");
         }
         encoder = new Encoder(config);
-        input = new Buffer(config.cacheInputSize());
+        input = new ByteInput(config.cacheInputSize());
     }
 
     /**
@@ -89,7 +89,7 @@ public final class BrotliOutputStream extends OutputStream implements RuntimeTyp
     @Override
     public void write(int value) throws IOException {
         ensureOpen();
-        if (input.bitIx() == input.maxBitIx()) {
+        if (input.size() == input.limit()) {
             flush();
         }
         input.writeByte(value & 0xFF);
@@ -99,8 +99,14 @@ public final class BrotliOutputStream extends OutputStream implements RuntimeTyp
     public void write(byte[] buffer, int offset, int length) throws IOException {
         Objects.checkFromIndexSize(offset, length, buffer.length);
         ensureOpen();
-        for (int i = 0; i < length; i++) {
-            write(buffer[offset + i]);
+        while (length > 0) {
+            if (input.size() == input.limit()) {
+                flush();
+            }
+            int count = Math.min(length, input.limit() - input.size());
+            input.write(buffer, offset, count);
+            offset += count;
+            length -= count;
         }
     }
 
@@ -108,10 +114,9 @@ public final class BrotliOutputStream extends OutputStream implements RuntimeTyp
     public void flush() throws IOException {
         ensureOpen();
         try {
-            if (input.byteIx() > 0) {
-                int inputBytes = input.byteIx();
+            if (input.size() > 0) {
                 encoder.compress(input);
-                input.clearWrittenBytes(inputBytes);
+                input.clear();
             }
             config.outputStream().flush();
         } catch (UncheckedIOException e) {

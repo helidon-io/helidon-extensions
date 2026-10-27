@@ -20,8 +20,7 @@
 */
 package io.helidon.extensions.brotli;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Arrays;
 
 import static io.helidon.extensions.brotli.Utils.convertBitDepthsToSymbols;
 
@@ -33,18 +32,28 @@ class HuffmanTree {
     private static final int REPEAT_ZERO_CODE_LENGTH = 17;
     private static final int CODE_LENGTH_CODES = 18;
 
-    private final List<HuffmanNode> nodes;
+    private static final int[] STORAGE_ORDER = {1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    private static final int[] BIT_LENGTH_SYMBOLS = {0, 7, 3, 2, 1, 15};
+    private static final int[] BIT_LENGTH_DEPTHS = {2, 4, 3, 2, 2, 4};
+    private static final long[] EMPTY_COUNTS = new long[0];
+    private static final int[] EMPTY_CHILDREN = new int[0];
+
+    private final int maximumSize;
+    private final int[] symbols = new int[4];
+
+    private long[] counts = EMPTY_COUNTS;
+    private int[] leftChildren = EMPTY_CHILDREN;
+    private int[] rightChildren = EMPTY_CHILDREN;
+    private int[] stack;
+    private HuffmanWorkspace workspace;
 
     HuffmanTree(int size) {
-        nodes = new ArrayList<>(size);
-        for (int i = 0; i < size; i++) {
-            nodes.add(new HuffmanNode());
-        }
+        maximumSize = size;
     }
 
-    static void buildAndStoreHuffmanTree(Buffer storage, int[] histogram, int total, Buffer depths, Buffer bits) {
+    void buildAndStoreHuffmanTree(BitBuffer storage, int[] histogram, int total, Buffer depths, Buffer bits) {
         int count = 0;
-        int[] symbols = new int[4];
+        Arrays.fill(symbols, 0);
         int length = 0;
 
         while (total != 0) {
@@ -65,68 +74,66 @@ class HuffmanTree {
             return;
         }
 
+        // A new metablock alphabet must not inherit bit depths from the previous prefix code.
+        for (int i = 0; i < length; i++) {
+            depths.set(i, 0);
+        }
         buildHuffmanTree(length, histogram, depths);
         convertBitDepthsToSymbols(depths, length, bits, 0);
         storeHuffmanTree(count, length, depths, storage, symbols);
     }
 
     void createHuffmanTree(int[] data, int dataIx, int length, int treeLimit, Buffer depth, int depthIx) {
-        int n;
-        int j;
-        int i;
-        int k;
+        ensureCapacity(2 * length + 1);
         for (int countLimit = 1; ; countLimit *= 2) {
-            n = 0;
-            for (i = length - 1; i >= 0; i--) {
+            int n = 0;
+            for (int i = length - 1; i >= 0; i--) {
                 if (data[dataIx + i] != 0) {
-                    int count = Math.max(data[dataIx + i], countLimit);
-                    this.initNode(n++, count, i);
+                    setNode(n++, Math.max(data[dataIx + i], countLimit), -1, i);
                 }
             }
             if (n == 1) {
-                depth.set(depthIx + this.node(0).indexRightOrValue(), 1);
+                depth.set(depthIx + rightChildren[0], 1);
                 break;
             }
-            this.sortNodes(n);
-            this.node(n, new Sentinel());
-            this.node(n + 1, new Sentinel());
-            i = 0;
-            j = n + 1;
-            for (k = n - 1; k != 0; k--) {
+            sortNodes(n);
+            setNode(n, Integer.MAX_VALUE, -1, -1);
+            setNode(n + 1, Integer.MAX_VALUE, -1, -1);
+            int i = 0;
+            int j = n + 1;
+            for (int k = n - 1; k != 0; k--) {
                 int left;
                 int right;
-                if (this.node(i).totalCount() <= this.node(j).totalCount()) {
-                    left = i;
-                    ++i;
+                if (counts[i] <= counts[j]) {
+                    left = i++;
                 } else {
-                    left = j;
-                    ++j;
+                    left = j++;
                 }
-                if (this.node(i).totalCount() <= this.node(j).totalCount()) {
-                    right = i;
-                    ++i;
+                if (counts[i] <= counts[j]) {
+                    right = i++;
                 } else {
-                    right = j;
-                    ++j;
+                    right = j++;
                 }
                 int jEnd = 2 * n - k;
-                this.node(jEnd).totalCount(this.node(left).totalCount() + this.node(right).totalCount());
-                this.node(jEnd).indexLeft(left);
-                this.node(jEnd).indexRightOrValue(right);
-                this.node(jEnd + 1, new Sentinel());
+                setNode(jEnd, counts[left] + counts[right], left, right);
+                setNode(jEnd + 1, Integer.MAX_VALUE, -1, -1);
             }
-            if (this.setDepth((2 * n - 1), depth, treeLimit, depthIx)) {
+            if (setDepth(2 * n - 1, depth, treeLimit, depthIx)) {
                 break;
             }
         }
     }
 
-    void brotliStoreHuffmanTree(Buffer depths, int alphabetSize, int index, Buffer storage) {
-        int[] huffmanTreeHistogram = new int[CODE_LENGTH_CODES];
-        Buffer huffmanTreeExtraBits = new Buffer(NUM_COMMAND_SYMBOLS);
-        Buffer huffmanTree = new Buffer(NUM_COMMAND_SYMBOLS);
-        Buffer codeLengthBitDepth = new Buffer(CODE_LENGTH_CODES);
-        Buffer codeLengthBitDepthSymbols = new Buffer(CODE_LENGTH_CODES);
+    void brotliStoreHuffmanTree(Buffer depths, int alphabetSize, int index, BitBuffer storage) {
+        if (workspace == null) {
+            workspace = new HuffmanWorkspace();
+        }
+        workspace.clear();
+        int[] huffmanTreeHistogram = workspace.histogram;
+        Buffer huffmanTreeExtraBits = workspace.extraBits;
+        Buffer huffmanTree = workspace.tree;
+        Buffer codeLengthBitDepth = workspace.depths;
+        Buffer codeLengthBitDepthSymbols = workspace.bits;
         int i;
         int numCodes = 0;
         int code = 0;
@@ -165,7 +172,7 @@ class HuffmanTree {
 
     }
 
-    private static void storeHuffmanTree(int count, int length, Buffer depths, Buffer storage, int[] symbols) {
+    private static void storeHuffmanTree(int count, int length, Buffer depths, BitBuffer storage, int[] symbols) {
         if (count <= 4) {
             int i;
             storage.writeBit(2, 1);
@@ -226,50 +233,38 @@ class HuffmanTree {
         }
     }
 
-    private static void buildHuffmanTree(int length, int[] histogram, Buffer depths) {
-        int maxTreeSize = 2 * length + 1;
-        HuffmanTree tree = new HuffmanTree(maxTreeSize);
-
+    private void buildHuffmanTree(int length, int[] histogram, Buffer depths) {
+        ensureCapacity(2 * length + 1);
         for (int countLimit = 1; ; countLimit *= 2) {
             int nodeIndex = 0;
-            for (int l = length; l != 0;) {
-                --l;
-                if (histogram[l] != 0) {
-                    tree.node(nodeIndex).initNode(Math.max(histogram[l], countLimit), l);
-                    ++nodeIndex;
+            for (int symbol = length - 1; symbol >= 0; symbol--) {
+                if (histogram[symbol] != 0) {
+                    setNode(nodeIndex++, Math.max(histogram[symbol], countLimit), -1, symbol);
                 }
             }
-
             int n = nodeIndex;
             int i = 0;
             int j = n + 1;
-            tree.sortNodes(n);
-            tree.node(nodeIndex++, new Sentinel());
-            tree.node(nodeIndex++, new Sentinel());
-            for (int k = n - 1; k > 0; --k) {
+            sortNodes(n);
+            setNode(nodeIndex++, Integer.MAX_VALUE, -1, -1);
+            setNode(nodeIndex++, Integer.MAX_VALUE, -1, -1);
+            for (int k = n - 1; k > 0; k--) {
                 int left;
                 int right;
-                if (tree.node(i).totalCount() <= tree.node(j).totalCount()) {
-                    left = i;
-                    ++i;
+                if (counts[i] <= counts[j]) {
+                    left = i++;
                 } else {
-                    left = j;
-                    ++j;
+                    left = j++;
                 }
-                if (tree.node(i).totalCount() <= tree.node(j).totalCount()) {
-                    right = i;
-                    ++i;
+                if (counts[i] <= counts[j]) {
+                    right = i++;
                 } else {
-                    right = j;
-                    ++j;
+                    right = j++;
                 }
-                tree.node(nodeIndex - 1).totalCount(tree.node(left).totalCount() + tree.node(right).totalCount());
-                tree.node(nodeIndex - 1).indexLeft(left);
-                tree.node(nodeIndex - 1).indexRightOrValue(right);
-                tree.node(nodeIndex++, new Sentinel());
+                setNode(nodeIndex - 1, counts[left] + counts[right], left, right);
+                setNode(nodeIndex++, Integer.MAX_VALUE, -1, -1);
             }
-
-            if (tree.setDepth(2 * n - 1, depths, 14, 0)) {
+            if (setDepth(2 * n - 1, depths, 14, 0)) {
                 break;
             }
         }
@@ -281,31 +276,28 @@ class HuffmanTree {
         array[j] = temp;
     }
 
-    private void storeHuffmanTreeOfHuffmanTreeToBitMask(int numCodes, Buffer codeLengthBitdepth, Buffer storage) {
-        int[] kStorageOrder = {1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-        int[] kHuffmanBitLengthHuffmanCodeSymbols = {0, 7, 3, 2, 1, 15};
-        int[] kHuffmanBitLengthHuffmanCodeBitLengths = {2, 4, 3, 2, 2, 4};
+    private void storeHuffmanTreeOfHuffmanTreeToBitMask(int numCodes, Buffer codeLengthBitdepth, BitBuffer storage) {
         int skipSome = 0;
         int codesToStore = CODE_LENGTH_CODES;
 
         if (numCodes > 1) {
             for (; codesToStore > 0; --codesToStore) {
-                if (codeLengthBitdepth.get(kStorageOrder[codesToStore - 1]) != 0) {
+                if (codeLengthBitdepth.get(STORAGE_ORDER[codesToStore - 1]) != 0) {
                     break;
                 }
             }
         }
-        if (codeLengthBitdepth.get(kStorageOrder[0]) == 0
-                && codeLengthBitdepth.get(kStorageOrder[1]) == 0) {
+        if (codeLengthBitdepth.get(STORAGE_ORDER[0]) == 0
+                && codeLengthBitdepth.get(STORAGE_ORDER[1]) == 0) {
             skipSome = 2;
-            if (codeLengthBitdepth.get(kStorageOrder[2]) == 0) {
+            if (codeLengthBitdepth.get(STORAGE_ORDER[2]) == 0) {
                 skipSome = 3;
             }
         }
         storage.writeBit(2, skipSome);
         for (int i = skipSome; i < codesToStore; ++i) {
-            int l = codeLengthBitdepth.get(kStorageOrder[i]);
-            storage.writeBit(kHuffmanBitLengthHuffmanCodeBitLengths[l], kHuffmanBitLengthHuffmanCodeSymbols[l]);
+            int l = codeLengthBitdepth.get(STORAGE_ORDER[i]);
+            storage.writeBit(BIT_LENGTH_DEPTHS[l], BIT_LENGTH_SYMBOLS[l]);
         }
     }
 
@@ -427,81 +419,112 @@ class HuffmanTree {
         }
     }
 
-    private void initNode(int index, long size, int right) {
-        nodes.get(index).initNode(size, right);
+    private void setNode(int index, long count, int left, int right) {
+        counts[index] = count;
+        leftChildren[index] = left;
+        rightChildren[index] = right;
     }
 
-    private HuffmanNode node(int index) {
-        return nodes.get(index);
-    }
-
-    private void node(int index, HuffmanNode node) {
-        nodes.set(index, node);
+    private void copyNode(int source, int destination) {
+        counts[destination] = counts[source];
+        leftChildren[destination] = leftChildren[source];
+        rightChildren[destination] = rightChildren[source];
     }
 
     private void sortNodes(int n) {
         if (n < 13) {
-            for (int i = 1; i < n; ++i) {
-                HuffmanNode node = nodes.get(i);
-                int k = i;
-                int j = i - 1;
-                while (compareNodes(node, nodes.get(j))) {
-                    nodes.set(k, nodes.get(j));
-                    k = j;
-                    if (j-- == 0) {
+            for (int i = 1; i < n; i++) {
+                long count = counts[i];
+                int left = leftChildren[i];
+                int right = rightChildren[i];
+                int destination = i;
+                int source = i - 1;
+                while (precedes(count, right, source)) {
+                    copyNode(source, destination);
+                    destination = source;
+                    if (source-- == 0) {
                         break;
                     }
                 }
-                nodes.set(k, node);
+                setNode(destination, count, left, right);
             }
         } else {
             int g = n < 57 ? 2 : 0;
-            for (; g < 6; ++g) {
+            for (; g < Context.BROTLI_SHELL_GAPS.length; g++) {
                 int gap = Context.BROTLI_SHELL_GAPS[g];
-                for (int i = gap; i < n; ++i) {
-                    int j = i;
-                    HuffmanNode node = nodes.get(i);
-                    for (; j >= gap && compareNodes(node, nodes.get(j - gap)); j -= gap) {
-                        nodes.set(j, nodes.get(j - gap));
+                for (int i = gap; i < n; i++) {
+                    long count = counts[i];
+                    int left = leftChildren[i];
+                    int right = rightChildren[i];
+                    int destination = i;
+                    for (; destination >= gap && precedes(count, right, destination - gap); destination -= gap) {
+                        copyNode(destination - gap, destination);
                     }
-                    nodes.set(j, node);
+                    setNode(destination, count, left, right);
                 }
             }
         }
     }
 
-    private boolean setDepth(int p, Buffer depth, int maxDepth, int index) {
-        int[] stack = new int[16];
+    private boolean setDepth(int node, Buffer depths, int maxDepth, int offset) {
+        if (stack == null) {
+            stack = new int[16];
+        }
+        Arrays.fill(stack, -1);
         int level = 0;
-        stack[0] = -1;
-
         while (true) {
-            if (nodes.get(p).indexLeft() >= 0) {
+            if (leftChildren[node] >= 0) {
                 level++;
                 if (level > maxDepth) {
                     return false;
                 }
-                stack[level] = nodes.get(p).indexRightOrValue();
-                p = nodes.get(p).indexLeft();
+                stack[level] = rightChildren[node];
+                node = leftChildren[node];
                 continue;
-            } else {
-                depth.set(index + nodes.get(p).indexRightOrValue(), level);
             }
+            depths.set(offset + rightChildren[node], level);
             while (level >= 0 && stack[level] == -1) {
                 level--;
             }
             if (level < 0) {
                 return true;
             }
-            p = stack[level];
+            node = stack[level];
             stack[level] = -1;
         }
     }
 
-    private boolean compareNodes(HuffmanNode first, HuffmanNode second) {
-        if (first.totalCount() != second.totalCount()) {
-            return first.totalCount() < second.totalCount();
+    private boolean precedes(long count, int value, int index) {
+        return count < counts[index] || (count == counts[index] && value > rightChildren[index]);
+    }
+
+    private void ensureCapacity(int required) {
+        if (required > maximumSize) {
+            throw new BrotliException("Huffman tree exceeds its alphabet size");
         }
-        return first.indexRightOrValue() > second.indexRightOrValue();
+        if (required > counts.length) {
+            int oldSize = counts.length;
+            int size = Math.min(maximumSize, Math.max(required, oldSize << 1));
+            counts = Arrays.copyOf(counts, size);
+            leftChildren = Arrays.copyOf(leftChildren, size);
+            rightChildren = Arrays.copyOf(rightChildren, size);
+            Arrays.fill(leftChildren, oldSize, size, -1);
+        }
+    }
+
+    private static final class HuffmanWorkspace {
+        private final int[] histogram = new int[CODE_LENGTH_CODES];
+        private final Buffer extraBits = new Buffer(NUM_COMMAND_SYMBOLS);
+        private final Buffer tree = new Buffer(NUM_COMMAND_SYMBOLS);
+        private final Buffer depths = new Buffer(CODE_LENGTH_CODES);
+        private final Buffer bits = new Buffer(CODE_LENGTH_CODES);
+
+        private void clear() {
+            Arrays.fill(histogram, 0);
+            extraBits.clear();
+            tree.clear();
+            depths.clear();
+            bits.clear();
+        }
     }
 }
