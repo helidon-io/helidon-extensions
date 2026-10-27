@@ -41,7 +41,5 @@
 
     <modules>
         <module>http-media</module>
-        <module>builder-codegen</module>
-        <module>compatibility</module>
     </modules>
 </project>

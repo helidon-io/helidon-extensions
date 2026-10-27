@@ -44,11 +44,6 @@
                 <artifactId>helidon-extensions-jackson-jackson-3-http-media</artifactId>
                 <version>${jackson.jackson-3.extension.version}</version>
             </dependency>
-            <dependency>
-                <groupId>io.helidon.extensions.jackson.jackson-3</groupId>
-                <artifactId>helidon-extensions-jackson-jackson-3-builder-codegen</artifactId>
-                <version>${jackson.jackson-3.extension.version}</version>
-            </dependency>
         </dependencies>
     </dependencyManagement>
 </project>

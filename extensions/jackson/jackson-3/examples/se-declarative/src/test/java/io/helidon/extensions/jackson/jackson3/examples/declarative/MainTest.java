@@ -35,8 +35,8 @@ class MainTest {
     }
 
     @Test
-    void generatedModelRoundTrip() {
-        var greeting = Greeting.builder().setMessage("Hello Jackson 3").build();
+    void modelRoundTrip() {
+        var greeting = new Greeting("Hello Jackson 3");
         var response = client.post("/echo")
                 .contentType(MediaTypes.APPLICATION_JSON)
                 .accept(MediaTypes.APPLICATION_JSON)

@@ -1,12 +1,12 @@
 # Jackson 2
 
-Jackson 2 JSON entity support and builder annotation generation for Helidon SE 28 (JDK 27).
+Jackson 2 JSON entity support for Helidon SE 28 (JDK 27).
 The extension starts at `1.0.0-SNAPSHOT` and is versioned independently of Helidon and the other Jackson extension.
 
 ## Dependencies
 
 Import this BOM in addition to your Helidon dependency management. It manages only the extension's
-HTTP media and builder-codegen modules; Jackson dependencies remain managed by Helidon or a separately
+HTTP media module; Jackson dependencies remain managed by Helidon or a separately
 imported upstream Jackson BOM. The extension uses Jackson `2.21.8`.
 
 ```xml
@@ -33,25 +33,21 @@ imported upstream Jackson BOM. The extension uses Jackson `2.21.8`.
 ```
 
 The runtime supports server request/response entities and WebClient request/response entities.
-The `builder-codegen` artifact is a compile-time processor extension; keep it on the annotation processor path.
-Neither extension module requires the deprecated core Jackson modules.
+The HTTP media module does not require the deprecated core Jackson integration.
 
 ## Migration map
 
 | Surface | Core Jackson 2 | This extension |
 | --- | --- | --- |
 | Runtime Maven coordinates | `io.helidon.http.media:helidon-http-media-jackson` | `io.helidon.extensions.jackson.jackson-2:helidon-extensions-jackson-jackson-2-http-media` |
-| Processor Maven coordinates | `io.helidon.builder:helidon-builder-codegen-jackson` | `io.helidon.extensions.jackson.jackson-2:helidon-extensions-jackson-jackson-2-builder-codegen` |
 | Version alignment | Helidon BOM | `io.helidon.extensions.jackson.jackson-2:helidon-extensions-jackson-jackson-2-bom` |
 | Runtime imports | `io.helidon.http.media.jackson.*` | `io.helidon.extensions.jackson.jackson2.http.media.*` |
-| Processor package | `io.helidon.builder.codegen.jackson` | `io.helidon.extensions.jackson.jackson2.builder.codegen` |
 | Runtime JPMS module | `io.helidon.http.media.jackson` | `io.helidon.extensions.jackson.jackson2.http.media` |
-| Processor JPMS module | `io.helidon.builder.codegen.jackson` | `io.helidon.extensions.jackson.jackson2.builder.codegen` |
 | Databind imports | `com.fasterxml.jackson.databind.*` | `com.fasterxml.jackson.databind.*` |
 | Common annotation imports | `com.fasterxml.jackson.annotation.*` | `com.fasterxml.jackson.annotation.*` |
 | Provider/configuration type | `jackson` | `jackson-2` |
 
-The public application API names map as follows, including generated builder types:
+The public HTTP media API names map as follows:
 
 | Core API | Extension API |
 | --- | --- |
@@ -62,13 +58,10 @@ The public application API names map as follows, including generated builder typ
 | `io.helidon.http.media.jackson.JacksonRuntimeException` | `io.helidon.extensions.jackson.jackson2.http.media.JacksonRuntimeException` |
 
 Update the corresponding `requires` declaration for a modular application.
-Do not add the processor module to your application's runtime module descriptor.
+Jackson 2 entity classes retain their Jackson annotations when the HTTP media dependency is replaced.
 
-Jackson 2 entity classes do not need to change when only the runtime dependency is replaced. Existing source models,
-compiled models, and models generated using the core Jackson 2 processor remain supported by the extension runtime.
-Old and newly generated models can share that runtime without the deprecated core runtime jar.
-When rebuilding blueprint input, replace the old processor path with the extension processor; never run both
-Jackson 2 processors over the same blueprint input.
+The former Jackson builder-codegen module has no replacement in these extensions.
+Use ordinary Java records or beans as entity models.
 
 ## Media-support selection
 
@@ -117,49 +110,20 @@ JDK 8 optional support, and Java time support. Boolean feature configuration use
 A custom `com.fasterxml.jackson.databind.ObjectMapper` can be supplied through `JacksonSupport.create(mapper)`.
 Configure the mapper before sharing it with server and client contexts.
 
-## Builder generation
-
-For named application modules, open model packages to `com.fasterxml.jackson.databind`
-so Jackson can access generated builder constructors. For an unchanged legacy module
-that only exports its model package, use `--add-opens <module>/<model-package>=com.fasterxml.jackson.databind`.
-This requires no source, descriptor, or binary rewrite; see the
-[legacy compatibility fixture](https://github.com/helidon-io/helidon-extensions/tree/main/extensions/jackson/jackson-2/tests/compatibility).
-
-Use a Helidon blueprint with Jackson databind extension annotations:
-
-```java
-import io.helidon.builder.api.Prototype;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
-
-@Prototype.Blueprint(beanStyle = true)
-@Prototype.Extension(JsonSerialize.class)
-@Prototype.Extension(JsonDeserialize.class)
-interface GreetingBlueprint {
-    @JsonProperty("message")
-    String getMessage();
-}
-```
-
-The generated `Greeting` type and builder carry the matching Jackson annotations.
-Add `io.helidon.extensions.jackson.jackson-2:helidon-extensions-jackson-jackson-2-builder-codegen:${jackson.jackson-2.extension.version}`
-to `maven-compiler-plugin`'s `annotationProcessorPaths` alongside
-`io.helidon.bundles:helidon-bundles-apt:${helidon.version}`.
-See the standalone example POMs for complete processor-path configuration.
-
 ## Examples and configuration reference
 
 - [Imperative example](https://github.com/helidon-io/helidon-extensions/tree/main/extensions/jackson/jackson-2/examples/se-imperative): explicit runtime registration and an echo handler.
 - [Declarative example](https://github.com/helidon-io/helidon-extensions/tree/main/extensions/jackson/jackson-2/examples/se-declarative): generated application binding and endpoint discovery.
 
-Both examples use generated Jackson 2 models and include typed client/server JSON round-trip checks.
+Both examples use ordinary Java entity models and include typed client/server JSON round-trip checks.
+See the generated [configuration reference](config/io.helidon.extensions.jackson.jackson2.http.media.JacksonSupport.md)
+and [manifest](config/manifest.md).
 Run `mvn generate-sources` from this docs directory after installing the extension runtime to regenerate
 Markdown configuration reference files under `config/` from its actual config metadata.
 
 ## Source provenance
 
-The initial HTTP media and builder-codegen implementation is derived from
+The initial HTTP media implementation and integration tests are derived from
 [Helidon core revision ffa7ebba4a39edbb757a10b8e41962f8a606cce5](https://github.com/helidon-io/helidon/tree/ffa7ebba4a39edbb757a10b8e41962f8a606cce5),
-respectively `http/media/jackson` and `builder/codegen-jackson`.
-The extension relocates the integration to its own namespace while preserving Jackson 2 model compatibility.
+respectively `http/media/jackson` and `http/tests/media/jackson`.
+The extension relocates the integration to its own namespace while preserving its Jackson 2 HTTP media behavior.

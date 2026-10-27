@@ -37,7 +37,6 @@
     </properties>
     <modules>
         <module>http-media</module>
-        <module>builder-codegen</module>
     </modules>
     <profiles>
         <profile>

@@ -100,11 +100,6 @@
                             <artifactId>helidon-bundles-apt</artifactId>
                             <version>${helidon.version}</version>
                         </path>
-                        <path>
-                            <groupId>io.helidon.extensions.jackson.jackson-2</groupId>
-                            <artifactId>helidon-extensions-jackson-jackson-2-builder-codegen</artifactId>
-                            <version>${jackson.jackson-2.extension.version}</version>
-                        </path>
                     </annotationProcessorPaths>
                 </configuration>
             </plugin>

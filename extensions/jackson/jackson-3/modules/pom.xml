@@ -29,6 +29,5 @@
     <packaging>pom</packaging>
     <modules>
         <module>http-media</module>
-        <module>builder-codegen</module>
     </modules>
 </project>
