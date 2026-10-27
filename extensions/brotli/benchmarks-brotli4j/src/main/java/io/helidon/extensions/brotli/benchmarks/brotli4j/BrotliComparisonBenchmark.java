@@ -32,6 +32,7 @@ import java.util.zip.GZIPOutputStream;
 
 import io.helidon.extensions.brotli.BrotliInputStream;
 import io.helidon.extensions.brotli.BrotliOutputStream;
+import io.helidon.extensions.brotli.BrotliOutputStreamConfig;
 
 import com.aayushatharva.brotli4j.Brotli4jLoader;
 import com.aayushatharva.brotli4j.decoder.Decoder;
@@ -189,12 +190,12 @@ public class BrotliComparisonBenchmark {
 
     private static byte[] encodeJava(byte[] data) throws IOException {
         var destination = new ByteArrayOutputStream();
-        try (var output = BrotliOutputStream.builder()
-                .outputStream(destination)
+        var config = BrotliOutputStreamConfig.builder()
                 .quality(0)
                 .window(18)
                 .cacheInputSize(BUFFER_SIZE)
-                .build()) {
+                .build();
+        try (var output = new BrotliOutputStream(destination, config)) {
             output.write(data);
         }
         return destination.toByteArray();
@@ -220,7 +221,7 @@ public class BrotliComparisonBenchmark {
     }
 
     private static byte[] decodeJava(byte[] encoded) throws IOException {
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
             return input.readAllBytes();
         }
     }

@@ -23,6 +23,7 @@ import java.util.function.Consumer;
 
 import io.helidon.builder.api.RuntimeType;
 import io.helidon.extensions.brotli.BrotliInputStream;
+import io.helidon.extensions.brotli.BrotliInputStreamConfig;
 import io.helidon.extensions.brotli.BrotliOutputStream;
 import io.helidon.http.Header;
 import io.helidon.http.HeaderNames;
@@ -114,11 +115,11 @@ public final class BrotliEncoding implements ContentEncoding, RuntimeType.Api<Br
 
     @Override
     public ContentDecoder decoder() {
-        return network -> BrotliInputStream.builder()
-                .inputStream(Objects.requireNonNull(network, "network"))
+        var decoderConfig = BrotliInputStreamConfig.builder()
                 .maxWindowBits(config.maxWindowBits())
                 .verifyEndOfInput(true)
                 .build();
+        return network -> new BrotliInputStream(Objects.requireNonNull(network, "network"), decoderConfig);
     }
 
     @Override
@@ -126,9 +127,7 @@ public final class BrotliEncoding implements ContentEncoding, RuntimeType.Api<Br
         return new ContentEncoder() {
             @Override
             public OutputStream apply(OutputStream network) {
-                return BrotliOutputStream.builder()
-                        .outputStream(Objects.requireNonNull(network, "network"))
-                        .build();
+                return new BrotliOutputStream(Objects.requireNonNull(network, "network"));
             }
 
             @Override

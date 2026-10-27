@@ -107,14 +107,12 @@ appropriate for the encoded entity.
 The stream types are in `io.helidon.extensions.brotli`.
 
 ```java
-try (var encoded = BrotliOutputStream.builder().outputStream(output).build()) {
+try (var encoded = new BrotliOutputStream(output)) {
     encoded.write(data);
 }
 
-try (var decoded = BrotliInputStream.builder()
-        .inputStream(input)
-        .verifyEndOfInput(true)
-        .build()) {
+var decoderConfig = BrotliInputStreamConfig.builder().verifyEndOfInput(true).build();
+try (var decoded = new BrotliInputStream(input, decoderConfig)) {
     int decodedLimit = 1_048_576; // Choose a limit for the application.
     byte[] data = decoded.readNBytes(decodedLimit + 1);
     if (data.length > decodedLimit) {
@@ -126,14 +124,19 @@ try (var decoded = BrotliInputStream.builder()
 Closing either wrapper closes its underlying stream. Close the output wrapper
 to finish the Brotli stream before consuming its compressed bytes.
 
+The one-argument constructors use `BrotliInputStream.DEFAULT_CONFIG` and
+`BrotliOutputStream.DEFAULT_CONFIG`. Configuration contains codec options, not
+the underlying stream, and can be reused for multiple wrappers.
+
 ### Resource limits
 
 Small Brotli inputs can expand into large entities. `BrotliInputStream` does not
 impose a decoded-byte limit; callers that materialize untrusted input should
-enforce one, as in the example above. The decoder may allocate up to a 16 MiB
-window from a compressed stream header before the body has been validated, so
-set `max-window-bits` when a smaller per-stream window is required and bound the
+enforce one, as in the example above. The decoder starts with 1 KiB of history
+and grows it as output is decoded, up to the configured window limit. Set
+`max-window-bits` when a smaller per-stream maximum is required, and bound the
 number of concurrent decoders for untrusted inputs.
+
 When the source contains exactly one Brotli entity, enable
 `verify-end-of-input` to require EOF and reject trailing bytes. HTTP
 `br` decoding enables this check. The standalone default allows a progressive
@@ -147,9 +150,9 @@ standalone streams likewise need an application-owned decoded-byte limit.
 
 ### Stream configuration
 
-Pass a Helidon `Config` node to the stream builder's `config(...)` method to set
-scalar options. Supply the underlying input/output stream and any shared
-dictionary chunks programmatically through the builder.
+Pass a Helidon `Config` node to the configuration builder's `config(...)` method
+to set scalar options. Supply the underlying stream to the constructor and any
+shared dictionary chunks through the input configuration builder.
 
 | Stream | Key | Default | Supported values |
 | --- | --- | --- | --- |
@@ -172,23 +175,20 @@ var config = Config.just(ConfigSources.create(Map.of(
         "decoder.max-window-bits", "22",
         "decoder.verify-end-of-input", "true")));
 
-try (var encoded = BrotliOutputStream.builder()
-        .outputStream(output)
-        .config(config.get("encoder"))
-        .build()) {
+var encoderConfig = BrotliOutputStreamConfig.builder().config(config.get("encoder")).build();
+try (var encoded = new BrotliOutputStream(output, encoderConfig)) {
     encoded.write(data);
 }
 
-try (var decoded = BrotliInputStream.builder()
-        .inputStream(input)
-        .config(config.get("decoder"))
-        .build()) {
+var decoderConfig = BrotliInputStreamConfig.builder().config(config.get("decoder")).build();
+try (var decoded = new BrotliInputStream(input, decoderConfig)) {
     byte[] restored = decoded.readAllBytes();
 }
 ```
 
-The `encoder` and `decoder` node names are application choices. Each builder
-reads the keys directly from the supplied node and rejects unsupported values.
+The `encoder` and `decoder` node names are application choices. Each configuration builder
+reads the keys directly from the supplied node; the stream constructors reject unsupported values.
+
 The maximum input window is checked from the compressed header before its ring
 buffer is allocated. The default accepts the full standard Brotli window range.
 
@@ -201,7 +201,7 @@ at other compression qualities.
 ## Source and licenses
 
 The codec adapts Thibault Vallin's Java implementation to the
-`io.helidon.extensions.brotli` package, with Helidon builders and stream contract
+`io.helidon.extensions.brotli` package, with Helidon configuration and stream contract
 adaptations.
 
 Oracle source is licensed under Apache License 2.0. Portions derived from

@@ -117,21 +117,19 @@ class BrotliDictionaryTest {
     @DisplayName("RFC 7932 section 9.2: attached dictionary copy cannot exceed the declared metablock")
     void rejectsAttachedDictionaryCopyBeyondMetablockBeforeReturningBytes() throws IOException {
         byte[] encoded = dictionaryReference(new byte[0], 4, 8, 1);
-        try (var input = BrotliInputStream.builder()
-                .inputStream(new ByteArrayInputStream(encoded))
-                .dictionaryChunks(List.of(DICTIONARY))
-                .build()) {
+        var inputConfig = BrotliInputStreamConfig.builder().dictionaryChunks(List.of(DICTIONARY)).build();
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded), inputConfig)) {
             assertThrows(IOException.class, () -> input.read(new byte[1]));
         }
     }
 
     private static byte[] decode(byte[] encoded, List<byte[]> chunks, int cacheSize, int readSize) throws IOException {
         var destination = new ByteArrayOutputStream();
-        try (var input = BrotliInputStream.builder()
-                .inputStream(new ByteArrayInputStream(encoded))
+        var inputConfig = BrotliInputStreamConfig.builder()
                 .dictionaryChunks(chunks)
                 .cacheBufferSize(cacheSize)
-                .build()) {
+                .build();
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded), inputConfig)) {
             if (readSize == 1) {
                 for (int value; (value = input.read()) != -1;) {
                     destination.write(value);

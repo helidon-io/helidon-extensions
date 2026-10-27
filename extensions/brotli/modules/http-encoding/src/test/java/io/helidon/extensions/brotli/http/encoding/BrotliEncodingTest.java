@@ -28,6 +28,7 @@ import java.util.Set;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 import io.helidon.extensions.brotli.BrotliOutputStream;
+import io.helidon.extensions.brotli.BrotliOutputStreamConfig;
 import io.helidon.http.HeaderNames;
 import io.helidon.http.WritableHeaders;
 import io.helidon.http.encoding.ContentEncodingContext;
@@ -70,7 +71,7 @@ class BrotliEncodingTest {
         var encoding = BrotliEncoding.builder().config(config).build();
         byte[] entity = "Brotli with a small window".getBytes(StandardCharsets.UTF_8);
         var compressed = new ByteArrayOutputStream();
-        try (var output = BrotliOutputStream.builder().outputStream(compressed).window(10).build()) {
+        try (var output = new BrotliOutputStream(compressed, BrotliOutputStreamConfig.builder().window(10).build())) {
             output.write(entity);
         }
 
@@ -89,7 +90,7 @@ class BrotliEncodingTest {
     void defaultDecoderAcceptsMaximumWindow() throws IOException {
         byte[] entity = "Brotli with a maximum window".getBytes(StandardCharsets.UTF_8);
         var compressed = new ByteArrayOutputStream();
-        try (var output = BrotliOutputStream.builder().outputStream(compressed).window(24).build()) {
+        try (var output = new BrotliOutputStream(compressed, BrotliOutputStreamConfig.builder().window(24).build())) {
             output.write(entity);
         }
 

@@ -16,8 +16,6 @@
 
 package io.helidon.extensions.brotli;
 
-import java.io.OutputStream;
-
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
 
@@ -26,17 +24,10 @@ import io.helidon.builder.api.Prototype;
  */
 @Prototype.Blueprint
 @Prototype.Configured(value = "brotli-output-stream", root = false)
-interface BrotliOutputStreamConfigBlueprint extends Prototype.Factory<BrotliOutputStream> {
-    /**
-     * Destination for compressed data. Closing the encoder closes this stream.
-     *
-     * @return compressed output
-     */
-    OutputStream outputStream();
-
+interface BrotliOutputStreamConfigBlueprint {
     /**
      * Compression quality. Only quality {@code 0} is currently implemented.
-     * Unsupported values fail when the stream is built.
+     * Unsupported values fail when a stream is constructed.
      *
      * @return compression quality
      */

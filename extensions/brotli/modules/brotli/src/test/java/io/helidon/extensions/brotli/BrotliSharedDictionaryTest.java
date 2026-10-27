@@ -98,7 +98,7 @@ class BrotliSharedDictionaryTest {
     void rejectsStaticDictionaryCopyBeyondMetablockBeforeReturningBytes() throws IOException {
         // The first fixture decodes "time"; its metablock length is changed from four bytes to one.
         byte[] encoded = HexFormat.of().parseHex("020000004450081210");
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
             assertThrows(IOException.class, () -> input.read(new byte[1]));
         }
     }
@@ -106,10 +106,9 @@ class BrotliSharedDictionaryTest {
     private static void assertDecoded(Fixture fixture, int cacheSize, int readSize) throws IOException {
         String description = fixture.name() + ", cache size " + cacheSize + ", read size " + readSize;
         var destination = new ByteArrayOutputStream();
-        try (var input = BrotliInputStream.builder()
-                .inputStream(new ByteArrayInputStream(HexFormat.of().parseHex(fixture.encoded())))
-                .cacheBufferSize(cacheSize)
-                .build()) {
+        byte[] encoded = HexFormat.of().parseHex(fixture.encoded());
+        var inputConfig = BrotliInputStreamConfig.builder().cacheBufferSize(cacheSize).build();
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded), inputConfig)) {
             if (readSize == 1) {
                 for (int value; (value = input.read()) != -1;) {
                     destination.write(value);

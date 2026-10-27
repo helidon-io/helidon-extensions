@@ -40,7 +40,7 @@ class BrotliStreamingTest {
     void readsCompleteSmallStreamWithoutWaitingForSourceEof() throws IOException {
         for (int chunkSize : new int[] {1, 2, Integer.MAX_VALUE}) {
             var source = new ReleasedPrefixInputStream(COMPLETE_STREAM, COMPLETE_STREAM.length, chunkSize);
-            try (var input = BrotliInputStream.builder().inputStream(source).build()) {
+            try (var input = new BrotliInputStream(source)) {
                 assertThat("source chunk size " + chunkSize, input.readNBytes(DATA.length), is(DATA));
                 assertThat(input.read(), is(-1));
             }
@@ -51,7 +51,7 @@ class BrotliStreamingTest {
     void returnsUncompressedBlockBeforeReadingNextHeader() throws IOException {
         byte[] encoded = uncompressedStream(DATA);
         var source = new ReleasedPrefixInputStream(encoded, encoded.length - 1, Integer.MAX_VALUE);
-        try (var input = BrotliInputStream.builder().inputStream(source).build()) {
+        try (var input = new BrotliInputStream(source)) {
             byte[] destination = new byte[64];
             int count = input.read(destination);
             assertThat(count, is(DATA.length));
@@ -66,7 +66,7 @@ class BrotliStreamingTest {
     void returnsBufferedBytesBeforeRequestingMoreInput() throws IOException {
         byte[] encoded = uncompressedStream(DATA);
         var source = new ReleasedPrefixInputStream(encoded, encoded.length - 1, Integer.MAX_VALUE);
-        try (var input = BrotliInputStream.builder().inputStream(source).build()) {
+        try (var input = new BrotliInputStream(source)) {
             assertThat(input.read(), is((int) DATA[0]));
 
             byte[] destination = new byte[64];
@@ -82,7 +82,7 @@ class BrotliStreamingTest {
     @Test
     void returnsCompressedLiteralBeforeReadingFollowingMetadata() throws IOException {
         var source = new ReleasedPrefixInputStream(COMPRESSED_WITH_METADATA, 13, 1);
-        try (var input = BrotliInputStream.builder().inputStream(source).build()) {
+        try (var input = new BrotliInputStream(source)) {
             byte[] destination = new byte[64];
             assertThat(input.read(destination), is(1));
             assertThat(destination[0], is((byte) 'C'));
@@ -97,7 +97,7 @@ class BrotliStreamingTest {
         byte[] encoded = uncompressedStream(DATA);
         int headerLength = encoded.length - DATA.length - 1;
         var source = new ReleasedPrefixInputStream(encoded, headerLength + 3, Integer.MAX_VALUE);
-        try (var input = BrotliInputStream.builder().inputStream(source).cacheBufferSize(1).build()) {
+        try (var input = new BrotliInputStream(source, BrotliInputStreamConfig.builder().cacheBufferSize(1).build())) {
             assertThat(input.readNBytes(3), is(Arrays.copyOf(DATA, 3)));
 
             source.releaseThrough(encoded.length);
@@ -115,7 +115,7 @@ class BrotliStreamingTest {
         byte[] encoded = uncompressedStream(expected);
         int headerLength = encoded.length - expected.length - 1;
         var source = new ReleasedPrefixInputStream(encoded, headerLength, 7);
-        try (var input = BrotliInputStream.builder().inputStream(source).build()) {
+        try (var input = new BrotliInputStream(source)) {
             for (int offset = 0; offset < expected.length;) {
                 int length = Math.min(257, expected.length - offset);
                 source.releaseThrough(headerLength + offset + length);
@@ -133,7 +133,7 @@ class BrotliStreamingTest {
         byte[] encoded = uncompressedStream(DATA);
         int headerLength = encoded.length - DATA.length - 1;
         var source = new ReleasedPrefixInputStream(encoded, headerLength + 3, Integer.MAX_VALUE);
-        try (var input = BrotliInputStream.builder().inputStream(source).build()) {
+        try (var input = new BrotliInputStream(source)) {
             assertThat(input.readNBytes(3), is(Arrays.copyOf(DATA, 3)));
 
             source.finish();
@@ -146,7 +146,7 @@ class BrotliStreamingTest {
         byte[] encoded = uncompressedStream(DATA);
         encoded[encoded.length - 1] |= (byte) 0x80;
         var source = new ReleasedPrefixInputStream(encoded, encoded.length - 1, Integer.MAX_VALUE);
-        try (var input = BrotliInputStream.builder().inputStream(source).build()) {
+        try (var input = new BrotliInputStream(source)) {
             assertThat(input.readNBytes(DATA.length), is(DATA));
 
             source.releaseThrough(encoded.length);

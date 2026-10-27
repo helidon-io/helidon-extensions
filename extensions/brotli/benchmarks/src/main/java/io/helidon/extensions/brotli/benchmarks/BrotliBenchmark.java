@@ -122,7 +122,7 @@ public class BrotliBenchmark {
     @Benchmark
     public long decodeByteByByte(Payload state) throws IOException {
         long checksum = 0;
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(state.encoded)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(state.encoded))) {
             for (int value; (value = input.read()) != -1;) {
                 checksum += value;
             }
@@ -172,7 +172,7 @@ public class BrotliBenchmark {
      */
     @Benchmark
     public void inputWrapper(Blackhole blackhole) throws IOException {
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(TINY_ENCODED)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(TINY_ENCODED))) {
             blackhole.consume(input);
         }
     }
@@ -186,7 +186,7 @@ public class BrotliBenchmark {
     @Benchmark
     public byte[] outputWrapper() throws IOException {
         var destination = new ByteArrayOutputStream();
-        try (var output = BrotliOutputStream.builder().outputStream(destination).build()) {
+        try (var output = new BrotliOutputStream(destination)) {
             output.flush();
         }
         return destination.toByteArray();
@@ -200,7 +200,7 @@ public class BrotliBenchmark {
      */
     @Benchmark
     public int firstRead() throws IOException {
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(TINY_ENCODED)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(TINY_ENCODED))) {
             return input.read();
         }
     }
@@ -236,14 +236,14 @@ public class BrotliBenchmark {
 
     private static byte[] compress(byte[] data) throws IOException {
         var destination = new ByteArrayOutputStream();
-        try (var output = BrotliOutputStream.builder().outputStream(destination).build()) {
+        try (var output = new BrotliOutputStream(destination)) {
             output.write(data);
         }
         return destination.toByteArray();
     }
 
     private static byte[] decompress(byte[] encoded) throws IOException {
-        try (var input = BrotliInputStream.builder().inputStream(new ByteArrayInputStream(encoded)).build()) {
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
             return input.readAllBytes();
         }
     }
