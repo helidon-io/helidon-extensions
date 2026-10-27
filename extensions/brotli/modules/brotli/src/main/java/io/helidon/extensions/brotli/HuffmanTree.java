@@ -233,6 +233,12 @@ class HuffmanTree {
         }
     }
 
+    private static void swap(int[] array, int j, int i) {
+        int temp = array[i];
+        array[i] = array[j];
+        array[j] = temp;
+    }
+
     private void buildHuffmanTree(int length, int[] histogram, Buffer depths) {
         ensureCapacity(2 * length + 1);
         for (int countLimit = 1; ; countLimit *= 2) {
@@ -268,12 +274,6 @@ class HuffmanTree {
                 break;
             }
         }
-    }
-
-    private static void swap(int[] array, int j, int i) {
-        int temp = array[i];
-        array[i] = array[j];
-        array[j] = temp;
     }
 
     private void storeHuffmanTreeOfHuffmanTreeToBitMask(int numCodes, Buffer codeLengthBitdepth, BitBuffer storage) {

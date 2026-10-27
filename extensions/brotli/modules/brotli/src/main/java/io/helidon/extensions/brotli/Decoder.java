@@ -1444,16 +1444,6 @@ final class Decoder {
         return result + i;
     }
 
-    private static final class DistanceLut {
-        private final byte[] extraBits;
-        private final int[] offsets;
-
-        private DistanceLut(int size) {
-            extraBits = new byte[size];
-            offsets = new int[size];
-        }
-    }
-
     enum RunningState {
         INITIALIZED,
         BLOCK_START,
@@ -1469,5 +1459,15 @@ final class Decoder {
         INIT_WRITE,
         WRITE,
         COPY_FROM_COMPOUND_DICTIONARY
+    }
+
+    private static final class DistanceLut {
+        private final byte[] extraBits;
+        private final int[] offsets;
+
+        private DistanceLut(int size) {
+            extraBits = new byte[size];
+            offsets = new int[size];
+        }
     }
 }

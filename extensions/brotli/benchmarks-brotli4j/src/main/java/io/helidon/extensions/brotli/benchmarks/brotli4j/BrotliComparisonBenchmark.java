@@ -66,6 +66,35 @@ public class BrotliComparisonBenchmark {
     }
 
     /**
+     * Check all four fixtures and print compressed sizes, ratios and common-input hashes outside JMH.
+     *
+     * @param args unused
+     * @throws IOException if a codec fails
+     * @throws NoSuchAlgorithmException if SHA-256 is unavailable
+     */
+    public static void main(String[] args) throws IOException, NoSuchAlgorithmException {
+        System.out.println("size,kind,inputBytes,javaBytes,nativeBytes,javaRatio,nativeRatio,"
+                                   + "inputSha256,compressedSha256,javaOutputNativeStream,nativeOutputNativeStream");
+        var digest = MessageDigest.getInstance("SHA-256");
+        for (String size : new String[] {"SHORT", "LONG"}) {
+            for (String kind : new String[] {"TEXT", "RANDOM"}) {
+                var payload = new Payload();
+                payload.configure(size, kind);
+                payload.prepare();
+                System.out.printf(Locale.ROOT, "%s,%s,%d,%d,%d,%.8f,%.8f,%s,%s,%s,%s%n",
+                                  size, kind, payload.data.length,
+                                  payload.javaEncodedLength, payload.nativeEncoded.length,
+                                  (double) payload.javaEncodedLength / payload.data.length,
+                                  (double) payload.nativeEncoded.length / payload.data.length,
+                                  HexFormat.of().formatHex(digest.digest(payload.data)),
+                                  HexFormat.of().formatHex(digest.digest(payload.nativeEncoded)),
+                                  csv(payload.javaOutputNativeStreamStatus),
+                                  csv(payload.nativeOutputNativeStreamStatus));
+            }
+        }
+    }
+
+    /**
      * Encode and close a fresh Java stream, retaining the encoded entity.
      *
      * @param payload immutable fixture
@@ -127,35 +156,6 @@ public class BrotliComparisonBenchmark {
     @Benchmark
     public byte[] nativeDecodeDirect(Payload payload) throws IOException {
         return decodeNativeDirect(payload.nativeEncoded, payload.data.length);
-    }
-
-    /**
-     * Check all four fixtures and print compressed sizes, ratios and common-input hashes outside JMH.
-     *
-     * @param args unused
-     * @throws IOException if a codec fails
-     * @throws NoSuchAlgorithmException if SHA-256 is unavailable
-     */
-    public static void main(String[] args) throws IOException, NoSuchAlgorithmException {
-        System.out.println("size,kind,inputBytes,javaBytes,nativeBytes,javaRatio,nativeRatio,"
-                                   + "inputSha256,compressedSha256,javaOutputNativeStream,nativeOutputNativeStream");
-        var digest = MessageDigest.getInstance("SHA-256");
-        for (String size : new String[] {"SHORT", "LONG"}) {
-            for (String kind : new String[] {"TEXT", "RANDOM"}) {
-                var payload = new Payload();
-                payload.configure(size, kind);
-                payload.prepare();
-                System.out.printf(Locale.ROOT, "%s,%s,%d,%d,%d,%.8f,%.8f,%s,%s,%s,%s%n",
-                                  size, kind, payload.data.length,
-                                  payload.javaEncodedLength, payload.nativeEncoded.length,
-                                  (double) payload.javaEncodedLength / payload.data.length,
-                                  (double) payload.nativeEncoded.length / payload.data.length,
-                                  HexFormat.of().formatHex(digest.digest(payload.data)),
-                                  HexFormat.of().formatHex(digest.digest(payload.nativeEncoded)),
-                                  csv(payload.javaOutputNativeStreamStatus),
-                                  csv(payload.nativeOutputNativeStreamStatus));
-            }
-        }
     }
 
     private static byte[] encodeJava(byte[] data) throws IOException {
@@ -275,20 +275,6 @@ public class BrotliComparisonBenchmark {
             nativeOutputNativeStreamStatus = streamStatus(nativeEncoded);
         }
 
-        private String streamStatus(byte[] encoded) {
-            try {
-                return Arrays.equals(data, decodeNative(encoded)) ? "OK" : "OUTPUT_MISMATCH";
-            } catch (IOException failure) {
-                return failure.getClass().getSimpleName() + ": " + failure.getMessage();
-            }
-        }
-
-        private void verify(String path, byte[] decoded) {
-            if (!Arrays.equals(data, decoded)) {
-                throw new IllegalStateException(path + " interoperability failed for " + size + '/' + kind);
-            }
-        }
-
         private static byte[] text(int length) {
             var text = new StringBuilder(length + 128);
             for (int index = 0; text.length() < length; index++) {
@@ -303,6 +289,20 @@ public class BrotliComparisonBenchmark {
             byte[] result = new byte[length];
             new SplittableRandom(7932).nextBytes(result);
             return result;
+        }
+
+        private String streamStatus(byte[] encoded) {
+            try {
+                return Arrays.equals(data, decodeNative(encoded)) ? "OK" : "OUTPUT_MISMATCH";
+            } catch (IOException failure) {
+                return failure.getClass().getSimpleName() + ": " + failure.getMessage();
+            }
+        }
+
+        private void verify(String path, byte[] decoded) {
+            if (!Arrays.equals(data, decoded)) {
+                throw new IllegalStateException(path + " interoperability failed for " + size + '/' + kind);
+            }
         }
     }
 }
