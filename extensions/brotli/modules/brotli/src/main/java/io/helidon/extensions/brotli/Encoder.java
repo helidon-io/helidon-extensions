@@ -586,7 +586,9 @@ class Encoder {
                 }
                 return;
             }
-            storage.writeBit(8, 51);
+            storage.writeBit(lastBytesBits, lastBytes);
+            storage.writeBit(2, 3);
+            storage.writeBit((-storage.bitIx()) & 7, 0);
             injectFlushOrPushOutput(output, storage);
             outputManager.flushToOutputStream(output);
             return;
