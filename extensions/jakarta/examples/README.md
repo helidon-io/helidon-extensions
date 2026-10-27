@@ -8,7 +8,8 @@ Jakarta EE 11 specification BOM, and Jakarta extension BOM.
 - [DBClient JSON-P mapping](dbclient-jsonp/README.md)
 - [JSON-P declarative endpoint](jsonp-declarative/README.md)
 
-Every example terminates after a finite demonstration and needs no database or container.
+Every example terminates after a finite demonstration and needs no external database or container.
+The DBClient example uses an embedded H2 database.
 Use JDK 27 with Maven: set `JAVA_HOME` to that JDK and put its `bin` directory on `PATH`.
 After following the [development build prerequisites](../docs/README.md#development-build), run
 `mvn clean install -Ptests,examples` from `extensions/jakarta` to build and test these applications.

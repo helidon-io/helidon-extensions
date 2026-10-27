@@ -19,9 +19,9 @@
  */
 module io.helidon.extensions.jakarta.examples.dbclientjsonp {
     requires io.helidon.dbclient;
-    requires io.helidon.common.mapper;
+    requires io.helidon.dbclient.hikari;
+    requires io.helidon.config;
     requires io.helidon.extensions.jakarta.dbclient.jsonp;
     requires jakarta.json;
-
-    uses io.helidon.dbclient.spi.DbMapperProvider;
+    requires com.h2database;
 }

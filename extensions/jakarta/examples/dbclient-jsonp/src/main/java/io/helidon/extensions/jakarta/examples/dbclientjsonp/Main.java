@@ -16,19 +16,19 @@
 
 package io.helidon.extensions.jakarta.examples.dbclientjsonp;
 
-import java.util.List;
-import java.util.ServiceLoader;
+import java.util.Map;
+import java.util.UUID;
 
-import io.helidon.common.mapper.Mappers;
-import io.helidon.dbclient.DbColumnBase;
+import io.helidon.config.Config;
+import io.helidon.config.ConfigSources;
+import io.helidon.dbclient.DbClient;
 import io.helidon.dbclient.DbMapperManager;
-import io.helidon.dbclient.DbRowBase;
-import io.helidon.dbclient.spi.DbMapperProvider;
 
+import jakarta.json.Json;
 import jakarta.json.JsonObject;
 
 /**
- * Uses the discovered JSON-P mapper with a DBClient row and statement parameters.
+ * Inserts a JSON-P object into an embedded database and reads it back as JSON.
  */
 public final class Main {
     private Main() {
@@ -36,66 +36,37 @@ public final class Main {
 
     /**
      * Runs the example without an external database.
-     *
-     * @param args ignored
      */
-    public static void main(String[] args) {
-        if (!Main.class.getModule().isNamed()) {
-            throw new IllegalStateException("Run the example on the module path");
-        }
-        var providers = ServiceLoader.load(DbMapperProvider.class)
-                .stream()
-                .filter(provider -> provider.type().getName().contains(".jsonp."))
-                .map(provider -> provider.type().getName())
-                .toList();
-        if (!providers.equals(List.of("io.helidon.extensions.jakarta.dbclient.jsonp.JsonProcessingMapperProvider"))) {
-            throw new IllegalStateException("Expected only the extension DBClient provider: " + providers);
-        }
-        var forbidden = ModuleLayer.boot().modules().stream()
-                .map(Module::getName)
-                .filter(name -> name.equals("io.helidon.dbclient.jsonp")
-                        || name.contains(".http.media.json")
-                        || name.startsWith("io.helidon.") && (name.contains(".persistence") || name.contains(".transaction"))
-                        || name.equals("jakarta.persistence")
-                        || name.equals("jakarta.transaction"))
-                .toList();
-        if (!forbidden.isEmpty()) {
-            throw new IllegalStateException("Unrelated integration resolved: " + forbidden);
-        }
-        JsonObject json = exampleRow();
-        if (!json.getString("name").equals("Ada") || json.getInt("id") != 42) {
-            throw new IllegalStateException("Unexpected row mapping: " + json);
-        }
-        var parameters = DbMapperManager.create().toNamedParameters(json, JsonObject.class);
-        System.out.println("Jakarta DBClient JSON-P example: " + json + ", named parameters: " + parameters);
+    static void main() {
+        JsonObject person = insertAndReadPerson();
+        System.out.println("Jakarta DBClient JSON-P example: " + person);
     }
 
-    static JsonObject exampleRow() {
-        var columns = new DbColumnBase[] {
-                column("id", 42),
-                column("name", "Ada"),
-                column("active", true)
-        };
-        var row = new DbRowBase(columns, DbMapperManager.create()) { };
-        return row.as(JsonObject.class);
-    }
+    static JsonObject insertAndReadPerson() {
+        Config config = Config.create(ConfigSources.create(Map.of(
+                "source", "jdbc",
+                "connection.url", "jdbc:h2:mem:" + UUID.randomUUID(),
+                "connection.username", "sa",
+                "connection.password", "")));
 
-    private static DbColumnBase column(String name, Object value) {
-        return new DbColumnBase(value, Mappers.create()) {
-            @Override
-            public Class<?> javaType() {
-                return value.getClass();
-            }
+        try (var db = DbClient.create(config)) {
+            db.execute().dml("create table person (id integer primary key, name varchar(100), active boolean)");
 
-            @Override
-            public String dbType() {
-                return "example";
-            }
+            JsonObject person = Json.createObjectBuilder()
+                    .add("id", 42)
+                    .add("name", "Ada")
+                    .add("active", true)
+                    .build();
+            var parameters = DbMapperManager.create().toNamedParameters(person, JsonObject.class);
+            db.execute()
+                    .createInsert("insert into person (id, name, active) values (:id, :name, :active)")
+                    .params(parameters)
+                    .execute();
 
-            @Override
-            public String name() {
-                return name;
-            }
-        };
+            return db.execute()
+                    .get("select id as \"id\", name as \"name\", active as \"active\" from person where id = ?", 42)
+                    .orElseThrow()
+                    .as(JsonObject.class);
+        }
     }
 }

@@ -1,6 +1,8 @@
 # Jakarta dbclient-jsonp example
 
-Maps a DBClient row to a JSON-P object and maps it to named statement parameters using the discovered extension provider. It uses an in-memory row to demonstrate the mapping without requiring a database. Tests also cover indexed parameters and JSON null parameters.
+Uses DBClient with an embedded H2 database to insert and query a person. The JSON-P extension maps a `JsonObject` to named SQL parameters through `DbMapperManager.toNamedParameters(person, JsonObject.class)` and maps the selected row back to JSON through `as(JsonObject.class)`.
+
+The database exists only in memory and closes with the DBClient. No external database or container is needed. H2 and the JDBC connection pool are dependencies of this example only.
 
 Requires JDK 27 and Maven, with `JAVA_HOME` set to that JDK and its `bin` directory on `PATH`.
 The Helidon 28 and Jakarta extension artifacts must be available. For a source checkout, follow the
@@ -21,6 +23,6 @@ java --module-path target/classes:target/libs --module io.helidon.extensions.jak
 ```
 
 On Windows replace the module-path separator `:` with `;`.
-The example exits after printing the successful response. It binds no fixed port.
+The example prints the selected person as JSON and exits.
 
 Inspect the runtime dependencies with `mvn dependency:tree -Dscope=runtime`.

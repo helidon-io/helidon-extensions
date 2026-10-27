@@ -22,6 +22,4 @@ module io.helidon.extensions.jakarta.examples.jsonp {
     requires io.helidon.webclient;
     requires io.helidon.extensions.jakarta.http.media.jsonp;
     requires jakarta.json;
-
-    uses io.helidon.http.media.spi.MediaSupportProvider;
 }

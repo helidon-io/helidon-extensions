@@ -23,6 +23,4 @@ module io.helidon.extensions.jakarta.examples.declarative {
     requires io.helidon.service.registry;
     requires io.helidon.extensions.jakarta.http.media.jsonp;
     requires jakarta.json;
-
-    uses io.helidon.http.media.spi.MediaSupportProvider;
 }

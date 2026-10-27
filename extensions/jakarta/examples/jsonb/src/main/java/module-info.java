@@ -26,7 +26,5 @@ module io.helidon.extensions.jakarta.examples.jsonb {
 
     exports io.helidon.extensions.jakarta.examples.jsonb;
 
-    uses io.helidon.http.media.spi.MediaSupportProvider;
-
     opens io.helidon.extensions.jakarta.examples.jsonb to org.eclipse.yasson;
 }
