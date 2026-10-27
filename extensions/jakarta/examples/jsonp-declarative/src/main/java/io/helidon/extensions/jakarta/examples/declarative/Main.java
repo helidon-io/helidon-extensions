@@ -16,11 +16,7 @@
 
 package io.helidon.extensions.jakarta.examples.declarative;
 
-import java.util.List;
-import java.util.ServiceLoader;
-
 import io.helidon.common.media.type.MediaTypes;
-import io.helidon.http.media.spi.MediaSupportProvider;
 import io.helidon.service.registry.Service;
 import io.helidon.service.registry.ServiceRegistryManager;
 import io.helidon.service.registry.Services;
@@ -40,24 +36,9 @@ public final class Main {
 
     /**
      * Starts the service registry, exchanges an entity, and shuts down.
-     *
-     * @param args ignored
      */
-    public static void main(String[] args) {
-        if (!Main.class.getModule().isNamed()) {
-            throw new IllegalStateException("Run the example on the module path");
-        }
-        var providers = ServiceLoader.load(MediaSupportProvider.class).stream()
-                .filter(provider -> provider.type().getName().contains(".media.jsonp."))
-                .map(provider -> provider.type().getName())
-                .toList();
-        if (!providers.equals(List.of("io.helidon.extensions.jakarta.http.media.jsonp.JsonpMediaSupportProvider"))) {
-            throw new IllegalStateException("Expected the extension JSON-P provider: " + providers);
-        }
+    static void main() {
         JsonObject response = exchange();
-        if (!response.getString("message").equals("Hello declarative Jakarta")) {
-            throw new IllegalStateException("Unexpected declarative response: " + response);
-        }
         System.out.println("Jakarta declarative JSON-P example: " + response);
     }
 

@@ -32,9 +32,15 @@
         <mainClass>io.helidon.extensions.jakarta.examples.dbclientjsonp.Main</mainClass>
         <jakarta.extension.version>1.0.0-SNAPSHOT</jakarta.extension.version>
         <version.lib.jakartaee-bom>11.0.0</version.lib.jakartaee-bom>
+        <version.lib.h2>2.4.240</version.lib.h2>
     </properties>
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>com.h2database</groupId>
+                <artifactId>h2</artifactId>
+                <version>${version.lib.h2}</version>
+            </dependency>
             <dependency>
                 <groupId>jakarta.platform</groupId>
                 <artifactId>jakarta.jakartaee-bom</artifactId>
@@ -61,8 +67,16 @@
             <artifactId>jakarta.json-api</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.helidon.common</groupId>
-            <artifactId>helidon-common-mapper</artifactId>
+            <groupId>io.helidon.config</groupId>
+            <artifactId>helidon-config</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.helidon.dbclient</groupId>
+            <artifactId>helidon-dbclient-hikari</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

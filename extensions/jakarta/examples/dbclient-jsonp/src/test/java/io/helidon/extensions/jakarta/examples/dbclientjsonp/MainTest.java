@@ -40,7 +40,7 @@ class MainTest {
                 .map(provider -> provider.type().getName())
                 .toList();
         assertThat(providers, is(List.of("io.helidon.extensions.jakarta.dbclient.jsonp.JsonProcessingMapperProvider")));
-        var mapped = Main.exampleRow();
+        var mapped = Main.insertAndReadPerson();
         assertThat(mapped.getInt("id"), is(42));
         assertThat(mapped.getString("name"), is("Ada"));
         assertThat(mapped.getBoolean("active"), is(true));

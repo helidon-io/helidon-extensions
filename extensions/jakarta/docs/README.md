@@ -216,8 +216,8 @@ Then use the command in its README to launch the built application on the module
 
 The HTTP examples start a loopback server on a dynamic port, make a real client request to `/echo`, print the result, and
 shut down. The declarative example generates its endpoint and service binding and uses automatic JSON-P discovery.
-The DBClient example demonstrates a discovered mapper using an in-memory row and statement parameters. Every example
-performs a finite demonstration and exits; none requires a database or container.
+The DBClient example inserts a JSON-P object into an embedded H2 database using named SQL parameters and reads the row
+back as JSON. Every example performs a finite demonstration and exits; none requires an external database or container.
 
 Each example selects only its own Jakarta integration module.
 

@@ -1,6 +1,6 @@
 # Jakarta jsonp example
 
-Starts a loopback server on a dynamic port, POSTs a JSON-P object using Helidon WebClient, prints the response, and stops. Tests exercise custom reader and writer factories on both sides of the connection.
+Registers `JsonpSupport` with Helidon WebServer and WebClient to exchange a `JsonObject`. The server echoes the JSON request; the client prints the response, and the server stops. The example uses a dynamic loopback port.
 
 Requires JDK 27 and Maven, with `JAVA_HOME` set to that JDK and its `bin` directory on `PATH`.
 The Helidon 28 and Jakarta extension artifacts must be available. For a source checkout, follow the

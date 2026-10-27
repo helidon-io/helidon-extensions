@@ -1,6 +1,6 @@
 # Jakarta jsonb example
 
-Starts a loopback server on a dynamic port, POSTs a JSON-B entity using Helidon WebClient, prints the response, and stops. Tests exercise a custom JSON-B instance and JSON-B configuration properties.
+Registers `JsonbSupport` with Helidon WebServer and WebClient to exchange a `Greeting` Java object as JSON. The server echoes the object; the client prints its message, and the server stops. The example uses a dynamic loopback port.
 
 Requires JDK 27 and Maven, with `JAVA_HOME` set to that JDK and its `bin` directory on `PATH`.
 The Helidon 28 and Jakarta extension artifacts must be available. For a source checkout, follow the

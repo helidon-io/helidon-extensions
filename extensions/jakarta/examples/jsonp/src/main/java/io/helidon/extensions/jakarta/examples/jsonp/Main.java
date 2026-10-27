@@ -16,12 +16,8 @@
 
 package io.helidon.extensions.jakarta.examples.jsonp;
 
-import java.util.List;
-import java.util.ServiceLoader;
-
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.extensions.jakarta.http.media.jsonp.JsonpSupport;
-import io.helidon.http.media.spi.MediaSupportProvider;
 import io.helidon.webclient.api.WebClient;
 import io.helidon.webserver.WebServer;
 
@@ -36,17 +32,11 @@ public final class Main {
     }
 
     /**
-     * Runs the example on the module path.
-     *
-     * @param args ignored
+     * Sends a JSON request to the server and prints its response.
      */
-    public static void main(String[] args) {
-        verifyRuntime();
+    static void main() {
         JsonObject request = Json.createObjectBuilder().add("message", "Hello Jakarta").build();
         JsonObject response = roundTrip(JsonpSupport.builder().build(), request);
-        if (!request.equals(response)) {
-            throw new IllegalStateException("JSON round trip changed the entity");
-        }
         System.out.println("Jakarta JSON-P example: " + response);
     }
 
@@ -74,32 +64,6 @@ public final class Main {
                     .entity();
         } finally {
             server.stop();
-        }
-    }
-
-    private static void verifyRuntime() {
-        if (!Main.class.getModule().isNamed()) {
-            throw new IllegalStateException("Run the example on the module path");
-        }
-        var providers = ServiceLoader.load(MediaSupportProvider.class)
-                .stream()
-                .filter(provider -> provider.type().getName().contains(".media.jsonp."))
-                .map(provider -> provider.type().getName())
-                .toList();
-        if (!providers.equals(List.of("io.helidon.extensions.jakarta.http.media.jsonp.JsonpMediaSupportProvider"))) {
-            throw new IllegalStateException("Expected only the extension media provider: " + providers);
-        }
-        var forbidden = ModuleLayer.boot().modules().stream()
-                .map(Module::getName)
-                .filter(name -> name.equals("io.helidon.http.media.jsonp")
-                        || name.equals("io.helidon.http.media.jsonb")
-                        || name.equals("io.helidon.dbclient.jsonp")
-                        || name.startsWith("io.helidon.") && (name.contains(".persistence") || name.contains(".transaction"))
-                        || name.equals("jakarta.persistence")
-                        || name.equals("jakarta.transaction"))
-                .toList();
-        if (!forbidden.isEmpty()) {
-            throw new IllegalStateException("Unrelated integration resolved: " + forbidden);
         }
     }
 }
