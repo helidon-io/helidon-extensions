@@ -148,6 +148,32 @@ class BrotliEncoderBufferTest {
     }
 
     @Test
+    @DisplayName("RFC 7932 sections 9.1 and 9.2: empty streams preserve the configured window")
+    void emptyCloseUsesConfiguredWindow() throws IOException {
+        String[] expectedStreams = {
+                "a101", "b101", "c101", "d101", "e101", "f101", "06", "8101",
+                "33", "35", "37", "39", "3b", "3d", "3f"
+        };
+        for (int window = 10; window <= 24; window++) {
+            for (int cache : new int[] {4, 77, 64_000}) {
+                var destination = new ByteArrayOutputStream();
+                var outputConfig = BrotliOutputStreamConfig.builder().window(window).cacheInputSize(cache).build();
+                try (var output = new BrotliOutputStream(destination, outputConfig)) {
+                    output.write(new byte[0]);
+                    output.flush();
+                }
+                String description = "window " + window + ", cache " + cache;
+                byte[] encoded = destination.toByteArray();
+                assertThat(description, encoded, is(HexFormat.of().parseHex(expectedStreams[window - 10])));
+                var inputConfig = BrotliInputStreamConfig.builder().maxWindowBits(window).verifyEndOfInput(true).build();
+                try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded), inputConfig)) {
+                    assertThat(description, input.readAllBytes(), is(new byte[0]));
+                }
+            }
+        }
+    }
+
+    @Test
     @DisplayName("RFC 7932 sections 3.2 and 9.2: each flushed block has an independent prefix-code alphabet")
     void reusesWorkspacesAcrossChangingAlphabetFlushes() throws IOException {
         byte[][] sections = {
