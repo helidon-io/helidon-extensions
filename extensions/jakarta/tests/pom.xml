@@ -33,6 +33,5 @@
         <maven.javadoc.skip>true</maven.javadoc.skip>
     </properties>
     <modules>
-        <module>consumers</module>
     </modules>
 </project>

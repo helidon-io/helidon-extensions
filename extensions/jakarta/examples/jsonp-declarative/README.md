@@ -23,6 +23,4 @@ java --module-path target/classes:target/libs --module io.helidon.extensions.jak
 On Windows replace the module-path separator `:` with `;`.
 The example exits after printing the successful response. It binds no fixed port.
 
-The runtime dependency tree is written to `target/runtime-dependencies.txt`.
-The independent-consumer suite also checks this tree to reject deprecated core integrations,
-other Jakarta integration modules, persistence, and transaction integrations.
+Inspect the runtime dependencies with `mvn dependency:tree -Dscope=runtime`.
