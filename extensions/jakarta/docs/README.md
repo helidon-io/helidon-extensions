@@ -200,7 +200,7 @@ Generated configuration reference:
 - [JSON-B support](config/io.helidon.extensions.jakarta.http.media.jsonb.JsonbSupport.md)
 - [Configuration manifest](config/manifest.md)
 
-## Examples and independent consumers
+## Examples
 
 The extension owns examples for each selectable integration:
 
@@ -219,9 +219,7 @@ shut down. The declarative example generates its endpoint and service binding an
 The DBClient example demonstrates a discovered mapper using an in-memory row and statement parameters. Every example
 performs a finite demonstration and exits; none requires a database or container.
 
-The `tests` profile includes independent-consumer builds of these projects. Their runtime dependency checks reject the
-old core integration artifacts and unrelated persistence or transaction integrations. Each consumer selects only its
-own Jakarta integration module.
+Each example selects only its own Jakarta integration module.
 
 When migrating an existing application, inspect its runtime graph with `mvn dependency:tree -Dscope=runtime` and check
 that only the selected extension integrations and their required APIs and implementations are present. A JSON-B
@@ -244,7 +242,8 @@ repository or a local core build. Then, from `extensions/jakarta`, run:
 mvn clean install -Ptests,examples,docs
 ```
 
-The `tests` and `examples` profiles include the extension's consumer checks and runnable examples. The `docs` profile
+JSON integration unit tests run in their production modules. The `tests` profile includes the shared test aggregator;
+the `examples` profile adds runnable examples and their application tests. The `docs` profile
 regenerates the configuration reference from built extension metadata. It does not require the deprecated JSON
 integration runtimes. The release unit builds against core artifacts without a core-to-extension build dependency.
 

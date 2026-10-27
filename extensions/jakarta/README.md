@@ -8,7 +8,7 @@ modules.
 - [JSON-B HTTP media](modules/http-media-jsonb/)
 - [DBClient JSON-P mapping](modules/dbclient-jsonp/)
 - [Runnable examples](examples/)
-- [Independent consumer tests](tests/)
+- [Tests](tests/)
 
 From this directory, build the release unit, its tests, examples, and configuration reference with:
 

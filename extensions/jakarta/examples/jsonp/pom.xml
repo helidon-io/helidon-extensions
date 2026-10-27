@@ -88,17 +88,6 @@
                     <execution>
                         <id>copy-libs</id>
                     </execution>
-                    <execution>
-                        <id>consumer-runtime-tree</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>tree</goal>
-                        </goals>
-                        <configuration>
-                            <scope>runtime</scope>
-                            <outputFile>${project.build.directory}/runtime-dependencies.txt</outputFile>
-                        </configuration>
-                    </execution>
                 </executions>
             </plugin>
             <plugin>
@@ -107,7 +96,7 @@
                 <version>3.1.0</version>
                 <executions>
                     <execution>
-                        <id>module-path-consumer</id>
+                        <id>module-path-example</id>
                         <phase>verify</phase>
                         <goals>
                             <goal>exec</goal>

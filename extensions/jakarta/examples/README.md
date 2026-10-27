@@ -11,6 +11,6 @@ Jakarta EE 11 specification BOM, and Jakarta extension BOM.
 Every example terminates after a finite demonstration and needs no database or container.
 Use JDK 27 with Maven: set `JAVA_HOME` to that JDK and put its `bin` directory on `PATH`.
 After following the [development build prerequisites](../docs/README.md#development-build), run
-`mvn clean install -Ptests,examples` from `extensions/jakarta` to build these applications
-and independently clone/build them using Maven Invoker. The standalone `verify` phase launches each
+`mvn clean install -Ptests,examples` from `extensions/jakarta` to build and test these applications.
+The `verify` phase launches each
 application using a real `java --module-path` command after its classpath behavior tests.
