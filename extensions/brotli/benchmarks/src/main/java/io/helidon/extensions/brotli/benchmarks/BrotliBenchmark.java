@@ -122,13 +122,16 @@ public class BrotliBenchmark {
      * Apply the HTTP encoder and its header policy without network transport.
      *
      * @param state payload and cached encoding strategy
+     * @param blackhole consumes the completed HTTP headers
      * @return encoded entity bytes
      * @throws IOException if encoding fails
      */
     @Benchmark
-    public byte[] httpEncode(Payload state) throws IOException {
+    public byte[] httpEncode(Payload state, Blackhole blackhole) throws IOException {
         var destination = new ByteArrayOutputStream();
-        state.encoder.headers(WritableHeaders.create());
+        var headers = WritableHeaders.create();
+        state.encoder.headers(headers);
+        blackhole.consume(headers);
         try (var output = state.encoder.apply(destination)) {
             output.write(state.data);
         }
@@ -229,12 +232,21 @@ public class BrotliBenchmark {
          * Representative entity shape; sizes cross the default 64,000-byte encoder cache boundary.
          */
         @Param({"TINY", "CACHE_TEXT", "CACHE_RANDOM", "LARGE_TEXT", "INTEROP"})
-        public String shape;
+        private String shape;
 
         private byte[] data;
         private byte[] encoded;
         private ContentEncoder encoder;
         private ContentDecoder decoder;
+
+        /**
+         * Select a shape when running the fixture checks outside JMH.
+         *
+         * @param value payload shape
+         */
+        public void shape(String value) {
+            shape = value;
+        }
 
         /**
          * Build fixtures and verify complete codec/HTTP roundtrips.

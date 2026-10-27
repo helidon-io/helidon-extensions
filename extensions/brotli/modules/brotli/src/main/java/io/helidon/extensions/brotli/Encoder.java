@@ -690,33 +690,32 @@ class Encoder {
         main_loop:
         while (true) {
             switch (compressState) {
-                case EMIT_COMMANDS:
+                case EMIT_COMMANDS -> {
                     emitCommands(shift);
                     continue;
-
-                case FOR:
+                }
+                case FOR -> {
                     skip = 32;
                     nextIp = ip;
                     compressState = TRAWL;
                     continue;
-
-                case TRAWL:
+                }
+                case TRAWL -> {
                     trawl(shift);
                     continue;
-
-                case EMIT_REMAINDER:
+                }
+                case EMIT_REMAINDER -> {
                     emitRemainder();
                     continue;
-
-                case NEXT_BLOCK:
+                }
+                case NEXT_BLOCK -> {
                     nextBlock();
                     if (compressState == EMIT_COMMANDS) {
                         continue;
                     }
                     break main_loop;
-
-                default:
-                    throw new BrotliException("Wrong compress state");
+                }
+                default -> throw new BrotliException("Wrong compress state");
             }
         }
         if (!isLast) {
@@ -933,7 +932,7 @@ class Encoder {
             try {
                 outputStream.write(output.toByteArray(), 0, output.byteIx());
                 outputStream.flush();
-                output.clear();
+                output.clearWrittenBytes(output.byteIx());
                 output.available(output.capacity());
             } catch (IOException e) {
                 throw new UncheckedIOException(e);

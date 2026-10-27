@@ -68,11 +68,12 @@ class BrotliEncodingHttpTest {
                 .port(0)
                 .routing(routing -> routing
                         .put("/echo", (req, res) -> res.send(req.content().as(String.class)))
-                        .get("/entity", (req, res) -> {
-                            res.header(HeaderNames.CONTENT_LENGTH, String.valueOf(ENTITY.getBytes(StandardCharsets.UTF_8).length));
+                        .get("/entity", (_, res) -> {
+                            res.header(HeaderNames.CONTENT_LENGTH,
+                                       String.valueOf(ENTITY.getBytes(StandardCharsets.UTF_8).length));
                             res.send(ENTITY);
                         })
-                        .get("/fixture", (req, res) -> {
+                        .get("/fixture", (_, res) -> {
                             res.header(HeaderNames.CONTENT_ENCODING, "br");
                             res.send(COMPRESSED_ENTITY);
                         }))

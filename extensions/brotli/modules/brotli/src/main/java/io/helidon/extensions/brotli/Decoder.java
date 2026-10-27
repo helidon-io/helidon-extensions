@@ -295,16 +295,16 @@ final class Decoder {
         ringBufferMask = ringBufferSize - 1;
         while (runningState != FINISHED) {
             switch (runningState) {
-                case BLOCK_START:
+                case BLOCK_START -> {
                     blockStart();
                     continue;
-
-                case COMPRESSED_BLOCK_START:
+                }
+                case COMPRESSED_BLOCK_START -> {
                     readMetablockHuffmanCodesAndContextMaps();
                     runningState = MAIN_LOOP;
                     continue;
-
-                case MAIN_LOOP:
+                }
+                case MAIN_LOOP -> {
                     if (metaBlockLength <= 0) {
                         runningState = BLOCK_START;
                         continue;
@@ -314,23 +314,23 @@ final class Decoder {
                     }
                     mainLoop();
                     continue;
-
-                case INSERT_LOOP:
+                }
+                case INSERT_LOOP -> {
                     insertLoop();
                     if (runningState != COPY_LOOP) {
                         continue;
                     }
                     continue;
-
-                case COPY_LOOP:
+                }
+                case COPY_LOOP -> {
                     copyLoop();
                     continue;
-
-                case USE_DICTIONARY:
+                }
+                case USE_DICTIONARY -> {
                     doUseDictionary(fence);
                     continue;
-
-                case COPY_FROM_COMPOUND_DICTIONARY:
+                }
+                case COPY_FROM_COMPOUND_DICTIONARY -> {
                     copyFromCompoundDictionary(fence);
                     if (pos >= fence) {
                         nextRunningState = COPY_FROM_COMPOUND_DICTIONARY;
@@ -339,29 +339,28 @@ final class Decoder {
                     }
                     runningState = MAIN_LOOP;
                     continue;
-
-                case READ_METADATA:
+                }
+                case READ_METADATA -> {
                     readMetadata();
                     continue;
-
-                case COPY_UNCOMPRESSED:
+                }
+                case COPY_UNCOMPRESSED -> {
                     copyUncompressedData();
                     continue;
-
-                case INIT_WRITE:
+                }
+                case INIT_WRITE -> {
                     ringBufferBytesReady = Math.min(pos, ringBufferSize);
                     runningState = WRITE;
                     continue;
-
-                case WRITE:
+                }
+                case WRITE -> {
                     if (writeRingBuffer() == 0) {
                         return;
                     }
                     write();
                     continue;
-
-                default:
-                    throw new BrotliException("Unexpected state " + runningState);
+                }
+                default -> throw new BrotliException("Unexpected state " + runningState);
             }
         }
         if (metaBlockLength < 0) {
@@ -671,32 +670,30 @@ final class Decoder {
         }
 
         switch (histogramId) {
-            case 1:
-                codeLengths[symbols[0]] = 1;
-                break;
-            case 2:
+            case 1 -> codeLengths[symbols[0]] = 1;
+            case 2 -> {
                 codeLengths[symbols[0]] = 1;
                 codeLengths[symbols[1]] = 1;
-                break;
-            case 3:
+            }
+            case 3 -> {
                 codeLengths[symbols[0]] = 1;
                 codeLengths[symbols[1]] = 2;
                 codeLengths[symbols[2]] = 2;
-                break;
-            case 4:
+            }
+            case 4 -> {
                 codeLengths[symbols[0]] = 2;
                 codeLengths[symbols[1]] = 2;
                 codeLengths[symbols[2]] = 2;
                 codeLengths[symbols[3]] = 2;
-                break;
-            case 5:
+            }
+            case 5 -> {
                 codeLengths[symbols[0]] = 1;
                 codeLengths[symbols[1]] = 2;
                 codeLengths[symbols[2]] = 3;
                 codeLengths[symbols[3]] = 3;
-                break;
-            default:
-                break;
+            }
+            default -> {
+            }
         }
         return buildHuffmanTable(tableGroup, tableIdx, HUFFMAN_TABLE_BITS, codeLengths, alphabetSizeLimit);
     }
@@ -1049,7 +1046,7 @@ final class Decoder {
             int wordIdx = address & mask;
             int transformIdx = address >>> shift;
             offset += wordIdx * wordLength;
-            Transform transform = Transform.createRFCTransform();
+            Transform transform = Transform.rfcTransform();
             if (transformIdx >= transform.numTransforms()) {
                 throw new BrotliException("Invalid backward reference");
             }
