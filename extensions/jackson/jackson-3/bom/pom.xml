@@ -35,18 +35,10 @@
 
     <properties>
         <jackson.jackson-3.extension.version>1.0.0-SNAPSHOT</jackson.jackson-3.extension.version>
-        <jackson.jackson-3.library.version>3.2.4</jackson.jackson-3.library.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
-            <dependency>
-                <groupId>tools.jackson</groupId>
-                <artifactId>jackson-bom</artifactId>
-                <version>${jackson.jackson-3.library.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.jackson.jackson-3</groupId>
                 <artifactId>helidon-extensions-jackson-jackson-3-http-media</artifactId>

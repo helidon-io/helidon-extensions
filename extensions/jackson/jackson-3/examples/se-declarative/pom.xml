@@ -36,6 +36,7 @@
     <properties>
         <mainClass>io.helidon.extensions.jackson.jackson3.examples.declarative.Main</mainClass>
         <jackson.jackson-3.extension.version>1.0.0-SNAPSHOT</jackson.jackson-3.extension.version>
+        <version.lib.jackson>3.2.4</version.lib.jackson>
     </properties>
 
     <dependencies>
@@ -75,6 +76,13 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>tools.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${version.lib.jackson}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.jackson.jackson-3</groupId>
                 <artifactId>helidon-extensions-jackson-jackson-3-bom</artifactId>

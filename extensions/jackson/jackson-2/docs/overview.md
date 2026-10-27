@@ -5,7 +5,9 @@ The extension starts at `1.0.0-SNAPSHOT` and is versioned independently of Helid
 
 ## Dependencies
 
-Import this BOM in addition to your Helidon dependency management:
+Import this BOM in addition to your Helidon dependency management. It manages only the extension's
+HTTP media and builder-codegen modules; Jackson dependencies remain managed by Helidon or a separately
+imported upstream Jackson BOM. The extension uses Jackson `2.21.8`.
 
 ```xml
 <properties>

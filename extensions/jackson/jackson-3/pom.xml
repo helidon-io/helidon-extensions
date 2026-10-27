@@ -47,10 +47,19 @@
         - change it in all example POM files in parent section, as that cannot use a property
         -->
         <helidon.version>28.0.0-SNAPSHOT</helidon.version>
+
+        <version.lib.jackson>3.2.4</version.lib.jackson>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>tools.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${version.lib.jackson}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.jackson.jackson-3</groupId>
                 <artifactId>helidon-extensions-jackson-jackson-3-bom</artifactId>

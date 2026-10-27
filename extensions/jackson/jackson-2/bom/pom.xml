@@ -37,18 +37,10 @@
 
     <properties>
         <jackson.jackson-2.extension.version>1.0.0-SNAPSHOT</jackson.jackson-2.extension.version>
-        <jackson.jackson-2.library.version>2.21.8</jackson.jackson-2.library.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
-            <dependency>
-                <groupId>com.fasterxml.jackson</groupId>
-                <artifactId>jackson-bom</artifactId>
-                <version>${jackson.jackson-2.library.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
             <dependency>
                 <groupId>io.helidon.extensions.jackson.jackson-2</groupId>
                 <artifactId>helidon-extensions-jackson-jackson-2-http-media</artifactId>

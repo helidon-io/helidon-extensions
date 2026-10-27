@@ -5,17 +5,27 @@ The extension starts at `1.0.0-SNAPSHOT` and is versioned independently of Helid
 
 ## Dependencies
 
-Import this BOM before Helidon dependency management and before the Jackson 2 extension BOM
-when both integrations are present. It manages Jackson `3.2.4`, including the shared
-`com.fasterxml.jackson.core:jackson-annotations:2.22` dependency required by that release.
-Do not force the older annotation version from the core Jackson 2 BOM onto Jackson 3.
+The extension BOM manages only the extension's HTTP media and builder-codegen modules.
+Import the upstream Jackson BOM separately to align Jackson dependencies. The extension uses
+Jackson `3.2.4`, which requires the shared `com.fasterxml.jackson.core:jackson-annotations:2.22`.
+Place the upstream Jackson 3 BOM before Helidon or Jackson 2 BOM imports in the same POM,
+or import it in the application POM when Helidon dependency management is inherited from a parent.
+This prevents older Jackson 2 annotation management from overriding the version required by Jackson 3.
 
 ```xml
 <properties>
     <jackson.jackson-3.extension.version>1.0.0-SNAPSHOT</jackson.jackson-3.extension.version>
+    <version.lib.jackson>3.2.4</version.lib.jackson>
 </properties>
 <dependencyManagement>
     <dependencies>
+        <dependency>
+            <groupId>tools.jackson</groupId>
+            <artifactId>jackson-bom</artifactId>
+            <version>${version.lib.jackson}</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
         <dependency>
             <groupId>io.helidon.extensions.jackson.jackson-3</groupId>
             <artifactId>helidon-extensions-jackson-jackson-3-bom</artifactId>
