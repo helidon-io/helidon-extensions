@@ -35,8 +35,15 @@ mvn -f extensions/jackson/jackson-3/pom.xml clean install -Ptests,examples
 Run the additional provider coexistence and default-comparison suite with both units:
 
 ```shell
-mvn -f extensions/jackson/pom.xml clean install -Ptests,coexistence
+JACKSON_2_VERSION=$(awk -F '[<>]' '$2 == "jackson.jackson-2.extension.version" {print $3; exit}' \
+    extensions/jackson/jackson-2/bom/pom.xml)
+mvn -f extensions/jackson/pom.xml clean install -Ptests,coexistence \
+    "-Djackson.jackson-2.test.version=${JACKSON_2_VERSION}"
 ```
+
+The test-only `jackson.jackson-2.test.version` property selects the Jackson 2 comparator independently
+of the Jackson 3 version. Use the current Jackson 2 BOM version for a combined source build, as above;
+override it to test another installed or published Jackson 2 extension version.
 
 The normal extension discovery scripts find both release IDs from their `bom/pom.xml`
 files. See the repository [release conventions](../../etc/scripts/RELEASE.md#directory-convention).

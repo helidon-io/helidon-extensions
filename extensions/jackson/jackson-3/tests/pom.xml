@@ -28,6 +28,8 @@
     <name>Helidon Extensions Jackson 3 Tests</name>
     <packaging>pom</packaging>
     <properties>
+        <!-- Baseline for standalone opt-in tests; combined builds select the current Jackson 2 version. -->
+        <jackson.jackson-2.test.version>1.0.0-SNAPSHOT</jackson.jackson-2.test.version>
         <maven.deploy.skip>true</maven.deploy.skip>
         <maven.sources.skip>true</maven.sources.skip>
         <maven.javadoc.skip>true</maven.javadoc.skip>

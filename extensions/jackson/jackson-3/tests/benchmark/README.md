@@ -8,13 +8,19 @@ or processor.
 From the repository root, prepare the benchmark and both extensions:
 
 ```shell
-mvn clean install -f extensions/jackson/pom.xml -Ptests,jmh -DskipTests
+JACKSON_2_VERSION=$(awk -F '[<>]' '$2 == "jackson.jackson-2.extension.version" {print $3; exit}' \
+    extensions/jackson/jackson-2/bom/pom.xml)
+mvn clean install -f extensions/jackson/pom.xml -Ptests,jmh -DskipTests \
+    "-Djackson.jackson-2.test.version=${JACKSON_2_VERSION}"
 ```
 
-Run only the Jackson media benchmark:
+This selects the current Jackson 2 release-unit version independently of Jackson 3.
+To compare another installed or published Jackson 2 extension version, set `JACKSON_2_VERSION`
+to that version instead. Run only the Jackson media benchmark in the same shell:
 
 ```shell
 mvn exec:exec -Ptests,jmh -pl :helidon-extensions-jackson-jackson-3-tests-benchmark \
+    "-Djackson.jackson-2.test.version=${JACKSON_2_VERSION}" \
     -Dexec.executable=java -Dexec.classpathScope=test \
     '-Dexec.args=-cp %classpath org.openjdk.jmh.Main io.helidon.extensions.jackson.benchmark.JacksonBenchmark -f 2 -wi 3 -i 5 -w 1s -r 1s -prof gc'
 ```

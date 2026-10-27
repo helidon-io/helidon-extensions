@@ -42,7 +42,7 @@
         <dependency>
             <groupId>io.helidon.extensions.jackson.jackson-2</groupId>
             <artifactId>helidon-extensions-jackson-jackson-2-http-media</artifactId>
-            <version>1.0.0-SNAPSHOT</version>
+            <version>${jackson.jackson-2.test.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>

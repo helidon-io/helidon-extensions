@@ -165,7 +165,11 @@ jobs:
               git diff --exit-code -- extensions/${{ matrix.extension.id }}/docs/config
             fi
             if [[ "${{ matrix.extension.id }}" == jackson/jackson-3 ]]; then
-              mvn ${MVN_ARGS} -f extensions/jackson/pom.xml -Ptests,coexistence clean install
+              JACKSON_2_VERSION=$(awk -F '[<>]' '$2 == "jackson.jackson-2.extension.version" {print $3; exit}' \
+                extensions/jackson/jackson-2/bom/pom.xml)
+              test -n "${JACKSON_2_VERSION}"
+              mvn ${MVN_ARGS} -f extensions/jackson/pom.xml -Ptests,coexistence \
+                "-Djackson.jackson-2.test.version=${JACKSON_2_VERSION}" clean install
             fi
   gate:
     runs-on: ubuntu-22.04
