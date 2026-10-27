@@ -45,6 +45,8 @@ interface BrotliInputStreamConfigBlueprint extends Prototype.Factory<BrotliInput
     /**
      * Optional shared dictionary chunks, in order. At most 15 chunks may be attached.
      * The stream copies the chunk arrays when it is created.
+     * References may span chunks but must stay within their concatenated contents;
+     * references that continue into the decoded output are not supported.
      *
      * @return dictionary chunks
      */

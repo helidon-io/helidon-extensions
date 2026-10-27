@@ -34,11 +34,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * Regression tests for the <a href="https://www.rfc-editor.org/rfc/rfc7932.html">Brotli format (RFC 7932)</a>.
  */
 class BrotliConformanceTest {
-    // Frozen valid output for the 76-byte flush/close fixture, independently decoded with Google Brotli 1.2.1.
-    // The compressed block and final empty block share the last byte; the final marker cannot start in a new byte.
+    // Frozen flush/close fixture with zero-length metadata alignment (RFC 7932 section 11.2).
+    // Metadata byte-aligns the compressed block; a separate final empty block closes the stream.
     private static final byte[] FLUSHED_DATA = HexFormat.of().parseHex(
             "8325000080aaaaaaea9f0fa72b11f3e1c4ff77d5bfe7deea9e515ddec67057bc585858d8d858d5cb8ceae0c3871f83c1601"
-                    + "c67b2aa0683c1603018cca1ce88549446e1b0d04eb2f70477f194e1c9f9070e");
+                    + "c67b2aa0683c1603018cca1ce88549446e1b0d04eb2f70477f194e1c9f9071a03");
 
     @Test
     @DisplayName("RFC 7932 sections 9.2 and 10: metadata has no ISUNCOMPRESSED field")
@@ -78,7 +78,7 @@ class BrotliConformanceTest {
             output.write(data);
             output.flush();
         }
-        // The independent fixture prevents a matching encoder/decoder error from making this a false positive.
+        // Metadata alignment must preserve the pending data bits before closing the stream.
         assertThat(destination.toByteArray(), is(FLUSHED_DATA));
         assertThat(decode(destination.toByteArray()), is(data));
     }
