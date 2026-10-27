@@ -43,7 +43,7 @@
         <profile>
             <id>jmh</id>
             <modules>
-                <module>benchmark</module>
+                <module>benchmarks</module>
             </modules>
         </profile>
         <profile>

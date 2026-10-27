@@ -45,5 +45,8 @@ The test-only `jackson.jackson-2.test.version` property selects the Jackson 2 co
 of the Jackson 3 version. Use the current Jackson 2 BOM version for a combined source build, as above;
 override it to test another installed or published Jackson 2 extension version.
 
+Opt-in [HTTP media benchmarks](jackson-3/tests/benchmarks/README.md) use the
+`tests,jmh` profiles, following the extension benchmark layout under `tests/benchmarks`.
+
 The normal extension discovery scripts find both release IDs from their `bom/pom.xml`
 files. See the repository [release conventions](../../etc/scripts/RELEASE.md#directory-convention).

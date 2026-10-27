@@ -23,17 +23,25 @@
         <artifactId>helidon-extensions-jackson-jackson-3-tests-project</artifactId>
         <version>1.0.0-SNAPSHOT</version>
     </parent>
-    <artifactId>helidon-extensions-jackson-jackson-3-tests-benchmark</artifactId>
+    <artifactId>helidon-extensions-jackson-jackson-3-benchmarks</artifactId>
     <name>Helidon Extensions Jackson Benchmarks</name>
+    <description>Opt-in public-API Jackson HTTP media JMH benchmarks.</description>
     <properties>
         <version.lib.jmh>1.37</version.lib.jmh>
         <maven.deploy.skip>true</maven.deploy.skip>
+        <!-- JMH tooling runs on the class path and does not provide JPMS services. -->
+        <helidon.services.skip>true</helidon.services.skip>
     </properties>
     <dependencyManagement>
         <dependencies>
             <dependency>
                 <groupId>org.openjdk.jmh</groupId>
                 <artifactId>jmh-core</artifactId>
+                <version>${version.lib.jmh}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openjdk.jmh</groupId>
+                <artifactId>jmh-generator-annprocess</artifactId>
                 <version>${version.lib.jmh}</version>
             </dependency>
         </dependencies>
@@ -43,43 +51,48 @@
             <groupId>io.helidon.extensions.jackson.jackson-2</groupId>
             <artifactId>helidon-extensions-jackson-jackson-2-http-media</artifactId>
             <version>${jackson.jackson-2.test.version}</version>
-            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>io.helidon.extensions.jackson.jackson-3</groupId>
             <artifactId>helidon-extensions-jackson-jackson-3-http-media</artifactId>
-            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>io.helidon.http.media</groupId>
             <artifactId>helidon-http-media-jackson</artifactId>
-            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.openjdk.jmh</groupId>
             <artifactId>jmh-core</artifactId>
-            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.openjdk.jmh</groupId>
+            <artifactId>jmh-generator-annprocess</artifactId>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
     <build>
         <plugins>
             <plugin>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <configuration>
+                    <excludeFilterFiles>
+                        <excludeFilterFile>${project.basedir}/spotbugs-exclude.xml</excludeFilterFile>
+                    </excludeFilterFiles>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <id>default-testCompile</id>
-                        <configuration>
-                            <annotationProcessorPaths>
-                                <path>
-                                    <groupId>org.openjdk.jmh</groupId>
-                                    <artifactId>jmh-generator-annprocess</artifactId>
-                                    <version>${version.lib.jmh}</version>
-                                </path>
-                            </annotationProcessorPaths>
-                        </configuration>
-                    </execution>
-                </executions>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.openjdk.jmh</groupId>
+                            <artifactId>jmh-generator-annprocess</artifactId>
+                            <version>${version.lib.jmh}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
             </plugin>
         </plugins>
     </build>
