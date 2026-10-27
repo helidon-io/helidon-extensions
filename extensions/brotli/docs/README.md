@@ -111,6 +111,47 @@ try (var decoded = BrotliInputStream.builder().inputStream(input).build()) {
 Closing either wrapper closes its underlying stream. Close the output wrapper
 to finish the Brotli stream before consuming its compressed bytes.
 
+### Stream configuration
+
+Pass a Helidon `Config` node to the stream builder's `config(...)` method to set
+scalar options. Supply the underlying input/output stream and any shared
+dictionary chunks programmatically through the builder.
+
+| Stream | Key | Default | Supported values |
+| --- | --- | --- | --- |
+| Output | `quality` | `0` | `0` |
+| Output | `window` | `18` | `10` through `24` |
+| Output | `cache-input-size` | `64000` | At least `4` bytes |
+| Input | `cache-buffer-size` | `256` | A positive number of bytes |
+
+All keys are optional. For example, using `io.helidon.config.Config`,
+`io.helidon.config.ConfigSources`, and `java.util.Map`:
+
+```java
+var config = Config.just(ConfigSources.create(Map.of(
+        "encoder.quality", "0",
+        "encoder.window", "16",
+        "encoder.cache-input-size", "256",
+        "decoder.cache-buffer-size", "128")));
+
+try (var encoded = BrotliOutputStream.builder()
+        .outputStream(output)
+        .config(config.get("encoder"))
+        .build()) {
+    encoded.write(data);
+}
+
+try (var decoded = BrotliInputStream.builder()
+        .inputStream(input)
+        .config(config.get("decoder"))
+        .build()) {
+    byte[] restored = decoded.readAllBytes();
+}
+```
+
+The `encoder` and `decoder` node names are application choices. Each builder
+reads the keys directly from the supplied node and rejects unsupported values.
+
 ## Supported compression
 
 The imported encoder implements compression quality `0`, which is the default.
