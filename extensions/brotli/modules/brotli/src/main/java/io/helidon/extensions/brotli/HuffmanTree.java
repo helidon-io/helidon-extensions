@@ -42,6 +42,7 @@ class HuffmanTree {
     private final int[] symbols = new int[4];
 
     private long[] counts = EMPTY_COUNTS;
+    private long[] sortKeys = EMPTY_COUNTS;
     private int[] leftChildren = EMPTY_CHILDREN;
     private int[] rightChildren = EMPTY_CHILDREN;
     private int[] stack;
@@ -449,19 +450,17 @@ class HuffmanTree {
                 setNode(destination, count, left, right);
             }
         } else {
-            int g = n < 57 ? 2 : 0;
-            for (; g < Context.BROTLI_SHELL_GAPS.length; g++) {
-                int gap = Context.BROTLI_SHELL_GAPS[g];
-                for (int i = gap; i < n; i++) {
-                    long count = counts[i];
-                    int left = leftChildren[i];
-                    int right = rightChildren[i];
-                    int destination = i;
-                    for (; destination >= gap && precedes(count, right, destination - gap); destination -= gap) {
-                        copyNode(destination - gap, destination);
-                    }
-                    setNode(destination, count, left, right);
-                }
+            if (sortKeys.length < n) {
+                sortKeys = new long[n];
+            }
+            // Leaves are bounded by one input fragment; invert the symbol for the existing tie order.
+            for (int i = 0; i < n; i++) {
+                sortKeys[i] = (counts[i] << 32) | (0xFFFF_FFFFL - rightChildren[i]);
+            }
+            Arrays.sort(sortKeys, 0, n);
+            for (int i = 0; i < n; i++) {
+                long key = sortKeys[i];
+                setNode(i, key >>> 32, -1, (int) (0xFFFF_FFFFL - (key & 0xFFFF_FFFFL)));
             }
         }
     }

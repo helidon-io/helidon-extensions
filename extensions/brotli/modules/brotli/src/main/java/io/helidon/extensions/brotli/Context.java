@@ -71,7 +71,6 @@ class Context {
             0x00, 0x08, 0x04, 0x0C, 0x02, 0x0A, 0x06, 0x0E,
             0x01, 0x09, 0x05, 0x0D, 0x03, 0x0B, 0x07, 0x0F
     };
-    static final int[] BROTLI_SHELL_GAPS = {132, 57, 23, 10, 4, 1};
     static final int[] DEFAULT_COMMAND_DEPTHS = {
             0, 4, 4, 5, 6, 6, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8,
             0, 0, 0, 4, 4, 4, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7,
