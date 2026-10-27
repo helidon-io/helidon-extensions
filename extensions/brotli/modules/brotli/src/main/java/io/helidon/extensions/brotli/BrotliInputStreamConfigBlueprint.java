@@ -26,6 +26,7 @@ import io.helidon.builder.api.Prototype;
  * Configuration of a Brotli decompression stream.
  */
 @Prototype.Blueprint
+@Prototype.Configured(value = "brotli-input-stream", root = false)
 interface BrotliInputStreamConfigBlueprint extends Prototype.Factory<BrotliInputStream> {
     /**
      * Stream containing Brotli-compressed data. Closing the decoder closes this stream.
@@ -39,6 +40,7 @@ interface BrotliInputStreamConfigBlueprint extends Prototype.Factory<BrotliInput
      *
      * @return strictly positive buffer size
      */
+    @Option.Configured
     @Option.DefaultInt(256)
     int cacheBufferSize();
 

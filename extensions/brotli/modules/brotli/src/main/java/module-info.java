@@ -18,7 +18,10 @@
  * Brotli compression and decompression implemented in Java.
  */
 module io.helidon.extensions.brotli {
+    requires static io.helidon.config.metadata;
+
     requires transitive io.helidon.builder.api;
+    requires transitive io.helidon.config;
 
     exports io.helidon.extensions.brotli;
 }

@@ -25,6 +25,7 @@ import io.helidon.builder.api.Prototype;
  * Configuration of a Brotli compression stream.
  */
 @Prototype.Blueprint
+@Prototype.Configured(value = "brotli-output-stream", root = false)
 interface BrotliOutputStreamConfigBlueprint extends Prototype.Factory<BrotliOutputStream> {
     /**
      * Destination for compressed data. Closing the encoder closes this stream.
@@ -39,6 +40,7 @@ interface BrotliOutputStreamConfigBlueprint extends Prototype.Factory<BrotliOutp
      *
      * @return compression quality
      */
+    @Option.Configured
     @Option.DefaultInt(0)
     int quality();
 
@@ -47,6 +49,7 @@ interface BrotliOutputStreamConfigBlueprint extends Prototype.Factory<BrotliOutp
      *
      * @return window size exponent, between 10 and 24
      */
+    @Option.Configured
     @Option.DefaultInt(18)
     int window();
 
@@ -55,6 +58,7 @@ interface BrotliOutputStreamConfigBlueprint extends Prototype.Factory<BrotliOutp
      *
      * @return input cache size, at least 4
      */
+    @Option.Configured
     @Option.DefaultInt(64_000)
     int cacheInputSize();
 }
