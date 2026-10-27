@@ -2,6 +2,8 @@
 
 Generates a REST endpoint and service binding, starts the Helidon service registry and WebServer on a dynamic loopback port, exchanges a JSON-P entity with Helidon WebClient, and shuts down. This demonstrates automatic extension discovery with declarative HTTP APIs.
 
+The server address and port are configured in [application.yaml](src/main/resources/application.yaml).
+
 Requires JDK 27 and Maven, with `JAVA_HOME` set to that JDK and its `bin` directory on `PATH`.
 The Helidon 28 and Jakarta extension artifacts must be available. For a source checkout, follow the
 [development build prerequisites](../../docs/README.md#development-build), then install the Jakarta release unit
@@ -17,7 +19,7 @@ mvn clean verify
 Run the built example on Linux or macOS:
 
 ```shell
-java --module-path target/classes:target/libs --module io.helidon.extensions.jakarta.examples.declarative/io.helidon.extensions.jakarta.examples.declarative.Main
+java --module-path target/classes:target/libs --module io.helidon.extensions.jakarta.examples.declarative/io.helidon.extensions.jakarta.examples.jsonp.Main
 ```
 
 On Windows replace the module-path separator `:` with `;`.

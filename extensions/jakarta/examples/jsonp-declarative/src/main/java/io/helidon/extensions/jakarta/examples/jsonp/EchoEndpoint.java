@@ -14,16 +14,23 @@
  * limitations under the License.
  */
 
-package io.helidon.extensions.jakarta.examples.declarative;
+package io.helidon.extensions.jakarta.examples.jsonp;
 
-import org.junit.jupiter.api.Test;
+import io.helidon.common.media.type.MediaTypes;
+import io.helidon.http.Http;
+import io.helidon.service.registry.Service;
+import io.helidon.webserver.http.RestServer;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
+import jakarta.json.JsonObject;
 
-class MainTest {
-    @Test
-    void discoveredJsonpSupportsGeneratedEndpoint() {
-        assertThat(Main.exchange().getString("message"), is("Hello declarative Jakarta"));
+@RestServer.Endpoint
+@Http.Path("/echo")
+@Service.Singleton
+class EchoEndpoint {
+    @Http.POST
+    @Http.Consumes(MediaTypes.APPLICATION_JSON_VALUE)
+    @Http.Produces(MediaTypes.APPLICATION_JSON_VALUE)
+    JsonObject echo(@Http.Entity JsonObject request) {
+        return request;
     }
 }
