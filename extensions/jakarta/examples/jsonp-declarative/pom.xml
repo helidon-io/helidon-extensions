@@ -119,31 +119,6 @@
                     </execution>
                 </executions>
             </plugin>
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>3.1.0</version>
-                <executions>
-                    <execution>
-                        <id>module-path-example</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <configuration>
-                            <executable>${java.home}/bin/java</executable>
-                            <longClasspath>false</longClasspath>
-                            <longModulepath>false</longModulepath>
-                            <arguments combine.self="override">
-                                <argument>--module-path</argument>
-                                <argument>${project.build.outputDirectory}${path.separator}${project.build.directory}/libs</argument>
-                                <argument>--module</argument>
-                                <argument>io.helidon.extensions.jakarta.examples.declarative/${mainClass}</argument>
-                            </arguments>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
     </build>
 </project>

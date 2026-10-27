@@ -211,8 +211,8 @@ The extension owns examples for each selectable integration:
 
 Each example declares its own Helidon SE parent, Jakarta EE 11 specification BOM, and Jakarta extension BOM.
 It can be copied outside this repository and built
-against installed or published dependencies. From an example directory, run `mvn clean verify` to build, test, and launch
-its JPMS entry point. The example READMEs also document commands for launching the built applications directly.
+against installed or published dependencies. From an example directory, run `mvn clean verify` to build and test it.
+Then use the command in its README to launch the built application on the module path.
 
 The HTTP examples start a loopback server on a dynamic port, make a real client request to `/echo`, print the result, and
 shut down. The declarative example generates its endpoint and service binding and uses automatic JSON-P discovery.
