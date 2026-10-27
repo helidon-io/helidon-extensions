@@ -50,7 +50,9 @@ public final class BrotliEncoding implements ContentEncoding, RuntimeType.Api<Br
     private BrotliEncoding(BrotliEncodingConfig config) {
         this.config = Objects.requireNonNull(config, "config");
         Objects.requireNonNull(config.name(), "name");
-        if (config.maxWindowBits() < 10 || config.maxWindowBits() > 24) {
+        var inputStreamConfig = Objects.requireNonNull(config.inputStreamConfig(), "inputStreamConfig");
+        Objects.requireNonNull(config.outputStreamConfig(), "outputStreamConfig");
+        if (inputStreamConfig.maxWindowBits() < 10 || inputStreamConfig.maxWindowBits() > 24) {
             throw new IllegalArgumentException("Maximum Brotli window exponent must be between 10 and 24");
         }
     }
@@ -115,8 +117,7 @@ public final class BrotliEncoding implements ContentEncoding, RuntimeType.Api<Br
 
     @Override
     public ContentDecoder decoder() {
-        var decoderConfig = BrotliInputStreamConfig.builder()
-                .maxWindowBits(config.maxWindowBits())
+        var decoderConfig = BrotliInputStreamConfig.builder(config.inputStreamConfig())
                 .verifyEndOfInput(true)
                 .build();
         return network -> new BrotliInputStream(Objects.requireNonNull(network, "network"), decoderConfig);
@@ -124,10 +125,11 @@ public final class BrotliEncoding implements ContentEncoding, RuntimeType.Api<Br
 
     @Override
     public ContentEncoder encoder() {
+        var encoderConfig = config.outputStreamConfig();
         return new ContentEncoder() {
             @Override
             public OutputStream apply(OutputStream network) {
-                return new BrotliOutputStream(Objects.requireNonNull(network, "network"));
+                return new BrotliOutputStream(Objects.requireNonNull(network, "network"), encoderConfig);
             }
 
             @Override

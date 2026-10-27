@@ -63,13 +63,22 @@ For explicit content-encoding registration, use
 `ContentEncoding` is accepted. It uses the same fixed codec defaults as the
 service-loaded provider.
 
-Use `BrotliEncoding.builder().maxWindowBits(22).build()` to reject streams that declare a window larger
-than 4 MiB. The service-loaded provider can use the same setting through a
-`content-encodings` entry with `type: br` and `max-window-bits: 22`.
-The maximum window exponent defaults to `24` and accepts values from `10` through `24`.
-Use `name(...)` to set the instance name, which defaults to `br`; the content coding identifier remains `br`.
-The builder's `config(...)` method accepts the component node with `name` and `max-window-bits` properties.
-For service-loaded instances, the name supplied by the content-encoding context takes precedence over the node's `name`.
+Configure the streams through the encoding's `inputStreamConfig(...)` and
+`outputStreamConfig(...)` options. For example, use
+`BrotliInputStreamConfig.builder().maxWindowBits(22).build()` as the input
+configuration to reject streams declaring a window larger than 4 MiB. The
+maximum window exponent defaults to `24` and accepts values from `10` through
+`24`. HTTP decoding always verifies the end of the encoded entity, even if
+the input configuration sets `verifyEndOfInput(false)`.
+
+The service-loaded provider accepts the same options under `input-stream` and
+`output-stream` in a `content-encodings` entry with `type: br`; for example,
+`input-stream.max-window-bits: 22` and `output-stream.window: 18`. The
+builder's `config(...)` method accepts those properties in the component node.
+Use `name(...)` to set the instance name, which defaults to `br`; the content
+coding identifier remains `br`. For service-loaded instances, the name
+supplied by the content-encoding context takes precedence over the node's
+`name`.
 
 ```java
 ContentEncodingContext encodings = ContentEncodingContext.builder()

@@ -23,7 +23,7 @@ import io.helidon.builder.api.Prototype;
  * Configuration of a Brotli compression stream.
  */
 @Prototype.Blueprint
-@Prototype.Configured(value = "brotli-output-stream", root = false)
+@Prototype.Configured
 interface BrotliOutputStreamConfigBlueprint {
     /**
      * Compression quality. Only quality {@code 0} is currently implemented.
