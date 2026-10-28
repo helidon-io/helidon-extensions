@@ -21,7 +21,9 @@ to Jackson 3 requires updating model annotations to the Jackson 3 namespace.
 The source baseline is Helidon core
 [`ffa7ebba4a39edbb757a10b8e41962f8a606cce5`](https://github.com/helidon-io/helidon/commit/ffa7ebba4a39edbb757a10b8e41962f8a606cce5).
 The copied source inventory consists of `http/media/jackson` and `http/tests/media/jackson`.
-Jackson 2 preserves their behavior while relocating the integration and its provider ID.
+Jackson 2 preserves their behavior while relocating the integration and its provider ID,
+except that inferred final-field mutation is disabled by default. Both extensions allow an explicit
+`ALLOW_FINAL_FIELDS_AS_MUTATORS` configuration override for applications that require it.
 Jackson 3 adapts the APIs and defaults described in its migration documentation.
 
 Build each release unit independently with JDK 27:

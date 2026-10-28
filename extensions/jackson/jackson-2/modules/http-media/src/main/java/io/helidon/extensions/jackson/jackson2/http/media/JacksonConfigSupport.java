@@ -51,6 +51,7 @@ final class JacksonConfigSupport {
                     target.objectMapper(createDefaultObjectMapper());
                 } else {
                     JsonMapper.Builder builder = JsonMapper.builder()
+                            .disable(MapperFeature.ALLOW_FINAL_FIELDS_AS_MUTATORS)
                             .enable(StreamReadFeature.USE_FAST_DOUBLE_PARSER)
                             .enable(StreamReadFeature.USE_FAST_BIG_NUMBER_PARSER);
                     configureJsonMapper(builder, target.properties());
@@ -87,6 +88,7 @@ final class JacksonConfigSupport {
 
         private static ObjectMapper createDefaultObjectMapper() {
             return JsonMapper.builder()
+                    .disable(MapperFeature.ALLOW_FINAL_FIELDS_AS_MUTATORS)
                     .enable(StreamReadFeature.USE_FAST_DOUBLE_PARSER)
                     .enable(StreamReadFeature.USE_FAST_BIG_NUMBER_PARSER)
                     .build()

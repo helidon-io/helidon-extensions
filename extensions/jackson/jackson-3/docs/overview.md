@@ -122,8 +122,9 @@ subtree rather than the entire server configuration.
 
 Jackson 3 mappers are immutable after construction. Configure a `tools.jackson.databind.json.JsonMapper.Builder`
 and pass its completed mapper to `JacksonSupport.create(mapper)` rather than mutating an installed mapper.
-The extension uses `JsonMapper.builderWithJackson2Defaults()`, enables parameter-name detection and default view
-inclusion, and enables fast numeric parsing. Java time and JDK 8 optional handling are built into Jackson 3;
+The extension uses `JsonMapper.builderWithJackson2Defaults()`, disables inferred final-field mutation,
+enables parameter-name detection and default view inclusion, and enables fast numeric parsing.
+Java time and JDK 8 optional handling are built into Jackson 3;
 the Jackson 2 datatype and parameter-name modules are not added.
 Boolean configuration uses Jackson 3 feature names, including `JsonReadFeature` and `JsonWriteFeature` instead
 of the removed `JsonParser.Feature` and `JsonGenerator.Feature` enums.
@@ -134,6 +135,7 @@ a binary replacement for Jackson 2.
 | --- | --- |
 | Property ordering | Preserve Jackson 2 declaration order instead of Jackson 3 alphabetical sorting. |
 | Unknown properties | Fail deserialization, as core Jackson 2 does. |
+| Inferred final-field writes | Disabled by default, unlike core Jackson 2. A getter alone does not make its final field writable during deserialization. |
 | Null primitive values | Preserve the Jackson 2 zero/false coercion. |
 | Enums and dates | Preserve enum names and timestamp defaults; `DateTimeFeature` properties such as `WRITE_DATES_AS_TIMESTAMPS` can override them. |
 | Parameter names and views | Detect constructor parameter names and include properties without a view annotation. |
@@ -145,6 +147,22 @@ a binary replacement for Jackson 2.
 Feature keys follow the Jackson 3 enums. For example, use `ALLOW_UNESCAPED_CONTROL_CHARS`
 instead of the removed `JsonParser.Feature.ALLOW_UNQUOTED_CONTROL_CHARS` spelling.
 Custom mappers retain their own defaults and override the integration's property map.
+
+Applications that intentionally need inferred final-field writes can explicitly enable them:
+
+```yaml
+server:
+  media-context:
+    media-supports:
+      jackson-3:
+        properties:
+          ALLOW_FINAL_FIELDS_AS_MUTATORS: true
+```
+
+The same override is available through `JacksonSupport.builder().putProperty("ALLOW_FINAL_FIELDS_AS_MUTATORS", true)`.
+Leave it disabled for untrusted input unless the application intentionally accepts values for those fields.
+This setting controls inferred field writes; it does not prevent constructor-based deserialization or make an object graph immutable.
+
 See the [official Jackson 3 migration guide](https://github.com/FasterXML/jackson/blob/main/jackson3/MIGRATING_TO_JACKSON_3.md)
 for third-party API changes outside this integration.
 

@@ -45,6 +45,7 @@ final class JacksonConfigSupport {
         public void decorate(JacksonSupportConfig.BuilderBase<?, ?> target) {
             if (target.objectMapper().isEmpty()) {
                 JsonMapper.Builder builder = JsonMapper.builderWithJackson2Defaults()
+                        .disable(MapperFeature.ALLOW_FINAL_FIELDS_AS_MUTATORS)
                         .enable(MapperFeature.DETECT_PARAMETER_NAMES)
                         .enable(MapperFeature.DEFAULT_VIEW_INCLUSION)
                         .enable(StreamReadFeature.USE_FAST_DOUBLE_PARSER)

@@ -23,6 +23,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.OptionalLong;
 
@@ -30,6 +31,7 @@ import io.helidon.common.GenericType;
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.common.testing.http.junit5.HttpHeaderMatcher;
 import io.helidon.config.Config;
+import io.helidon.config.ConfigSources;
 import io.helidon.http.ClientRequestHeaders;
 import io.helidon.http.HeaderValues;
 import io.helidon.http.HttpException;
@@ -43,7 +45,9 @@ import io.helidon.http.media.MediaContext;
 import io.helidon.http.media.MediaSupport;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.containsString;
@@ -82,6 +86,45 @@ class JacksonMediaTest {
         assertThat(configured.name(), is("custom-jackson"));
         assertThat(support.name(), is("jackson-2"));
         assertThat(JacksonSupport.builder().build().type(), is("jackson-2"));
+    }
+
+    @Test
+    void testDefaultMapperRejectsFinalFieldMutation() {
+        var exception = assertThrows(JacksonRuntimeException.class,
+                                     () -> readRole(JacksonSupport.create(Config.empty())));
+        assertThat(exception.getCause().getMessage(), containsString("role"));
+    }
+
+    @Test
+    void testConfiguredMapperPreservesFinalField() {
+        Config config = Config.create(ConfigSources.create(Map.of("properties.FAIL_ON_UNKNOWN_PROPERTIES", "false")));
+
+        assertThat(readRole(JacksonSupport.create(config)).getRole(), is("user"));
+    }
+
+    @Test
+    void testConfiguredMapperAllowsExplicitFinalFieldMutation() {
+        Config config = Config.create(ConfigSources.create(Map.of("properties.ALLOW_FINAL_FIELDS_AS_MUTATORS", "true")));
+
+        assertThat(readRole(JacksonSupport.create(config)).getRole(), is("admin"));
+    }
+
+    @Test
+    void testConfiguredMapperDisablesExplicitFinalFieldMutation() {
+        Config config = Config.create(ConfigSources.create(Map.of("properties.ALLOW_FINAL_FIELDS_AS_MUTATORS", "false",
+                                                                  "properties.FAIL_ON_UNKNOWN_PROPERTIES", "false")));
+
+        assertThat(readRole(JacksonSupport.create(config)).getRole(), is("user"));
+    }
+
+    @Test
+    void testCustomMapperRetainsFinalFieldMutationSetting() {
+        ObjectMapper mapper = JsonMapper.builder().enable(MapperFeature.ALLOW_FINAL_FIELDS_AS_MUTATORS).build();
+        Config config = Config.create(ConfigSources.create(Map.of("properties.ALLOW_FINAL_FIELDS_AS_MUTATORS", "false")));
+        var configured = JacksonSupport.builder().objectMapper(mapper).config(config).build();
+
+        assertThat(readRole(configured).getRole(), is("admin"));
+        assertThat(mapper.isEnabled(MapperFeature.ALLOW_FINAL_FIELDS_AS_MUTATORS), is(true));
     }
 
     @Test
@@ -329,6 +372,15 @@ class JacksonMediaTest {
         assertThat(httpException.status(), is(Status.UNSUPPORTED_MEDIA_TYPE_415));
     }
 
+    private RoleRequest readRole(MediaSupport mediaSupport) {
+        var type = GenericType.create(RoleRequest.class);
+        var headers = WritableHeaders.create().contentType(MediaTypes.APPLICATION_JSON);
+        var response = mediaSupport.reader(type, headers);
+        assertThat(response.support(), is(MediaSupport.SupportLevel.COMPATIBLE));
+        var input = new ByteArrayInputStream("{\"role\":\"admin\"}".getBytes(StandardCharsets.UTF_8));
+        return response.supplier().get().read(type, input, headers);
+    }
+
     private void assertInstanceWriter(InstanceWriter writer, String expectedTitle) {
         byte[] bytes = writer.instanceBytes();
         assertThat(writer.alwaysInMemory(), is(true));
@@ -341,6 +393,18 @@ class JacksonMediaTest {
         String result = new String(bytes, StandardCharsets.UTF_8);
         assertThat(result, containsString("\"title\""));
         assertThat(result, containsString("\"" + expectedTitle + "\""));
+    }
+
+    public static class RoleRequest {
+        private final String role;
+
+        public RoleRequest() {
+            this.role = "user";
+        }
+
+        public String getRole() {
+            return role;
+        }
     }
 
     public static class Book {

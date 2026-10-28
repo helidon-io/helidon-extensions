@@ -105,9 +105,15 @@ subtree rather than the entire server configuration.
 
 ## Mapper behavior
 
-The default mapper retains the core Jackson 2 behavior: fast numeric parsing, parameter-name support,
-JDK 8 optional support, and Java time support. Boolean feature configuration uses Jackson 2 enum names.
+The default mapper retains fast numeric parsing, parameter-name support, JDK 8 optional support,
+and Java time support. Unlike the core Jackson 2 integration, it disables `ALLOW_FINAL_FIELDS_AS_MUTATORS`
+so Jackson does not infer final fields as writable properties solely from getters. Such input may be rejected
+as an unknown property, or ignored when `FAIL_ON_UNKNOWN_PROPERTIES` is disabled. This does not prevent
+explicitly annotated creator properties or make an entire object graph immutable.
+To restore inferred final-field writes, set `properties.ALLOW_FINAL_FIELDS_AS_MUTATORS: true`
+in the support-scoped configuration. Boolean feature configuration uses Jackson 2 enum names.
 A custom `com.fasterxml.jackson.databind.ObjectMapper` can be supplied through `JacksonSupport.create(mapper)`.
+It retains its own settings and takes precedence over configured properties.
 Configure the mapper before sharing it with server and client contexts.
 
 ## Examples and configuration reference
@@ -126,4 +132,4 @@ Markdown configuration reference files under `config/` from its actual config me
 The initial HTTP media implementation and integration tests are derived from
 [Helidon core revision ffa7ebba4a39edbb757a10b8e41962f8a606cce5](https://github.com/helidon-io/helidon/tree/ffa7ebba4a39edbb757a10b8e41962f8a606cce5),
 respectively `http/media/jackson` and `http/tests/media/jackson`.
-The extension relocates the integration to its own namespace while preserving its Jackson 2 HTTP media behavior.
+The extension relocates the integration to its own namespace, with the intentional final-field default described above.

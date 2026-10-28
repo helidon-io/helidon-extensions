@@ -49,8 +49,10 @@ interface JacksonSupportConfigBlueprint extends MediaSupportConfig, Prototype.Fa
 
     /**
      * Jackson configuration properties.
-     * Properties are being ignored if specific {@link JacksonSupport} is set.
+     * Properties are ignored when a custom {@link com.fasterxml.jackson.databind.ObjectMapper} is supplied.
      * Only {@code boolean} configuration values are supported.
+     * The default mapper disables {@code ALLOW_FINAL_FIELDS_AS_MUTATORS}, preventing inferred writes to final fields.
+     * Set this property to {@code true} to explicitly enable such writes.
      *
      * @return jackson config properties
      */

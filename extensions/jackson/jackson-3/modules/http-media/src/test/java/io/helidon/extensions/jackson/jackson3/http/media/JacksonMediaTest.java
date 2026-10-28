@@ -23,6 +23,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -31,6 +32,7 @@ import io.helidon.common.GenericType;
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.common.testing.http.junit5.HttpHeaderMatcher;
 import io.helidon.config.Config;
+import io.helidon.config.ConfigSources;
 import io.helidon.http.ClientRequestHeaders;
 import io.helidon.http.HeaderValues;
 import io.helidon.http.HttpException;
@@ -94,6 +96,41 @@ class JacksonMediaTest {
                 .build().prototype().objectMapper();
         assertThat(mapper.isEnabled(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES), is(false));
         assertThat(mapper.isEnabled(MapperFeature.DEFAULT_VIEW_INCLUSION), is(false));
+    }
+
+    @Test
+    void testFinalFieldMutationRejectedByDefault() {
+        assertThrows(JacksonRuntimeException.class, () -> readRole(support));
+    }
+
+    @Test
+    void testFinalFieldMutationDisabledWithOtherProperties() {
+        var config = Config.create(ConfigSources.create(Map.of("properties.FAIL_ON_UNKNOWN_PROPERTIES", "false")));
+        assertThat(readRole(JacksonSupport.create(config)), is("user"));
+    }
+
+    @Test
+    void testFinalFieldMutationConfigured() {
+        for (boolean enabled : List.of(false, true)) {
+            var config = Config.create(ConfigSources.create(Map.of("properties.FAIL_ON_UNKNOWN_PROPERTIES", "false",
+                                                                  "properties.ALLOW_FINAL_FIELDS_AS_MUTATORS",
+                                                                  Boolean.toString(enabled))));
+            assertThat("ALLOW_FINAL_FIELDS_AS_MUTATORS=" + enabled,
+                       readRole(JacksonSupport.create(config)),
+                       is(enabled ? "admin" : "user"));
+        }
+    }
+
+    @Test
+    void testFinalFieldMutationWithSuppliedMapper() {
+        var mapper = JsonMapper.builder()
+                .enable(MapperFeature.ALLOW_FINAL_FIELDS_AS_MUTATORS)
+                .build();
+        var mediaSupport = JacksonSupport.builder()
+                .objectMapper(mapper)
+                .putProperty("ALLOW_FINAL_FIELDS_AS_MUTATORS", false)
+                .build();
+        assertThat(readRole(mediaSupport), is("admin"));
     }
 
     @Test
@@ -371,6 +408,13 @@ class JacksonMediaTest {
         assertThat(httpException.status(), is(Status.UNSUPPORTED_MEDIA_TYPE_415));
     }
 
+    private String readRole(MediaSupport mediaSupport) {
+        var type = GenericType.create(RequestDto.class);
+        var headers = WritableHeaders.create().contentType(MediaTypes.APPLICATION_JSON);
+        var body = new ByteArrayInputStream("{\"role\":\"admin\"}".getBytes(StandardCharsets.UTF_8));
+        return mediaSupport.reader(type, headers).supplier().get().read(type, body, headers).getRole();
+    }
+
     private void assertInstanceWriter(InstanceWriter writer, String expectedTitle) {
         byte[] bytes = writer.instanceBytes();
         assertThat(writer.alwaysInMemory(), is(true));
@@ -386,6 +430,18 @@ class JacksonMediaTest {
     }
 
     public record JavaTypes(Optional<String> value, Instant timestamp) {
+    }
+
+    public static class RequestDto {
+        private final String role;
+
+        public RequestDto() {
+            role = "user";
+        }
+
+        public String getRole() {
+            return role;
+        }
     }
 
     public static class Book {
