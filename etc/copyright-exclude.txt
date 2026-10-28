@@ -78,5 +78,3 @@ service.loader
 .repo
 reflection.proto
 manifest
-# Original core fixture sources retain their recorded copyright notices.
-extensions/jackson/jackson-2/tests/compatibility/src/test/resources/legacy/
