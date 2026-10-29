@@ -64,6 +64,7 @@ class OciMetricsData {
         List<MetricDataDetails> allMetricDataDetails = new ArrayList<>();
         Services.get(MeterRegistry.class).meters().stream()
                 .flatMap(this::metricDataDetails)
+                .filter(Objects::nonNull)
                 .forEach(allMetricDataDetails::add);
         return allMetricDataDetails;
     }

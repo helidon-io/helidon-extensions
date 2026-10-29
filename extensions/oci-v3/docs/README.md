@@ -9,6 +9,9 @@ become OCI dimensions; the exporter does not add a `scope` dimension.
 For meters without tags, the exporter uses `source=helidon` to satisfy
 [OCI's minimum of one dimension per metric group](https://docs.oracle.com/en-us/iaas/tools/oci-cli/latest/oci_cli_docs/cmdref/monitoring/metric-data/post.html).
 
+Metric samples with a `NaN` value are omitted from export. Other valid samples
+continue to be exported. If no samples remain, the exporter sends no request to OCI.
+
 Helidon 27 no longer supports metric scopes. The legacy OCI metrics `scopes`
 configuration setting is ignored, and `OciMetricsSupport.Builder.scopes(String[])`
 is deprecated and has no effect. Use ordinary metric tags to attach categories to
