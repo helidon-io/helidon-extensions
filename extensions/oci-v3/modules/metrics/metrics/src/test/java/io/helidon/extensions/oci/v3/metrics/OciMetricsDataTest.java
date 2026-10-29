@@ -128,6 +128,31 @@ class OciMetricsDataTest {
     }
 
     @Test
+    void testUnavailableGaugeIsOmittedAlongsideValidMetrics() {
+        var factory = meterRegistry.metricsFactory();
+        meterRegistry.getOrCreate(factory.gaugeBuilder("unavailable", () -> Double.NaN));
+        meterRegistry.getOrCreate(factory.gaugeBuilder("available", () -> 2.5));
+        meterRegistry.getOrCreate(factory.counterBuilder("requests")).increment();
+
+        OciMetricsData ociMetricsData = new OciMetricsData(
+                nameFormatter, "compartmentId", "namespace", "resourceGroup", false);
+
+        assertMetricValues(ociMetricsData.getMetricDataDetails(), Map.of("available_gauge", 2.5, "requests_counter", 1.0));
+    }
+
+    @Test
+    void testOnlyUnavailableGaugesProduceNoMetricData() {
+        var factory = meterRegistry.metricsFactory();
+        meterRegistry.getOrCreate(factory.gaugeBuilder("unavailable", () -> Double.NaN));
+        meterRegistry.getOrCreate(factory.gaugeBuilder("also.unavailable", () -> Double.NaN));
+
+        OciMetricsData ociMetricsData = new OciMetricsData(
+                nameFormatter, "compartmentId", "namespace", "resourceGroup", false);
+
+        assertThat("Unavailable gauges are omitted", ociMetricsData.getMetricDataDetails(), hasSize(0));
+    }
+
+    @Test
     void testBaseUnitsControlValueConversion() {
         String description = "Measured values";
         meterRegistry.getOrCreate(meterRegistry.metricsFactory().counterBuilder("elapsed")

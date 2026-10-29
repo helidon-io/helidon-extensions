@@ -17,10 +17,14 @@ package io.helidon.extensions.oci.v3.metrics;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.stream.IntStream;
 
 import io.helidon.config.Config;
@@ -45,12 +49,17 @@ import org.junit.jupiter.params.provider.ValueSource;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class OciMetricsSupportTest {
     private static final Monitoring monitoringClient = mock(Monitoring.class);
@@ -265,6 +274,73 @@ class OciMetricsSupportTest {
         assertThat(Duration.between(start, finish).toMillis(), is(greaterThanOrEqualTo(estimatedTotalBatchDelay)));
 
         webServer.stop();
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 1, 3})
+    void testUnavailableGaugesWithTraceLogging(int validMetricCount) throws InterruptedException {
+        CountDownLatch gaugeReads = new CountDownLatch(2);
+        meterRegistry.getOrCreate(meterRegistry.metricsFactory().gaugeBuilder("unavailable", () -> {
+            gaugeReads.countDown();
+            return Double.NaN;
+        }));
+        IntStream.range(0, validMetricCount)
+                .forEach(index -> meterRegistry.getOrCreate(meterRegistry.metricsFactory()
+                                                                   .counterBuilder("available" + index)).increment());
+
+        Monitoring client = mock(Monitoring.class);
+        when(client.getEndpoint()).thenReturn("https://telemetry.DummyEndpoint.com");
+        var batches = new LinkedBlockingQueue<List<MetricDataDetails>>();
+        doAnswer(invocation -> {
+            PostMetricDataRequest request = invocation.getArgument(0);
+            // Copy each batch before the exporter removes the posted metrics from its list.
+            batches.add(List.copyOf(request.getPostMetricDataDetails().getMetricData()));
+            return PostMetricDataResponse.builder().__httpStatusCode__(200).build();
+        }).when(client).postMetricData(any());
+
+        OciMetricsSupport support = OciMetricsSupport.builder()
+                .compartmentId("compartmentId")
+                .namespace("namespace")
+                .initialDelay(0)
+                .delay(50)
+                .batchDelay(0)
+                .batchSize(2)
+                .schedulingTimeUnit(TimeUnit.MILLISECONDS)
+                .monitoringClient(client)
+                .build();
+
+        Logger logger = Logger.getLogger(OciMetricsSupport.class.getName());
+        Level originalLevel = logger.getLevel();
+        logger.setLevel(Level.FINEST);
+        try {
+            assertThat("TRACE logging is enabled",
+                       System.getLogger(OciMetricsSupport.class.getName()).isLoggable(System.Logger.Level.TRACE), is(true));
+            support.beforeStart();
+            countDownLatchWait(gaugeReads);
+            if (validMetricCount == 0) {
+                verify(client, never()).postMetricData(any());
+            } else {
+                int batchCount = (validMetricCount + 1) / 2;
+                // Verify two export cycles so an unavailable sample cannot silently stop future exports.
+                for (int cycle = 0; cycle < 2; cycle++) {
+                    var exported = new ArrayList<MetricDataDetails>();
+                    for (int batch = 0; batch < batchCount; batch++) {
+                        List<MetricDataDetails> metrics = batches.poll(10, TimeUnit.SECONDS);
+                        assertThat("Posted batch", metrics, notNullValue());
+                        assertThat("Batch size", metrics, hasSize(Math.min(2, validMetricCount - batch * 2)));
+                        exported.addAll(metrics);
+                    }
+                    assertThat("Exported metric names", exported.stream().map(MetricDataDetails::getName).sorted().toList(),
+                               is(IntStream.range(0, validMetricCount).mapToObj(index -> "available" + index + "_counter")
+                                          .toList()));
+                    exported.forEach(metric -> assertThat("Exported value", metric.getDatapoints().getFirst().getValue(),
+                                                          is(1.0)));
+                }
+            }
+        } finally {
+            support.afterStop();
+            logger.setLevel(originalLevel);
+        }
     }
 
     @ParameterizedTest
