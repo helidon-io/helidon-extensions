@@ -88,13 +88,9 @@ final class AqValues {
             return copy.asReadOnlyBuffer().order(buffer.order());
         }
         if (value instanceof Map<?, ?> map) {
-            Map<String, Object> result = new LinkedHashMap<>();
-            map.forEach((key, item) -> {
-                if (!(key instanceof String name) || name.isEmpty()) {
-                    throw new IllegalArgumentException("AQ map payload keys must be non-empty strings");
-                }
-                result.put(name, mapValue(item));
-            });
+            // Application maps may need conversion before the mapper checks native MapMessage constraints.
+            Map<Object, Object> result = new LinkedHashMap<>();
+            map.forEach((key, item) -> result.put(key, item instanceof byte[] bytes ? bytes.clone() : item));
             return Collections.unmodifiableMap(result);
         }
         return value;

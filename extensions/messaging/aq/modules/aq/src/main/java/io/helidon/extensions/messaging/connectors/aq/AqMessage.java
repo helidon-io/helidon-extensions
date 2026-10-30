@@ -41,9 +41,11 @@ import oracle.jms.AdtMessage;
 
 /**
  * AQ message with detached payload and immutable native metadata.
- * Binary and map payloads are defensively copied. Use the Map interface for map entity types and
+ * Binary payloads, map structure, and byte-array map values are defensively copied.
+ * Map keys and other map values are retained; applications and converters must keep these values stable.
+ * Use the Map interface for map entity types and
  * {@link java.nio.ByteBuffer} for buffer entity types; concrete buffer subclasses are not retained by snapshots.
- * An outgoing application object is retained until mapping; the application must keep custom values stable.
+ * Other application objects are retained; applications and converters must keep custom values stable.
  * Serializable object payloads are copied only after the connector's explicit object-message opt-in.
  * No accessor exposes a native message, session, connection, LOB, or XML database resource.
  *

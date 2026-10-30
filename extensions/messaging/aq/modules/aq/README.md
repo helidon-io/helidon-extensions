@@ -82,6 +82,10 @@ The database queue's storage type must match the payload. The connector does not
 types, users, or grants. Configured durable subscriptions are created through Oracle AQ.
 An `AqPayloadConverter` can convert application payloads to and from
 detached connector payloads without exposing a live JMS session or JDBC connection.
+Application maps can contain domain-specific keys and values, including nested collections. The converter can
+map these values to another supported payload, such as text. JMS MapMessage key/value restrictions are checked
+when reading or writing the native map payload. Message envelopes copy the map structure and byte-array values;
+applications and converters must keep map keys and other nested values stable.
 
 `AqMessage<T>` is a detached message envelope. It carries the payload, correlation identifier, JMS type,
 reply-to destination, supported application properties, and explicit recipient list. Incoming metadata also

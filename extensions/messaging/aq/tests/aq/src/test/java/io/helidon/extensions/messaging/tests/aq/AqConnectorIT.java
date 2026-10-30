@@ -50,6 +50,7 @@ import io.helidon.extensions.messaging.connectors.aq.AqDestinationType;
 import io.helidon.extensions.messaging.connectors.aq.AqIncomingConfig;
 import io.helidon.extensions.messaging.connectors.aq.AqMessage;
 import io.helidon.extensions.messaging.connectors.aq.AqOutgoingConfig;
+import io.helidon.extensions.messaging.connectors.aq.AqPayloadConverter;
 import io.helidon.extensions.messaging.connectors.aq.AqPayloadType;
 import io.helidon.extensions.messaging.connectors.aq.AqRecipient;
 import io.helidon.extensions.messaging.connectors.aq.AqXml;
@@ -447,6 +448,52 @@ class AqConnectorIT {
         messaging(manager).emit("outgoing", AqMessage.create(body));
 
         assertThat(receiver.await().entity(), is(body));
+    }
+
+    @Test
+    void convertedApplicationMapsCanBeReceivedForwardedAndSent() throws Exception {
+        AqPayloadConverter converter = new AqPayloadConverter() {
+            @Override
+            public Object fromPayload(Object payload) {
+                return Map.of(7, Map.of("label", payload), "items", List.of(payload));
+            }
+
+            @Override
+            public Object toPayload(Object entity) {
+                return ((Map<?, ?>) ((Map<?, ?>) entity).get(7)).get("label");
+            }
+        };
+        AqConnector connector = AqConnector.builder().name("converted-aq").dataSource(database.dataSource())
+                .schema(database.schema()).destination("TEXT_QUEUE").payloadConverter(converter).build();
+        var channel = MessagingChannel.create("converted", Object.class);
+        BlockingQueue<Message<?>> received = new LinkedBlockingQueue<>();
+        try (var graph = MessagingGraph.builder().channel(channel)
+                .incomingChannel(channel, connector.incoming(AqIncomingConfig.builder()
+                        .connector("converted-aq").channelName("converted").build()))
+                .messageSink(channel, received::add).build();
+             var outgoing = connector.outgoing(AqOutgoingConfig.builder()
+                     .connector("converted-aq").channelName("outgoing").build())) {
+            graph.start();
+            outgoing.start();
+            Map<Object, Object> first = Map.of(7, Map.of("label", "first"), "items", List.of("first"));
+            outgoing.sendBatch(MessageBatch.create(Message.create(first)));
+            Message<?> incoming = received.poll(20, TimeUnit.SECONDS);
+            assertThat(incoming, instanceOf(AqMessage.class));
+            assertThat(incoming.entity(), is(first));
+            assertThat(incoming.entity(), is(first));
+
+            outgoing.sendBatch(MessageBatch.create(incoming));
+            Message<?> forwarded = received.poll(20, TimeUnit.SECONDS);
+            assertThat(forwarded, instanceOf(AqMessage.class));
+            assertThat(forwarded.entity(), is(first));
+
+            Map<Object, Object> second = Map.of(7, Map.of("label", "second"), "items", List.of("second"));
+            outgoing.sendBatch(MessageBatch.create(AqMessage.mapBuilder(second).build()));
+            Message<?> created = received.poll(20, TimeUnit.SECONDS);
+            assertThat(created, instanceOf(AqMessage.class));
+            assertThat(created.entity(), is(second));
+        }
+        assertThat("all converted messages must be committed", receiveText("TEXT_QUEUE", 200), nullValue());
     }
 
     @Test

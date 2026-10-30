@@ -21,6 +21,9 @@ package io.helidon.extensions.messaging.connectors.aq;
  * The connector invokes this converter while it owns transport resources.
  * Implementations must return non-null values independent of live database resources.
  * Native payloads are {@link AqAdt}, {@link AqXml}, text, byte arrays, or maps.
+ * Application maps may contain domain-specific keys and values; native MapMessage restrictions apply to
+ * maps read from or written to the transport. Message envelopes copy the map structure and byte-array
+ * values, while retaining keys and other values, which must remain stable.
  */
 public interface AqPayloadConverter {
     /**
