@@ -84,6 +84,16 @@ interface AqChannelOptions {
     Optional<String> schema();
 
     /**
+     * Look up the destination through JNDI instead of a direct queue name and schema.
+     * Channel JNDI settings replace the complete connector JNDI configuration.
+     * Configuring a direct channel destination or schema instead selects direct destination resolution.
+     *
+     * @return JNDI destination lookup settings
+     */
+    @Option.Configured
+    Optional<AqJndiConfig> jndi();
+
+    /**
      * Destination type. Defaults to a single-consumer queue.
      *
      * @return destination type

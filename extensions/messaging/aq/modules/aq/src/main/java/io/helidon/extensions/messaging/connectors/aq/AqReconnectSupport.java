@@ -29,6 +29,16 @@ import java.util.concurrent.CancellationException;
 import javax.jms.InvalidDestinationException;
 import javax.jms.JMSException;
 import javax.jms.JMSSecurityException;
+import javax.naming.CommunicationException;
+import javax.naming.ConfigurationException;
+import javax.naming.InterruptedNamingException;
+import javax.naming.InvalidNameException;
+import javax.naming.NameNotFoundException;
+import javax.naming.NamingSecurityException;
+import javax.naming.NoInitialContextException;
+import javax.naming.NotContextException;
+import javax.naming.OperationNotSupportedException;
+import javax.naming.ServiceUnavailableException;
 
 import io.helidon.builder.api.Prototype;
 
@@ -50,12 +60,22 @@ final class AqReconnectSupport {
                     || current instanceof InterruptedException
                     || current instanceof CancellationException
                     || current instanceof InvalidDestinationException
-                    || current instanceof JMSSecurityException) {
+                    || current instanceof JMSSecurityException
+                    || current instanceof InterruptedNamingException
+                    || current instanceof NamingSecurityException
+                    || current instanceof NameNotFoundException
+                    || current instanceof InvalidNameException
+                    || current instanceof NoInitialContextException
+                    || current instanceof ConfigurationException
+                    || current instanceof NotContextException
+                    || current instanceof OperationNotSupportedException) {
                 return false;
             }
             if (current instanceof AqConnectionTimeoutException
                     || current instanceof SQLRecoverableException
-                    || current instanceof SQLTransientConnectionException) {
+                    || current instanceof SQLTransientConnectionException
+                    || current instanceof CommunicationException
+                    || current instanceof ServiceUnavailableException) {
                 connectionFailure = true;
             }
             if (current instanceof SQLException sql) {

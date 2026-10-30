@@ -33,9 +33,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import javax.jms.Connection;
+import javax.jms.Destination;
 import javax.jms.MessageConsumer;
 import javax.jms.Session;
 import javax.jms.TextMessage;
+import javax.jms.Topic;
 import javax.sql.DataSource;
 import javax.xml.parsers.DocumentBuilderFactory;
 
@@ -192,6 +194,100 @@ class AqConnectorIT {
     @Test
     void topicReplyToSurvivesReceiveAndForwarding() throws Exception {
         verifyReplyTo("DURABLE_QUEUE", AqDestinationType.TOPIC);
+    }
+
+    @Test
+    void jndiQueueIsLookedUpAgainAfterReconnectAndRebind() throws Exception {
+        Destination original = detachedDestination("TEXT_QUEUE", AqDestinationType.QUEUE);
+        Destination rebound = detachedDestination("RECONNECT_QUEUE", AqDestinationType.QUEUE);
+        try (var registration = AqJndiTestContextFactory.register()) {
+            registration.rebind("jms/Orders", original);
+            AqConnector connector = AqConnector.builder().name("jndi-aq").dataSource(database.dataSource())
+                    .jndi(registration.config("jms/Orders"))
+                    .reconnect(reconnect -> reconnect.initialDelay(Duration.ofMillis(10)).maxDelay(Duration.ofMillis(50))
+                            .jitter(0).connectTimeout(Duration.ofSeconds(5)).waitTimeout(Duration.ofSeconds(10)))
+                    .build();
+            try (var outgoing = connector.outgoing(AqOutgoingConfig.builder()
+                    .connector("jndi-aq").channelName("outgoing").build())) {
+                outgoing.start();
+                outgoing.sendBatch(MessageBatch.create(AqMessage.create("before rebind")));
+                TextMessage first = receiveText("TEXT_QUEUE", 5_000);
+                assertThat(first, notNullValue());
+                assertThat(first.getText(), is("before rebind"));
+
+                registration.rebind("jms/Orders", rebound);
+                assertThat(database.killSessions(), greaterThan(0));
+                assertThrows(BatchDeliveryException.class,
+                             () -> outgoing.sendBatch(MessageBatch.create(AqMessage.create("failed send"))));
+                outgoing.sendBatch(MessageBatch.create(AqMessage.create("after rebind")));
+
+                TextMessage second = receiveText("RECONNECT_QUEUE", 5_000);
+                assertThat(second, notNullValue());
+                assertThat(second.getText(), is("after rebind"));
+                assertThat(receiveText("TEXT_QUEUE", 200), nullValue());
+                assertThat(registration.opened(), is(2));
+                assertThat(registration.closed(), is(2));
+            }
+        }
+    }
+
+    @Test
+    void jndiTopicFromAClosedLookupSessionCanBePublishedTo() throws Exception {
+        Topic topic = (Topic) detachedDestination("DURABLE_QUEUE", AqDestinationType.TOPIC);
+        try (var registration = AqJndiTestContextFactory.register();
+             Connection connection = AQjmsFactory.getConnectionFactory(database.dataSource()).createConnection()) {
+            registration.rebind("jms/Events", topic);
+            connection.setClientID("jndi-topic-test");
+            AqConnector connector = AqConnector.builder().name("jndi-aq").dataSource(database.dataSource())
+                    .destinationType(AqDestinationType.TOPIC).jndi(registration.config("jms/Events")).build();
+            try (Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE)) {
+                try (MessageConsumer consumer = session.createDurableSubscriber(topic, "JNDI_SUBSCRIBER");
+                     var outgoing = connector.outgoing(AqOutgoingConfig.builder()
+                             .connector("jndi-aq").channelName("outgoing").build())) {
+                    connection.start();
+                    outgoing.start();
+                    outgoing.sendBatch(MessageBatch.create(AqMessage.create("JNDI topic")));
+
+                    TextMessage received = (TextMessage) consumer.receive(5_000);
+                    assertThat(received, notNullValue());
+                    assertThat(received.getText(), is("JNDI topic"));
+                    assertThat(registration.opened(), is(1));
+                    assertThat(registration.closed(), is(1));
+                }
+                session.unsubscribe("JNDI_SUBSCRIBER");
+            }
+        }
+    }
+
+    @Test
+    void incomingJndiQueueFromAClosedLookupSessionCanBeConsumed() throws Exception {
+        Destination destination = detachedDestination("TEXT_QUEUE", AqDestinationType.QUEUE);
+        try (var registration = AqJndiTestContextFactory.register()) {
+            registration.rebind("jms/Orders", destination);
+            AqConnector incoming = AqConnector.builder().name("jndi-aq").dataSource(database.dataSource())
+                    .jndi(registration.config("jms/Orders")).receiveTimeout(Duration.ofMillis(200)).build();
+            AqConnector sender = AqConnector.builder().name("direct-aq").dataSource(database.dataSource())
+                    .schema(database.schema()).destination("TEXT_QUEUE").build();
+            var channel = MessagingChannel.create("jndi-incoming", String.class);
+            BlockingQueue<Message<?>> messages = new LinkedBlockingQueue<>();
+            try (var graph = MessagingGraph.builder().channel(channel)
+                    .incomingChannel(channel, incoming.incoming(AqIncomingConfig.builder()
+                            .connector("jndi-aq").channelName("jndi-incoming").build()))
+                    .messageSink(channel, messages::add).build();
+                 var outgoing = sender.outgoing(AqOutgoingConfig.builder()
+                         .connector("direct-aq").channelName("outgoing").build())) {
+                graph.start();
+                outgoing.start();
+                outgoing.sendBatch(MessageBatch.create(AqMessage.create("JNDI incoming")));
+
+                Message<?> received = messages.poll(20, TimeUnit.SECONDS);
+                assertThat(received, instanceOf(AqMessage.class));
+                assertThat(received.entity(), is("JNDI incoming"));
+            }
+            assertThat(registration.opened(), is(1));
+            assertThat(registration.closed(), is(1));
+        }
+        assertThat("the JNDI input must commit its dequeue", receiveText("TEXT_QUEUE", 200), nullValue());
     }
 
     @Test
@@ -866,6 +962,15 @@ class AqConnectorIT {
                 .reconnect(reconnect -> reconnect.initialDelay(Duration.ofMillis(50)).maxDelay(Duration.ofMillis(100))
                         .jitter(0).connectTimeout(Duration.ofSeconds(5)).waitTimeout(Duration.ofSeconds(10)))
                 .build();
+    }
+
+    private Destination detachedDestination(String destination, AqDestinationType type) throws Exception {
+        try (Connection connection = AQjmsFactory.getConnectionFactory(database.dataSource()).createConnection();
+             Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE)) {
+            AQjmsSession aq = (AQjmsSession) session;
+            return type == AqDestinationType.QUEUE
+                    ? aq.getQueue(database.schema(), destination) : aq.getTopic(database.schema(), destination);
+        }
     }
 
     private AqAdt binaryLobValue(byte[] bytes) {

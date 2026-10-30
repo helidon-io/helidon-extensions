@@ -31,6 +31,7 @@ import javax.jms.MessageConsumer;
 import javax.jms.MessageProducer;
 import javax.jms.Session;
 import javax.jms.Topic;
+import javax.naming.NamingException;
 
 import io.helidon.messaging.MessagingException;
 
@@ -255,7 +256,10 @@ final class AqResources implements AutoCloseable {
         }
     }
 
-    private Destination destination(Session current) throws JMSException {
+    private Destination destination(Session current) throws JMSException, NamingException {
+        if (config.jndi().isPresent()) {
+            return AqJndiDestination.resolve(config.jndi().orElseThrow(), config.destinationType());
+        }
         if (config.schema().isPresent()) {
             AQjmsSession aq = aqSession(current);
             return switch (config.destinationType()) {

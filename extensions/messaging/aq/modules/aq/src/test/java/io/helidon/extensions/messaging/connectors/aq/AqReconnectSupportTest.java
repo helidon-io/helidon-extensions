@@ -23,6 +23,12 @@ import java.util.List;
 import java.util.concurrent.CancellationException;
 
 import javax.jms.JMSException;
+import javax.naming.AuthenticationException;
+import javax.naming.CommunicationException;
+import javax.naming.InvalidNameException;
+import javax.naming.NameNotFoundException;
+import javax.naming.NamingException;
+import javax.naming.ServiceUnavailableException;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -67,6 +73,22 @@ class AqReconnectSupportTest {
         first.setLinkedException(second);
         second.setLinkedException(first);
         assertThat(AqReconnectSupport.recoverable(first), is(false));
+    }
+
+    @Test
+    void testNamingFailuresPreserveTransientAndPermanentDistinctions() {
+        for (NamingException transientFailure : List.of(new CommunicationException("connection lost"),
+                                                        new ServiceUnavailableException("offline"))) {
+            NamingException wrapper = new NamingException("lookup failed");
+            wrapper.setRootCause(transientFailure);
+            assertThat(AqReconnectSupport.recoverable(wrapper), is(true));
+        }
+        for (NamingException permanent : List.of(new NameNotFoundException("missing"),
+                                                 new InvalidNameException("malformed"),
+                                                 new AuthenticationException("denied"))) {
+            permanent.setRootCause(new CommunicationException("provider context"));
+            assertThat(AqReconnectSupport.recoverable(permanent), is(false));
+        }
     }
 
     @Test

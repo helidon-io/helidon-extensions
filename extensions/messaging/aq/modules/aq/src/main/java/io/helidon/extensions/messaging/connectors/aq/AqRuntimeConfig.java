@@ -26,10 +26,12 @@ import javax.sql.DataSource;
 
 /**
  * Effective channel settings, kept out of the public configuration API.
+ * The destination identifies the direct queue or the JNDI lookup name when JNDI settings are present.
  */
 record AqRuntimeConfig(String channelName,
                        String destination,
                        Optional<String> schema,
+                       Optional<AqJndiConfig> jndi,
                        AqDestinationType destinationType,
                        AqPayloadType payloadType,
                        Optional<AqPayloadConverter> payloadConverter,
@@ -79,10 +81,17 @@ record AqRuntimeConfig(String channelName,
         requireNonBlank("channel-name", Optional.of(channelName));
         validateResources(defaults);
         validateResources(channel);
+        validateDestination(defaults);
+        validateDestination(channel);
         AqChannelOptions resources = resourceCount(channel) > 0 ? channel : defaults;
-        String destination = inherit(channel.destination(), defaults.destination())
+        boolean directOverride = channel.destination().isPresent() || channel.schema().isPresent();
+        Optional<AqJndiConfig> jndi = directOverride ? Optional.empty() : inherit(channel.jndi(), defaults.jndi());
+        Optional<String> directDestination = defaults.jndi().isEmpty()
+                ? inherit(channel.destination(), defaults.destination()) : channel.destination();
+        String destination = jndi.map(AqJndiConfig::destination).or(() -> directDestination)
                 .orElseThrow(() -> new IllegalArgumentException("AQ destination is required for channel " + channelName));
-        Optional<String> schema = inherit(channel.schema(), defaults.schema());
+        Optional<String> schema = jndi.isPresent() ? Optional.empty()
+                : defaults.jndi().isEmpty() ? inherit(channel.schema(), defaults.schema()) : channel.schema();
         Optional<String> username = inherit(channel.username(), defaults.username());
         Optional<String> password = inherit(channel.password(), defaults.password());
         Optional<String> clientId = inherit(channel.clientId(), defaults.clientId());
@@ -147,6 +156,7 @@ record AqRuntimeConfig(String channelName,
         return new AqRuntimeConfig(channelName,
                                    destination,
                                    schema,
+                                   jndi,
                                    destinationType,
                                    inherit(channel.payloadType(), defaults.payloadType()).orElse(AqPayloadType.JMS),
                                    inherit(channel.payloadConverter(), defaults.payloadConverter()),
@@ -194,6 +204,14 @@ record AqRuntimeConfig(String channelName,
         requireNonBlank("data-source-name", options.dataSourceName());
         requireNonBlank("connection-factory-name", options.connectionFactoryName());
         requireNonBlank("jdbc-url", options.jdbcUrl());
+    }
+
+    private static void validateDestination(AqChannelOptions options) {
+        if (options.jndi().isPresent() && (options.destination().isPresent() || options.schema().isPresent())) {
+            throw new IllegalArgumentException("AQ JNDI settings and direct destination or schema are mutually exclusive");
+        }
+        requireNonBlank("destination", options.destination());
+        requireNonBlank("schema", options.schema());
     }
 
     private static void requireNonBlank(String name, Optional<String> value) {

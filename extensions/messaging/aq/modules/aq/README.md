@@ -67,6 +67,63 @@ As alternatives, configure an application-supplied Oracle AQ `ConnectionFactory`
 channel level overrides the connector's resource selection as a unit. Configure wallets and JDBC/pool-specific
 properties on the supplied data source or connection factory.
 
+## JNDI destination lookup
+
+Use `jndi.destination` to look up an existing queue or topic through a naming provider:
+
+```yaml
+messaging:
+  connector:
+    orders-aq:
+      type: helidon-aq
+      data-source-name: orders
+  outgoing:
+    orders-out:
+      connector: orders-aq
+      destination-type: QUEUE
+      jndi:
+        destination: jms/Orders
+        env-properties:
+          java.naming.factory.initial: com.example.naming.OrdersContextFactory
+          java.naming.provider.url: your-provider-url
+```
+
+Supply your naming provider implementation and its environment values. The connector uses the JDK `java.naming`
+API; the environment map is optional, so normal naming-provider defaults and `jndi.properties` can also be used.
+Programmatic configuration supports the same options:
+
+```java
+AqConnector connector = AqConnector.builder()
+        .name("orders-aq")
+        .dataSource(sharedDataSource)
+        .jndi(jndi -> jndi.destination("jms/Orders")
+                .putEnvProperty("java.naming.factory.initial", "com.example.naming.OrdersContextFactory"))
+        .build();
+```
+
+The resolved object must be a `javax.jms.Queue` or `javax.jms.Topic` matching `destination-type`, and compatible with
+the configured AQ connection factory. Oracle destination objects implement both interfaces, so the connector checks
+their actual native kind. Jakarta Messaging 3.x objects use a different namespace and are not compatible.
+The existing data source/factory/JDBC settings still select the database; JNDI resolves only the destination object.
+The object must describe a queue in that database. No JNDI connection-factory lookup is performed.
+
+At either connector or channel scope, `jndi` is mutually exclusive with direct `destination` and `schema` settings.
+A channel's JNDI block replaces the connector's entire JNDI configuration, including environment properties, or
+switches from inherited direct naming. An explicit channel `destination` or `schema` switches to direct naming;
+when switching from JNDI, supply a direct destination. When both scopes use direct naming, the existing field-by-field
+destination/schema inheritance applies. `destination-type` is inherited independently in either mode.
+
+Each initialization attempt creates and closes its own naming context. Lookup runs within `reconnect.connect-timeout`
+and repeats after a connection failure, so a directory rebind is observed by the recovered channel. Contexts are also
+closed on lookup/type failure and after a cancelled lookup returns late. Providers that ignore interruption retain
+the existing cleanup limit: another recovery attempt waits for the unfinished initializer to clean up.
+Configure provider-specific network timeouts through `env-properties` when needed.
+
+Missing names, invalid destination types, authentication and naming configuration errors fail explicitly. During
+established-channel recovery, recognized communication/service-unavailable naming failures use the configured backoff.
+Initial startup still performs one bounded attempt. Lookup failures never fall back to direct destination naming.
+Environment values are excluded from generated configuration string representations.
+
 ## Payloads and metadata
 
 | Queue storage | Java payload | Configuration |
@@ -304,8 +361,10 @@ Settings can be declared on the connector and overridden on individual channels.
 
 | Setting | Default or requirement |
 | --- | --- |
-| `destination` | Required existing queue name |
+| `destination` | Existing queue name; required when `jndi` is absent |
 | `schema` | Connected database user |
+| `jndi.destination` | Lookup name; mutually exclusive with direct `destination`/`schema` at the same scope |
+| `jndi.env-properties` | Initial-context environment; empty by default |
 | `destination-type` | `QUEUE`; use `TOPIC` for multi-consumer queues |
 | `payload-type` | `JMS`; alternatives `ADT`, `XML` |
 | `transacted` | `true` |
@@ -352,4 +411,7 @@ durable subscriptions, generated `@Messaging.ReceiveFrom` handlers and injected 
 rollback/redelivery, and sharing an injected data source across application components and runtime shutdown.
 Reconnect tests terminate only sessions belonging to the disposable schema, then verify incoming continuation,
 uncertain-settlement redelivery, outgoing failure without hidden replay, and durable subscription/selector restoration.
+JNDI tests use isolated in-process naming factories with real Oracle queue/topic objects, including objects obtained
+from a closed session, incoming delivery and destination rebind after reconnect. External naming-server connectivity
+and authentication depend on the deployment's naming provider and are not exercised by this fixture.
 Other database releases and deployment-specific wallet/failover configurations need separate validation.

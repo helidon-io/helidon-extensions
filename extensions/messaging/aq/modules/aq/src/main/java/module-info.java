@@ -34,6 +34,7 @@ module io.helidon.extensions.messaging.connectors.aq {
 
     requires io.helidon.common;
     requires io.helidon.service.registry;
+    requires java.naming;
     requires java.transaction;
     requires aqapi;
     requires com.oracle.database.jdbc;

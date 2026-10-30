@@ -36,4 +36,11 @@
         <Bug pattern="PREDICTABLE_RANDOM"/>
     </Match>
 
+    <Match>
+        <!-- The lookup name comes exclusively from application-owned channel configuration, never message data. -->
+        <Class name="io.helidon.extensions.messaging.connectors.aq.AqJndiDestination"/>
+        <Method name="resolve"/>
+        <Bug pattern="LDAP_INJECTION"/>
+    </Match>
+
 </FindBugsFilter>
