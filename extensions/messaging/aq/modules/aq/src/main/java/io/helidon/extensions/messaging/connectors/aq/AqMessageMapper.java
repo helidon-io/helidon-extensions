@@ -85,7 +85,7 @@ final class AqMessageMapper {
     }
 
     static javax.jms.Message toNative(Session session, Message<?> message, AqRuntimeConfig config) {
-        int deliveryDelay = deliveryDelay(message);
+        AqMessageMetadata.Outgoing options = AqMessageMetadata.outgoing(message, config.payloadType());
         Message<?> original = message instanceof DeadLetterMessage<?> deadLetter ? deadLetter.originalMessage() : message;
         AqMessage<?> aq = original instanceof AqMessage<?> candidate ? candidate : null;
         Object entity = aq == null ? original.entity()
@@ -98,9 +98,7 @@ final class AqMessageMapper {
         try {
             result = aq != null && aq.objectBody() && config.payloadConverter().isEmpty()
                     ? createObject(session, entity, config) : createBody(session, entity, config);
-            if (deliveryDelay > 0) {
-                result.setIntProperty("JMS_OracleDelay", deliveryDelay);
-            }
+            options.applyTo(result);
             if (aq != null) {
                 if (aq.correlationId().isPresent()) {
                     result.setJMSCorrelationID(aq.correlationId().orElseThrow());
@@ -188,28 +186,6 @@ final class AqMessageMapper {
             }
         } catch (JMSException | SQLException e) {
             throw new MessagingException("Cannot release AQ payload resources", e);
-        }
-    }
-
-    private static int deliveryDelay(Message<?> message) {
-        if (message instanceof DeadLetterMessage<?>) {
-            return 0;
-        }
-        var value = message.localMetadata().value(AqMessage.DELIVERY_DELAY_METADATA);
-        if (value.isEmpty()) {
-            return 0;
-        }
-        if (!(value.orElseThrow() instanceof MessageHeaderValue.IntegerValue integer)) {
-            throw new MessagingException("AQ delivery delay metadata must be an integer number of seconds");
-        }
-        try {
-            int seconds = integer.value().intValueExact();
-            if (seconds < 0) {
-                throw new MessagingException("AQ delivery delay metadata must not be negative");
-            }
-            return seconds;
-        } catch (ArithmeticException e) {
-            throw new MessagingException("AQ delivery delay metadata must not exceed " + Integer.MAX_VALUE + " seconds", e);
         }
     }
 

@@ -88,11 +88,14 @@ import org.xml.sax.InputSource;
 
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -192,6 +195,60 @@ class AqConnectorIT {
     }
 
     @Test
+    void oracleMetadataIsSnapshottedWithoutReplayingSendOptions() throws Exception {
+        Receiver receiver = new Receiver();
+        ServiceRegistryManager manager = runtime("TEXT_QUEUE", "", "", receiver);
+        String exceptionQueue = database.schema() + ".TEXT_EXCEPTION_QUEUE";
+        long beforeSend = System.currentTimeMillis();
+        messaging(manager).emit("outgoing", AqMessage.builder("Oracle metadata")
+                .applicationId("orders-worker").exceptionQueue(exceptionQueue).build());
+
+        AqMessage<?> received = receiver.await();
+        assertThat(received.localMetadata().text(AqMessage.RECEIVED_APPLICATION_ID_METADATA).orElseThrow(),
+                   is("orders-worker"));
+        assertThat(received.localMetadata().text(AqMessage.RECEIVED_USER_ID_METADATA).orElseThrow(), is(database.schema()));
+        assertThat(received.localMetadata().text(AqMessage.RECEIVED_EXCEPTION_QUEUE_METADATA).orElseThrow(), is(exceptionQueue));
+        assertReceivedOracleMetadata(received);
+        assertThat(metadataInteger(received, AqMessage.RECEIVED_TIMESTAMP_METADATA), greaterThanOrEqualTo(beforeSend));
+        assertThat(metadataInteger(received, AqMessage.RECEIVED_TIMESTAMP_METADATA), lessThanOrEqualTo(System.currentTimeMillis()));
+        assertThat(received.headers().entries().isEmpty(), is(true));
+        assertThat(received.properties().isEmpty(), is(true));
+
+        messaging(manager).emit("outgoing", received);
+        AqMessage<?> forwarded = receiver.await();
+        assertThat(forwarded.entity(), is("Oracle metadata"));
+        assertThat(forwarded.localMetadata().text(AqMessage.RECEIVED_APPLICATION_ID_METADATA).orElse(""),
+                   not(is("orders-worker")));
+        assertReceivedOracleMetadata(forwarded);
+        assertThat(received.localMetadata().text(AqMessage.RECEIVED_APPLICATION_ID_METADATA).orElseThrow(),
+                   is("orders-worker"));
+    }
+
+    @Test
+    void expiredMessageUsesTheExplicitOracleExceptionQueue() throws Exception {
+        ServiceRegistryManager sender = runtime("TEXT_QUEUE", "time-to-live: PT1S", "", null);
+        String exceptionQueue = database.schema() + ".TEXT_EXCEPTION_QUEUE";
+        messaging(sender).emit("outgoing", Message.builder("expired to custom queue")
+                .localMetadata(AqMessage.APPLICATION_ID_METADATA, "expired-order")
+                .localMetadata(AqMessage.EXCEPTION_QUEUE_METADATA, exceptionQueue).build());
+        awaitMessageState("TEXT_TAB", "EXPIRED");
+        try (var connection = database.dataSource().getConnection(); var statement = connection.createStatement();
+             var result = statement.executeQuery("SELECT COUNT(*) FROM AQ$TEXT_TAB"
+                                                         + " WHERE QUEUE = 'TEXT_EXCEPTION_QUEUE' AND MSG_STATE = 'EXPIRED'")) {
+            assertThat(result.next(), is(true));
+            assertThat("database expiration must route to the requested exception queue", result.getInt(1), is(1));
+        }
+        Receiver receiver = new Receiver();
+        runtime("TEXT_EXCEPTION_QUEUE", "", "", receiver);
+
+        AqMessage<?> received = receiver.await();
+        assertThat(received.entity(), is("expired to custom queue"));
+        assertThat(received.localMetadata().text(AqMessage.RECEIVED_APPLICATION_ID_METADATA).orElseThrow(), is("expired-order"));
+        assertReceivedOracleMetadata(received);
+        assertThat(metadataInteger(received, AqMessage.RECEIVED_STATE_METADATA), is(3L));
+    }
+
+    @Test
     void immediateMessagesOvertakeDelayedGenericAndAqMessages() throws Exception {
         Receiver receiver = new Receiver();
         ServiceRegistryManager manager = runtime("DELAY_TEXT_QUEUE", "", "", receiver);
@@ -209,7 +266,7 @@ class AqConnectorIT {
         List<AqMessage<?>> delayed = List.of(receiver.await(), receiver.await());
         assertThat(delayed.stream().map(Message::entity).toList(), containsInAnyOrder("generic delayed", "AQ delayed"));
         for (AqMessage<?> received : delayed) {
-            assertThat(received.localMetadata().isEmpty(), is(true));
+            assertReceivedOracleMetadata(received);
             assertThat(received.properties().containsKey(AqMessage.DELIVERY_DELAY_METADATA), is(false));
             assertThat(received.properties().containsKey("private"), is(false));
         }
@@ -268,13 +325,18 @@ class AqConnectorIT {
         ServiceRegistryManager manager = runtime("DELAY_ADT_QUEUE", "payload-type: ADT", "", receiver);
         AqAdt payload = AqAdt.builder().typeName(database.schema() + ".AQ_TEST_EVENT")
                 .addAttribute("delayed ADT").addAttribute(new BigDecimal("42")).build();
-        messaging(manager).emit("outgoing", AqMessage.builder(payload).deliveryDelay(Duration.ofSeconds(3)).build());
+        String exceptionQueue = database.schema() + ".ADT_EXCEPTION_QUEUE";
+        messaging(manager).emit("outgoing", AqMessage.builder(payload).deliveryDelay(Duration.ofSeconds(3))
+                .exceptionQueue(exceptionQueue).build());
 
         assertThat(receiver.messages.poll(200, TimeUnit.MILLISECONDS), nullValue());
         AqMessage<?> received = receiver.await();
         assertThat(received.entity(), instanceOf(AqAdt.class));
         assertThat(((AqAdt) received.entity()).attributes(), is(payload.attributes()));
-        assertThat(received.localMetadata().isEmpty(), is(true));
+        assertReceivedOracleMetadata(received);
+        assertThat(received.localMetadata().text(AqMessage.RECEIVED_EXCEPTION_QUEUE_METADATA).orElseThrow(), is(exceptionQueue));
+        assertThat(received.localMetadata().contains(AqMessage.RECEIVED_APPLICATION_ID_METADATA), is(false));
+        assertThat(received.localMetadata().contains(AqMessage.RECEIVED_USER_ID_METADATA), is(false));
     }
 
     @Test
@@ -283,7 +345,9 @@ class AqConnectorIT {
         Receiver receiver = new Receiver();
         ServiceRegistryManager manager = runtime("DELAY_XML_QUEUE", "payload-type: XML", "", receiver);
         AqXml payload = AqXml.builder().text("<event>delayed XML</event>").build();
-        messaging(manager).emit("outgoing", AqMessage.builder(payload).deliveryDelay(Duration.ofSeconds(3)).build());
+        String exceptionQueue = database.schema() + ".XML_EXCEPTION_QUEUE";
+        messaging(manager).emit("outgoing", AqMessage.builder(payload).deliveryDelay(Duration.ofSeconds(3))
+                .exceptionQueue(exceptionQueue).build());
 
         assertThat(receiver.messages.poll(200, TimeUnit.MILLISECONDS), nullValue());
         AqMessage<?> received = receiver.await();
@@ -291,7 +355,10 @@ class AqConnectorIT {
         var document = DocumentBuilderFactory.newInstance().newDocumentBuilder()
                 .parse(new InputSource(new StringReader(((AqXml) received.entity()).text())));
         assertThat(document.getDocumentElement().getTextContent(), is("delayed XML"));
-        assertThat(received.localMetadata().isEmpty(), is(true));
+        assertReceivedOracleMetadata(received);
+        assertThat(received.localMetadata().text(AqMessage.RECEIVED_EXCEPTION_QUEUE_METADATA).orElseThrow(), is(exceptionQueue));
+        assertThat(received.localMetadata().contains(AqMessage.RECEIVED_APPLICATION_ID_METADATA), is(false));
+        assertThat(received.localMetadata().contains(AqMessage.RECEIVED_USER_ID_METADATA), is(false));
     }
 
     @Test
@@ -719,6 +786,23 @@ class AqConnectorIT {
 
     private static MessagingRuntime messaging(ServiceRegistryManager manager) {
         return manager.registry().get(MessagingRuntime.class);
+    }
+
+    private static void assertReceivedOracleMetadata(AqMessage<?> message) {
+        assertThat(message.localMetadata().contains(AqMessage.APPLICATION_ID_METADATA), is(false));
+        assertThat(message.localMetadata().contains(AqMessage.EXCEPTION_QUEUE_METADATA), is(false));
+        assertThat(message.localMetadata().contains(AqMessage.DELIVERY_DELAY_METADATA), is(false));
+        assertThat(metadataInteger(message, AqMessage.RECEIVED_STATE_METADATA), greaterThanOrEqualTo(0L));
+        assertThat(metadataInteger(message, AqMessage.RECEIVED_STATE_METADATA), lessThanOrEqualTo(3L));
+        assertThat(metadataInteger(message, AqMessage.RECEIVED_TIMESTAMP_METADATA), greaterThan(0L));
+        assertThat(message.localMetadata().value(AqMessage.RECEIVED_DELIVERY_DELAY_METADATA).orElseThrow(),
+                   instanceOf(MessageHeaderValue.IntegerValue.class));
+    }
+
+    private static long metadataInteger(AqMessage<?> message, String key) {
+        MessageHeaderValue value = message.localMetadata().value(key).orElseThrow();
+        assertThat(value, instanceOf(MessageHeaderValue.IntegerValue.class));
+        return ((MessageHeaderValue.IntegerValue) value).value().longValueExact();
     }
 
     private static void sendText(AqConnector connector, AqMessage<String> message) {

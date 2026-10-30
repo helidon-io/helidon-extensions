@@ -61,6 +61,62 @@ public final class AqMessage<T> implements Message<T> {
      */
     public static final String DELIVERY_DELAY_METADATA = "helidon.messaging.aq.delivery-delay-seconds";
 
+    /**
+     * Outgoing application identifier, represented by non-blank
+     * {@link io.helidon.messaging.MessageHeaderValue.TextValue} metadata.
+     * Sets Oracle's JMSXAppID on JMS payloads; ADT and XML payloads do not support it.
+     * Ignored on {@link io.helidon.messaging.DeadLetterMessage} envelopes.
+     */
+    public static final String APPLICATION_ID_METADATA = "helidon.messaging.aq.application-id";
+
+    /**
+     * Outgoing Oracle exception queue name, represented by non-blank
+     * {@link io.helidon.messaging.MessageHeaderValue.TextValue} metadata.
+     * Sets JMS_OracleExcpQ for JMS, ADT and XML payloads. The named queue must be an existing Oracle exception queue;
+     * use a schema-qualified name to select its owner. Ignored on {@link io.helidon.messaging.DeadLetterMessage} envelopes.
+     */
+    public static final String EXCEPTION_QUEUE_METADATA = "helidon.messaging.aq.exception-queue";
+
+    /**
+     * Received JMSXAppID as text, when available on a JMS payload. Observation only; not applied to outgoing messages.
+     */
+    public static final String RECEIVED_APPLICATION_ID_METADATA = "helidon.messaging.aq.received.application-id";
+
+    /**
+     * Received JMSXUserID as text, when available on a JMS payload. Observation only; not applied to outgoing messages.
+     */
+    public static final String RECEIVED_USER_ID_METADATA = "helidon.messaging.aq.received.user-id";
+
+    /**
+     * Received Oracle exception queue name as text, when available. Observation only; not applied to outgoing messages.
+     */
+    public static final String RECEIVED_EXCEPTION_QUEUE_METADATA = "helidon.messaging.aq.received.exception-queue";
+
+    /**
+     * Received JMSXState as integer metadata: 0 READY, 1 WAITING, 2 PROCESSED, or 3 EXPIRED.
+     * Observation only; not applied to outgoing messages.
+     */
+    public static final String RECEIVED_STATE_METADATA = "helidon.messaging.aq.received.state";
+
+    /**
+     * Receive time recorded by the Oracle Java client, as integer milliseconds since the epoch.
+     * Snapshots JMSXRcvTimestamp. Observation only; not applied to outgoing messages.
+     */
+    public static final String RECEIVED_TIMESTAMP_METADATA = "helidon.messaging.aq.received.timestamp-millis";
+
+    /**
+     * Original message identifier from Oracle propagation, as text when the provider supplies it.
+     * Snapshots JMS_OracleOriginalMessageID; absence is not replaced with the current message ID.
+     * Observation only; not applied to outgoing messages.
+     */
+    public static final String RECEIVED_ORIGINAL_MESSAGE_ID_METADATA = "helidon.messaging.aq.received.original-message-id";
+
+    /**
+     * Original Oracle delivery delay as integer seconds, when available. This is not the remaining wait time.
+     * Observation only; not applied to outgoing messages.
+     */
+    public static final String RECEIVED_DELIVERY_DELAY_METADATA = "helidon.messaging.aq.received.delivery-delay-seconds";
+
     private final Object entity;
     private final byte[] serializedEntity;
     private final boolean bodyAvailable;
@@ -118,7 +174,7 @@ public final class AqMessage<T> implements Message<T> {
         this.bodyAvailable = bodyAvailable;
         this.properties = AqValues.properties(properties);
         this.headers = AqValues.headers(this.properties);
-        this.localMetadata = MessageMetadata.empty();
+        this.localMetadata = AqMessageMetadata.snapshot(message);
         this.recipients = List.of();
         this.messageId = Optional.ofNullable(message.getJMSMessageID());
         this.correlationId = Optional.ofNullable(message.getJMSCorrelationID());

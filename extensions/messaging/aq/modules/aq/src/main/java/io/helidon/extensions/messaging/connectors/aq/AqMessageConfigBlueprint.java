@@ -44,8 +44,9 @@ interface AqMessageConfigBlueprint<T> extends Prototype.Factory<AqMessage<T>> {
     /**
      * Metadata local to this message envelope, initially empty.
      * Setting this map replaces all entries; adding a value replaces the value with the same exact name.
-     * The AQ connector interprets {@link io.helidon.extensions.messaging.connectors.aq.AqMessage#DELIVERY_DELAY_METADATA}
-     * as a delivery option. Other local metadata is not copied into native message properties.
+     * The AQ connector interprets the delivery delay, application ID and exception queue entries documented by
+     * {@link io.helidon.extensions.messaging.connectors.aq.AqMessage} as send options.
+     * Other local metadata is not copied into native message properties.
      *
      * @return local metadata
      */

@@ -177,6 +177,58 @@ requires separate validation for the database and queue type. Oracle queue-monit
 message becomes available. Expiration follows Oracle AQ semantics; the expiration interval starts when the message
 becomes ready for dequeue.
 
+## Oracle-specific metadata
+
+Set an application identifier and an Oracle exception queue through the AQ message builder:
+
+```java
+AqMessage<String> message = AqMessage.builder("order created")
+        .applicationId("orders-service")
+        .exceptionQueue("ORDERS.ORDER_ERRORS")
+        .build();
+```
+
+These convenience methods set `AqMessage.APPLICATION_ID_METADATA` and `AqMessage.EXCEPTION_QUEUE_METADATA` in local
+metadata, preserving other entries. Generic `Message` envelopes can set the same entries directly:
+
+```java
+Message<String> message = Message.builder("order created")
+        .localMetadata(AqMessage.APPLICATION_ID_METADATA, "orders-service")
+        .localMetadata(AqMessage.EXCEPTION_QUEUE_METADATA, "ORDERS.ORDER_ERRORS")
+        .build();
+```
+
+Both options require non-blank text. Application ID maps to `JMSXAppID` and is supported only for JMS payloads;
+requesting it for ADT/XML fails before native message creation. Exception queue maps to `JMS_OracleExcpQ` and supports
+JMS, ADT and XML payloads. The destination must already exist as an Oracle AQ exception queue. Use a schema-qualified
+name to select its owner; the connector preserves the supplied name and Oracle validates it at enqueue.
+This option controls database routing after expiration or exhausted database dequeue retries. Messaging's application
+failure policy and logical dead-letter channel are configured separately.
+
+Incoming messages snapshot the following provider observations into local metadata. All keys use the
+`helidon.messaging.aq.received.` prefix and are exposed as constants on `AqMessage`:
+
+| Constant | Native property | Metadata value |
+| --- | --- | --- |
+| `RECEIVED_APPLICATION_ID_METADATA` | `JMSXAppID` | Text; JMS payloads only |
+| `RECEIVED_USER_ID_METADATA` | `JMSXUserID` | Text; JMS payloads only |
+| `RECEIVED_EXCEPTION_QUEUE_METADATA` | `JMS_OracleExcpQ` | Text |
+| `RECEIVED_STATE_METADATA` | `JMSXState` | Integer: 0 READY, 1 WAITING, 2 PROCESSED, 3 EXPIRED |
+| `RECEIVED_TIMESTAMP_METADATA` | `JMSXRcvTimestamp` | Integer milliseconds since the epoch, recorded by the receiving Java client |
+| `RECEIVED_ORIGINAL_MESSAGE_ID_METADATA` | `JMS_OracleOriginalMessageID` | Text, when supplied by the provider |
+| `RECEIVED_DELIVERY_DELAY_METADATA` | `JMS_OracleDelay` | Integer seconds; original delay, not remaining wait |
+
+For example, `received.localMetadata().text(AqMessage.RECEIVED_APPLICATION_ID_METADATA)` returns the optional application
+identifier. Unavailable values are omitted, including application/user IDs for ADT/XML. An absent original message ID
+is not replaced with the current message ID. Snapshots remain available after native resources close and, when readable,
+on envelopes whose payload mapping failed. Provider read failures follow the existing mapping/recovery handling.
+
+Received observations are separate from outgoing controls and are never reapplied when forwarding a message. To reuse
+an application ID or exception queue, explicitly set the outgoing option on a new envelope. `DeadLetterMessage`
+envelopes ignore application ID, exception queue and delay controls inherited from the original message; explicitly
+configured rerouting uses a new ordinary outgoing envelope. Unrecognized local metadata remains local, and raw reserved
+`JMS*` application properties remain restricted.
+
 ## Processing and settlement
 
 An incoming channel reserves runtime delivery capacity before receiving. It receives one message, waits for

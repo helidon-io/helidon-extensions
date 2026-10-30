@@ -55,6 +55,37 @@ final class AqMessageSupport {
     }
 
     /**
+     * Set the outgoing application identifier for JMS payloads.
+     * Stores {@link io.helidon.extensions.messaging.connectors.aq.AqMessage#APPLICATION_ID_METADATA}, preserving other entries.
+     * ADT and XML payloads do not support application IDs. Ignored during dead-letter routing.
+     * Passing {@code null} throws {@link java.lang.NullPointerException}.
+     *
+     * @param builder target builder
+     * @param applicationId non-blank application identifier
+     * @throws IllegalArgumentException if the identifier is blank
+     */
+    @Prototype.BuilderMethod
+    static void applicationId(AqMessageConfig.BuilderBase<?, ?, ?> builder, String applicationId) {
+        builder.localMetadata(AqMessage.APPLICATION_ID_METADATA, nonBlank(applicationId, "applicationId"));
+    }
+
+    /**
+     * Set the Oracle exception queue for this outgoing message.
+     * Stores {@link io.helidon.extensions.messaging.connectors.aq.AqMessage#EXCEPTION_QUEUE_METADATA}, preserving other entries.
+     * The queue must exist as an Oracle exception queue; use a schema-qualified name to select its owner.
+     * Supported for JMS, ADT and XML payloads and ignored during dead-letter routing.
+     * Passing {@code null} throws {@link java.lang.NullPointerException}.
+     *
+     * @param builder target builder
+     * @param exceptionQueue non-blank exception queue name
+     * @throws IllegalArgumentException if the queue name is blank
+     */
+    @Prototype.BuilderMethod
+    static void exceptionQueue(AqMessageConfig.BuilderBase<?, ?, ?> builder, String exceptionQueue) {
+        builder.localMetadata(AqMessage.EXCEPTION_QUEUE_METADATA, nonBlank(exceptionQueue, "exceptionQueue"));
+    }
+
+    /**
      * Set a local text metadata value, replacing the value with the same exact name.
      *
      * @param builder target builder
@@ -105,6 +136,14 @@ final class AqMessageSupport {
     @Prototype.BuilderMethod
     static void localMetadata(AqMessageConfig.BuilderBase<?, ?, ?> builder, Supplier<? extends MessageMetadata> supplier) {
         localMetadata(builder, Objects.requireNonNull(supplier, "supplier").get());
+    }
+
+    private static String nonBlank(String value, String name) {
+        Objects.requireNonNull(value, name);
+        if (value.isBlank()) {
+            throw new IllegalArgumentException(name + " must not be blank");
+        }
+        return value;
     }
 
     static final class BuilderDecorator implements Prototype.BuilderDecorator<AqMessageConfig.BuilderBase<?, ?, ?>> {
