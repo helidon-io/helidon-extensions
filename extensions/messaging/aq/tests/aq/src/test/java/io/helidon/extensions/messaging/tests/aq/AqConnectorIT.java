@@ -88,6 +88,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.xml.sax.InputSource;
 
+import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
@@ -614,6 +615,123 @@ class AqConnectorIT {
     }
 
     @Test
+    void enqueueTransformationChangesDatabaseValuesAndCanBeDisabledPerChannel() throws Exception {
+        Receiver receiver = new Receiver();
+        ServiceRegistryManager manager = runtime("TRANSFORM_QUEUE", transformationOptions("AQ_EVENT_UPPER"), "", receiver);
+        AqAdt original = transformationEvent("first", 7);
+
+        messaging(manager).emit("outgoing", AqMessage.create(original));
+
+        AqAdt transformed = (AqAdt) receiver.await().entity();
+        assertThat(transformed.typeName(), is(database.schema() + ".AQ_TEST_EVENT"));
+        assertThat(transformed.attributes(), is(List.of("FIRST", new BigDecimal("107"))));
+
+        AqConnector connector = transformationConnector("TRANSFORM_QUEUE", "AQ_EVENT_UPPER");
+        try (var disabled = connector.outgoing(AqOutgoingConfig.builder().connector("transform-aq").channelName("disabled")
+                .enqueueTransformation(transform -> transform.enabled(false)).build())) {
+            disabled.start();
+            disabled.sendBatch(MessageBatch.create(AqMessage.create(original)));
+            assertThat(((AqAdt) receiver.await().entity()).attributes(), is(original.attributes()));
+        }
+
+        ServiceRegistryManager plain = runtime("TRANSFORM_QUEUE", "payload-type: ADT", "", null);
+        messaging(plain).emit("outgoing", AqMessage.create(original));
+        assertThat(((AqAdt) receiver.await().entity()).attributes(), is(original.attributes()));
+    }
+
+    @Test
+    void enqueueTransformationConvertsSourceAdtIntoTheQueuesTargetType() throws Exception {
+        Receiver receiver = new Receiver();
+        ServiceRegistryManager manager = runtime("TRANSFORM_TARGET_QUEUE", transformationOptions("AQ_EVENT_TO_TARGET"), "", receiver);
+
+        messaging(manager).emit("outgoing", AqMessage.create(transformationEvent("source", 21)));
+
+        AqAdt transformed = (AqAdt) receiver.await().entity();
+        assertThat(transformed.typeName(), is(database.schema() + ".AQ_TEST_TARGET"));
+        assertThat(transformed.attributes(), is(List.of("converted:source", new BigDecimal("42"))));
+    }
+
+    @Test
+    void enqueueTransformationChangesNativeTopicPayloads() throws Exception {
+        Receiver receiver = new Receiver();
+        ServiceRegistryManager manager = runtime("TRANSFORM_TOPIC",
+                                                 transformationOptions("AQ_EVENT_UPPER") + "destination-type: TOPIC\n",
+                                                 "recipient-name: TRANSFORM", receiver);
+
+        messaging(manager).emit("outgoing", AqMessage.builder(transformationEvent("topic", 9))
+                .addRecipient(AqRecipient.builder().name("TRANSFORM").build()).build());
+
+        assertThat(((AqAdt) receiver.await().entity()).attributes(), is(List.of("TOPIC", new BigDecimal("109"))));
+    }
+
+    @Test
+    void enqueueTransformationRejectsAnActualShardedQueue() throws Exception {
+        try (var connection = database.dataSource().getConnection(); var statement = connection.createStatement()) {
+            statement.execute("BEGIN DBMS_AQADM.CREATE_SHARDED_QUEUE('TRANSFORM_SHARDED');"
+                                      + " DBMS_AQADM.START_QUEUE('TRANSFORM_SHARDED'); END;");
+            try {
+                AqConnector connector = AqConnector.builder().name("sharded-aq").dataSource(database.dataSource())
+                        .schema(database.schema()).destination("TRANSFORM_SHARDED")
+                        .enqueueTransformation(transform -> transform.name(database.schema() + ".AQ_EVENT_UPPER")).build();
+                try (var outgoing = connector.outgoing(AqOutgoingConfig.builder()
+                        .connector("sharded-aq").channelName("transformed").build())) {
+                    MessagingException failure = assertThrows(MessagingException.class, outgoing::start);
+                    assertThat(failure.getMessage(), containsString("sharded"));
+                }
+                try (var disabled = connector.outgoing(AqOutgoingConfig.builder().connector("sharded-aq").channelName("disabled")
+                        .enqueueTransformation(transform -> transform.enabled(false)).build())) {
+                    disabled.start();
+                }
+            } finally {
+                statement.execute("BEGIN DBMS_AQADM.DROP_SHARDED_QUEUE('TRANSFORM_SHARDED', force => TRUE); END;");
+            }
+        }
+    }
+
+    @Test
+    void nonexistentEnqueueTransformationFailsWithoutEnqueuing() throws Exception {
+        ServiceRegistryManager manager = runtime("TRANSFORM_QUEUE", transformationOptions("MISSING_TRANSFORMATION"), "", null);
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                () -> messaging(manager).emit("outgoing", AqMessage.create(transformationEvent("rejected", 1))));
+
+        assertThat(failure.outcome(0).status(), is(BatchItemStatus.FAILED));
+        assertThat(adtAvailable("TRANSFORM_QUEUE"), is(false));
+    }
+
+    @Test
+    void incompatibleTransformationInputRollsBackEarlierEnqueueInTheBatch() throws Exception {
+        ServiceRegistryManager manager = runtime("TRANSFORM_TARGET_QUEUE", transformationOptions("AQ_EVENT_TO_TARGET"), "", null);
+        AqAdt incompatible = AqAdt.builder().typeName(database.schema() + ".AQ_TEST_TARGET")
+                .addAttribute("wrong source type").addAttribute(BigDecimal.ONE).build();
+        MessageBatch<AqAdt> batch = MessageBatch.create(List.of(AqMessage.create(transformationEvent("must roll back", 1)),
+                                                               AqMessage.create(incompatible)));
+
+        BatchDeliveryException failure = assertThrows(BatchDeliveryException.class,
+                                                      () -> messaging(manager).emitBatch("outgoing", batch));
+
+        assertThat(failure.outcomes().stream().map(item -> item.status()).toList(),
+                   is(List.of(BatchItemStatus.FAILED, BatchItemStatus.FAILED)));
+        assertThat("the valid transformed item must also be rolled back", adtAvailable("TRANSFORM_TARGET_QUEUE"), is(false));
+    }
+
+    @Test
+    void enqueueTransformationIsRestoredAfterConnectionRecovery() throws Exception {
+        Receiver receiver = new Receiver();
+        ServiceRegistryManager manager = runtime("TRANSFORM_QUEUE", transformationOptions("AQ_EVENT_UPPER"), "", receiver);
+        messaging(manager).emit("outgoing", AqMessage.create(transformationEvent("before", 1)));
+        assertThat(((AqAdt) receiver.await().entity()).attributes(), is(List.of("BEFORE", new BigDecimal("101"))));
+        database.awaitDequeue();
+        assertThat(database.killSessions(), greaterThan(0));
+
+        assertThrows(BatchDeliveryException.class,
+                     () -> messaging(manager).emit("outgoing", AqMessage.create(transformationEvent("failed", 2))));
+        messaging(manager).emit("outgoing", AqMessage.create(transformationEvent("after", 3)));
+
+        assertThat(((AqAdt) receiver.await().entity()).attributes(), is(List.of("AFTER", new BigDecimal("103"))));
+    }
+
+    @Test
     void convertedApplicationMapsCanBeReceivedForwardedAndSent() throws Exception {
         AqPayloadConverter converter = new AqPayloadConverter() {
             @Override
@@ -962,6 +1080,25 @@ class AqConnectorIT {
                 .reconnect(reconnect -> reconnect.initialDelay(Duration.ofMillis(50)).maxDelay(Duration.ofMillis(100))
                         .jitter(0).connectTimeout(Duration.ofSeconds(5)).waitTimeout(Duration.ofSeconds(10)))
                 .build();
+    }
+
+    private String transformationOptions(String transformation) {
+        return """
+                payload-type: ADT
+                enqueue-transformation:
+                  name: %s.%s
+                """.formatted(database.schema(), transformation);
+    }
+
+    private AqConnector transformationConnector(String destination, String transformation) {
+        return AqConnector.builder().name("transform-aq").dataSource(database.dataSource()).schema(database.schema())
+                .destination(destination).payloadType(AqPayloadType.ADT)
+                .enqueueTransformation(config -> config.name(database.schema() + "." + transformation)).build();
+    }
+
+    private AqAdt transformationEvent(String label, int amount) {
+        return AqAdt.builder().typeName(database.schema() + ".AQ_TEST_EVENT")
+                .addAttribute(label).addAttribute(BigDecimal.valueOf(amount)).build();
     }
 
     private Destination detachedDestination(String destination, AqDestinationType type) throws Exception {

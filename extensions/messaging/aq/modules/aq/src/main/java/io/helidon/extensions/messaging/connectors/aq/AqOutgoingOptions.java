@@ -48,4 +48,13 @@ interface AqOutgoingOptions {
      */
     @Option.Configured
     Optional<Duration> timeToLive();
+
+    /**
+     * Selection of an existing Oracle AQ enqueue transformation. Absent settings leave the producer unchanged.
+     * A channel policy replaces the complete connector policy; disabling it suppresses an inherited transformation.
+     *
+     * @return enqueue transformation policy
+     */
+    @Option.Configured
+    Optional<AqEnqueueTransformationConfig> enqueueTransformation();
 }

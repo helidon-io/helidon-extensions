@@ -134,13 +134,22 @@ final class AqDatabase implements AutoCloseable {
     public void close() throws SQLException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(40);
         try (Connection connection = administrator.getConnection(); var statement = connection.createStatement()) {
+            SQLException transformationFailure = null;
+            try {
+                dropTransformations(connection);
+            } catch (SQLException failure) {
+                transformationFailure = failure;
+            }
             while (true) {
                 try {
                     statement.execute("DROP USER " + schema + " CASCADE");
-                    return;
+                    break;
                 } catch (SQLException failure) {
                     // A cancelled JDBC read closes its socket before the server finishes its pending dequeue.
                     if (failure.getErrorCode() != 1940 || System.nanoTime() >= deadline) {
+                        if (transformationFailure != null && transformationFailure != failure) {
+                            failure.addSuppressed(transformationFailure);
+                        }
                         throw failure;
                     }
                     try {
@@ -152,6 +161,9 @@ final class AqDatabase implements AutoCloseable {
                         throw interrupted;
                     }
                 }
+            }
+            if (transformationFailure != null) {
+                throw transformationFailure;
             }
         }
     }
@@ -175,6 +187,30 @@ final class AqDatabase implements AutoCloseable {
                     statement.execute(sql.strip());
                 }
             }
+        }
+    }
+
+    private void dropTransformations(Connection connection) throws SQLException {
+        SQLException failure = null;
+        try (var statement = connection.prepareCall("BEGIN DBMS_TRANSFORM.DROP_TRANSFORMATION(?, ?); END;")) {
+            for (String name : List.of("AQ_EVENT_UPPER", "AQ_EVENT_TO_TARGET")) {
+                statement.setString(1, schema);
+                statement.setString(2, name);
+                try {
+                    statement.execute();
+                } catch (SQLException error) {
+                    if (error.getErrorCode() != 24185) {
+                        if (failure == null) {
+                            failure = error;
+                        } else {
+                            failure.addSuppressed(error);
+                        }
+                    }
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
         }
     }
 }

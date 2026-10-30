@@ -42,6 +42,8 @@ import javax.naming.ServiceUnavailableException;
 
 import io.helidon.builder.api.Prototype;
 
+import oracle.AQ.AQException;
+
 final class AqReconnectSupport {
     private AqReconnectSupport() {
     }
@@ -92,6 +94,9 @@ final class AqReconnectSupport {
             }
             if (current instanceof JMSException jms && jms.getLinkedException() != null) {
                 pending.add(jms.getLinkedException());
+            }
+            if (current instanceof AQException aq && aq.getNextException() != null) {
+                pending.add(aq.getNextException());
             }
             if (current.getCause() != null) {
                 pending.add(current.getCause());

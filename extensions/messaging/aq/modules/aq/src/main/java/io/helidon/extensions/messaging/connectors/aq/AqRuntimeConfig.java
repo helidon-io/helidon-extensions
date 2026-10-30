@@ -56,7 +56,8 @@ record AqRuntimeConfig(String channelName,
                        Duration receiveTimeout,
                        int deliveryMode,
                        int priority,
-                       Duration timeToLive) {
+                       Duration timeToLive,
+                       Optional<String> enqueueTransformation) {
     static AqRuntimeConfig incoming(AqConnectorConfig defaults, AqIncomingConfig channel) {
         return create(channel.channelName(), defaults, channel, channel, defaults, true);
     }
@@ -109,6 +110,10 @@ record AqRuntimeConfig(String channelName,
         Duration closeTimeout = inherit(channel.closeTimeout(), defaults.closeTimeout()).orElse(Duration.ofSeconds(10));
         AqReconnectConfig reconnect = inherit(channel.reconnect(), defaults.reconnect()).orElseGet(AqReconnectConfig::create);
         Duration timeToLive = inherit(outgoing.timeToLive(), defaults.timeToLive()).orElse(Duration.ZERO);
+        Optional<String> enqueueTransformation = receiving ? Optional.empty()
+                : inherit(outgoing.enqueueTransformation(), defaults.enqueueTransformation())
+                        .filter(AqEnqueueTransformationConfig::enabled)
+                        .flatMap(AqEnqueueTransformationConfig::name);
         int maxBodyBytes = inherit(incoming.maxBodyBytes(), defaults.maxBodyBytes()).orElse(1_048_576);
         int deliveryMode = inherit(outgoing.deliveryMode(), defaults.deliveryMode()).orElse(DeliveryMode.PERSISTENT);
         int priority = inherit(outgoing.priority(), defaults.priority()).orElse(4);
@@ -181,7 +186,8 @@ record AqRuntimeConfig(String channelName,
                                    receiveTimeout,
                                    deliveryMode,
                                    priority,
-                                   timeToLive);
+                                   timeToLive,
+                                   enqueueTransformation);
     }
 
     private static <T> Optional<T> inherit(Optional<T> channel, Optional<T> defaults) {

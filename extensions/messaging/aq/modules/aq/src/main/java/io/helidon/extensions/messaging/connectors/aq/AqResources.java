@@ -211,6 +211,14 @@ final class AqResources implements AutoCloseable {
                     closeLate(createdProducer, createdSession);
                     return;
                 }
+                if (config.enqueueTransformation().isPresent()) {
+                    AqEnqueueTransformation.configure(createdProducer, config.enqueueTransformation().orElseThrow());
+                    AqEnqueueTransformation.requireClassicDestination(createdSession, destination);
+                    if (isClosed()) {
+                        closeLate(createdProducer, createdSession);
+                        return;
+                    }
+                }
                 producer = createdProducer;
             }
             ready.complete(null);

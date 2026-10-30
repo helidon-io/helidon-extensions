@@ -286,6 +286,56 @@ envelopes ignore application ID, exception queue and delay controls inherited fr
 configured rerouting uses a new ordinary outgoing envelope. Unrecognized local metadata remains local, and raw reserved
 `JMS*` application properties remain restricted.
 
+## Database enqueue transformations
+
+Select an existing Oracle AQ database transformation for an outgoing channel:
+
+```yaml
+messaging:
+  outgoing:
+    transformed-orders:
+      connector: orders-aq
+      destination: NORMALIZED_ORDERS
+      payload-type: ADT
+      enqueue-transformation:
+        name: ORDERS.NORMALIZE_ORDER
+```
+
+The same policy can be a connector default or configured programmatically:
+
+```java
+AqOutgoingConfig outgoing = AqOutgoingConfig.builder()
+        .connector("orders-aq")
+        .channelName("transformed-orders")
+        .enqueueTransformation(transformation -> transformation.name("ORDERS.NORMALIZE_ORDER"))
+        .build();
+```
+
+The policy defaults to enabled and requires a non-blank name when enabled. Omitting the channel policy inherits the
+connector policy; an explicit channel policy replaces the whole block. To disable an inherited transformation:
+
+```yaml
+enqueue-transformation:
+  enabled: false
+```
+
+The application or database administrator must create the transformation and grant its required privileges in Oracle,
+for example using `DBMS_TRANSFORM`. The connector selects its name through `AQjmsProducer.setTransformation` on every
+new producer, including after reconnect. Oracle applies it during enqueue; it can change fields or map a source SQL
+object type to the queue's target type. `AqPayloadConverter` still performs application-side conversion before the native
+enqueue. Incoming channels do not apply this outgoing policy.
+
+This option supports classic Oracle AQ queues and topics. An enabled policy requires native AQ session, destination
+and producer implementations. The connector checks Oracle's queue metadata during initialization and rejects sharded
+AQ/TxEventQ destinations because the pinned driver does not apply the transformation there. Disabled or absent policies
+do not perform this extra metadata lookup. The inspection uses the channel's JDBC connection and leaves it open.
+
+Setting the producer option does not validate the transformation's database definition. Missing names, incompatible SQL
+types and privilege errors are reported by Oracle at enqueue and follow the existing send/batch rollback behavior;
+failed sends are not automatically replayed. Oracle caches transformation type metadata on destination objects, so live
+changes to a definition under the same name can require refreshing provider resources, including a JNDI binding that
+returns a previously used destination object.
+
 ## Processing and settlement
 
 An incoming channel reserves runtime delivery capacity before receiving. It receives one message, waits for
@@ -365,6 +415,8 @@ Settings can be declared on the connector and overridden on individual channels.
 | `schema` | Connected database user |
 | `jndi.destination` | Lookup name; mutually exclusive with direct `destination`/`schema` at the same scope |
 | `jndi.env-properties` | Initial-context environment; empty by default |
+| `enqueue-transformation.name` | Existing Oracle transformation name; required when its policy is enabled |
+| `enqueue-transformation.enabled` | `true` within a configured policy; `false` disables an inherited policy |
 | `destination-type` | `QUEUE`; use `TOPIC` for multi-consumer queues |
 | `payload-type` | `JMS`; alternatives `ADT`, `XML` |
 | `transacted` | `true` |

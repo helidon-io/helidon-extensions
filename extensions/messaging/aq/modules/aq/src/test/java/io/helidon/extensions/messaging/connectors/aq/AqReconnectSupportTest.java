@@ -30,11 +30,14 @@ import javax.naming.NameNotFoundException;
 import javax.naming.NamingException;
 import javax.naming.ServiceUnavailableException;
 
+import oracle.AQ.AQException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 @Timeout(5)
 class AqReconnectSupportTest {
@@ -89,6 +92,24 @@ class AqReconnectSupportTest {
             permanent.setRootCause(new CommunicationException("provider context"));
             assertThat(AqReconnectSupport.recoverable(permanent), is(false));
         }
+    }
+
+    @Test
+    void testOracleMetadataFailuresFollowLinkedSqlExceptionsWithoutLooping() {
+        AQException transientFailure = mock(AQException.class);
+        when(transientFailure.getNextException()).thenReturn(new SQLRecoverableException("connection lost"));
+        assertThat(AqReconnectSupport.recoverable(new IllegalStateException(transientFailure)), is(true));
+
+        for (SQLException cause : List.of(new SQLException("invalid credentials", "72000", 1017),
+                                         new SQLException("queue missing", "72000", 24010))) {
+            AQException permanent = mock(AQException.class);
+            when(permanent.getNextException()).thenReturn(cause);
+            assertThat(AqReconnectSupport.recoverable(permanent), is(false));
+        }
+
+        AQException cycle = mock(AQException.class);
+        when(cycle.getNextException()).thenReturn(cycle);
+        assertThat(AqReconnectSupport.recoverable(cycle), is(false));
     }
 
     @Test
