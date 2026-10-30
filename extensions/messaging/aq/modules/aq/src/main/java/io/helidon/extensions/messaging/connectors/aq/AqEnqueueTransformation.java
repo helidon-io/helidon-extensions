@@ -16,6 +16,9 @@
 
 package io.helidon.extensions.messaging.connectors.aq;
 
+import java.sql.SQLException;
+import java.util.Locale;
+
 import javax.jms.Destination;
 import javax.jms.JMSException;
 import javax.jms.MessageProducer;
@@ -23,9 +26,6 @@ import javax.jms.Session;
 
 import io.helidon.messaging.MessagingException;
 
-import oracle.AQ.AQException;
-import oracle.AQ.AQOracleQueue;
-import oracle.AQ.AQOracleSession;
 import oracle.jms.AQjmsDestination;
 import oracle.jms.AQjmsProducer;
 import oracle.jms.AQjmsSession;
@@ -53,25 +53,40 @@ final class AqEnqueueTransformation {
         if (name == null || owner == null) {
             throw new MessagingException("Oracle AQ destination identity is unavailable for enqueue transformation");
         }
-        try {
-            AQOracleSession metadata = new AQOracleSession(aqSession.getDBConnection());
-            try {
-                AQOracleQueue queue = (AQOracleQueue) metadata.getQueue(owner, name);
-                try {
-                    // getQueue loads SHARDED; the no-argument property getter uses an older query without that flag.
-                    if (queue.getProperty(true).isSharded()) {
-                        throw new MessagingException(
-                                "Enqueue transformations are not supported on sharded AQ or TxEventQ queues");
-                    }
-                } finally {
-                    queue.close();
+        String dictionaryOwner = dictionaryName(owner);
+        String dictionaryQueue = dictionaryName(name);
+        // Inspect the public dictionary without the legacy AQ wrapper's assumptions about the JDBC type map.
+        try (var statement = aqSession.getDBConnection().prepareStatement(
+                "SELECT SHARDED FROM SYS.ALL_QUEUES WHERE OWNER = ? AND NAME = ?")) {
+            statement.setString(1, dictionaryOwner);
+            statement.setString(2, dictionaryQueue);
+            try (var result = statement.executeQuery()) {
+                if (!result.next()) {
+                    throw new MessagingException("AQ destination metadata is not visible for enqueue transformation");
                 }
-            } finally {
-                // These metadata handles close their own statements, not the JMS session's borrowed JDBC connection.
-                metadata.close();
+                String sharded = result.getString(1);
+                if (result.next()) {
+                    throw new MessagingException("AQ destination metadata is ambiguous for enqueue transformation");
+                }
+                if ("TRUE".equalsIgnoreCase(sharded)) {
+                    throw new MessagingException(
+                            "Enqueue transformations are not supported on sharded AQ or TxEventQ queues");
+                }
+                if (!"FALSE".equalsIgnoreCase(sharded)) {
+                    throw new MessagingException("AQ destination has unrecognized sharded-queue metadata");
+                }
             }
-        } catch (AQException e) {
+        } catch (SQLException e) {
             throw new MessagingException("Cannot inspect AQ destination for enqueue transformation", e);
         }
+    }
+
+    private static String dictionaryName(String identifier) {
+        boolean quoted = identifier.length() >= 2 && identifier.startsWith("\"") && identifier.endsWith("\"");
+        String name = quoted ? identifier.substring(1, identifier.length() - 1) : identifier.toUpperCase(Locale.ROOT);
+        if (name.isEmpty() || (!quoted && name.isBlank()) || name.indexOf('"') >= 0 || name.indexOf('\0') >= 0) {
+            throw new MessagingException("AQ destination contains an invalid database identifier");
+        }
+        return name;
     }
 }

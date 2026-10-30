@@ -21,7 +21,9 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
@@ -665,13 +667,58 @@ class AqConnectorIT {
     }
 
     @Test
+    void jndiTransformationsPreserveApplicationHashMapTypeMappingsForQueuesAndTopics() throws Exception {
+        for (AqDestinationType type : AqDestinationType.values()) {
+            String queue = type == AqDestinationType.QUEUE ? "TRANSFORM_QUEUE" : "TRANSFORM_TOPIC";
+            String table = type == AqDestinationType.QUEUE ? "TRANSFORM_TAB" : "TRANSFORM_TOPIC_TAB";
+            Destination destination = detachedDestination(queue.toLowerCase(Locale.ROOT), type);
+            AqTypeMapDataSource source = new AqTypeMapDataSource(database.dataSource(), database.schema() + ".AQ_TEST_TARGET");
+            try (var registration = AqJndiTestContextFactory.register()) {
+                registration.rebind("queues/Transform", destination);
+                AqConnector connector = AqConnector.builder().name("type-map-aq").dataSource(source)
+                        .jndi(registration.config("queues/Transform")).destinationType(type).payloadType(AqPayloadType.ADT)
+                        .enqueueTransformation(transform -> transform.name(database.schema() + ".AQ_EVENT_UPPER")).build();
+                try (var outgoing = connector.outgoing(AqOutgoingConfig.builder()
+                        .connector("type-map-aq").channelName("outgoing").build())) {
+                    outgoing.start();
+                    assertApplicationTypeMap(source);
+                    var message = AqMessage.builder(transformationEvent("hashmap", 5));
+                    if (type == AqDestinationType.TOPIC) {
+                        message.addRecipient(AqRecipient.builder().name("TYPE_MAP_TEST").build());
+                    }
+                    outgoing.sendBatch(MessageBatch.create(message.build()));
+
+                    try (var connection = database.dataSource().getConnection();
+                         var statement = connection.prepareStatement("SELECT q.user_data.label, q.user_data.amount FROM "
+                                                                            + table + " q WHERE q.user_data.label = ?")) {
+                        statement.setString(1, "HASHMAP");
+                        try (var rows = statement.executeQuery()) {
+                            assertThat("Oracle must persist the transformed payload", rows.next(), is(true));
+                            assertThat(rows.getString(1), is("HASHMAP"));
+                            assertThat(rows.getInt(2), is(105));
+                            assertThat(rows.next(), is(false));
+                        }
+                    }
+                    assertApplicationTypeMap(source);
+                    consumeTypeMapTestMessage(queue, type);
+                }
+                assertThat(registration.opened(), is(1));
+                assertThat(registration.closed(), is(1));
+            }
+        }
+    }
+
+    @Test
     void enqueueTransformationRejectsAnActualShardedQueue() throws Exception {
         try (var connection = database.dataSource().getConnection(); var statement = connection.createStatement()) {
             statement.execute("BEGIN DBMS_AQADM.CREATE_SHARDED_QUEUE('TRANSFORM_SHARDED');"
                                       + " DBMS_AQADM.START_QUEUE('TRANSFORM_SHARDED'); END;");
-            try {
-                AqConnector connector = AqConnector.builder().name("sharded-aq").dataSource(database.dataSource())
-                        .schema(database.schema()).destination("TRANSFORM_SHARDED")
+            try (var registration = AqJndiTestContextFactory.register()) {
+                Destination destination = detachedDestination("TRANSFORM_SHARDED", AqDestinationType.QUEUE);
+                registration.rebind("queues/Sharded", destination);
+                AqTypeMapDataSource source = new AqTypeMapDataSource(database.dataSource(), database.schema() + ".AQ_TEST_TARGET");
+                AqConnector connector = AqConnector.builder().name("sharded-aq").dataSource(source)
+                        .jndi(registration.config("queues/Sharded"))
                         .enqueueTransformation(transform -> transform.name(database.schema() + ".AQ_EVENT_UPPER")).build();
                 try (var outgoing = connector.outgoing(AqOutgoingConfig.builder()
                         .connector("sharded-aq").channelName("transformed").build())) {
@@ -681,7 +728,10 @@ class AqConnectorIT {
                 try (var disabled = connector.outgoing(AqOutgoingConfig.builder().connector("sharded-aq").channelName("disabled")
                         .enqueueTransformation(transform -> transform.enabled(false)).build())) {
                     disabled.start();
+                    assertApplicationTypeMap(source);
                 }
+                assertThat(registration.opened(), is(2));
+                assertThat(registration.closed(), is(2));
             } finally {
                 statement.execute("BEGIN DBMS_AQADM.DROP_SHARDED_QUEUE('TRANSFORM_SHARDED', force => TRUE); END;");
             }
@@ -1019,6 +1069,14 @@ class AqConnectorIT {
         return ((MessageHeaderValue.IntegerValue) value).value().longValueExact();
     }
 
+    private static void assertApplicationTypeMap(AqTypeMapDataSource source) throws Exception {
+        AqTypeMapDataSource.BorrowedConnection borrowed = source.connections().getLast();
+        assertThat(borrowed.connection().isClosed(), is(false));
+        assertThat(borrowed.connection().getTypeMap(), sameInstance(borrowed.typeMap()));
+        assertThat(borrowed.connection().getTypeMap(), instanceOf(HashMap.class));
+        assertThat(borrowed.connection().getTypeMap(), is(source.initialTypeMap()));
+    }
+
     private static void sendText(AqConnector connector, AqMessage<String> message) {
         try (var outgoing = connector.outgoing(AqOutgoingConfig.builder()
                 .connector("reconnect-aq").channelName("test-sender").build())) {
@@ -1124,6 +1182,21 @@ class AqConnectorIT {
             OracleDataFactory factory = (value, _) -> (OracleData) _ -> value;
             try (MessageConsumer consumer = aq.createReceiver(aq.getQueue(database.schema(), queue), null, factory)) {
                 return consumer.receive(200) != null;
+            }
+        }
+    }
+
+    private void consumeTypeMapTestMessage(String queue, AqDestinationType type) throws Exception {
+        try (Connection connection = AQjmsFactory.getConnectionFactory(database.dataSource()).createConnection();
+             Session session = connection.createSession(true, Session.SESSION_TRANSACTED)) {
+            AQjmsSession aq = (AQjmsSession) session;
+            OracleDataFactory factory = (value, _) -> (OracleData) _ -> value;
+            try (MessageConsumer consumer = type == AqDestinationType.QUEUE
+                    ? aq.createReceiver(aq.getQueue(database.schema(), queue), null, factory)
+                    : aq.createTopicReceiver(aq.getTopic(database.schema(), queue), "TYPE_MAP_TEST", null, factory)) {
+                connection.start();
+                assertThat(consumer.receive(5_000), notNullValue());
+                session.commit();
             }
         }
     }

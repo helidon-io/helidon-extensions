@@ -328,7 +328,8 @@ enqueue. Incoming channels do not apply this outgoing policy.
 This option supports classic Oracle AQ queues and topics. An enabled policy requires native AQ session, destination
 and producer implementations. The connector checks Oracle's queue metadata during initialization and rejects sharded
 AQ/TxEventQ destinations because the pinned driver does not apply the transformation there. Disabled or absent policies
-do not perform this extra metadata lookup. The inspection uses the channel's JDBC connection and leaves it open.
+do not perform this extra metadata lookup. The inspection reads `SYS.ALL_QUEUES` through the channel's JDBC connection,
+without changing its type map or transaction settings, and leaves the connection open.
 
 Setting the producer option does not validate the transformation's database definition. Missing names, incompatible SQL
 types and privilege errors are reported by Oracle at enqueue and follow the existing send/batch rollback behavior;

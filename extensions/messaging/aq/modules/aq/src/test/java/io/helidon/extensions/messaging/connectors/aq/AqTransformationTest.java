@@ -16,7 +16,12 @@
 
 package io.helidon.extensions.messaging.connectors.aq;
 
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.SQLRecoverableException;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 
 import javax.jms.Connection;
@@ -33,14 +38,19 @@ import javax.jms.TopicPublisher;
 import io.helidon.messaging.MessagingException;
 import io.helidon.service.registry.ServiceRegistry;
 
+import oracle.jms.AQjmsDestination;
 import oracle.jms.AQjmsProducer;
 import oracle.jms.AQjmsSession;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -68,6 +78,118 @@ class AqTransformationTest {
         Queue queue = mock(Queue.class);
 
         assertThrows(MessagingException.class, () -> AqEnqueueTransformation.requireClassicDestination(session, queue));
+    }
+
+    @Test
+    void metadataQueryAcceptsClassicQueuesAndTopicsWithoutChangingConnectionState() throws Exception {
+        for (AqDestinationType type : AqDestinationType.values()) {
+            MetadataQuery query = metadataQuery(type, true, "FALSE");
+
+            AqEnqueueTransformation.requireClassicDestination(query.session(), query.destination());
+
+            verify(query.statement()).setString(1, "Application's schema");
+            verify(query.statement()).setString(2, "Mixed Case Destination");
+            verify(query.rows()).close();
+            verify(query.statement()).close();
+            assertConnectionUnchanged(query.connection());
+        }
+    }
+
+    @Test
+    void metadataQueryNormalizesUnquotedLowercaseQueueAndTopicIdentifiers() throws Exception {
+        for (AqDestinationType type : AqDestinationType.values()) {
+            MetadataQuery query = metadataQuery(type, true, "false");
+            if (type == AqDestinationType.QUEUE) {
+                when(query.destination().getQueueOwner()).thenReturn("app");
+                when(query.destination().getQueueName()).thenReturn("orders");
+            } else {
+                when(query.destination().getTopicOwner()).thenReturn("app");
+                when(query.destination().getTopicName()).thenReturn("orders");
+            }
+
+            AqEnqueueTransformation.requireClassicDestination(query.session(), query.destination());
+
+            verify(query.connection()).prepareStatement("SELECT SHARDED FROM SYS.ALL_QUEUES WHERE OWNER = ? AND NAME = ?");
+            verify(query.statement()).setString(1, "APP");
+            verify(query.statement()).setString(2, "ORDERS");
+            verify(query.rows()).close();
+            verify(query.statement()).close();
+            assertConnectionUnchanged(query.connection());
+        }
+    }
+
+    @Test
+    void malformedQuotedIdentifiersFailBeforeQueryingMetadata() throws Exception {
+        for (String name : List.of("\"unterminated", "bad\"quote", "\"embedded\"quote\"", "BAD\0NAME")) {
+            MetadataQuery query = metadataQuery(AqDestinationType.QUEUE, true, "FALSE");
+            when(query.destination().getQueueName()).thenReturn(name);
+
+            assertThrows(MessagingException.class,
+                         () -> AqEnqueueTransformation.requireClassicDestination(query.session(), query.destination()));
+
+            verify(query.connection(), never()).prepareStatement(anyString());
+            assertConnectionUnchanged(query.connection());
+        }
+    }
+
+    @Test
+    void metadataQueryRejectsShardedAndUnrecognizedRowsAndClosesResources() throws Exception {
+        for (String value : Arrays.asList("TRUE", "true", "unexpected", null)) {
+            MetadataQuery query = metadataQuery(AqDestinationType.QUEUE, true, value);
+
+            assertThrows(MessagingException.class,
+                         () -> AqEnqueueTransformation.requireClassicDestination(query.session(), query.destination()));
+
+            verify(query.rows()).close();
+            verify(query.statement()).close();
+            assertConnectionUnchanged(query.connection());
+        }
+    }
+
+    @Test
+    void missingMetadataIsNotTreatedAsAClassicQueue() throws Exception {
+        MetadataQuery query = metadataQuery(AqDestinationType.QUEUE, false, "FALSE");
+
+        assertThrows(MessagingException.class,
+                     () -> AqEnqueueTransformation.requireClassicDestination(query.session(), query.destination()));
+
+        verify(query.rows()).close();
+        verify(query.statement()).close();
+        assertConnectionUnchanged(query.connection());
+    }
+
+    @Test
+    void queryFailureClosesTheStatementAndPreservesRecoveryClassification() throws Exception {
+        MetadataQuery query = metadataQuery(AqDestinationType.QUEUE, true, "FALSE");
+        SQLRecoverableException lost = new SQLRecoverableException("connection lost", "08006");
+        when(query.statement().executeQuery()).thenThrow(lost);
+
+        MessagingException failure = assertThrows(MessagingException.class,
+                () -> AqEnqueueTransformation.requireClassicDestination(query.session(), query.destination()));
+
+        assertThat(failure.getCause(), sameInstance(lost));
+        assertThat(AqReconnectSupport.recoverable(failure), is(true));
+        verify(query.statement()).close();
+        verify(query.rows(), never()).close();
+        assertConnectionUnchanged(query.connection());
+    }
+
+    @Test
+    void rowReadAndCloseFailuresRetainThePrimaryErrorAndCloseTheStatement() throws Exception {
+        MetadataQuery query = metadataQuery(AqDestinationType.QUEUE, true, "FALSE");
+        SQLException readFailure = new SQLException("metadata unavailable");
+        SQLException closeFailure = new SQLException("cursor close failed");
+        when(query.rows().getString(1)).thenThrow(readFailure);
+        doThrow(closeFailure).when(query.rows()).close();
+
+        MessagingException failure = assertThrows(MessagingException.class,
+                () -> AqEnqueueTransformation.requireClassicDestination(query.session(), query.destination()));
+
+        assertThat(failure.getCause(), sameInstance(readFailure));
+        assertThat(Arrays.asList(readFailure.getSuppressed()).contains(closeFailure), is(true));
+        verify(query.rows()).close();
+        verify(query.statement()).close();
+        assertConnectionUnchanged(query.connection());
     }
 
     @Test
@@ -157,6 +279,38 @@ class AqTransformationTest {
         return new Client(connection, session, producer);
     }
 
+    private static MetadataQuery metadataQuery(AqDestinationType type, boolean present, String sharded) throws Exception {
+        java.sql.Connection connection = mock(java.sql.Connection.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        ResultSet rows = mock(ResultSet.class);
+        when(connection.prepareStatement("SELECT SHARDED FROM SYS.ALL_QUEUES WHERE OWNER = ? AND NAME = ?")).thenReturn(statement);
+        when(statement.executeQuery()).thenReturn(rows);
+        when(rows.next()).thenReturn(present, false);
+        when(rows.getString(1)).thenReturn(sharded);
+        AQjmsSession session = mock(AQjmsSession.class);
+        when(session.getDBConnection()).thenReturn(connection);
+        AQjmsDestination destination = mock(AQjmsDestination.class);
+        if (type == AqDestinationType.QUEUE) {
+            when(destination.getQueueName()).thenReturn("\"Mixed Case Destination\"");
+            when(destination.getQueueOwner()).thenReturn("\"Application's schema\"");
+        } else {
+            when(destination.getTopicName()).thenReturn("\"Mixed Case Destination\"");
+            when(destination.getTopicOwner()).thenReturn("\"Application's schema\"");
+        }
+        return new MetadataQuery(session, destination, connection, statement, rows);
+    }
+
+    private static void assertConnectionUnchanged(java.sql.Connection connection) throws SQLException {
+        verify(connection, never()).getTypeMap();
+        verify(connection, never()).setTypeMap(any());
+        verify(connection, never()).setAutoCommit(anyBoolean());
+        verify(connection, never()).setReadOnly(anyBoolean());
+        verify(connection, never()).setTransactionIsolation(anyInt());
+        verify(connection, never()).commit();
+        verify(connection, never()).rollback();
+        verify(connection, never()).close();
+    }
+
     private static Client genericClient() throws JMSException {
         Connection connection = mock(Connection.class);
         Session session = mock(Session.class);
@@ -193,5 +347,9 @@ class AqTransformationTest {
     }
 
     private record Client(Connection connection, Session session, MessageProducer producer) {
+    }
+
+    private record MetadataQuery(AQjmsSession session, AQjmsDestination destination, java.sql.Connection connection,
+                                 PreparedStatement statement, ResultSet rows) {
     }
 }
