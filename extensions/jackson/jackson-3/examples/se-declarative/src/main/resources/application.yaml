@@ -22,5 +22,3 @@ server:
       jackson-3:
         properties:
           INDENT_OUTPUT: true
-declarative:
-  ignore-incubating: true
