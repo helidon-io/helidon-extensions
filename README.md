@@ -20,6 +20,7 @@ See README for individual extensions.
 * [OCI SDK v3](extensions/oci-v3/docs/README.md)
 * [OpenAPI UI](extensions/openapi-ui/docs/README.md)
 * [gson](extensions/gson/docs/README.md)
+* [Jackson 2 and Jackson 3](extensions/jackson/README.md)
 * [toml](extensions/toml/docs/README.md)
 * [Chaos](extensions/chaos/docs/README.md)
 * [Messaging connectors](extensions/messaging/README.md)

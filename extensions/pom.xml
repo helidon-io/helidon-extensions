@@ -46,6 +46,7 @@
         <module>openapi-ui</module>
         <module>openapi-generator</module>
         <module>gson</module>
+        <module>jackson</module>
         <module>toml</module>
     </modules>
 </project>

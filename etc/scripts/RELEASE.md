@@ -23,6 +23,10 @@ directly under `extensions/` or one grouping directory below it. Each extension
 has its own version and declares `helidon.version` in its root POM. A grouping
 POM only aggregates extensions; it is not their Maven parent or a release unit.
 
+Jackson follows the same convention: `jackson/jackson-2` and `jackson/jackson-3`
+are independent release IDs with BOM properties `jackson.jackson-2.extension.version`
+and `jackson.jackson-3.extension.version`. The `jackson` grouping itself is not released.
+
 For example, Messaging connectors live in `extensions/messaging/kafka`,
 `extensions/messaging/jms`, `extensions/messaging/jms-javax`, and
 `extensions/messaging/pulsar`. Each uses the normal `bom` and `modules` layout,
