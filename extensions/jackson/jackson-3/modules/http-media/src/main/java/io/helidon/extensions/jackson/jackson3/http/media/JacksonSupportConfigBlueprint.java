@@ -51,8 +51,13 @@ interface JacksonSupportConfigBlueprint extends MediaSupportConfig, Prototype.Fa
      * Jackson configuration properties.
      * Properties are ignored if a custom {@link tools.jackson.databind.ObjectMapper} is supplied.
      * Only {@code boolean} configuration values are supported.
+     * The defaults below apply only when the extension creates the mapper.
      * {@code ALLOW_FINAL_FIELDS_AS_MUTATORS} is disabled by default; set it to {@code true}
      * to allow inferred final-field writes during deserialization.
+     * {@code ALLOW_VOID_VALUED_PROPERTIES} is disabled by default, so getters returning
+     * {@link java.lang.Void} are ignored, as with core Jackson 2. Set it to {@code true} to recognize them.
+     * This feature does not enable getters returning primitive {@code void}.
+     * Explicit properties override these defaults.
      *
      * @return jackson config properties
      */

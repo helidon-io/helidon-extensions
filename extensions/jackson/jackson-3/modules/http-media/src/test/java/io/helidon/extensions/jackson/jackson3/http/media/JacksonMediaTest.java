@@ -99,6 +99,47 @@ class JacksonMediaTest {
     }
 
     @Test
+    void testVoidValuedPropertiesIgnoredByDefault() {
+        assertThat(writeVoidProperties(support), is("{\"value\":\"x\"}"));
+    }
+
+    @Test
+    void testVoidValuedPropertiesIgnoredWithOtherProperties() {
+        var config = Config.create(ConfigSources.create(Map.of("properties.FAIL_ON_UNKNOWN_PROPERTIES", "false")));
+        assertThat(writeVoidProperties(JacksonSupport.create(config)), is("{\"value\":\"x\"}"));
+    }
+
+    @Test
+    void testVoidValuedPropertiesConfigured() {
+        for (boolean enabled : List.of(false, true)) {
+            String expected = enabled ? "{\"value\":\"x\",\"ignored\":null}" : "{\"value\":\"x\"}";
+            var config = Config.create(ConfigSources.create(Map.of("properties.ALLOW_VOID_VALUED_PROPERTIES",
+                                                                  Boolean.toString(enabled))));
+            assertThat("configured ALLOW_VOID_VALUED_PROPERTIES=" + enabled,
+                       writeVoidProperties(JacksonSupport.create(config)),
+                       is(expected));
+            var mediaSupport = JacksonSupport.builder()
+                    .putProperty("ALLOW_VOID_VALUED_PROPERTIES", enabled)
+                    .build();
+            assertThat("programmatic ALLOW_VOID_VALUED_PROPERTIES=" + enabled,
+                       writeVoidProperties(mediaSupport),
+                       is(expected));
+        }
+    }
+
+    @Test
+    void testVoidValuedPropertiesWithSuppliedMapper() {
+        var mapper = JsonMapper.builder()
+                .enable(MapperFeature.ALLOW_VOID_VALUED_PROPERTIES)
+                .build();
+        var mediaSupport = JacksonSupport.builder()
+                .objectMapper(mapper)
+                .putProperty("ALLOW_VOID_VALUED_PROPERTIES", false)
+                .build();
+        assertThat(writeVoidProperties(mediaSupport), is("{\"ignored\":null,\"value\":\"x\"}"));
+    }
+
+    @Test
     void testFinalFieldMutationRejectedByDefault() {
         assertThrows(JacksonRuntimeException.class, () -> readRole(support));
     }
@@ -408,6 +449,19 @@ class JacksonMediaTest {
         assertThat(httpException.status(), is(Status.UNSUPPORTED_MEDIA_TYPE_415));
     }
 
+    private String writeVoidProperties(MediaSupport mediaSupport) {
+        var type = GenericType.create(VoidProperties.class);
+        var headers = WritableHeaders.create();
+        var value = new VoidProperties();
+        var writer = mediaSupport.writer(type, headers).supplier().get();
+        var output = new ByteArrayOutputStream();
+        writer.write(type, value, output, headers);
+        String result = output.toString(StandardCharsets.UTF_8);
+        assertThat(new String(writer.instanceWriter(type, value, headers).instanceBytes(), StandardCharsets.UTF_8),
+                   is(result));
+        return result;
+    }
+
     private String readRole(MediaSupport mediaSupport) {
         var type = GenericType.create(RequestDto.class);
         var headers = WritableHeaders.create().contentType(MediaTypes.APPLICATION_JSON);
@@ -430,6 +484,17 @@ class JacksonMediaTest {
     }
 
     public record JavaTypes(Optional<String> value, Instant timestamp) {
+    }
+
+    public static class VoidProperties {
+        public String value = "x";
+
+        public Void getIgnored() {
+            return null;
+        }
+
+        public void getSkipped() {
+        }
     }
 
     public static class RequestDto {
