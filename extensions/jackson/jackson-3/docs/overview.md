@@ -120,6 +120,11 @@ subtree rather than the entire server configuration.
 
 ## Mapper behavior
 
+The extension integrates Jackson 3 with Helidon's HTTP media API. Its selected mapper defaults do not guarantee
+compatibility with Jackson 2 APIs or JSON representations. Applications must verify their model types and
+JSON wire formats when migrating between Jackson major versions. The settings and known differences below
+are not an exhaustive migration checklist.
+
 Jackson 3 mappers are immutable after construction. Configure a `tools.jackson.databind.json.JsonMapper.Builder`
 and pass its completed mapper to `JacksonSupport.create(mapper)` rather than mutating an installed mapper.
 The extension uses `JsonMapper.builderWithJackson2Defaults()`, disables inferred final-field mutation and
@@ -129,22 +134,35 @@ Java time and JDK 8 optional handling are built into Jackson 3;
 the Jackson 2 datatype and parameter-name modules are not added.
 Boolean configuration uses Jackson 3 feature names, including `JsonReadFeature` and `JsonWriteFeature` instead
 of the removed `JsonParser.Feature` and `JsonGenerator.Feature` enums.
-Jackson 3 API, exception, coercion, and feature differences still apply; this extension does not make Jackson 3
-a binary replacement for Jackson 2.
+Jackson 3 API, exception, coercion, and feature differences still apply.
 
-| Behavior | Extension default or migration requirement |
+| Behavior | Selected integration default or Jackson 3 difference |
 | --- | --- |
-| Property ordering | Preserve Jackson 2 declaration order instead of Jackson 3 alphabetical sorting. |
+| Property ordering | Alphabetical property sorting is disabled by default. |
 | Unknown properties | Fail deserialization, as core Jackson 2 does. |
 | Inferred final-field writes | Disabled by default, unlike core Jackson 2. A getter alone does not make its final field writable during deserialization. |
 | `java.lang.Void` getters | Ignored by default, as core Jackson 2 does. Set `ALLOW_VOID_VALUED_PROPERTIES` to `true` to recognize them. This feature does not enable getters returning primitive `void`. |
-| Null primitive values | Preserve the Jackson 2 zero/false coercion. |
-| Enums and dates | Preserve enum names and timestamp defaults; `DateTimeFeature` properties such as `WRITE_DATES_AS_TIMESTAMPS` can override them. |
+| Null primitive values | JSON `null` is coerced to zero or `false` for primitive properties by default. |
+| Ordinary enums | Names are written by default. Specialized serializers, including `java.time.Month`, can use a different representation (see below). |
+| Dates and times | Timestamp output is enabled by default; the representation depends on the type's serializer. `DateTimeFeature` properties such as `WRITE_DATES_AS_TIMESTAMPS` configure serializers that support them. |
 | Parameter names and views | Detect constructor parameter names and include properties without a view annotation. |
 | Databind annotations | Use `tools.jackson.databind.annotation` on application models; old Jackson 2 databind annotations are not recognized. |
 | Mapper changes | Build or rebuild a mapper before supplying it; an installed mapper cannot be mutated. |
 | Capability probing | Jackson 3 removed `canSerialize`/`canDeserialize`; an applicable JSON entity is attempted and unsupported types fail during reading/writing instead of being rejected by a preliminary mapper probe. |
 | Exceptions | Jackson 3 exceptions are unchecked. The integration still wraps Jackson reader/writer failures in its own `JacksonRuntimeException`. |
+
+One known difference concerns `java.time.Month`. With Jackson 3 `3.2.4`, `Month.NOVEMBER` is serialized as
+the zero-based month index `10`. Core Jackson 2 with Jackson `2.21.8` serializes it as the name `"NOVEMBER"`.
+For example, a `month` property containing that value has these JSON representations:
+
+| Mapper | JSON |
+| --- | --- |
+| This extension with Jackson 3 `3.2.4` | `{"month":10}` |
+| Core Jackson 2 with Jackson `2.21.8` | `{"month":"NOVEMBER"}` |
+
+With Jackson 3 `3.2.4`, setting `WRITE_DATES_AS_TIMESTAMPS` to `false` or, independently,
+`WRITE_ENUMS_USING_INDEX` to `false` still yields `10` for `Month.NOVEMBER`.
+Do not assume that the ordinary enum-name default applies to this specialized serializer.
 
 Feature keys follow the Jackson 3 enums. For example, use `ALLOW_UNESCAPED_CONTROL_CHARS`
 instead of the removed `JsonParser.Feature.ALLOW_UNQUOTED_CONTROL_CHARS` spelling.

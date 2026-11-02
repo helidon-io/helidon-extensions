@@ -22,6 +22,7 @@ import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.Month;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -192,6 +193,32 @@ class JacksonMediaTest {
                 .build().prototype().objectMapper();
         assertThat(mapper.writeValueAsString(Instant.parse("2026-01-01T00:00:00Z")),
                    is("\"2026-01-01T00:00:00Z\""));
+    }
+
+    @Test
+    void testMonthSerialization() {
+        var supports = Map.of("default", support,
+                              "WRITE_DATES_AS_TIMESTAMPS=false", JacksonSupport.builder()
+                                      .putProperty("WRITE_DATES_AS_TIMESTAMPS", false)
+                                      .build(),
+                              "WRITE_ENUMS_USING_INDEX=false", JacksonSupport.builder()
+                                      .putProperty("WRITE_ENUMS_USING_INDEX", false)
+                                      .build());
+        var type = GenericType.create(MonthValue.class);
+        supports.forEach((configuration, mediaSupport) -> {
+            var headers = WritableHeaders.create();
+            var value = new MonthValue(Month.NOVEMBER);
+            var writer = mediaSupport.writer(type, headers).supplier().get();
+            var output = new ByteArrayOutputStream();
+            writer.write(type, value, output, headers);
+            assertThat(configuration, output.toString(StandardCharsets.UTF_8), is("{\"month\":10}"));
+            assertThat(configuration + " instance writer",
+                       new String(writer.instanceWriter(type, value, headers).instanceBytes(), StandardCharsets.UTF_8),
+                       is("{\"month\":10}"));
+            var result = mediaSupport.reader(type, headers).supplier().get()
+                    .read(type, new ByteArrayInputStream(output.toByteArray()), headers);
+            assertThat(configuration + " round trip", result.month(), is(Month.NOVEMBER));
+        });
     }
 
     @Test
@@ -484,6 +511,9 @@ class JacksonMediaTest {
     }
 
     public record JavaTypes(Optional<String> value, Instant timestamp) {
+    }
+
+    public record MonthValue(Month month) {
     }
 
     public static class VoidProperties {
