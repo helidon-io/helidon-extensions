@@ -47,5 +47,6 @@
         <module>openapi-generator</module>
         <module>gson</module>
         <module>toml</module>
+        <module>jakarta</module>
     </modules>
 </project>
