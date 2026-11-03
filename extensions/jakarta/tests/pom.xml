@@ -33,5 +33,6 @@
         <maven.javadoc.skip>true</maven.javadoc.skip>
     </properties>
     <modules>
+        <module>json-schema</module>
     </modules>
 </project>
