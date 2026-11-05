@@ -16,11 +16,29 @@
 
 package io.helidon.extensions.langchain4j;
 
+import java.time.Duration;
+
 import io.helidon.builder.api.Prototype;
+import io.helidon.config.Config;
+import io.helidon.webclient.api.WebClientConfig;
 
 final class McpClientSupport {
 
     private McpClientSupport() {
+    }
+
+    static WebClientConfig defaultWebClientConfig() {
+        return createWebClientConfig(Config.empty());
+    }
+
+    @Prototype.ConfigFactoryMethod("webClientConfig")
+    static WebClientConfig createWebClientConfig(Config config) {
+        return WebClientConfig.builder()
+                .connectTimeout(Duration.ofSeconds(60))
+                .readTimeout(Duration.ZERO)
+                .followRedirects(false)
+                .config(config)
+                .buildPrototype();
     }
 
     static final class McpClientDecorator implements Prototype.BuilderDecorator<McpClientConfig.BuilderBase<?, ?>> {
