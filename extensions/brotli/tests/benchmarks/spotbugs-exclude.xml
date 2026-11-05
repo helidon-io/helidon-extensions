@@ -22,7 +22,7 @@
     <!-- One-time trial fixtures need reproducible bytes, not cryptographic randomness. -->
     <Match>
         <Class name="io.helidon.extensions.brotli.benchmarks.BrotliBenchmark$Payload"/>
-        <Method name="random"/>
+        <Method name="~(random|literals)"/>
         <Bug pattern="DMI_RANDOM_USED_ONLY_ONCE,PREDICTABLE_RANDOM"/>
     </Match>
 </FindBugsFilter>

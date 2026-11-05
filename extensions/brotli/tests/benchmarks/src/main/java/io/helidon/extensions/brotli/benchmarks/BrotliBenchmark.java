@@ -256,7 +256,7 @@ public class BrotliBenchmark {
         /**
          * Representative entity shape; sizes cross the default 64,000-byte encoder cache boundary.
          */
-        @Param({"TINY", "CACHE_TEXT", "CACHE_RANDOM", "LARGE_TEXT", "INTEROP"})
+        @Param({"TINY", "CACHE_TEXT", "CACHE_RANDOM", "LARGE_TEXT", "INTEROP", "SHORT_LITERALS", "LONG_LITERALS"})
         private String shape;
 
         private byte[] data;
@@ -286,6 +286,8 @@ public class BrotliBenchmark {
                 case "CACHE_RANDOM" -> random(64_001);
                 case "LARGE_TEXT" -> text(262_144);
                 case "INTEROP" -> INTEROP_TEXT.getBytes(StandardCharsets.UTF_8);
+                case "SHORT_LITERALS" -> literals(256);
+                case "LONG_LITERALS" -> literals(64_001);
                 default -> throw new IllegalArgumentException("Unknown payload shape: " + shape);
             };
             encoded = shape.equals("INTEROP") ? INTEROP_ENCODED.clone() : compress(data);
@@ -321,6 +323,17 @@ public class BrotliBenchmark {
         private static byte[] random(int length) {
             byte[] result = new byte[length];
             new Random(7932).nextBytes(result);
+            return result;
+        }
+
+        private static byte[] literals(int length) {
+            byte[] alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+                    .getBytes(StandardCharsets.US_ASCII);
+            byte[] result = new byte[length];
+            var random = new Random(7932);
+            for (int i = 0; i < length; i++) {
+                result[i] = alphabet[random.nextInt(alphabet.length)];
+            }
             return result;
         }
     }
