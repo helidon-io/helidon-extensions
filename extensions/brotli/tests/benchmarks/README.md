@@ -34,8 +34,13 @@ The classpath separator above is for Unix shells; use `;` on Windows.
 Payload shapes are a 7-byte entity, 64,001-byte repetitive/random entities that
 cross the default encoder cache boundary, a 256 KiB repetitive entity, and an
 external Google Brotli quality 11 interoperability entity. Trial setup checks
-full byte equality for codec and HTTP paths, outside timed operations. The
-dictionary fixtures were constructed from RFC 7932 Appendices A/B and independently
+full byte equality for codec and HTTP paths, outside timed operations.
+
+`SHORT_LITERALS` (256 bytes) and `LONG_LITERALS` (64,001 bytes) shapes use seeded
+random data from a 32-character ASCII alphabet. The restricted alphabet allows
+Huffman compression while making repeated substrings uncommon, targeting
+literal-heavy decoding. Select them with `-p shape=SHORT_LITERALS,LONG_LITERALS`.
+The dictionary fixtures were constructed from RFC 7932 Appendices A/B and independently
 decoded with Google Brotli 1.2.1; they include identity, first/all-uppercase,
 space-suffix and UTF-8 cases. No native dependency is used by the benchmarks.
 

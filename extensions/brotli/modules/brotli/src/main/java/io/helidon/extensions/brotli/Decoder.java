@@ -1305,10 +1305,21 @@ final class Decoder {
                 if (literalBlockLength == 0) {
                     decodeLiteralBlockSwitch();
                 }
-                literalBlockLength--;
-                ringBuffer[pos] = (byte) readSymbol(literalTreeGroup, literalTreeIdx);
-                pos++;
-                j++;
+                // A literal uses at most 15 bits. Keep the same input reserve as writeBeforeInput
+                // before every symbol, so batching never reads ahead of an available plaintext prefix.
+                int bufferedLiterals = (bitReader.bufferedBits() - MAX_ATOMIC_INPUT_BITS) / MAX_LENGTH + 1;
+                int count = Math.min(Math.min(insertLength - j, literalBlockLength), fence - pos);
+                count = Math.min(count, bufferedLiterals);
+                if (count > 1) {
+                    readLiteralBatch(count);
+                    literalBlockLength -= count;
+                    j += count;
+                } else {
+                    literalBlockLength--;
+                    ringBuffer[pos] = (byte) readSymbol(literalTreeGroup, literalTreeIdx);
+                    pos++;
+                    j++;
+                }
                 if (pos >= fence) {
                     nextRunningState = INSERT_LOOP;
                     runningState = INIT_WRITE;
@@ -1392,6 +1403,25 @@ final class Decoder {
         }
         j = 0;
         runningState = COPY_LOOP;
+    }
+
+    private void readLiteralBatch(int count) {
+        int[] table = literalTreeGroup;
+        int tableOffset = table[literalTreeIdx];
+        int limit = pos + count;
+        while (pos < limit) {
+            int value = bitReader.peekBits();
+            int offset = tableOffset + (value & ((1 << HUFFMAN_TABLE_BITS) - 1));
+            int entry = table[offset];
+            int bits = entry >>> 16;
+            if (bits > HUFFMAN_TABLE_BITS) {
+                offset += (entry & 0xFFFF) + ((value & ((1 << bits) - 1)) >>> HUFFMAN_TABLE_BITS);
+                entry = table[offset];
+                bits = (entry >>> 16) + HUFFMAN_TABLE_BITS;
+            }
+            bitReader.incrementBitOffset(bits);
+            ringBuffer[pos++] = (byte) entry;
+        }
     }
 
     private void mainLoop() {
