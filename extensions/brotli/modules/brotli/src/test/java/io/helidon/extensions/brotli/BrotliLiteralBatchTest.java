@@ -40,68 +40,6 @@ class BrotliLiteralBatchTest {
             new Schedule(Integer.MAX_VALUE, 7),
             new Schedule(Integer.MAX_VALUE, 8192));
 
-    @Test
-    void decodesLongLiteralRunsAcrossRingGrowthAndWrap() throws IOException {
-        // WBITS=16 and 70,000 literal bytes cross the 65,536-byte history window.
-        for (Alphabet alphabet : Alphabet.values()) {
-            assertDecoded(literalStream(alphabet, false));
-        }
-    }
-
-    @Test
-    void switchesLiteralTreesAfterSeveralLiterals() throws IOException {
-        assertDecoded(literalStream(Alphabet.SINGLETON, true));
-    }
-
-    @Test
-    void returnsRequestedLiteralsBeforeReadingWithheldInput() throws IOException {
-        Fixture fixture = literalStream(Alphabet.PAIR, false);
-        // Release only enough compressed input for the header and 512 one-bit literals.
-        // The producer remains open; reading beyond the released prefix fails immediately.
-        int prefix = (fixture.payloadBitOffset() + 512 + 7) / 8;
-        for (int sourceChunk : new int[] {1, Integer.MAX_VALUE}) {
-            var source = new ReleasedPrefixInputStream(fixture.encoded(), prefix, sourceChunk);
-            var config = BrotliInputStreamConfig.builder().cacheBufferSize(Size.create(1)).build();
-            try (var input = new BrotliInputStream(source, config)) {
-                assertThat("source chunk " + sourceChunk,
-                           input.readNBytes(385), is(Arrays.copyOf(fixture.expected(), 385)));
-                source.releaseAll();
-                assertThat(input.readAllBytes(), is(Arrays.copyOfRange(fixture.expected(), 385, fixture.expected().length)));
-                assertThat(input.read(), is(-1));
-            }
-        }
-    }
-
-    private static void assertDecoded(Fixture fixture) throws IOException {
-        for (Schedule schedule : SCHEDULES) {
-            String description = fixture.name() + ", " + schedule;
-            var config = BrotliInputStreamConfig.builder().cacheBufferSize(Size.create(3)).verifyEndOfInput(true).build();
-            var destination = new ByteArrayOutputStream();
-            try (var input = new BrotliInputStream(new ChunkedInputStream(fixture.encoded(), schedule.sourceChunk()), config)) {
-                byte[] buffer = new byte[schedule.outputChunk() + 4];
-                byte[] canaries = new byte[buffer.length];
-                Arrays.fill(canaries, (byte) 0xDA);
-                for (;;) {
-                    Arrays.fill(buffer, (byte) 0xDA);
-                    int count = input.read(buffer, 2, schedule.outputChunk());
-                    assertThat(description + " first mismatching prefix byte",
-                               Arrays.mismatch(buffer, 0, 2, canaries, 0, 2), is(-1));
-                    int written = Math.max(0, count);
-                    assertThat(description + " first mismatching byte after returned output",
-                               Arrays.mismatch(buffer, 2 + written, buffer.length,
-                                               canaries, 2 + written, canaries.length), is(-1));
-                    if (count == -1) {
-                        break;
-                    }
-                    assertThat(description + " makes progress", count, greaterThan(0));
-                    destination.write(buffer, 2, count);
-                }
-                assertThat(description + " remains at EOF", input.read(), is(-1));
-            }
-            assertThat(description, destination.toByteArray(), is(fixture.expected()));
-        }
-    }
-
     static Fixture literalStream(Alphabet alphabet, boolean switches) {
         // RFC 7932 sections 2, 3.4, 3.5, 5, 6, 7 and 9.2. A single insert command
         // fills the final metablock, so its copy and distance are never consumed.
@@ -189,6 +127,68 @@ class BrotliLiteralBatchTest {
         }
         return new Fixture(switches ? "eight-literal block switches" : alphabet.name(),
                            bits.toByteArray(), expected, payloadBitOffset);
+    }
+
+    @Test
+    void decodesLongLiteralRunsAcrossRingGrowthAndWrap() throws IOException {
+        // WBITS=16 and 70,000 literal bytes cross the 65,536-byte history window.
+        for (Alphabet alphabet : Alphabet.values()) {
+            assertDecoded(literalStream(alphabet, false));
+        }
+    }
+
+    @Test
+    void switchesLiteralTreesAfterSeveralLiterals() throws IOException {
+        assertDecoded(literalStream(Alphabet.SINGLETON, true));
+    }
+
+    @Test
+    void returnsRequestedLiteralsBeforeReadingWithheldInput() throws IOException {
+        Fixture fixture = literalStream(Alphabet.PAIR, false);
+        // Release only enough compressed input for the header and 512 one-bit literals.
+        // The producer remains open; reading beyond the released prefix fails immediately.
+        int prefix = (fixture.payloadBitOffset() + 512 + 7) / 8;
+        for (int sourceChunk : new int[] {1, Integer.MAX_VALUE}) {
+            var source = new ReleasedPrefixInputStream(fixture.encoded(), prefix, sourceChunk);
+            var config = BrotliInputStreamConfig.builder().cacheBufferSize(Size.create(1)).build();
+            try (var input = new BrotliInputStream(source, config)) {
+                assertThat("source chunk " + sourceChunk,
+                           input.readNBytes(385), is(Arrays.copyOf(fixture.expected(), 385)));
+                source.releaseAll();
+                assertThat(input.readAllBytes(), is(Arrays.copyOfRange(fixture.expected(), 385, fixture.expected().length)));
+                assertThat(input.read(), is(-1));
+            }
+        }
+    }
+
+    private static void assertDecoded(Fixture fixture) throws IOException {
+        for (Schedule schedule : SCHEDULES) {
+            String description = fixture.name() + ", " + schedule;
+            var config = BrotliInputStreamConfig.builder().cacheBufferSize(Size.create(3)).verifyEndOfInput(true).build();
+            var destination = new ByteArrayOutputStream();
+            try (var input = new BrotliInputStream(new ChunkedInputStream(fixture.encoded(), schedule.sourceChunk()), config)) {
+                byte[] buffer = new byte[schedule.outputChunk() + 4];
+                byte[] canaries = new byte[buffer.length];
+                Arrays.fill(canaries, (byte) 0xDA);
+                for (;;) {
+                    Arrays.fill(buffer, (byte) 0xDA);
+                    int count = input.read(buffer, 2, schedule.outputChunk());
+                    assertThat(description + " first mismatching prefix byte",
+                               Arrays.mismatch(buffer, 0, 2, canaries, 0, 2), is(-1));
+                    int written = Math.max(0, count);
+                    assertThat(description + " first mismatching byte after returned output",
+                               Arrays.mismatch(buffer, 2 + written, buffer.length,
+                                               canaries, 2 + written, canaries.length), is(-1));
+                    if (count == -1) {
+                        break;
+                    }
+                    assertThat(description + " makes progress", count, greaterThan(0));
+                    destination.write(buffer, 2, count);
+                }
+                assertThat(description + " remains at EOF", input.read(), is(-1));
+            }
+            assertThat(description, destination.toByteArray(), is(fixture.expected()));
+        }
     }
 
     enum Alphabet {
