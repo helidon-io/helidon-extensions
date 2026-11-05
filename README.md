@@ -12,6 +12,7 @@ Each extension is versioned independently. Please see the documentation for each
 
 See README for individual extensions.
 
+* [Brotli](extensions/brotli/docs/README.md)
 * [neo4j](extensions/neo4j/docs/README.md)
 * [HashiCorp Vault](extensions/hashicorp-vault/docs/README.md)
 * [Eureka](extensions/eureka/docs/README.md)
