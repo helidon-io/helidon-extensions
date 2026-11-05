@@ -18,6 +18,7 @@ package io.helidon.extensions.brotli.http.encoding;
 
 import java.util.Objects;
 
+import io.helidon.common.Api;
 import io.helidon.common.Weighted;
 import io.helidon.config.Config;
 import io.helidon.http.encoding.ContentEncoding;
@@ -30,6 +31,7 @@ public final class BrotliEncodingProvider implements ContentEncodingProvider, We
     /**
      * Public constructor required by {@link java.util.ServiceLoader}.
      */
+    @Api.Internal
     public BrotliEncodingProvider() {
     }
 
@@ -43,10 +45,5 @@ public final class BrotliEncodingProvider implements ContentEncodingProvider, We
         Objects.requireNonNull(config, "config");
         Objects.requireNonNull(name, "name");
         return BrotliEncoding.builder().config(config).name(name).build();
-    }
-
-    @Override
-    public double weight() {
-        return Weighted.DEFAULT_WEIGHT;
     }
 }
