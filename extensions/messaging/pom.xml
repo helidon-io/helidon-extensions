@@ -39,5 +39,6 @@
         <module>jms</module>
         <module>jms-javax</module>
         <module>pulsar</module>
+        <module>aq</module>
     </modules>
 </project>

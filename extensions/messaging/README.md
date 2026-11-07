@@ -24,8 +24,9 @@ Each connector is an independently versioned extension under this grouping direc
 * [javax JMS](jms-javax/modules/jms-javax/README.md),
   including [runnable javax JMS examples](jms-javax/examples/README.md)
 * [Pulsar](pulsar/modules/pulsar/README.md), including [runnable examples](pulsar/examples/README.md)
+* [Oracle AQ](aq/modules/aq/README.md), with a standalone connector and shared application-provided data sources
 
-Kafka's Java APIs are preview APIs; Jakarta JMS, javax JMS, and Pulsar are incubating connectors.
+Kafka's Java APIs are preview APIs; Jakarta JMS, javax JMS, Pulsar, and Oracle AQ are incubating connectors.
 
 Build all connectors with `mvn -f extensions/messaging/pom.xml install`, or build one
 with `mvn -f extensions/messaging/kafka/pom.xml install`. Add `-Ptests` to include
@@ -33,7 +34,7 @@ integration tests and `-Pexamples` to include the Kafka, Jakarta JMS, javax JMS,
 
 Each connector has its own `bom` and `modules` directories. Import
 `io.helidon.extensions.messaging.kafka:helidon-extensions-messaging-kafka-bom` for
-Kafka, or replace `kafka` with `jms`, `jms-javax`, or `pulsar` for the other connectors. Connector
+Kafka, or replace `kafka` with `jms`, `jms-javax`, `pulsar`, or `aq` for the other connectors. Connector
 JAR coordinates remain under `io.helidon.extensions.messaging.connectors`.
 Applications using both JMS APIs import both JMS BOMs; their versions are independent.
 
@@ -43,3 +44,4 @@ See the [release instructions](../../etc/scripts/RELEASE.md).
 
 Third-party attributions for the connectors are in
 [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt).
+Oracle AQ's native client attributions are in [aq/THIRD_PARTY_LICENSES.txt](aq/THIRD_PARTY_LICENSES.txt).
