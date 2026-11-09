@@ -40,6 +40,7 @@
         <module>modules/cascading-validation-swagger2</module>
         <module>modules/cascading-validation-mapped-containers</module>
         <module>modules/validation-private-field</module>
+        <module>modules/discriminator-enum-ref-allof</module>
         <module>modules/discriminator-enum-mapping-repro</module>
         <module>modules/discriminator-enum-mapping-repro-2</module>
         <module>modules/composed-schemas</module>

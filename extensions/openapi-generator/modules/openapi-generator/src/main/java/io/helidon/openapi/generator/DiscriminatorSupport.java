@@ -84,7 +84,9 @@ final class DiscriminatorSupport {
     static String qualifiedType(Property discriminatorProperty) {
         CodegenProperty property = discriminatorProperty.property();
         String type = property.datatypeWithEnum == null ? property.dataType : property.datatypeWithEnum;
-        return property.isEnum ? discriminatorProperty.owner().classname + "." + type : type;
+        return property.isEnum && !property.isEnumRef
+                ? discriminatorProperty.owner().classname + "." + type
+                : type;
     }
 
     static String inlineShorthand(Schema<?> schema) {
@@ -181,7 +183,8 @@ final class DiscriminatorSupport {
                 return;
             }
             throw new IllegalStateException("Contradictory discriminator accessor '" + accessor.get("name")
-                    + "' on model '" + model.classname + "': " + existing + " versus " + accessor);
+                    + "' on model '" + model.classname
+                    + "': discriminator relationships must agree on the Java type and canonical alias");
         }
         accessors.add(accessor);
     }
