@@ -1,0 +1,98 @@
+# Copyright (c) 2026 Oracle and/or its affiliates.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+openapi: 3.0.3
+info:
+  title: Referenced enum discriminator regression
+  version: 1.0.0
+paths:
+  /softwareSources:
+    post:
+      operationId: createSoftwareSource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCustomSoftwareSourceDetails'
+      responses:
+        '200':
+          description: Created software source
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSoftwareSourceDetails'
+components:
+  schemas:
+    SoftwareSourceType:
+      type: string
+      enum: [CUSTOM, VENDOR, VERSIONED]
+    SoftwareSourceSubType:
+      type: string
+      enum: [FILTER, MANIFEST, SNAPSHOT]
+    CreateSoftwareSourceDetails:
+      type: object
+      required: [compartmentId, softwareSourceType]
+      discriminator:
+        propertyName: softwareSourceType
+        mapping:
+          CUSTOM: '#/components/schemas/CreateCustomSoftwareSourceDetails'
+          VENDOR: '#/components/schemas/CreateVendorSoftwareSourceDetails'
+      properties:
+        compartmentId:
+          type: string
+        displayName:
+          type: string
+        softwareSourceType:
+          $ref: '#/components/schemas/SoftwareSourceType'
+    CreateCustomSoftwareSourceDetails:
+      allOf:
+        - $ref: '#/components/schemas/CreateSoftwareSourceDetails'
+        - type: object
+          properties:
+            softwareSourceSubType:
+              $ref: '#/components/schemas/SoftwareSourceSubType'
+    CreateVendorSoftwareSourceDetails:
+      allOf:
+        - $ref: '#/components/schemas/CreateSoftwareSourceDetails'
+        - type: object
+          properties:
+            vendorName:
+              type: string
+    EscapedSourceType:
+      type: string
+      enum: ['custom"mode\path']
+    EscapedSource:
+      type: object
+      discriminator:
+        propertyName: kind
+        mapping:
+          'custom"mode\path': '#/components/schemas/EscapedCustomSource'
+      properties:
+        kind:
+          $ref: '#/components/schemas/EscapedSourceType'
+    EscapedCustomSource:
+      allOf:
+        - $ref: '#/components/schemas/EscapedSource'
+        - type: object
+          properties:
+            description:
+              type: string
+    SoftwareSourceChoice:
+      oneOf:
+        - $ref: '#/components/schemas/CreateCustomSoftwareSourceDetails'
+        - $ref: '#/components/schemas/CreateVendorSoftwareSourceDetails'
+      discriminator:
+        propertyName: softwareSourceType
+        mapping:
+          CUSTOM: '#/components/schemas/CreateCustomSoftwareSourceDetails'
+          VENDOR: '#/components/schemas/CreateVendorSoftwareSourceDetails'

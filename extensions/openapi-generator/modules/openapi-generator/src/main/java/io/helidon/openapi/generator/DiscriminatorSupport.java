@@ -84,7 +84,9 @@ final class DiscriminatorSupport {
     static String qualifiedType(Property discriminatorProperty) {
         CodegenProperty property = discriminatorProperty.property();
         String type = property.datatypeWithEnum == null ? property.dataType : property.datatypeWithEnum;
-        return property.isEnum ? discriminatorProperty.owner().classname + "." + type : type;
+        return property.isEnum && !property.isEnumRef
+                ? discriminatorProperty.owner().classname + "." + type
+                : type;
     }
 
     static String inlineShorthand(Schema<?> schema) {
