@@ -11,6 +11,10 @@ pages:
 - [RAG](rag.md) <!--@icon i-lucide-search-check -->
 - [Provider Generator](provider-generator.md) <!--@icon i-lucide-factory -->
 
+## Examples
+
+- [Helidon Assistant](../examples/helidon-assistant/README.md): declarative documentation chat with SE/MP routing and RAG.
+
 ## Providers
 
 - [OpenAI](open-ai.md) <!--@icon i-simple-icons-openai -->
