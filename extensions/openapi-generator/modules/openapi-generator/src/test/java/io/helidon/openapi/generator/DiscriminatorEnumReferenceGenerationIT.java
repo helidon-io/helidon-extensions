@@ -30,10 +30,13 @@ import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.openapitools.codegen.DefaultGenerator;
 import org.openapitools.codegen.config.CodegenConfigurator;
 
 import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -96,39 +99,95 @@ class DiscriminatorEnumReferenceGenerationIT {
                    containsString("return SoftwareSourceType.fromValue(" + JavaStringLiterals.toJavaStringLiteral(alias) + ");"));
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"schema-driven", "metadata", "readOnlyProperty"})
+    void invalidAliasesAreCollectedInEveryGlobalRepresentation(String representation) {
+        assertInvalidAliases(false, Map.of("discriminatorRepresentation", representation));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"metadata", "readOnlyProperty"})
+    void invalidAliasesAreCollectedWithSchemaRepresentationOverrides(String representation) {
+        String global = "metadata".equals(representation) ? "readOnlyProperty" : "metadata";
+        assertInvalidAliases(true, Map.of("discriminatorRepresentation", global));
+    }
+
     @Test
-    void invalidAliasesAreCollectedWithoutDisclosingRejectedValues() {
+    void invalidUnionAliasesAreReportedBeforeAccessorConflicts() {
         String customAlias = "PRIVATE_CUSTOM_ALIAS";
         String vendorAlias = "PRIVATE_VENDOR_ALIAS";
         RuntimeException error = assertThrows(RuntimeException.class, () -> generate(input -> {
-            schemas(input).remove("SoftwareSourceChoice");
-            schemas(input).get(BASE).getDiscriminator().setMapping(new LinkedHashMap<>(Map.of(
+            schemas(input).get("SoftwareSourceChoice").getDiscriminator().setMapping(new LinkedHashMap<>(Map.of(
                     customAlias, "#/components/schemas/" + CUSTOM,
                     vendorAlias, "#/components/schemas/" + VENDOR)));
         }));
+        assertAliasErrors(error, "SoftwareSourceChoice", customAlias, vendorAlias);
+    }
+
+    @Test
+    void conflictingDeclaredAliasesDoNotDiscloseAccessorExpressions() {
+        RuntimeException error = assertThrows(RuntimeException.class, () -> generate(input -> {
+            schemas(input).get("SoftwareSourceChoice").getDiscriminator().setMapping(new LinkedHashMap<>(Map.of(
+                    "VENDOR", "#/components/schemas/" + CUSTOM,
+                    "CUSTOM", "#/components/schemas/" + VENDOR)));
+        }));
+        assertThat(rootMessage(error), containsString("Contradictory discriminator accessor 'softwareSourceType'"));
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            assertThat(cause.getMessage(), not(containsString("CUSTOM")));
+            assertThat(cause.getMessage(), not(containsString("VENDOR")));
+            assertThat(cause.getMessage(), not(containsString("valueExpression")));
+        }
+    }
+
+    private void assertInvalidAliases(boolean schemaOverride, Map<String, Object> options) {
+        String customAlias = "PRIVATE_CUSTOM_ALIAS";
+        String vendorAlias = "PRIVATE_VENDOR_ALIAS";
+        RuntimeException error = assertThrows(RuntimeException.class, () -> generate(input -> {
+            // Keep the union so both composition paths are exercised in the same generation run.
+            schemas(input).get(BASE).getDiscriminator().setMapping(new LinkedHashMap<>(Map.of(
+                    customAlias, "#/components/schemas/" + CUSTOM,
+                    vendorAlias, "#/components/schemas/" + VENDOR)));
+            if (schemaOverride) {
+                String representation = "metadata".equals(options.get("discriminatorRepresentation"))
+                        ? "readOnlyProperty" : "metadata";
+                schemas(input).get(BASE).addExtension("x-helidon-discriminator-representation", representation);
+                schemas(input).get("SoftwareSourceChoice")
+                        .addExtension("x-helidon-discriminator-representation", representation);
+            }
+        }, options));
+        assertAliasErrors(error, BASE, customAlias, vendorAlias);
+    }
+
+    private void assertAliasErrors(Throwable error, String schema, String customAlias, String vendorAlias) {
         String message = rootMessage(error);
         for (Throwable cause = error; cause != null; cause = cause.getCause()) {
             assertThat(cause.getMessage(), not(containsString(customAlias)));
             assertThat(cause.getMessage(), not(containsString(vendorAlias)));
+            assertThat(cause.getMessage(), not(containsString("valueExpression")));
+            assertThat(cause.getMessage(), not(containsString("Contradictory discriminator accessor")));
         }
-        assertThat(message, containsString(BASE));
+        assertThat(message, containsString(schema));
         assertThat(message, containsString("softwareSourceType"));
         assertThat(message, containsString(CUSTOM));
         assertThat(message, containsString(VENDOR));
         assertThat(message, containsString("must be declared by enum"));
-        assertThat(message, not(containsString(customAlias)));
-        assertThat(message, not(containsString(vendorAlias)));
+        assertThat(message.lines().filter(line -> line.contains("must be declared by enum")).count(), is(2L));
     }
 
     private Path generate(Consumer<OpenAPI> customize) throws Exception {
+        return generate(customize, Map.of());
+    }
+
+    private Path generate(Consumer<OpenAPI> customize, Map<String, Object> options) throws Exception {
         Path spec = Path.of(getClass().getResource("/discriminator-enum-ref-allof.yaml").toURI());
         Path output = tempDir.resolve("generated");
-        var input = new CodegenConfigurator()
+        CodegenConfigurator configurator = new CodegenConfigurator()
                 .setGeneratorName("helidon-declarative")
                 .setInputSpec(spec.toString())
                 .setOutputDir(output.toString())
-                .addAdditionalProperty("helidonVersion", "4.5.0")
-                .toClientOptInput();
+                .addAdditionalProperty("helidonVersion", "4.5.0");
+        options.forEach(configurator::addAdditionalProperty);
+        var input = configurator.toClientOptInput();
         customize.accept(input.getOpenAPI());
         new DefaultGenerator().opts(input).generate();
         return output;

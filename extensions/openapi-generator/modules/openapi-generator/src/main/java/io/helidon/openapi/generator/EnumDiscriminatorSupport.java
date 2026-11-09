@@ -37,34 +37,51 @@ final class EnumDiscriminatorSupport {
         this.enumVarNamer = enumVarNamer;
     }
 
-    String valueExpression(CodegenModel owner, String key, String alias, String subtype) {
-        String literal = JavaStringLiterals.toJavaStringLiteral(alias);
-        CodegenProperty property = DiscriminatorSupport.property(owner, key);
-        if (property == null || (!property.isEnum && !property.isEnumRef)) {
-            return literal;
+    void validate(CodegenModel mappingOwner,
+                  String key,
+                  DiscriminatorSupport.Property declaration,
+                  String alias,
+                  String subtype) {
+        if (declaration == null) {
+            return;
         }
-        String type = DiscriminatorSupport.qualifiedType(new DiscriminatorSupport.Property(owner, property));
-        String location = "Schema '" + owner.schemaName + "', discriminator property '" + key
+        CodegenProperty property = declaration.property();
+        if (!property.isEnum && !property.isEnumRef) {
+            return;
+        }
+        String type = property.datatypeWithEnum == null ? property.dataType : property.datatypeWithEnum;
+        String location = "Schema '" + mappingOwner.schemaName + "', discriminator property '" + key
                 + "', subtype '" + subtype + "': ";
         if (type == null || type.isBlank()) {
             errors.fatal(location + "enum discriminator must have a resolved Java type");
         }
         List<String> values = enumValues(property);
-        boolean declared = values.contains(alias);
-        if (!declared) {
-            errors.fatal(location + "discriminator alias must be declared by enum '" + type + "'");
+        if (values.isEmpty()) {
+            errors.fatal(location + "enum discriminator must resolve a declaration with string enum values");
+        } else if (!values.contains(alias)) {
+            errors.fatal(location + "discriminator alias must be declared by enum '"
+                                 + DiscriminatorSupport.qualifiedType(declaration) + "'");
         }
-        if (type == null || type.isBlank() || !declared) {
-            // Generation stops at checkValid before these staged expressions can be rendered.
-            return literal;
-        }
-        return property.isEnumRef
-                ? type + ".fromValue(" + literal + ")"
-                : type + "." + enumVarNamer.apply(alias, "String");
     }
 
     void checkValid() {
         errors.collect().checkValid();
+    }
+
+    // Called only after every discriminator relationship has passed validation.
+    String valueExpression(DiscriminatorSupport.Property declaration, String alias) {
+        String literal = JavaStringLiterals.toJavaStringLiteral(alias);
+        if (declaration == null) {
+            return literal;
+        }
+        CodegenProperty property = declaration.property();
+        if (!property.isEnum && !property.isEnumRef) {
+            return literal;
+        }
+        String type = DiscriminatorSupport.qualifiedType(declaration);
+        return property.isEnumRef
+                ? type + ".fromValue(" + literal + ")"
+                : type + "." + enumVarNamer.apply(alias, "String");
     }
 
     private List<String> enumValues(CodegenProperty property) {
