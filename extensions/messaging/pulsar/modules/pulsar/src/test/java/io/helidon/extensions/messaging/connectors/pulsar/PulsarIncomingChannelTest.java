@@ -18,17 +18,24 @@ package io.helidon.extensions.messaging.connectors.pulsar;
 
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 
+import io.helidon.messaging.BatchDeliveryException;
+import io.helidon.messaging.BatchItemOutcome;
+import io.helidon.messaging.BatchItemStatus;
 import io.helidon.messaging.ConnectorDelivery;
 import io.helidon.messaging.ConnectorDeliveryReservation;
 import io.helidon.messaging.IncomingConnectorContext;
@@ -39,6 +46,7 @@ import io.helidon.messaging.spi.IncomingChannel;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.ConsumerBuilder;
 import org.apache.pulsar.client.api.Message;
+import org.apache.pulsar.client.api.Messages;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionMode;
@@ -54,6 +62,7 @@ import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.lessThan;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PulsarIncomingChannelTest {
@@ -245,7 +254,7 @@ class PulsarIncomingChannelTest {
         assertThat(source.acks.get(), is(1));
         assertThat(source.negativeAcks.get(), is(0));
         assertThat(dataReads.get(), is(0));
-        assertThat(context.mappingFailure.get().getMessage(), containsString("exceeds max-message-bytes 1"));
+        assertThat(mappingFailure(context, 0).getMessage(), containsString("exceeds max-message-bytes 1"));
         PulsarMessage<?> rejected = (PulsarMessage<?>) context.failedBatch.get().get(0);
         assertThat(((PulsarMessageImpl<?>) rejected).entityAvailable(), is(false));
         assertThrows(MessagingException.class, rejected::entity);
@@ -280,7 +289,7 @@ class PulsarIncomingChannelTest {
         assertThat(source.acks.get(), is(1));
         assertThat(source.negativeAcks.get(), is(0));
         assertThat(dataReads.get(), is(0));
-        assertThat(context.mappingFailure.get().getMessage(), is("Pulsar message payload is null"));
+        assertThat(mappingFailure(context, 0).getMessage(), is("Pulsar message payload is null"));
         PulsarMessage<?> rejected = (PulsarMessage<?>) context.failedBatch.get().get(0);
         assertThat(((PulsarMessageImpl<?>) rejected).entityAvailable(), is(false));
         assertThrows(MessagingException.class, rejected::entity);
@@ -315,7 +324,7 @@ class PulsarIncomingChannelTest {
         assertThat(context.failedStarts.get(), is(1));
         assertThat(source.acks.get(), is(1));
         assertThat(source.negativeAcks.get(), is(0));
-        assertThat(context.mappingFailure.get().getSuppressed(), is(new Throwable[] {metadataFailure}));
+        assertThat(mappingFailure(context, 0).getSuppressed(), is(new Throwable[] {metadataFailure}));
         PulsarMessage<?> rejected = (PulsarMessage<?>) context.failedBatch.get().get(0);
         assertThat(((PulsarMessageImpl<?>) rejected).entityAvailable(), is(false));
         assertThrows(MessagingException.class, rejected::entity);
@@ -345,7 +354,7 @@ class PulsarIncomingChannelTest {
     @Test
     void forceCloseInterruptsActiveDeliveryWithoutSettlingTransport() throws Exception {
         TestContext context = new TestContext(false, true);
-        FakeSource source = new FakeSource(PulsarTestSupport.nativeMessage("payload", 7), context.reserved);
+        FakeSource source = batchSource(context, "first", "second", "third");
         IncomingChannel connector = new PulsarIncomingChannel(ignored -> source.client())
                 .createIncomingChannel(commonConfig(), config(1024));
         AtomicReference<Throwable> runFailure = new AtomicReference<>();
@@ -529,6 +538,464 @@ class PulsarIncomingChannelTest {
         assertThat(runFailure.get(), nullValue());
     }
 
+    @Test
+    void receivesOrderedBatchAndRetainsAdmissionUntilEveryAcknowledgmentCompletes() throws Exception {
+        TestContext context = new TestContext(false, true);
+        FakeSource source = batchSource(context, "first", "second", "third");
+        CompletableFuture<Void> pendingAck = new CompletableFuture<>();
+        source.ackResults.put("second", pendingAck);
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+
+        try {
+            assertThat(context.deliveryEntered.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+            MessageBatch<?> batch = context.deliveredBatch.get();
+            assertThat(batch.size(), is(3));
+            assertThat(batch.get(0).entity(), is("first"));
+            assertThat(batch.get(1).entity(), is("second"));
+            assertThat(batch.get(2).entity(), is("third"));
+            assertThat(batch.get(1).header("source-id").orElseThrow(), is("second"));
+            assertThat(source.receiveCalls.get(), is(1));
+            assertThat(source.paused.get(), is(true));
+            assertThat(source.acks.get(), is(0));
+
+            context.allowDelivery.countDown();
+            assertThat(source.acknowledged.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+            assertThat(List.copyOf(source.acknowledgedPayloads), is(List.of("first", "second", "third")));
+            assertThat(source.receiveCalls.get(), is(1));
+            assertThat(context.deliveryCloses.get(), is(0));
+            connector.drain();
+            pendingAck.complete(null);
+            owner.join(WAIT.toMillis());
+            connector.close();
+            assertThat(owner.isAlive(), is(false));
+            assertThat(failure.get(), nullValue());
+            assertThat(context.deliveryCloses.get(), is(1));
+            assertThat(source.negativeAcks.get(), is(0));
+        } finally {
+            pendingAck.complete(null);
+            context.allowDelivery.countDown();
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+    }
+
+    @Test
+    void emptyBatchReleasesReservationWithoutDispatchOrSettlement() throws Exception {
+        TestContext context = new TestContext(false, true);
+        FakeSource source = batchSource(context, "after-empty");
+        source.emptyFirst.set(true);
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+
+        try {
+            assertThat(context.deliveryEntered.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+            assertThat(source.receiveCalls.get(), is(2));
+            assertThat(context.reservationCloses.get(), is(1));
+            assertThat(context.started.get(), is(1));
+            assertThat(context.failedStarts.get(), is(0));
+            assertThat(source.acks.get(), is(0));
+            assertThat(source.negativeAcks.get(), is(0));
+            assertThat(deliveredMessage(context).entity(), is("after-empty"));
+        } finally {
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+        assertThat(failure.get(), nullValue());
+    }
+
+    @Test
+    void unavailableReservationKeepsConsumerPausedWithoutAcquiringMessages() throws Exception {
+        TestContext context = new TestContext(false);
+        context.allowReservation.set(false);
+        FakeSource source = batchSource(context, "waiting");
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+
+        try {
+            assertThat(context.reservationEntered.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+            assertThat(source.receiveEntered.await(100, TimeUnit.MILLISECONDS), is(false));
+            assertThat(source.receiveCalls.get(), is(0));
+            assertThat(source.paused.get(), is(true));
+            context.allowReservation.set(true);
+            assertThat(source.acknowledged.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+            connector.drain();
+            owner.join(WAIT.toMillis());
+            assertThat(source.receivedAfterReservation.get(), is(true));
+            assertThat(failure.get(), nullValue());
+        } finally {
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+    }
+
+    @Test
+    void explicitCountOneStillUsesNativeBatchReceive() throws Exception {
+        TestContext context = new TestContext(false);
+        FakeSource source = batchSource(context, "single");
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), configBuilder(PulsarSchemaType.STRING, 1024)
+                        .batchReceiveMaxMessages(1)
+                        .build());
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+
+        try {
+            assertThat(source.acknowledged.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+            connector.drain();
+            owner.join(WAIT.toMillis());
+            assertThat(deliveredMessage(context).entity(), is("single"));
+            assertThat(failure.get(), nullValue());
+        } finally {
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+    }
+
+    @Test
+    void unexpectedNativeBatchCountRejectsEveryAcquiredMessageBeforeMapping() throws Exception {
+        TestContext context = new TestContext(false);
+        FakeSource source = batchSource(context, "first", "second", "third");
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), configBuilder(PulsarSchemaType.STRING, 1024)
+                        .batchReceiveMaxMessages(2)
+                        .build());
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+        owner.join(WAIT.toMillis());
+
+        try {
+            assertThat(owner.isAlive(), is(false));
+            assertThat(failure.get() instanceof MessagingException, is(true));
+            assertThat(context.started.get(), is(0));
+            assertThat(context.failedStarts.get(), is(0));
+            assertThat(source.acks.get(), is(0));
+            assertThat(List.copyOf(source.negativelyAcknowledgedPayloads), is(List.of("first", "second", "third")));
+            assertThat(context.reservationCloses.get(), is(1));
+        } finally {
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+    }
+
+    @Test
+    void mixedMappingFailurePreservesValidSiblingsAsNotAttempted() throws Exception {
+        TestContext context = new TestContext(false);
+        FakeSource source = batchSource(context, "a", "oversized", "b");
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), config(1));
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+
+        try {
+            assertThat(source.acknowledged.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+            connector.drain();
+            owner.join(WAIT.toMillis());
+            BatchDeliveryException mapping = (BatchDeliveryException) context.mappingFailure.get();
+            assertThat(mapping.batch(), sameInstance(context.failedBatch.get()));
+            assertThat(mapping.outcome(0).status(), is(BatchItemStatus.NOT_ATTEMPTED));
+            assertThat(mapping.outcome(1).status(), is(BatchItemStatus.FAILED));
+            assertThat(mapping.outcome(2).status(), is(BatchItemStatus.NOT_ATTEMPTED));
+            assertThat(mapping.batch().get(0).entity(), is("a"));
+            assertThat(mapping.batch().get(2).entity(), is("b"));
+            assertThrows(MessagingException.class, mapping.batch().get(1)::entity);
+            assertThat(mapping.batch().get(1).header("source-id").orElseThrow(), is("oversized"));
+            assertThat(context.started.get(), is(0));
+            assertThat(context.failedStarts.get(), is(1));
+            assertThat(source.acks.get(), is(3));
+            assertThat(source.negativeAcks.get(), is(0));
+            assertThat(failure.get(), nullValue());
+        } finally {
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+    }
+
+    @Test
+    void partialFailureAcknowledgesOnlySuccessfulIndexes() throws Exception {
+        TestContext context = new TestContext(false);
+        context.deliveryFailure = batch -> new BatchDeliveryException("partial delivery",
+                                                                       new IllegalStateException("handler failed"),
+                                                                       batch,
+                                                                       List.of(BatchItemOutcome.succeeded(0),
+                                                                               BatchItemOutcome.failed(1),
+                                                                               BatchItemOutcome.notAttempted(2),
+                                                                               BatchItemOutcome.indeterminate(3)));
+        FakeSource source = batchSource(context, "success", "failed", "deferred", "uncertain");
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+        owner.join(WAIT.toMillis());
+
+        try {
+            assertThat(owner.isAlive(), is(false));
+            assertThat(failure.get(), sameInstance(context.terminalFailure.get()));
+            assertThat(List.copyOf(source.acknowledgedPayloads), is(List.of("success")));
+            assertThat(List.copyOf(source.negativelyAcknowledgedPayloads), is(List.of("failed", "deferred", "uncertain")));
+            assertThat(context.deliveryCloses.get(), is(1));
+            assertThat(source.receiveCalls.get(), is(1));
+        } finally {
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+    }
+
+    @Test
+    void unstructuredFailureAttemptsEveryNegativeAcknowledgmentAndPreservesPrimaryFailure() throws Exception {
+        TestContext context = new TestContext(true);
+        FakeSource source = batchSource(context, "first", "second", "third");
+        IllegalStateException nackFailure = new IllegalStateException("first nack failed");
+        source.nackFailures.put("first", nackFailure);
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+        owner.join(WAIT.toMillis());
+
+        try {
+            assertThat(owner.isAlive(), is(false));
+            assertThat(failure.get(), sameInstance(context.terminalFailure.get()));
+            assertThat(containsFailure(failure.get(), nackFailure), is(true));
+            assertThat(List.copyOf(source.negativelyAcknowledgedPayloads), is(List.of("first", "second", "third")));
+            assertThat(source.acks.get(), is(0));
+            assertThat(context.deliveryCloses.get(), is(1));
+        } finally {
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+    }
+
+    @Test
+    void partialFailureRetainsAcknowledgmentAndNegativeAcknowledgmentFailures() throws Exception {
+        TestContext context = new TestContext(false);
+        context.deliveryFailure = batch -> new BatchDeliveryException("partial delivery",
+                                                                       new IllegalStateException("handler failed"),
+                                                                       batch,
+                                                                       List.of(BatchItemOutcome.succeeded(0),
+                                                                               BatchItemOutcome.failed(1),
+                                                                               BatchItemOutcome.succeeded(2),
+                                                                               BatchItemOutcome.notAttempted(3)));
+        FakeSource source = batchSource(context, "first", "second", "third", "fourth");
+        IllegalStateException ackFailure = new IllegalStateException("first receipt failed");
+        IllegalStateException nackFailure = new IllegalStateException("second nack failed");
+        source.ackResults.put("first", CompletableFuture.failedFuture(ackFailure));
+        source.nackFailures.put("second", nackFailure);
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+        owner.join(WAIT.toMillis());
+
+        try {
+            assertThat(owner.isAlive(), is(false));
+            assertThat(failure.get(), sameInstance(context.terminalFailure.get()));
+            assertThat(containsFailure(failure.get(), ackFailure), is(true));
+            assertThat(containsFailure(failure.get(), nackFailure), is(true));
+            assertThat(List.copyOf(source.acknowledgedPayloads), is(List.of("first", "third")));
+            assertThat(List.copyOf(source.negativelyAcknowledgedPayloads), is(List.of("second", "fourth")));
+            assertThat(context.deliveryCloses.get(), is(1));
+            assertThat(source.receiveCalls.get(), is(1));
+        } finally {
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+    }
+
+    @Test
+    void acknowledgmentFailureDoesNotSkipLaterAcknowledgmentsOrAcquireAnotherBatch() throws Exception {
+        TestContext context = new TestContext(false);
+        FakeSource source = batchSource(context, "first", "second", "third");
+        IllegalStateException ackFailure = new IllegalStateException("first ack failed");
+        source.ackFailures.put("first", ackFailure);
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+        owner.join(WAIT.toMillis());
+
+        try {
+            assertThat(owner.isAlive(), is(false));
+            assertThat(containsFailure(failure.get(), ackFailure), is(true));
+            assertThat(List.copyOf(source.acknowledgedPayloads), is(List.of("first", "second", "third")));
+            assertThat(source.receiveCalls.get(), is(1));
+            assertThat(context.deliveryCloses.get(), is(1));
+            assertThat(source.closed.get(), is(true));
+        } finally {
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+    }
+
+    @Test
+    void settlementDeadlineCoversAllAcknowledgmentsTogether() throws Exception {
+        TestContext context = new TestContext(false);
+        FakeSource source = batchSource(context, "first", "second");
+        CompletableFuture<Void> firstAck = new CompletableFuture<>();
+        CompletableFuture<Void> secondAck = new CompletableFuture<>();
+        source.ackResults.put("first", firstAck);
+        source.ackResults.put("second", secondAck);
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), configBuilder(PulsarSchemaType.STRING, 1024)
+                        .settlementTimeout(Duration.ofSeconds(1))
+                        .build());
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        long started = System.nanoTime();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+
+        try {
+            assertThat(source.acknowledged.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+            CompletableFuture.delayedExecutor(750, TimeUnit.MILLISECONDS).execute(() -> firstAck.complete(null));
+            owner.join(WAIT.toMillis());
+            assertThat(owner.isAlive(), is(false));
+            assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started), lessThan(1500L));
+            assertThat(containsFailureType(failure.get(), TimeoutException.class), is(true));
+            assertThat(source.receiveCalls.get(), is(1));
+            assertThat(context.deliveryCloses.get(), is(1));
+        } finally {
+            firstAck.complete(null);
+            secondAck.complete(null);
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+    }
+
+    @Test
+    void drainAfterNativeReceiveReturnsEveryMessageWithoutDispatch() throws Exception {
+        TestContext context = new TestContext(false);
+        FakeSource source = batchSource(context, "first", "second", "third");
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
+        source.beforeReceiveReturn = connector::drain;
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+        owner.join(WAIT.toMillis());
+
+        try {
+            assertThat(owner.isAlive(), is(false));
+            assertThat(failure.get(), nullValue());
+            assertThat(context.started.get(), is(0));
+            assertThat(context.failedStarts.get(), is(0));
+            assertThat(source.acks.get(), is(0));
+            assertThat(List.copyOf(source.negativelyAcknowledgedPayloads), is(List.of("first", "second", "third")));
+            assertThat(context.reservationCloses.get(), is(1));
+        } finally {
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+    }
+
+    @Test
+    void forceCloseWhileNativeReceiveCompletesWithNullReleasesReservation() throws Exception {
+        TestContext context = new TestContext(false);
+        FakeSource source = new FakeSource(null, context.reserved);
+        source.nullReceiveResult.set(true);
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
+        source.beforeReceiveReturn = connector::forceClose;
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+        owner.join(WAIT.toMillis());
+
+        try {
+            assertThat(owner.isAlive(), is(false));
+            assertThat(failure.get(), nullValue());
+            assertThat(source.receiveCalls.get(), is(1));
+            assertThat(context.started.get(), is(0));
+            assertThat(context.failedStarts.get(), is(0));
+            assertThat(context.reservationCloses.get(), is(1));
+            assertThat(source.acks.get(), is(0));
+            assertThat(source.negativeAcks.get(), is(0));
+            assertThat(source.shutdownCalls.get(), is(1));
+        } finally {
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+    }
+
+    @Test
+    void forceCloseDuringAcknowledgmentAbandonsBatchWithoutAnotherReceive() throws Exception {
+        TestContext context = new TestContext(false);
+        FakeSource source = batchSource(context, "first", "second");
+        CompletableFuture<Void> ack = new CompletableFuture<>();
+        source.ackResults.put("first", ack);
+        source.ackResults.put("second", ack);
+        IncomingChannel connector = new PulsarIncomingChannel(_ -> source.client())
+                .createIncomingChannel(commonConfig(), config(1024));
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread owner = Thread.ofVirtual().start(() -> run(connector, context, failure));
+
+        try {
+            assertThat(source.acknowledged.await(WAIT.toMillis(), TimeUnit.MILLISECONDS), is(true));
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+            assertThat(owner.isAlive(), is(false));
+            assertThat(failure.get(), nullValue());
+            assertThat(ack.isDone(), is(false));
+            assertThat(source.receiveCalls.get(), is(1));
+            assertThat(source.negativeAcks.get(), is(0));
+            assertThat(context.deliveryCloses.get(), is(1));
+            assertThat(source.closed.get(), is(true));
+        } finally {
+            ack.complete(null);
+            connector.forceClose();
+            owner.join(WAIT.toMillis());
+        }
+    }
+
+    private static Throwable mappingFailure(TestContext context, int index) {
+        BatchDeliveryException failure = (BatchDeliveryException) context.mappingFailure.get();
+        assertThat(failure.batch(), sameInstance(context.failedBatch.get()));
+        return failure.outcome(index).failure().orElseThrow();
+    }
+
+    private static boolean containsFailure(Throwable actual, Throwable expected) {
+        if (actual == null) {
+            return false;
+        }
+        if (actual == expected || containsFailure(actual.getCause(), expected)) {
+            return true;
+        }
+        for (Throwable suppressed : actual.getSuppressed()) {
+            if (containsFailure(suppressed, expected)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsFailureType(Throwable actual, Class<? extends Throwable> expected) {
+        if (actual == null) {
+            return false;
+        }
+        if (expected.isInstance(actual) || containsFailureType(actual.getCause(), expected)) {
+            return true;
+        }
+        for (Throwable suppressed : actual.getSuppressed()) {
+            if (containsFailureType(suppressed, expected)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static FakeSource batchSource(TestContext context, String... payloads) {
+        FakeSource source = new FakeSource(null, context.reserved);
+        source.acknowledged = new CountDownLatch(payloads.length);
+        source.batches.add(List.of(payloads).stream()
+                                   .map(payload -> PulsarTestSupport.nativeMessage(payload,
+                                                                                  payload.length(),
+                                                                                  Map.of("source-id", payload)))
+                                   .toList());
+        return source;
+    }
+
     private static void forceCloseDuringCleanup(boolean pendingConsumer, RuntimeException consumerFailure) throws Exception {
         TestContext context = new TestContext(false);
         CompletableFuture<Void> consumerClose = new CompletableFuture<>();
@@ -655,11 +1122,17 @@ class PulsarIncomingChannelTest {
         private final AtomicInteger awaitRunningCalls = new AtomicInteger();
         private final AtomicInteger started = new AtomicInteger();
         private final AtomicInteger failedStarts = new AtomicInteger();
+        private final AtomicInteger reservationCloses = new AtomicInteger();
+        private final AtomicInteger deliveryCloses = new AtomicInteger();
+        private final AtomicBoolean allowReservation = new AtomicBoolean(true);
         private final AtomicReference<MessageBatch<?>> deliveredBatch = new AtomicReference<>();
         private final AtomicReference<MessageBatch<?>> failedBatch = new AtomicReference<>();
         private final AtomicReference<RuntimeException> mappingFailure = new AtomicReference<>();
         private final CountDownLatch deliveryEntered = new CountDownLatch(1);
         private final CountDownLatch allowDelivery = new CountDownLatch(1);
+        private final CountDownLatch reservationEntered = new CountDownLatch(1);
+        private final AtomicReference<RuntimeException> terminalFailure = new AtomicReference<>();
+        private Function<MessageBatch<?>, RuntimeException> deliveryFailure;
 
         private TestContext(boolean failDelivery) {
             this(failDelivery, false);
@@ -693,6 +1166,10 @@ class PulsarIncomingChannelTest {
 
         @Override
         public Optional<ConnectorDeliveryReservation> tryReserveDelivery() {
+            reservationEntered.countDown();
+            if (!allowReservation.get()) {
+                return Optional.empty();
+            }
             reserved.set(true);
             return Optional.of(reservation());
         }
@@ -703,7 +1180,7 @@ class PulsarIncomingChannelTest {
                 public ConnectorDelivery start(MessageBatch<?> batch) {
                     deliveredBatch.set(batch);
                     started.incrementAndGet();
-                    return delivery();
+                    return delivery(batch);
                 }
 
                 @Override
@@ -711,7 +1188,7 @@ class PulsarIncomingChannelTest {
                     failedBatch.set(batch);
                     mappingFailure.set(failure);
                     failedStarts.incrementAndGet();
-                    return PulsarTestSupport.completedDelivery();
+                    return delivery(batch);
                 }
 
                 @Override
@@ -721,17 +1198,20 @@ class PulsarIncomingChannelTest {
 
                 @Override
                 public void close() {
+                    reserved.set(false);
+                    reservationCloses.incrementAndGet();
                 }
             };
         }
 
-        private ConnectorDelivery delivery() {
-            if (!failDelivery) {
-                if (!blockDelivery) {
-                    return PulsarTestSupport.completedDelivery();
-                }
+        private ConnectorDelivery delivery(MessageBatch<?> batch) {
+            if (blockDelivery) {
                 return blockingDelivery();
             }
+            RuntimeException failure = deliveryFailure == null
+                    ? failDelivery ? new IllegalStateException("expected delivery failure") : null
+                    : deliveryFailure.apply(batch);
+            terminalFailure.set(failure);
             return new ConnectorDelivery() {
                 @Override
                 public boolean isDone() {
@@ -745,12 +1225,15 @@ class PulsarIncomingChannelTest {
 
                 @Override
                 public void await() {
-                    throw new IllegalStateException("expected delivery failure");
+                    if (failure != null) {
+                        throw failure;
+                    }
                 }
 
                 @Override
                 public boolean await(Duration timeout) {
-                    throw new IllegalStateException("expected delivery failure");
+                    await();
+                    return true;
                 }
 
                 @Override
@@ -759,6 +1242,7 @@ class PulsarIncomingChannelTest {
 
                 @Override
                 public void close() {
+                    deliveryCloses.incrementAndGet();
                 }
             };
         }
@@ -804,6 +1288,7 @@ class PulsarIncomingChannelTest {
 
                 @Override
                 public void close() {
+                    deliveryCloses.incrementAndGet();
                 }
             };
         }
@@ -843,7 +1328,12 @@ class PulsarIncomingChannelTest {
     }
 
     private static final class FakeSource {
-        private final AtomicReference<Message<Object>> next;
+        private final ConcurrentLinkedQueue<List<Message<Object>>> batches = new ConcurrentLinkedQueue<>();
+        private final ConcurrentLinkedQueue<Object> acknowledgedPayloads = new ConcurrentLinkedQueue<>();
+        private final ConcurrentLinkedQueue<Object> negativelyAcknowledgedPayloads = new ConcurrentLinkedQueue<>();
+        private final Map<Object, CompletableFuture<Void>> ackResults = new ConcurrentHashMap<>();
+        private final Map<Object, RuntimeException> ackFailures = new ConcurrentHashMap<>();
+        private final Map<Object, RuntimeException> nackFailures = new ConcurrentHashMap<>();
         private final AtomicBoolean reserved;
         private final CompletableFuture<Void> consumerClose;
         private final CompletableFuture<Void> clientClose;
@@ -860,7 +1350,10 @@ class PulsarIncomingChannelTest {
         private final AtomicBoolean closed = new AtomicBoolean();
         private final AtomicInteger acks = new AtomicInteger();
         private final AtomicInteger negativeAcks = new AtomicInteger();
-        private final CountDownLatch acknowledged = new CountDownLatch(1);
+        private final AtomicInteger receiveCalls = new AtomicInteger();
+        private final AtomicBoolean emptyFirst = new AtomicBoolean();
+        private final AtomicBoolean nullReceiveResult = new AtomicBoolean();
+        private final AtomicBoolean paused = new AtomicBoolean(true);
         private final CountDownLatch negativelyAcknowledged = new CountDownLatch(1);
         private final CountDownLatch receiveEntered = new CountDownLatch(1);
         private final AtomicBoolean blockReceive = new AtomicBoolean();
@@ -868,6 +1361,8 @@ class PulsarIncomingChannelTest {
         private final Consumer<Object> consumer = consumer();
         private final ConsumerBuilder<Object> consumerBuilder = consumerBuilder();
         private final PulsarClient client = clientProxy();
+        private CountDownLatch acknowledged = new CountDownLatch(1);
+        private Runnable beforeReceiveReturn = () -> { };
 
         private FakeSource(Message<Object> message, AtomicBoolean reserved) {
             this(message, reserved, CompletableFuture.completedFuture(null), CompletableFuture.completedFuture(null));
@@ -877,10 +1372,26 @@ class PulsarIncomingChannelTest {
                            AtomicBoolean reserved,
                            CompletableFuture<Void> consumerClose,
                            CompletableFuture<Void> clientClose) {
-            this.next = new AtomicReference<>(message);
+            if (message != null) {
+                batches.add(List.of(message));
+            }
             this.reserved = reserved;
             this.consumerClose = consumerClose;
             this.clientClose = clientClose;
+        }
+
+        private static Messages<Object> messages(List<Message<Object>> messages) {
+            return new Messages<>() {
+                @Override
+                public int size() {
+                    return messages.size();
+                }
+
+                @Override
+                public Iterator<Message<Object>> iterator() {
+                    return messages.iterator();
+                }
+            };
         }
 
         private PulsarClient client() {
@@ -934,22 +1445,51 @@ class PulsarIncomingChannelTest {
         @SuppressWarnings("unchecked")
         private Consumer<Object> consumer() {
             return PulsarTestSupport.proxy(Consumer.class, (ignored, method, args) -> switch (method.getName()) {
-            case "receive" -> {
+            case "receive" -> throw new AssertionError("Incoming connector must use native batch receive");
+            case "batchReceive" -> {
+                receiveCalls.incrementAndGet();
                 receiveEntered.countDown();
                 if (blockReceive.get()) {
                     new CountDownLatch(1).await();
                 }
                 receivedAfterReservation.set(reserved.get());
-                yield next.getAndSet(null);
+                List<Message<Object>> messages = emptyFirst.compareAndSet(true, false) ? List.of() : batches.poll();
+                beforeReceiveReturn.run();
+                yield nullReceiveResult.get() ? null : messages(messages == null ? List.of() : messages);
             }
             case "acknowledgeAsync" -> {
                 acks.incrementAndGet();
+                Object payload = ((Message<?>) args[0]).getValue();
+                if (payload != null) {
+                    acknowledgedPayloads.add(payload);
+                }
                 acknowledged.countDown();
-                yield CompletableFuture.completedFuture(null);
+                RuntimeException failure = payload == null ? null : ackFailures.get(payload);
+                if (failure != null) {
+                    throw failure;
+                }
+                yield payload == null ? CompletableFuture.completedFuture(null)
+                        : ackResults.getOrDefault(payload, CompletableFuture.completedFuture(null));
             }
             case "negativeAcknowledge" -> {
                 negativeAcks.incrementAndGet();
+                Object payload = ((Message<?>) args[0]).getValue();
+                if (payload != null) {
+                    negativelyAcknowledgedPayloads.add(payload);
+                }
                 negativelyAcknowledged.countDown();
+                RuntimeException failure = payload == null ? null : nackFailures.get(payload);
+                if (failure != null) {
+                    throw failure;
+                }
+                yield null;
+            }
+            case "pause" -> {
+                paused.set(true);
+                yield null;
+            }
+            case "resume" -> {
+                paused.set(false);
                 yield null;
             }
             case "closeAsync" -> {
@@ -960,5 +1500,6 @@ class PulsarIncomingChannelTest {
             default -> PulsarTestSupport.defaultValue(method);
             });
         }
+
     }
 }

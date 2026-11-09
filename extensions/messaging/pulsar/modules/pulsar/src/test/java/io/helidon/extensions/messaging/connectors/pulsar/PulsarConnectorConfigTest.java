@@ -17,17 +17,27 @@
 package io.helidon.extensions.messaging.connectors.pulsar;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
 
+import org.apache.pulsar.client.api.BatchReceivePolicy;
+import org.apache.pulsar.client.api.Consumer;
+import org.apache.pulsar.client.api.ConsumerBuilder;
+import org.apache.pulsar.client.api.PulsarClient;
+import org.apache.pulsar.client.api.PulsarClientException;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
+import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -48,6 +58,8 @@ class PulsarConnectorConfigTest {
         assertThat(incomingBuilder().build().schema().isEmpty(), is(true));
         assertThat(incomingBuilder().build().clientProperties().isEmpty(), is(true));
         assertThat(incomingBuilder().build().consumerProperties().isEmpty(), is(true));
+        assertThat(incomingBuilder().build().batchReceiveMaxMessages().isEmpty(), is(true));
+        assertThat(incomingBuilder().build().batchReceiveMaxBytes().isEmpty(), is(true));
         assertThat(outgoingBuilder().build().producerProperties().isEmpty(), is(true));
         assertThat(config.topic().isEmpty(), is(true));
         assertThrows(IllegalArgumentException.class,
@@ -63,7 +75,9 @@ class PulsarConnectorConfigTest {
         assertThat(config.subscriptionType(), is(PulsarSubscriptionType.EXCLUSIVE));
         assertThat(config.subscriptionInitialPosition(), is(PulsarSubscriptionInitialPosition.LATEST));
         assertThat(config.batchIndexAcknowledgmentEnabled(), is(false));
-        assertThat(config.receiverQueueSize(), is(1));
+        assertThat(config.receiverQueueSize(), is(100));
+        assertThat(config.batchReceiveMaxMessages(), is(100));
+        assertThat(config.batchReceiveMaxBytes(), is(10 * 1024 * 1024));
         assertThat(config.maxMessageBytes(), is(10 * 1024 * 1024));
         assertThat(config.receiveTimeout(), is(Duration.ofMillis(100)));
         assertThat(config.settlementTimeout(), is(Duration.ofSeconds(30)));
@@ -76,12 +90,16 @@ class PulsarConnectorConfigTest {
                 "service-url", "pulsar://broker:6650",
                 "schema", "BYTES",
                 "schema-provider", "orders-json",
+                "batch-receive-max-messages", "40",
+                "batch-receive-max-bytes", "4096",
                 "client-properties.authPluginClassName", "example.Auth")));
         PulsarIncomingConfig incoming = PulsarIncomingConfig.create(channelConfig(Map.of(
                 "connector", "pulsar",
                 "topic", TOPIC,
                 "schema", "INT32",
                 "subscription-name", "orders-subscription",
+                "batch-receive-max-messages", "1",
+                "batch-receive-max-bytes", "1024",
                 "consumer-properties.consumerName", "orders-consumer")));
         PulsarOutgoingConfig outgoing = PulsarOutgoingConfig.create(channelConfig(Map.of(
                 "connector", "pulsar",
@@ -90,6 +108,8 @@ class PulsarConnectorConfigTest {
 
         assertThat(connector.prototype().schema(), is(PulsarSchemaType.BYTES));
         assertThat(connector.prototype().schemaProvider().orElseThrow(), is("orders-json"));
+        assertThat(connector.prototype().batchReceiveMaxMessages(), is(40));
+        assertThat(connector.prototype().batchReceiveMaxBytes(), is(4096));
         assertThat(connector.prototype().clientProperties(), is(Map.of("authPluginClassName", "example.Auth")));
         assertThat(incoming.channelName(), is(CHANNEL));
         assertThat(outgoing.channelName(), is(CHANNEL));
@@ -97,6 +117,8 @@ class PulsarConnectorConfigTest {
         assertThat(outgoing.connector(), is("pulsar"));
         assertThat(incoming.schema().orElseThrow(), is(PulsarSchemaType.INT32));
         assertThat(incoming.subscriptionName().orElseThrow(), is("orders-subscription"));
+        assertThat(incoming.batchReceiveMaxMessages().orElseThrow(), is(1));
+        assertThat(incoming.batchReceiveMaxBytes().orElseThrow(), is(1024));
         assertThat(incoming.consumerProperties().orElseThrow(), is(Map.of("consumerName", "orders-consumer")));
         assertThat(outgoing.producerProperties().orElseThrow(), is(Map.of("producerName", "orders-producer")));
     }
@@ -111,6 +133,8 @@ class PulsarConnectorConfigTest {
                 .subscriptionInitialPosition(PulsarSubscriptionInitialPosition.EARLIEST)
                 .batchIndexAcknowledgmentEnabled(true)
                 .receiverQueueSize(8)
+                .batchReceiveMaxMessages(6)
+                .batchReceiveMaxBytes(4096)
                 .maxMessageBytes(2048)
                 .receiveTimeout(Duration.ofSeconds(2))
                 .negativeAckRedeliveryDelay(Duration.ofSeconds(3))
@@ -133,6 +157,8 @@ class PulsarConnectorConfigTest {
         assertThat(inheritedIncoming.subscriptionInitialPosition(), is(PulsarSubscriptionInitialPosition.EARLIEST));
         assertThat(inheritedIncoming.batchIndexAcknowledgmentEnabled(), is(true));
         assertThat(inheritedIncoming.receiverQueueSize(), is(8));
+        assertThat(inheritedIncoming.batchReceiveMaxMessages(), is(6));
+        assertThat(inheritedIncoming.batchReceiveMaxBytes(), is(4096));
         assertThat(inheritedIncoming.maxMessageBytes(), is(2048));
         assertThat(inheritedIncoming.receiveTimeout(), is(Duration.ofSeconds(2)));
         assertThat(inheritedIncoming.negativeAckRedeliveryDelay(), is(Duration.ofSeconds(3)));
@@ -150,6 +176,8 @@ class PulsarConnectorConfigTest {
                 Map.entry("subscription-type", "EXCLUSIVE"),
                 Map.entry("batch-index-acknowledgment-enabled", "false"),
                 Map.entry("receiver-queue-size", "1"),
+                Map.entry("batch-receive-max-messages", "1"),
+                Map.entry("batch-receive-max-bytes", "512"),
                 Map.entry("receive-timeout", "PT0.2S"),
                 Map.entry("settlement-timeout", "PT0.3S"),
                 Map.entry("client-properties.overridden", "channel"),
@@ -170,6 +198,8 @@ class PulsarConnectorConfigTest {
         assertThat(incoming.subscriptionType(), is(PulsarSubscriptionType.EXCLUSIVE));
         assertThat(incoming.batchIndexAcknowledgmentEnabled(), is(false));
         assertThat(incoming.receiverQueueSize(), is(1));
+        assertThat(incoming.batchReceiveMaxMessages(), is(1));
+        assertThat(incoming.batchReceiveMaxBytes(), is(512));
         assertThat(incoming.receiveTimeout(), is(Duration.ofMillis(200)));
         assertThat(incoming.settlementTimeout(), is(Duration.ofMillis(300)));
         assertThat(incoming.clientProperties(), is(Map.of("shared", "client", "overridden", "channel")));
@@ -180,6 +210,71 @@ class PulsarConnectorConfigTest {
         assertThat(outgoing.producerProperties(), is(Map.of("shared", "producer", "overridden", "channel")));
         assertThat(common.topic().orElseThrow(), is(TOPIC));
         assertThat(common.clientProperties().get("overridden"), is("common"));
+    }
+
+    @Test
+    void configuresNativeBatchPolicy() throws PulsarClientException {
+        var defaults = configuredConsumer(commonBuilder().buildPrototype(), incomingBuilder().build(), 1024);
+        assertThat(defaults.queueSize(), is(100));
+        assertThat(defaults.policy().getMaxNumMessages(), is(100));
+        assertThat(defaults.policy().getMaxNumBytes(), is(10 * 1024 * 1024));
+        assertThat(defaults.policy().getTimeoutMs(), is(100L));
+        assertThat(defaults.policy().isMessagesFromMultiTopicsEnabled(), is(true));
+
+        PulsarConnectorConfig common = commonBuilder()
+                .receiverQueueSize(80)
+                .batchReceiveMaxMessages(60)
+                .batchReceiveMaxBytes(4096)
+                .receiveTimeout(Duration.ofMillis(250))
+                .consumerProperties(Map.of("receiverQueueSize", "1000"))
+                .buildPrototype();
+        var configured = configuredConsumer(common, incomingBuilder().build(), 100);
+        assertThat(configured.queueSize(), is(80));
+        assertThat(configured.policy().getMaxNumMessages(), is(60));
+        assertThat(configured.policy().getMaxNumBytes(), is(4096));
+        assertThat(configured.policy().getTimeoutMs(), is(250L));
+        assertThat(configured.appliedOptions(), is(List.of("loadConf", "receiverQueueSize", "batchReceivePolicy")));
+
+        var runtimeBounded = configuredConsumer(common, incomingBuilder().build(), 20);
+        assertThat(runtimeBounded.queueSize(), is(20));
+        assertThat(runtimeBounded.policy().getMaxNumMessages(), is(20));
+
+        var queueBounded = configuredConsumer(common, incomingBuilder().receiverQueueSize(10).build(), 100);
+        assertThat(queueBounded.queueSize(), is(10));
+        assertThat(queueBounded.policy().getMaxNumMessages(), is(10));
+
+        var single = configuredConsumer(common, incomingBuilder()
+                .batchReceiveMaxMessages(1)
+                .batchReceiveMaxBytes(512)
+                .receiveTimeout(Duration.ofMillis(50))
+                .build(), 100);
+        assertThat(single.policy().getMaxNumMessages(), is(1));
+        assertThat(single.policy().getMaxNumBytes(), is(512));
+        assertThat(single.policy().getTimeoutMs(), is(50L));
+    }
+
+    @Test
+    void validatesBatchBoundsFromBuildersAndConfiguration() {
+        for (int value : List.of(0, -1)) {
+            assertThrows(IllegalArgumentException.class, () -> commonBuilder().batchReceiveMaxMessages(value).build());
+            assertThrows(IllegalArgumentException.class, () -> commonBuilder().batchReceiveMaxBytes(value).build());
+            assertThrows(IllegalArgumentException.class, () -> incomingBuilder().batchReceiveMaxMessages(value).build());
+            assertThrows(IllegalArgumentException.class, () -> incomingBuilder().batchReceiveMaxBytes(value).build());
+            for (String key : List.of("batch-receive-max-messages", "batch-receive-max-bytes")) {
+                assertThrows(IllegalArgumentException.class, () -> PulsarConnector.create(config(Map.of(
+                        "name", "pulsar",
+                        "service-url", "pulsar://localhost:6650",
+                        key, Integer.toString(value)))));
+                assertThrows(IllegalArgumentException.class, () -> PulsarIncomingConfig.create(channelConfig(Map.of(
+                        "connector", "pulsar",
+                        "topic", TOPIC,
+                        key, Integer.toString(value)))));
+            }
+        }
+        assertThrows(IllegalArgumentException.class,
+                     () -> commonBuilder().receiveTimeout(Duration.ofMillis(Integer.MAX_VALUE).plusMillis(1)).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> incomingBuilder().receiveTimeout(Duration.ofMillis(Integer.MAX_VALUE).plusMillis(1)).build());
     }
 
     @Test
@@ -256,5 +351,48 @@ class PulsarConnectorConfigTest {
 
     private static PulsarOutgoingConfig.Builder outgoingBuilder() {
         return PulsarOutgoingConfig.builder().connector("pulsar").channelName(CHANNEL).topic(TOPIC);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ConsumerConfiguration configuredConsumer(PulsarConnectorConfig common,
+                                                            PulsarIncomingConfig incoming,
+                                                            int maxDeliveryMessages) throws PulsarClientException {
+        AtomicReference<BatchReceivePolicy> policy = new AtomicReference<>();
+        AtomicInteger queueSize = new AtomicInteger();
+        List<String> appliedOptions = new ArrayList<>();
+        Consumer<Object> consumer = PulsarTestSupport.proxy(Consumer.class,
+                                                           (_, method, _) -> PulsarTestSupport.defaultValue(method));
+        ConsumerBuilder<Object> builder = PulsarTestSupport.proxy(ConsumerBuilder.class, (proxy, method, args) -> {
+            switch (method.getName()) {
+            case "loadConf" -> appliedOptions.add("loadConf");
+            case "receiverQueueSize" -> {
+                appliedOptions.add("receiverQueueSize");
+                queueSize.set((int) args[0]);
+            }
+            case "batchReceivePolicy" -> {
+                appliedOptions.add("batchReceivePolicy");
+                policy.set((BatchReceivePolicy) args[0]);
+            }
+            case "subscribe" -> {
+                return consumer;
+            }
+            default -> {
+            }
+            }
+            return proxy;
+        });
+        PulsarClient client = PulsarTestSupport.proxy(PulsarClient.class, (_, method, _) -> switch (method.getName()) {
+        case "newConsumer" -> builder;
+        default -> PulsarTestSupport.defaultValue(method);
+        });
+        var settings = PulsarConnectorConfigSupport.incoming(common, incoming);
+        var schema = PulsarSchemaResolver.resolve(CHANNEL, settings.schema(), settings.schemaProvider(), true,
+                                                 common::schemaProviders);
+        assertThat(PulsarConnectorConfigSupport.createConsumer(client, settings, schema, maxDeliveryMessages),
+                   sameInstance(consumer));
+        return new ConsumerConfiguration(queueSize.get(), policy.get(), List.copyOf(appliedOptions));
+    }
+
+    private record ConsumerConfiguration(int queueSize, BatchReceivePolicy policy, List<String> appliedOptions) {
     }
 }

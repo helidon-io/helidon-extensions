@@ -112,12 +112,30 @@ interface PulsarIncomingConfigBlueprint extends MessagingIncomingConfig {
     /**
      * Maximum Pulsar client receive queue size per topic partition. The runtime delivery limit further bounds each
      * partition queue, although aggregate client prefetch can exceed that limit for a partitioned topic. The connector
-     * retains and delivers only one message after acquiring a runtime reservation.
+     * acquires one bounded batch after reserving runtime capacity.
      *
      * @return receive queue size
      */
     @Option.Configured(PulsarConnectorConfigSupport.RECEIVER_QUEUE_SIZE_PROPERTY)
     Optional<Integer> receiverQueueSize();
+
+    /**
+     * Maximum number of messages in one native receive batch. The receiver queue size and runtime delivery limit
+     * further bound this value. Set this to one to receive single-message batches.
+     *
+     * @return maximum batch message count override
+     */
+    @Option.Configured
+    Optional<Integer> batchReceiveMaxMessages();
+
+    /**
+     * Target maximum encoded bytes in one native receive batch. Pulsar permits the first message to exceed this target;
+     * {@link #maxMessageBytes()} independently limits each incoming payload. This does not bound client prefetch memory.
+     *
+     * @return batch byte target override
+     */
+    @Option.Configured
+    Optional<Integer> batchReceiveMaxBytes();
 
     /**
      * Maximum incoming payload size copied into one Helidon message.
@@ -128,7 +146,8 @@ interface PulsarIncomingConfigBlueprint extends MessagingIncomingConfig {
     Optional<Integer> maxMessageBytes();
 
     /**
-     * Maximum duration of one incoming receive call.
+     * Maximum wait to accumulate a native receive batch before returning the available messages. A batch can return
+     * earlier when its count or byte target is reached. A message count of one returns when one message is available.
      *
      * @return receive timeout
      */
@@ -144,7 +163,7 @@ interface PulsarIncomingConfigBlueprint extends MessagingIncomingConfig {
     Optional<Duration> negativeAckRedeliveryDelay();
 
     /**
-     * Maximum duration to await a broker-confirmed incoming acknowledgement.
+     * Maximum total duration to await broker-confirmed incoming acknowledgements for one receive batch.
      *
      * @return settlement timeout
      */
