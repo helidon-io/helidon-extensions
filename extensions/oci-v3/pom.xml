@@ -55,7 +55,7 @@
         <!--
         Align with lc4j extension
         -->
-        <version.lib.oci>3.78.1</version.lib.oci>
+        <version.lib.oci>3.100.0</version.lib.oci>
     </properties>
 
     <dependencyManagement>
