@@ -54,6 +54,14 @@ Validation selects one connector for a connector branch or a change inside
 that connector directory, and all connectors for changes to their grouping
 POM. Flat extensions such as `eureka` use the same commands as before.
 
+`jakarta` is one release unit with individually selectable JSON integration
+modules. Its BOM, modules, tests, examples, and generated configuration reference
+share the Jakarta extension version; its Helidon dependency version is managed
+separately. Discovery selects it through `extensions/jakarta/bom/pom.xml` and
+uses the `helidon.version` declared in its release root. A Jakarta release must
+depend on final Helidon 28 artifacts; development snapshots are not release
+inputs. See the [Jakarta documentation](../../extensions/jakarta/docs/README.md).
+
 ## Steps in detail
 
 1. Create local release branch
