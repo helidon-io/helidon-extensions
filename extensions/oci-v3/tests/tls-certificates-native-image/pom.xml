@@ -34,7 +34,7 @@
 
     <properties>
         <mainClass>io.helidon.extensions.oci.v3.tests.tls.certificates.NativeImageMain</mainClass>
-        <version.lib.oci>3.78.1</version.lib.oci>
+        <version.lib.oci>3.100.0</version.lib.oci>
         <maven.deploy.skip>true</maven.deploy.skip>
         <maven.sources.skip>true</maven.sources.skip>
         <maven.javadoc.skip>true</maven.javadoc.skip>
