@@ -1,0 +1,156 @@
+/*
+ * Copyright (c) 2026 Oracle and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.helidon.extensions.brotli.http.encoding;
+
+import java.io.OutputStream;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.Consumer;
+
+import io.helidon.builder.api.RuntimeType;
+import io.helidon.extensions.brotli.BrotliInputStream;
+import io.helidon.extensions.brotli.BrotliInputStreamConfig;
+import io.helidon.extensions.brotli.BrotliOutputStream;
+import io.helidon.http.Header;
+import io.helidon.http.HeaderNames;
+import io.helidon.http.HeaderValues;
+import io.helidon.http.WritableHeaders;
+import io.helidon.http.encoding.ContentDecoder;
+import io.helidon.http.encoding.ContentEncoder;
+import io.helidon.http.encoding.ContentEncoding;
+
+/**
+ * Pure Java Brotli content encoding for Helidon HTTP clients and servers.
+ * <p>
+ * The content coding identifier is {@code br}. Compression uses the codec's
+ * supported quality level, {@code 0}.
+ */
+public final class BrotliEncoding implements ContentEncoding, RuntimeType.Api<BrotliEncodingConfig> {
+    private static final Header CONTENT_ENCODING_BROTLI = HeaderValues.createCached(HeaderNames.CONTENT_ENCODING,
+                                                                                    false,
+                                                                                    false,
+                                                                                    "br");
+
+    private final BrotliEncodingConfig config;
+
+    private BrotliEncoding(BrotliEncodingConfig config) {
+        this.config = Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(config.name(), "name");
+        var inputStreamConfig = Objects.requireNonNull(config.inputStreamConfig(), "inputStreamConfig");
+        Objects.requireNonNull(config.outputStreamConfig(), "outputStreamConfig");
+        if (inputStreamConfig.maxWindowBits() < 10 || inputStreamConfig.maxWindowBits() > 24) {
+            throw new IllegalArgumentException("Maximum Brotli window exponent must be between 10 and 24");
+        }
+        if (!inputStreamConfig.dictionaryChunks().isEmpty()) {
+            throw new IllegalArgumentException("HTTP br content encoding does not support attached dictionaries");
+        }
+    }
+
+    /**
+     * Create a builder for Brotli content encoding.
+     *
+     * @return a new builder
+     */
+    public static BrotliEncodingConfig.Builder builder() {
+        return BrotliEncodingConfig.builder();
+    }
+
+    /**
+     * Create Brotli content encoding with the default name, {@code br}.
+     *
+     * @return Brotli content encoding
+     */
+    public static BrotliEncoding create() {
+        return builder().build();
+    }
+
+    /**
+     * Create Brotli content encoding from its configuration.
+     *
+     * @param config encoding configuration
+     * @return Brotli content encoding
+     */
+    public static BrotliEncoding create(BrotliEncodingConfig config) {
+        return new BrotliEncoding(config);
+    }
+
+    /**
+     * Create Brotli content encoding customizing its configuration.
+     *
+     * @param consumer configuration consumer
+     * @return Brotli content encoding
+     */
+    public static BrotliEncoding create(Consumer<BrotliEncodingConfig.Builder> consumer) {
+        return builder().update(Objects.requireNonNull(consumer, "consumer")).build();
+    }
+
+    @Override
+    public BrotliEncodingConfig prototype() {
+        return config;
+    }
+
+    @Override
+    public Set<String> ids() {
+        return Set.of("br");
+    }
+
+    @Override
+    public boolean supportsEncoding() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsDecoding() {
+        return true;
+    }
+
+    @Override
+    public ContentDecoder decoder() {
+        var decoderConfig = BrotliInputStreamConfig.builder(config.inputStreamConfig())
+                .verifyEndOfInput(true)
+                .build();
+        return network -> new BrotliInputStream(Objects.requireNonNull(network, "network"), decoderConfig);
+    }
+
+    @Override
+    public ContentEncoder encoder() {
+        var encoderConfig = config.outputStreamConfig();
+        return new ContentEncoder() {
+            @Override
+            public OutputStream apply(OutputStream network) {
+                return new BrotliOutputStream(Objects.requireNonNull(network, "network"), encoderConfig);
+            }
+
+            @Override
+            public void headers(WritableHeaders<?> headers) {
+                Objects.requireNonNull(headers, "headers");
+                headers.add(CONTENT_ENCODING_BROTLI);
+                headers.remove(HeaderNames.CONTENT_LENGTH);
+            }
+        };
+    }
+
+    @Override
+    public String name() {
+        return config.name();
+    }
+
+    @Override
+    public String type() {
+        return "br";
+    }
+}
