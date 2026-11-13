@@ -24,8 +24,8 @@ has its own version and declares `helidon.version` in its root POM. A grouping
 POM only aggregates extensions; it is not their Maven parent or a release unit.
 
 For example, Messaging connectors live in `extensions/messaging/kafka`,
-`extensions/messaging/jms`, `extensions/messaging/jms-javax`, and
-`extensions/messaging/pulsar`. Each uses the normal `bom` and `modules` layout,
+`extensions/messaging/jms`, `extensions/messaging/jms-javax`,
+`extensions/messaging/pulsar`, and `extensions/messaging/aq`. Each uses the normal `bom` and `modules` layout,
 with optional `tests` and `examples` directories. The extension
 ID is its path relative to `extensions/`; no registration file is needed.
 
