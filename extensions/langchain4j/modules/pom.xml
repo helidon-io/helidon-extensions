@@ -33,7 +33,9 @@
 
     <modules>
         <module>codegen</module>
+        <module>http-client</module>
         <module>langchain4j</module>
         <module>providers</module>
     </modules>
+
 </project>

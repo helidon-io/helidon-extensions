@@ -19,6 +19,7 @@ See the [root type](config_reference.md).
 - [io.<wbr>helidon.<wbr>extensions.<wbr>langchain4j.<wbr>Content<wbr>Retriever<wbr>Config](io.helidon.extensions.langchain4j.ContentRetrieverConfig.md)
 - [io.<wbr>helidon.<wbr>extensions.<wbr>langchain4j.<wbr>InMemory<wbr>Embedding<wbr>Store<wbr>Config](io.helidon.extensions.langchain4j.InMemoryEmbeddingStoreConfig.md)
 - [io.<wbr>helidon.<wbr>extensions.<wbr>langchain4j.<wbr>McpClient<wbr>Config](io.helidon.extensions.langchain4j.McpClientConfig.md)
+- [io.<wbr>helidon.<wbr>extensions.<wbr>langchain4j.<wbr>McpRoot<wbr>Config](io.helidon.extensions.langchain4j.McpRootConfig.md)
 - [io.<wbr>helidon.<wbr>extensions.<wbr>langchain4j.<wbr>providers.<wbr>cohere.<wbr>Cohere<wbr>Embedding<wbr>Model<wbr>Config](io.helidon.extensions.langchain4j.providers.cohere.CohereEmbeddingModelConfig.md)
 - [io.<wbr>helidon.<wbr>extensions.<wbr>langchain4j.<wbr>providers.<wbr>cohere.<wbr>Cohere<wbr>Scoring<wbr>Model<wbr>Config](io.helidon.extensions.langchain4j.providers.cohere.CohereScoringModelConfig.md)
 - [io.<wbr>helidon.<wbr>extensions.<wbr>langchain4j.<wbr>providers.<wbr>coherence.<wbr>Coherence<wbr>Embedding<wbr>Store<wbr>Config](io.helidon.extensions.langchain4j.providers.coherence.CoherenceEmbeddingStoreConfig.md)

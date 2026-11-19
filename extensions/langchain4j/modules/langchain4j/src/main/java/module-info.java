@@ -34,6 +34,8 @@ module io.helidon.extensions.langchain4j {
     requires transitive io.helidon.builder.api;
     requires transitive io.helidon.common.tls;
     requires transitive io.helidon.service.registry;
+    requires transitive io.helidon.webclient;
+    requires io.helidon.extensions.langchain4j.httpclient;
     requires langchain4j.core;
     requires langchain4j;
     requires io.helidon.metrics.api;

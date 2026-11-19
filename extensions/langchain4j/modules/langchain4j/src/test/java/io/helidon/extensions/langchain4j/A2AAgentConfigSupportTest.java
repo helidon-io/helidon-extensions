@@ -21,6 +21,7 @@ import java.lang.reflect.Proxy;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import io.helidon.common.media.type.MediaTypes;
 import io.helidon.config.Config;
@@ -41,8 +42,10 @@ import dev.langchain4j.agentic.internal.A2AClientBuilder;
 import dev.langchain4j.agentic.internal.A2AService;
 import dev.langchain4j.agentic.internal.AgentExecutor;
 import dev.langchain4j.agentic.internal.InternalAgent;
+import dev.langchain4j.agentic.observability.A2AStreamingClientListener;
 import dev.langchain4j.agentic.observability.AgentListener;
 import dev.langchain4j.agentic.planner.AgenticSystemConfigurationException;
+import dev.langchain4j.agentic.scope.AgenticScope;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -485,8 +488,18 @@ public class A2AAgentConfigSupportTest {
         }
 
         @Override
+        public A2AClientBuilder<T> activationCondition(String description, Predicate<AgenticScope> condition) {
+            return this;
+        }
+
+        @Override
         public A2AClientBuilder<T> clientCustomizer(Consumer<?> customizer) {
             this.customizer = customizer;
+            return this;
+        }
+
+        @Override
+        public A2AClientBuilder<T> streamingClientListener(A2AStreamingClientListener<?> listener) {
             return this;
         }
 
