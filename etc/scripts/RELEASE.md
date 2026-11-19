@@ -28,8 +28,8 @@ are independent release IDs with BOM properties `jackson.jackson-2.extension.ver
 and `jackson.jackson-3.extension.version`. The `jackson` grouping itself is not released.
 
 For example, Messaging connectors live in `extensions/messaging/kafka`,
-`extensions/messaging/jms`, `extensions/messaging/jms-javax`, and
-`extensions/messaging/pulsar`. Each uses the normal `bom` and `modules` layout,
+`extensions/messaging/jms`, `extensions/messaging/jms-javax`,
+`extensions/messaging/pulsar`, and `extensions/messaging/aq`. Each uses the normal `bom` and `modules` layout,
 with optional `tests` and `examples` directories. The extension
 ID is its path relative to `extensions/`; no registration file is needed.
 
