@@ -19,50 +19,6 @@
 <tbody>
 <tr>
 <td>
-<code>allow.<wbr>pattern</code>
-</td>
-<td>
-<code>List&lt;<wbr>Pattern&gt;</code>
-</td>
-<td>
-</td>
-<td><code>Pattern</code>s specifying strings to allow</td>
-</tr>
-<tr>
-<td>
-<code>deny.<wbr>suffix</code>
-</td>
-<td>
-<code>List&lt;<wbr>String&gt;</code>
-</td>
-<td>
-</td>
-<td>Suffixes specifying strings to deny</td>
-</tr>
-<tr>
-<td>
-<code>deny.<wbr>exact</code>
-</td>
-<td>
-<code>List&lt;<wbr>String&gt;</code>
-</td>
-<td>
-</td>
-<td>Exact strings to deny</td>
-</tr>
-<tr>
-<td>
-<code>allow.<wbr>prefix</code>
-</td>
-<td>
-<code>List&lt;<wbr>String&gt;</code>
-</td>
-<td>
-</td>
-<td>Prefixes specifying strings to allow</td>
-</tr>
-<tr>
-<td>
 <code>allow.<wbr>all</code>
 </td>
 <td>
@@ -83,6 +39,50 @@
 <td>
 </td>
 <td>Exact strings to allow</td>
+</tr>
+<tr>
+<td>
+<code>allow.<wbr>pattern</code>
+</td>
+<td>
+<code>List&lt;<wbr>Pattern&gt;</code>
+</td>
+<td>
+</td>
+<td><code>Pattern</code>s specifying strings to allow</td>
+</tr>
+<tr>
+<td>
+<code>allow.<wbr>prefix</code>
+</td>
+<td>
+<code>List&lt;<wbr>String&gt;</code>
+</td>
+<td>
+</td>
+<td>Prefixes specifying strings to allow</td>
+</tr>
+<tr>
+<td>
+<code>allow.<wbr>suffix</code>
+</td>
+<td>
+<code>List&lt;<wbr>String&gt;</code>
+</td>
+<td>
+</td>
+<td>Suffixes specifying strings to allow</td>
+</tr>
+<tr>
+<td>
+<code>deny.<wbr>exact</code>
+</td>
+<td>
+<code>List&lt;<wbr>String&gt;</code>
+</td>
+<td>
+</td>
+<td>Exact strings to deny</td>
 </tr>
 <tr>
 <td>
@@ -108,14 +108,14 @@
 </tr>
 <tr>
 <td>
-<code>allow.<wbr>suffix</code>
+<code>deny.<wbr>suffix</code>
 </td>
 <td>
 <code>List&lt;<wbr>String&gt;</code>
 </td>
 <td>
 </td>
-<td>Suffixes specifying strings to allow</td>
+<td>Suffixes specifying strings to deny</td>
 </tr>
 </tbody>
 </table>
