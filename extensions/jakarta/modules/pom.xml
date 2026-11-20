@@ -31,5 +31,7 @@
         <module>http-media-jsonp</module>
         <module>http-media-jsonb</module>
         <module>dbclient-jsonp</module>
+        <module>transaction-jta</module>
+        <module>transaction-narayana</module>
     </modules>
 </project>

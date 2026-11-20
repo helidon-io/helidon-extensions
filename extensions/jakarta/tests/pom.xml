@@ -31,8 +31,57 @@
         <maven.deploy.skip>true</maven.deploy.skip>
         <maven.sources.skip>true</maven.sources.skip>
         <maven.javadoc.skip>true</maven.javadoc.skip>
+        <version.lib.eclipselink>5.0.2</version.lib.eclipselink>
+        <version.lib.hibernate>7.4.11.Final</version.lib.hibernate>
+        <version.lib.mysql-connector-j>26.7.0</version.lib.mysql-connector-j>
+        <version.lib.testcontainers>1.21.4</version.lib.testcontainers>
     </properties>
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${version.lib.testcontainers}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.helidon.data.sql</groupId>
+                <artifactId>helidon-data-sql-testing</artifactId>
+                <version>${helidon.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.hibernate.orm</groupId>
+                <artifactId>hibernate-core</artifactId>
+                <version>${version.lib.hibernate}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.persistence</groupId>
+                <artifactId>org.eclipse.persistence.jpa</artifactId>
+                <version>${version.lib.eclipselink}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.persistence</groupId>
+                <artifactId>org.eclipse.persistence.core</artifactId>
+                <version>${version.lib.eclipselink}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.mysql</groupId>
+                <artifactId>mysql-connector-j</artifactId>
+                <version>${version.lib.mysql-connector-j}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
     <modules>
         <module>json-schema</module>
     </modules>
+    <profiles>
+        <profile>
+            <id>transaction-mysql</id>
+            <modules>
+                <module>hibernate-mysql-jta</module>
+                <module>eclipselink-mysql-jta</module>
+            </modules>
+        </profile>
+    </profiles>
 </project>
