@@ -50,6 +50,15 @@ class MySqlExtension implements BeforeAllCallback {
                 .withPassword("changeit");
         private final ServiceRegistryManager registryManager = ServiceRegistryManager.create();
 
+        @Override
+        public void close() {
+            try {
+                registryManager.shutdown();
+            } finally {
+                container.stop();
+            }
+        }
+
         private void start() {
             container.start();
             Config config = Config.just(ConfigSources.create(Map.of("test.database.url", container.getJdbcUrl())),
@@ -59,15 +68,6 @@ class MySqlExtension implements BeforeAllCallback {
             PokemonRepository repository = Services.get(PokemonRepository.class);
             repository.run(InitialData::init);
             repository.run(InitialData::verify);
-        }
-
-        @Override
-        public void close() {
-            try {
-                registryManager.shutdown();
-            } finally {
-                container.stop();
-            }
         }
     }
 }
