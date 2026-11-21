@@ -27,6 +27,8 @@ Ordinary JUnit tests use the default Maven test naming conventions. An extension
 JUnit callback starts MySQL and initializes the service registry before the inherited
 fixture lifecycle methods run. Its JUnit store resource shuts down the registry and
 container after the inherited fixture cleanup, including setup failures.
+Both provider modules compile the shared `transaction-mysql/src/test/java` sources
+independently with their own provider dependencies and configuration.
 
 The suites reuse core's test-only data model, generated repositories, and common assertions.
 Those fixtures require the core Jakarta persistence runtime pending its separate migration.
