@@ -46,11 +46,6 @@
                 <scope>import</scope>
             </dependency>
             <dependency>
-                <groupId>io.helidon.data.sql</groupId>
-                <artifactId>helidon-data-sql-testing</artifactId>
-                <version>${helidon.version}</version>
-            </dependency>
-            <dependency>
                 <groupId>org.hibernate.orm</groupId>
                 <artifactId>hibernate-core</artifactId>
                 <version>${version.lib.hibernate}</version>

@@ -18,10 +18,15 @@ mvn clean install -Ptests,examples
 ## MySQL transaction integration
 
 The opt-in `transaction-mysql` profile adds Hibernate and EclipseLink suites ported from
-core revision `ecc7e16e3e37b48c3aca684126eee982ecc8d51b`. Each suite runs the original
+core revision `ecc7e16e3e37b48c3aca684126eee982ecc8d51b`. Each module runs the original
 transaction-method and transaction-annotation tests against MySQL, using the extension
 JTA and Narayana modules. This covers transaction propagation, persistence after commit,
 and failure behavior through the repository API.
+
+Ordinary JUnit tests use the default Maven test naming conventions. An extension-owned
+JUnit callback starts MySQL and initializes the service registry before the inherited
+fixture lifecycle methods run. Its JUnit store resource shuts down the registry and
+container after the inherited fixture cleanup, including setup failures.
 
 The suites reuse core's test-only data model, generated repositories, and common assertions.
 Those fixtures require the core Jakarta persistence runtime pending its separate migration.
