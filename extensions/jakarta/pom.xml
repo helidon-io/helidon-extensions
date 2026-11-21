@@ -34,6 +34,7 @@
         <jakarta.extension.version>1.0.0-SNAPSHOT</jakarta.extension.version>
         <helidon.version>28.0.0-SNAPSHOT</helidon.version>
         <version.lib.jakartaee-bom>11.0.0</version.lib.jakartaee-bom>
+        <version.lib.narayana>7.3.4.Final</version.lib.narayana>
         <version.lib.parsson>1.1.9</version.lib.parsson>
         <version.lib.yasson>3.0.5</version.lib.yasson>
     </properties>
@@ -45,6 +46,22 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.jboss.narayana.jta</groupId>
+                <artifactId>narayana-jta</artifactId>
+                <version>${version.lib.narayana}</version>
+                <exclusions>
+                    <!-- The optional Infinispan store is unused; these JARs cannot load on the module path. -->
+                    <exclusion>
+                        <groupId>org.infinispan</groupId>
+                        <artifactId>infinispan-core</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>org.infinispan</groupId>
+                        <artifactId>infinispan-commons</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
             <dependency>
                 <groupId>org.eclipse.parsson</groupId>
                 <artifactId>parsson</artifactId>

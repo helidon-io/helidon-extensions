@@ -87,7 +87,7 @@
 
         <version.plugin.build-helper>3.6.1</version.plugin.build-helper>
         <version.plugin.checkstyle>3.6.0</version.plugin.checkstyle>
-        <version.plugin.compiler>3.11.0</version.plugin.compiler>
+        <version.plugin.compiler>3.16.0</version.plugin.compiler>
         <version.plugin.dependency>3.6.0</version.plugin.dependency>
         <version.plugin.directory>1.0</version.plugin.directory>
         <version.plugin.enforcer>3.3.0</version.plugin.enforcer>
@@ -204,13 +204,6 @@
                             <arg>-Xpkginfo:always</arg>
                         </compilerArgs>
                     </configuration>
-                    <dependencies>
-                        <dependency>
-                            <groupId>org.ow2.asm</groupId>
-                            <artifactId>asm</artifactId>
-                            <version>${version.lib.asm}</version>
-                        </dependency>
-                    </dependencies>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>

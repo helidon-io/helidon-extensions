@@ -38,6 +38,16 @@
         <dependencies>
             <dependency>
                 <groupId>io.helidon.extensions.jakarta</groupId>
+                <artifactId>helidon-extensions-jakarta-transaction-jta</artifactId>
+                <version>${jakarta.extension.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.jakarta</groupId>
+                <artifactId>helidon-extensions-jakarta-transaction-narayana</artifactId>
+                <version>${jakarta.extension.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.helidon.extensions.jakarta</groupId>
                 <artifactId>helidon-extensions-jakarta-http-media-jsonp</artifactId>
                 <version>${jakarta.extension.version}</version>
             </dependency>

@@ -1,12 +1,14 @@
 # Jakarta
 
-Jakarta JSON integrations for Helidon 28, released as one independently versioned extension with individually selectable
+Jakarta JSON and transaction integrations for Helidon 28, released as one independently versioned extension with individually selectable
 modules.
 
 - [Documentation and migration mappings](docs/README.md)
 - [JSON-P HTTP media](modules/http-media-jsonp/)
 - [JSON-B HTTP media](modules/http-media-jsonb/)
 - [DBClient JSON-P mapping](modules/dbclient-jsonp/)
+- [JTA transaction support](modules/transaction-jta/)
+- [Narayana transaction provider](modules/transaction-narayana/)
 - [Runnable examples](examples/)
 - [Tests](tests/)
 
