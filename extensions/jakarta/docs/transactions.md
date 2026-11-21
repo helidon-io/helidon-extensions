@@ -37,8 +37,8 @@ For a named Java module, update the corresponding `requires` directive in `modul
 | `io.helidon.transaction.jta` | `io.helidon.extensions.jakarta.transaction.jta` |
 | `io.helidon.transaction.helidon.narayana` | `io.helidon.extensions.jakarta.transaction.narayana` |
 
-Existing JNDI lookups use the same names, `helidon:jndi/TransactionManager` and
-`helidon:jndi/TransactionSynchronizationRegistry`. If you use Narayana's optional Infinispan transaction store,
+Existing JNDI lookups continue to use `java:comp/TransactionManager` and
+`java:comp/TransactionSynchronizationRegistry`. If you use Narayana's optional Infinispan transaction store,
 continue to supply its libraries separately.
 
 The [Narayana example](../examples/transaction-narayana/README.md) includes a complete POM and module descriptor.
