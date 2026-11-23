@@ -217,6 +217,19 @@ final class Decoder {
         runningState = INITIALIZED;
     }
 
+    static int[] ensureTreeCapacity(int[] group, int nextOffset, int maxTableSize, int treeCount) {
+        int required = nextOffset + maxTableSize;
+        if (group == null) {
+            return new int[required];
+        }
+        if (group.length >= required) {
+            return group;
+        }
+        int maxCapacity = treeCount + treeCount * maxTableSize;
+        int capacity = Math.min(maxCapacity, Math.max(required, group.length * 2));
+        return Arrays.copyOf(group, capacity);
+    }
+
     void close() throws IOException {
         if (runningState == CLOSED) {
             return;
@@ -1079,9 +1092,9 @@ final class Decoder {
         if (n == 1) {
             return decodeSingleHuffmanTree(group, alphabetSizeMax, alphabetSizeLimit, maxTableSize);
         }
-        group = reuseScratch(group, n + n * maxTableSize);
         int next = n;
         for (int i = 0; i < n; ++i) {
+            group = ensureTreeCapacity(group, next, maxTableSize, n);
             group[i] = next;
             next += readHuffmanCode(alphabetSizeMax, alphabetSizeLimit, group, i);
         }

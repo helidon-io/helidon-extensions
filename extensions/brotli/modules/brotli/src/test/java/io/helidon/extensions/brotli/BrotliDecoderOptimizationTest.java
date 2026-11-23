@@ -31,6 +31,7 @@ import org.junit.jupiter.api.Test;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.sameInstance;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class BrotliDecoderOptimizationTest {
@@ -186,6 +187,23 @@ class BrotliDecoderOptimizationTest {
                 }
             }
         }
+    }
+
+    @Test
+    void allocatesTreeGroupStorageAsTreesAreDecoded() {
+        int treeCount = 16;
+        int maxTableSize = 512;
+        int[] group = Decoder.ensureTreeCapacity(null, treeCount, maxTableSize, treeCount);
+        assertThat(group.length, is(treeCount + maxTableSize));
+        group[0] = treeCount;
+        group[treeCount] = 42;
+
+        int nextOffset = treeCount + 256;
+        int[] grown = Decoder.ensureTreeCapacity(group, nextOffset, maxTableSize, treeCount);
+        assertThat(grown.length, greaterThan(nextOffset + maxTableSize - 1));
+        assertThat(grown[0], is(treeCount));
+        assertThat(grown[treeCount], is(42));
+        assertThat(Decoder.ensureTreeCapacity(grown, nextOffset, maxTableSize, treeCount), sameInstance(grown));
     }
 
     private static void assertDecoded(Fixture fixture) throws IOException {
