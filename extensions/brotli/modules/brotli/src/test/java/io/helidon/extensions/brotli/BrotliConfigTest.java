@@ -244,7 +244,7 @@ class BrotliConfigTest {
 
     @Test
     void rejectsConfiguredReadCacheOutsideSupportedRange() {
-        for (String size : List.of("-1", "0", "2147483648", "9223372036854775808")) {
+        for (String size : List.of("-1", "0", "2147483640", "2147483647", "2147483648", "9223372036854775808")) {
             var config = Config.just(ConfigSources.create(Map.of("cache-buffer-size", size)));
             var inputConfig = BrotliInputStreamConfig.builder().config(config).build();
             assertThrows(IllegalArgumentException.class,

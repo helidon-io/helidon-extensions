@@ -32,7 +32,7 @@ interface BrotliInputStreamConfigBlueprint {
     /**
      * Size of the buffer used for byte-by-byte reads.
      *
-     * @return buffer size, from 1 through {@link Integer#MAX_VALUE} bytes
+     * @return buffer size, from 1 through 2147483639 bytes
      */
     @Option.Configured
     @Option.Default("256")
@@ -61,7 +61,7 @@ interface BrotliInputStreamConfigBlueprint {
     boolean verifyEndOfInput();
 
     /**
-     * Optional shared dictionary chunks, in order. At most 15 chunks may be attached.
+     * Optional shared dictionary chunks, in order. At most 15 chunks totaling up to 64 MiB may be attached.
      * The stream copies the chunk arrays when it is created.
      * References may span chunks but must stay within their concatenated contents;
      * references that continue into the decoded output are not supported.

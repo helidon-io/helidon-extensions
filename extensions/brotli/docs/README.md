@@ -172,10 +172,10 @@ to set stream options. Supply the underlying stream to the constructor.
 | Output | `quality` | `0` | `0` |
 | Output | `window` | `18` | `10` through `24` |
 | Output | `cache-input-size` | `64000` bytes | A `Size` from `4` through `536870911` bytes (less than 512 MiB) |
-| Input | `cache-buffer-size` | `256` bytes | A `Size` from `1` through `2147483647` bytes |
+| Input | `cache-buffer-size` | `256` bytes | A `Size` from `1` through `2147483639` bytes |
 | Input | `max-window-bits` | `24` | `10` through `24` |
 | Input | `verify-end-of-input` | `false` | `true` or `false` |
-| Input | `dictionary-chunks` | Empty list | Ordered Base64 strings, at most 15 chunks; standalone decoding only |
+| Input | `dictionary-chunks` | Empty list | Ordered Base64 strings for standalone decoding, at most 15 chunks totaling up to 64 MiB after Base64 decoding |
 
 The cache options use `io.helidon.common.Size`. Configuration accepts a byte count,
 such as `64000`, or a value with a unit, such as `64 kB` or `4 KiB`.

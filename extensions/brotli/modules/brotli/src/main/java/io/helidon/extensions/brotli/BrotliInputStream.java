@@ -31,6 +31,9 @@ public final class BrotliInputStream extends InputStream {
      */
     public static final BrotliInputStreamConfig DEFAULT_CONFIG = BrotliInputStreamConfig.builder().build();
 
+    private static final int MAX_CACHE_BUFFER_SIZE = Integer.MAX_VALUE - 8;
+    private static final int MAX_DICTIONARY_SIZE = 64 * 1024 * 1024;
+
     private final InputStream inputStream;
     private final BrotliInputStreamConfig config;
     private final byte[] buffer;
@@ -65,10 +68,10 @@ public final class BrotliInputStream extends InputStream {
         try {
             cacheBufferSize = Math.toIntExact(config.cacheBufferSize().toBytes());
         } catch (ArithmeticException e) {
-            throw new IllegalArgumentException("Cache buffer size must be between 1 and 2147483647 bytes", e);
+            throw new IllegalArgumentException("Cache buffer size must be between 1 and " + MAX_CACHE_BUFFER_SIZE + " bytes", e);
         }
-        if (cacheBufferSize <= 0) {
-            throw new IllegalArgumentException("Cache buffer size must be strictly positive");
+        if (cacheBufferSize <= 0 || cacheBufferSize > MAX_CACHE_BUFFER_SIZE) {
+            throw new IllegalArgumentException("Cache buffer size must be between 1 and " + MAX_CACHE_BUFFER_SIZE + " bytes");
         }
         if (config.maxWindowBits() < 10 || config.maxWindowBits() > 24) {
             throw new IllegalArgumentException("Maximum Brotli window exponent must be between 10 and 24");
@@ -77,15 +80,20 @@ public final class BrotliInputStream extends InputStream {
         if (chunks.size() > 15) {
             throw new IllegalArgumentException("At most 15 dictionary chunks are supported");
         }
-        dictionaryChunks = new byte[chunks.size()][];
-        chunkOffsets = new int[chunks.size() + 1];
-        int totalSize = 0;
-        for (int i = 0; i < chunks.size(); i++) {
-            dictionaryChunks[i] = Objects.requireNonNull(chunks.get(i)).clone();
-            totalSize = Math.addExact(totalSize, dictionaryChunks[i].length);
-            chunkOffsets[i + 1] = totalSize;
+        dictionaryChunks = chunks.toArray(byte[][]::new);
+        chunkOffsets = new int[dictionaryChunks.length + 1];
+        long totalSize = 0;
+        for (int i = 0; i < dictionaryChunks.length; i++) {
+            totalSize += dictionaryChunks[i].length;
+            if (totalSize > MAX_DICTIONARY_SIZE) {
+                throw new IllegalArgumentException("Combined dictionary size exceeds 64 MiB");
+            }
+            chunkOffsets[i + 1] = (int) totalSize;
         }
-        dictionarySize = totalSize;
+        dictionarySize = (int) totalSize;
+        for (int i = 0; i < dictionaryChunks.length; i++) {
+            dictionaryChunks[i] = dictionaryChunks[i].clone();
+        }
         buffer = new byte[cacheBufferSize];
     }
 

@@ -19,8 +19,11 @@ package io.helidon.extensions.brotli;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import io.helidon.common.Size;
@@ -40,6 +43,19 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  */
 class BrotliDictionaryTest {
     private static final byte[] DICTIONARY = "abcdefgh".getBytes(StandardCharsets.US_ASCII);
+
+    @Test
+    void enforcesCombinedDictionarySizeLimit() throws IOException {
+        byte[] chunk = new byte[8 * 1024 * 1024];
+        System.arraycopy(DICTIONARY, 0, chunk, chunk.length - DICTIONARY.length, DICTIONARY.length);
+        var chunks = new ArrayList<>(Collections.nCopies(8, chunk));
+        assertThat(decode(dictionaryReference(8, 8), chunks, 256, 8192), is(DICTIONARY));
+
+        chunks.add(new byte[1]);
+        var config = BrotliInputStreamConfig.builder().dictionaryChunks(chunks).build();
+        assertThrows(IllegalArgumentException.class,
+                     () -> new BrotliInputStream(InputStream.nullInputStream(), config));
+    }
 
     @Test
     @DisplayName("RFC 9841 section 3.2 address mapping: copy a chunk prefix")
