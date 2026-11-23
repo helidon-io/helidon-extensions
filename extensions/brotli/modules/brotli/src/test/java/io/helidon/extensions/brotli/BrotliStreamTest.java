@@ -92,6 +92,26 @@ class BrotliStreamTest {
     }
 
     @Test
+    void googleDecoderReadsHelidonStreams() throws IOException {
+        byte[] incompressible = new byte[70_000];
+        new Random(7932).nextBytes(incompressible);
+        byte[] text = INTEROP_TEXT.repeat(512).getBytes(StandardCharsets.UTF_8);
+        for (byte[] data : new byte[][] {new byte[0], DATA, text, incompressible}) {
+            var encoded = new ByteArrayOutputStream();
+            try (var output = new BrotliOutputStream(encoded)) {
+                int split = data.length / 2;
+                output.write(data, 0, split);
+                output.flush();
+                output.write(data, split, data.length - split);
+            }
+            try (var google = new org.brotli.dec.BrotliInputStream(new ByteArrayInputStream(encoded.toByteArray()))) {
+                assertThat("first mismatching byte for input length " + data.length,
+                           Arrays.mismatch(data, google.readAllBytes()), is(-1));
+            }
+        }
+    }
+
+    @Test
     void decodesIndependentQualityElevenStream() throws IOException {
         try (var stream = new BrotliInputStream(new ByteArrayInputStream(INTEROP_DATA))) {
             assertThat(new String(stream.readAllBytes(), StandardCharsets.UTF_8), is(INTEROP_TEXT));
