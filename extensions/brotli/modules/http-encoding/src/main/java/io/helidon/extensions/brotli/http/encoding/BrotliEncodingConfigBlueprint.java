@@ -38,8 +38,8 @@ interface BrotliEncodingConfigBlueprint extends Prototype.Factory<BrotliEncoding
 
     /**
      * Configuration for Brotli streams used to decode HTTP entities.
-     * HTTP decoding always verifies the end of the encoded entity, even when
-     * {@link BrotliInputStreamConfig#verifyEndOfInput()} is {@code false}.
+     * HTTP decoding rejects trailing bytes when the decoded stream is read to EOF, even when
+     * {@link BrotliInputStreamConfig#verifyEndOfInput()} is {@code false}. Closing the stream early skips this check.
      * The {@link BrotliInputStreamConfig#dictionaryChunks() dictionary chunk list}
      * must be empty: standard {@code br} content encoding uses the built-in Brotli
      * dictionary. Configuring attached dictionary chunks causes encoding

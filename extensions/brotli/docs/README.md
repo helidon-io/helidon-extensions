@@ -68,8 +68,9 @@ Configure the streams through the encoding's `inputStreamConfig(...)` and
 `BrotliInputStreamConfig.builder().maxWindowBits(22).build()` as the input
 configuration to reject streams declaring a window larger than 4 MiB. The
 maximum window exponent defaults to `24` and accepts values from `10` through
-`24`. HTTP decoding always verifies the end of the encoded entity, even if
-the input configuration sets `verifyEndOfInput(false)`.
+`24`. HTTP decoding rejects trailing bytes when the decoded stream is read to EOF,
+even if the input configuration sets `verifyEndOfInput(false)`. Closing the stream
+early skips this check.
 
 Standard HTTP `br` uses Brotli's built-in dictionary. Attaching dictionary chunks
 through the input configuration causes `BrotliEncoding` construction to throw
