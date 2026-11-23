@@ -18,6 +18,7 @@ package io.helidon.extensions.brotli;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.io.FilterInputStream;
 import java.io.FilterOutputStream;
 import java.io.IOException;
@@ -374,13 +375,28 @@ class BrotliStreamTest {
         output.write(DATA);
         assertThat(assertThrows(IOException.class, output::flush), sameInstance(failure));
         int prefixSize = accepted.size();
-        assertThat(assertThrows(IOException.class, () -> output.write(1)), sameInstance(failure));
-        assertThat(assertThrows(IOException.class, () -> output.write(DATA)), sameInstance(failure));
-        assertThat(assertThrows(IOException.class, output::flush), sameInstance(failure));
+        assertThrows(IOException.class, () -> output.write(1));
+        assertThrows(IOException.class, () -> output.write(DATA));
+        assertThrows(IOException.class, output::flush);
         output.close();
         output.close();
         assertThat(accepted.size(), is(prefixSize));
         assertThat(destination.closes, is(1));
+    }
+
+    @Test
+    void preservesCompressedWriteFailureWhenOuterStreamFlushesOnClose() {
+        var failure = new IOException("destination write failed");
+        var destination = new FailingOutputStream(failure, null);
+        IOException reported = assertThrows(IOException.class, () -> {
+            try (var output = new DataOutputStream(new BrotliOutputStream(destination))) {
+                output.write(DATA);
+                output.flush();
+            }
+        });
+        assertThat(reported, sameInstance(failure));
+        assertThat(destination.writeAttempts, is(1));
+        assertThat(destination.closed, is(true));
     }
 
     @Test
@@ -518,6 +534,7 @@ class BrotliStreamTest {
     private static final class FailingOutputStream extends OutputStream {
         private final IOException writeFailure;
         private final IOException closeFailure;
+        private int writeAttempts;
         private boolean closed;
 
         private FailingOutputStream() {
@@ -531,6 +548,7 @@ class BrotliStreamTest {
 
         @Override
         public void write(int value) throws IOException {
+            writeAttempts++;
             throw writeFailure;
         }
 

@@ -176,7 +176,7 @@ public final class BrotliOutputStream extends OutputStream {
             throw new IOException("Brotli output stream is closed");
         }
         if (writeFailed) {
-            throw reportedFlushFailure;
+            throw new IOException("Brotli output stream cannot continue after a failed destination write");
         }
     }
 }
