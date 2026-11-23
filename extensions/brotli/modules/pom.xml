@@ -34,4 +34,27 @@
         <module>brotli</module>
         <module>http-encoding</module>
     </modules>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-compile</id>
+                        <configuration>
+                            <annotationProcessorPaths combine.children="append">
+                                <path>
+                                    <groupId>io.helidon.codegen</groupId>
+                                    <artifactId>helidon-codegen-api-stability-enforcer</artifactId>
+                                    <version>${helidon.version}</version>
+                                </path>
+                            </annotationProcessorPaths>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
