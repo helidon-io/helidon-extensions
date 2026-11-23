@@ -19,6 +19,7 @@ package io.helidon.extensions.brotli;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FilterInputStream;
+import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -304,6 +305,67 @@ class BrotliStreamTest {
         assertThat(assertThrows(IOException.class, input::read), sameInstance(failure));
         assertThat(input.readAllBytes(), is(DATA));
         assertThat(assertThrows(IOException.class, input::close), sameInstance(failure));
+    }
+
+    @Test
+    void stopsEncodingAfterPartialDestinationWrite() throws IOException {
+        var failure = new IOException("partial write");
+        var accepted = new ByteArrayOutputStream();
+        var destination = new OutputStream() {
+            private int closes;
+
+            @Override
+            public void write(int value) throws IOException {
+                if (accepted.size() == 1) {
+                    // Fail once and accept later writes so an accidental replay is observable.
+                    accepted.write(value);
+                    throw failure;
+                }
+                accepted.write(value);
+            }
+
+            @Override
+            public void close() {
+                closes++;
+            }
+        };
+        var output = new BrotliOutputStream(destination);
+        output.write(DATA);
+        assertThat(assertThrows(IOException.class, output::flush), sameInstance(failure));
+        int prefixSize = accepted.size();
+        assertThat(assertThrows(IOException.class, () -> output.write(1)), sameInstance(failure));
+        assertThat(assertThrows(IOException.class, () -> output.write(DATA)), sameInstance(failure));
+        assertThat(assertThrows(IOException.class, output::flush), sameInstance(failure));
+        output.close();
+        output.close();
+        assertThat(accepted.size(), is(prefixSize));
+        assertThat(destination.closes, is(1));
+    }
+
+    @Test
+    void retriesDestinationFlushAfterCompressedBytesWereWritten() throws IOException {
+        var failure = new IOException("flush failed");
+        var accepted = new ByteArrayOutputStream();
+        var destination = new FilterOutputStream(accepted) {
+            private boolean failNextFlush = true;
+
+            @Override
+            public void flush() throws IOException {
+                if (failNextFlush) {
+                    failNextFlush = false;
+                    throw failure;
+                }
+                super.flush();
+            }
+        };
+        try (var output = new BrotliOutputStream(destination)) {
+            output.write(DATA);
+            assertThat(assertThrows(IOException.class, output::flush), sameInstance(failure));
+            output.flush();
+        }
+        try (var decoder = new BrotliInputStream(new ByteArrayInputStream(accepted.toByteArray()))) {
+            assertThat(decoder.readAllBytes(), is(DATA));
+        }
     }
 
     @Test

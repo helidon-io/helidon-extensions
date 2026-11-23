@@ -26,6 +26,8 @@ import io.helidon.common.Api;
 /**
  * Output stream that compresses data using Brotli without a native library.
  * Closing this stream finishes the Brotli stream and closes the underlying output stream.
+ * If writing compressed bytes to the destination fails, subsequent writes and flushes fail,
+ * and closing the stream only closes the destination.
  * Only compression quality {@code 0} is currently supported.
  */
 @Api.Preview
@@ -43,6 +45,7 @@ public final class BrotliOutputStream extends OutputStream {
     private final ByteInput input;
 
     private boolean closed;
+    private boolean writeFailed;
     private IOException reportedFlushFailure;
 
     /**
@@ -111,11 +114,18 @@ public final class BrotliOutputStream extends OutputStream {
     @Override
     public void flush() throws IOException {
         ensureOpen();
-        try {
-            if (input.size() > 0) {
+        if (input.size() > 0) {
+            try {
                 encoder.compress(input);
-                input.clear();
+            } catch (UncheckedIOException e) {
+                // The destination may already have accepted part of this compressed block.
+                writeFailed = true;
+                reportedFlushFailure = e.getCause();
+                throw reportedFlushFailure;
             }
+            input.clear();
+        }
+        try {
             outputStream.flush();
             reportedFlushFailure = null;
         } catch (UncheckedIOException e) {
@@ -138,7 +148,9 @@ public final class BrotliOutputStream extends OutputStream {
         reportedFlushFailure = null;
         IOException finishFailure = null;
         try {
-            encoder.finish(input);
+            if (!writeFailed) {
+                encoder.finish(input);
+            }
         } catch (UncheckedIOException e) {
             if (e.getCause() != reported) {
                 finishFailure = e.getCause();
@@ -162,6 +174,9 @@ public final class BrotliOutputStream extends OutputStream {
     private void ensureOpen() throws IOException {
         if (closed) {
             throw new IOException("Brotli output stream is closed");
+        }
+        if (writeFailed) {
+            throw reportedFlushFailure;
         }
     }
 }
