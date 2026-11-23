@@ -26,6 +26,7 @@ import java.util.HexFormat;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.fail;
 
 class BrotliInvalidBlockSwitchTest {
     // https://github.com/nodejs/node/blob/v26.12.1/test/parallel/test-zlib-invalid-input.js
@@ -46,9 +47,15 @@ class BrotliInvalidBlockSwitchTest {
                 };
             }
             try (var stream = new BrotliInputStream(source)) {
-                assertThrows(IOException.class,
-                             () -> stream.transferTo(OutputStream.nullOutputStream()),
-                             "one byte at a time: " + oneByteAtATime);
+                String inputMode = oneByteAtATime ? "one-byte reads" : "buffered reads";
+                IOException failure = assertThrows(IOException.class,
+                                                   () -> stream.transferTo(OutputStream.nullOutputStream()),
+                                                   inputMode);
+                for (Throwable cause = failure.getCause(); cause != null; cause = cause.getCause()) {
+                    if (cause instanceof IndexOutOfBoundsException) {
+                        fail("Unexpected decoder index error with " + inputMode, failure);
+                    }
+                }
             }
         }
     }
