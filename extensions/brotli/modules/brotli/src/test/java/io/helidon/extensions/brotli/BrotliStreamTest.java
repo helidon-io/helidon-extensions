@@ -230,6 +230,56 @@ class BrotliStreamTest {
     }
 
     @Test
+    void preservesReadFailureAcrossResourceCleanup() {
+        var timeout = new SocketTimeoutException("source timed out");
+        var source = new InputStream() {
+            private boolean closed;
+
+            @Override
+            public int read() throws IOException {
+                throw timeout;
+            }
+
+            @Override
+            public void close() throws IOException {
+                closed = true;
+                throw timeout;
+            }
+        };
+        IOException failure = assertThrows(IOException.class, () -> {
+            try (var input = new BrotliInputStream(source)) {
+                input.read();
+            }
+        });
+        assertThat(failure, sameInstance(timeout));
+        assertThat(failure.getSuppressed().length, is(0));
+        assertThat(source.closed, is(true));
+    }
+
+    @Test
+    void preservesFlushFailureAcrossResourceCleanup() {
+        for (boolean buffered : new boolean[] {false, true}) {
+            for (boolean distinctCloseFailure : new boolean[] {false, true}) {
+                var flushFailure = new IOException("destination failed");
+                var closeFailure = distinctCloseFailure ? new IOException("close failed") : flushFailure;
+                var destination = new FailingOutputStream(flushFailure, closeFailure);
+                IOException failure = assertThrows(IOException.class, () -> {
+                    try (var output = new BrotliOutputStream(destination)) {
+                        if (buffered) {
+                            output.write(DATA);
+                        }
+                        output.flush();
+                    }
+                });
+                assertThat(failure, sameInstance(flushFailure));
+                Throwable[] expectedSuppressed = distinctCloseFailure ? new Throwable[] {closeFailure} : new Throwable[0];
+                assertThat(failure.getSuppressed(), is(expectedSuppressed));
+                assertThat(destination.closed, is(true));
+            }
+        }
+    }
+
+    @Test
     void propagatesOutputFailureAndClosesDestination() throws IOException {
         var destination = new FailingOutputStream();
         var stream = new BrotliOutputStream(destination);
@@ -320,6 +370,11 @@ class BrotliStreamTest {
 
         @Override
         public void write(int value) throws IOException {
+            throw writeFailure;
+        }
+
+        @Override
+        public void flush() throws IOException {
             throw writeFailure;
         }
 

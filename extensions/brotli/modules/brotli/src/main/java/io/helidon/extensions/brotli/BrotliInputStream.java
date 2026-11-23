@@ -45,6 +45,7 @@ public final class BrotliInputStream extends InputStream {
     private final int dictionarySize;
 
     private Decoder decoder;
+    private IOException reportedReadFailure;
     private int remainingBufferBytes;
     private int bufferOffset;
     private boolean closed;
@@ -135,7 +136,8 @@ public final class BrotliInputStream extends InputStream {
             int decoded = decoder.outputUsed();
             return decoded == 0 ? -1 : decoded;
         } catch (UncheckedIOException e) {
-            throw e.getCause();
+            reportedReadFailure = e.getCause();
+            throw reportedReadFailure;
         } catch (RuntimeException e) {
             throw new IOException("Brotli stream decoding failed", e);
         }
@@ -145,10 +147,18 @@ public final class BrotliInputStream extends InputStream {
     public void close() throws IOException {
         if (!closed) {
             closed = true;
-            if (decoder == null) {
-                inputStream.close();
-            } else {
-                decoder.close();
+            try {
+                if (decoder == null) {
+                    inputStream.close();
+                } else {
+                    decoder.close();
+                }
+            } catch (IOException e) {
+                if (e != reportedReadFailure) {
+                    throw e;
+                }
+            } finally {
+                reportedReadFailure = null;
             }
         }
     }

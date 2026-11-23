@@ -111,13 +111,12 @@ class Encoder {
         }
     }
 
-    void close(ByteInput input) throws IOException {
+    void finish(ByteInput input) {
         if (eof) {
             return;
         }
         eof = true;
         compress(input);
-        outputManager.close();
     }
 
     private static int hashBytesAtOffset(long v, int offset, int shift) {
@@ -979,10 +978,6 @@ class Encoder {
                 return true;
             }
             return false;
-        }
-
-        void close() throws IOException {
-            outputStream.close();
         }
 
         void resetLastFlushPosition() {

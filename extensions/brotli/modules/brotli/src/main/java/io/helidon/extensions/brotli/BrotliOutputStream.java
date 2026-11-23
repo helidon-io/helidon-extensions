@@ -43,6 +43,7 @@ public final class BrotliOutputStream extends OutputStream {
     private final ByteInput input;
 
     private boolean closed;
+    private IOException reportedFlushFailure;
 
     /**
      * Create an encoder with the default configuration.
@@ -115,7 +116,11 @@ public final class BrotliOutputStream extends OutputStream {
             }
             outputStream.flush();
         } catch (UncheckedIOException e) {
-            throw e.getCause();
+            reportedFlushFailure = e.getCause();
+            throw reportedFlushFailure;
+        } catch (IOException e) {
+            reportedFlushFailure = e;
+            throw e;
         }
     }
 
@@ -125,18 +130,29 @@ public final class BrotliOutputStream extends OutputStream {
             return;
         }
         closed = true;
+        // Try-with-resources cannot suppress a cleanup failure on the identical exception from flush.
+        IOException reported = reportedFlushFailure;
+        reportedFlushFailure = null;
+        IOException finishFailure = null;
         try {
-            encoder.close(input);
+            encoder.finish(input);
         } catch (UncheckedIOException e) {
-            IOException writeFailure = e.getCause();
-            try {
-                outputStream.close();
-            } catch (IOException closeFailure) {
-                if (closeFailure != writeFailure) {
-                    writeFailure.addSuppressed(closeFailure);
-                }
+            if (e.getCause() != reported) {
+                finishFailure = e.getCause();
             }
-            throw writeFailure;
+        }
+        try {
+            outputStream.close();
+        } catch (IOException e) {
+            if (e != reported && e != finishFailure) {
+                if (finishFailure == null) {
+                    throw e;
+                }
+                finishFailure.addSuppressed(e);
+            }
+        }
+        if (finishFailure != null) {
+            throw finishFailure;
         }
     }
 
