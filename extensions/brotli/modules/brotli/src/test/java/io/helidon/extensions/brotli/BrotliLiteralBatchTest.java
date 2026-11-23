@@ -45,6 +45,66 @@ class BrotliLiteralBatchTest {
         return literalStream(alphabet, switches, 0);
     }
 
+    @Test
+    void rejectsUnusedTreeInLiteralAndDistanceMaps() throws IOException {
+        for (boolean literalMap : new boolean[] {true, false}) {
+            byte[] encoded = twoTreeStream(literalMap, 0);
+            try (var stream = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
+                assertThrows(IOException.class, stream::read, literalMap ? "literal map" : "distance map");
+            }
+        }
+    }
+
+    @Test
+    void acceptsAllTreesSelectedByInverseMoveToFront() throws IOException {
+        for (boolean literalMap : new boolean[] {true, false}) {
+            byte[] encoded = twoTreeStream(literalMap, 1);
+            try (var stream = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
+                assertThat(stream.readAllBytes(), is(new byte[] {(byte) (literalMap ? 'B' : 'A')}));
+            }
+        }
+    }
+
+    @Test
+    void rejectsOversizedInsertionBeforeReturningAnyLiteral() throws IOException {
+        var fixture = literalStream(Alphabet.PAIR, true, 1);
+        try (var stream = new BrotliInputStream(new ByteArrayInputStream(fixture.encoded()))) {
+            assertThrows(IOException.class, () -> stream.read(new byte[1]));
+        }
+    }
+
+    @Test
+    void decodesLongLiteralRunsAcrossRingGrowthAndWrap() throws IOException {
+        // WBITS=16 and 70,000 literal bytes cross the 65,536-byte history window.
+        for (Alphabet alphabet : Alphabet.values()) {
+            assertDecoded(literalStream(alphabet, false));
+        }
+    }
+
+    @Test
+    void switchesLiteralTreesAfterSeveralLiterals() throws IOException {
+        assertDecoded(literalStream(Alphabet.SINGLETON, true));
+    }
+
+    @Test
+    void returnsRequestedLiteralsBeforeReadingWithheldInput() throws IOException {
+        Fixture fixture = literalStream(Alphabet.PAIR, false);
+        // Release only enough compressed input for the header and 512 one-bit literals.
+        // The producer remains open; reading beyond the released prefix fails immediately.
+        int prefix = (fixture.payloadBitOffset() + 512 + 7) / 8;
+        for (int sourceChunk : new int[] {1, Integer.MAX_VALUE}) {
+            var source = new ReleasedPrefixInputStream(fixture.encoded(), prefix, sourceChunk);
+            var config = BrotliInputStreamConfig.builder().cacheBufferSize(Size.create(1)).build();
+            try (var input = new BrotliInputStream(source, config)) {
+                assertThat("source chunk " + sourceChunk,
+                           input.readNBytes(385), is(Arrays.copyOf(fixture.expected(), 385)));
+                source.releaseAll();
+                assertThat(input.readAllBytes(), is(Arrays.copyOfRange(fixture.expected(), 385, fixture.expected().length)));
+                assertThat(input.read(), is(-1));
+            }
+        }
+    }
+
     private static Fixture literalStream(Alphabet alphabet, boolean switches, int excessLiterals) {
         // RFC 7932 sections 2, 3.4, 3.5, 5, 6, 7 and 9.2. A single insert command
         // fills the final metablock, so its copy and distance are never consumed.
@@ -132,66 +192,6 @@ class BrotliLiteralBatchTest {
         }
         return new Fixture(switches ? "eight-literal block switches" : alphabet.name(),
                            bits.toByteArray(), expected, payloadBitOffset);
-    }
-
-    @Test
-    void rejectsUnusedTreeInLiteralAndDistanceMaps() throws IOException {
-        for (boolean literalMap : new boolean[] {true, false}) {
-            byte[] encoded = twoTreeStream(literalMap, 0);
-            try (var stream = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
-                assertThrows(IOException.class, stream::read, literalMap ? "literal map" : "distance map");
-            }
-        }
-    }
-
-    @Test
-    void acceptsAllTreesSelectedByInverseMoveToFront() throws IOException {
-        for (boolean literalMap : new boolean[] {true, false}) {
-            byte[] encoded = twoTreeStream(literalMap, 1);
-            try (var stream = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
-                assertThat(stream.readAllBytes(), is(new byte[] {(byte) (literalMap ? 'B' : 'A')}));
-            }
-        }
-    }
-
-    @Test
-    void rejectsOversizedInsertionBeforeReturningAnyLiteral() throws IOException {
-        var fixture = literalStream(Alphabet.PAIR, true, 1);
-        try (var stream = new BrotliInputStream(new ByteArrayInputStream(fixture.encoded()))) {
-            assertThrows(IOException.class, () -> stream.read(new byte[1]));
-        }
-    }
-
-    @Test
-    void decodesLongLiteralRunsAcrossRingGrowthAndWrap() throws IOException {
-        // WBITS=16 and 70,000 literal bytes cross the 65,536-byte history window.
-        for (Alphabet alphabet : Alphabet.values()) {
-            assertDecoded(literalStream(alphabet, false));
-        }
-    }
-
-    @Test
-    void switchesLiteralTreesAfterSeveralLiterals() throws IOException {
-        assertDecoded(literalStream(Alphabet.SINGLETON, true));
-    }
-
-    @Test
-    void returnsRequestedLiteralsBeforeReadingWithheldInput() throws IOException {
-        Fixture fixture = literalStream(Alphabet.PAIR, false);
-        // Release only enough compressed input for the header and 512 one-bit literals.
-        // The producer remains open; reading beyond the released prefix fails immediately.
-        int prefix = (fixture.payloadBitOffset() + 512 + 7) / 8;
-        for (int sourceChunk : new int[] {1, Integer.MAX_VALUE}) {
-            var source = new ReleasedPrefixInputStream(fixture.encoded(), prefix, sourceChunk);
-            var config = BrotliInputStreamConfig.builder().cacheBufferSize(Size.create(1)).build();
-            try (var input = new BrotliInputStream(source, config)) {
-                assertThat("source chunk " + sourceChunk,
-                           input.readNBytes(385), is(Arrays.copyOf(fixture.expected(), 385)));
-                source.releaseAll();
-                assertThat(input.readAllBytes(), is(Arrays.copyOfRange(fixture.expected(), 385, fixture.expected().length)));
-                assertThat(input.read(), is(-1));
-            }
-        }
     }
 
     private static byte[] twoTreeStream(boolean literalMap, int moveToFrontIndex) {
