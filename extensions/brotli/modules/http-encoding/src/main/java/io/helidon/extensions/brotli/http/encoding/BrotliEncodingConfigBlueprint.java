@@ -18,6 +18,7 @@ package io.helidon.extensions.brotli.http.encoding;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
+import io.helidon.common.Api;
 import io.helidon.extensions.brotli.BrotliInputStreamConfig;
 import io.helidon.extensions.brotli.BrotliOutputStreamConfig;
 
@@ -26,6 +27,7 @@ import io.helidon.extensions.brotli.BrotliOutputStreamConfig;
  */
 @Prototype.Blueprint
 @Prototype.Configured(value = "br", root = false)
+@Api.Preview
 interface BrotliEncodingConfigBlueprint extends Prototype.Factory<BrotliEncoding> {
     /**
      * Name of this encoding instance. The content coding identifier remains {@code br}.

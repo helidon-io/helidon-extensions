@@ -18,6 +18,7 @@ package io.helidon.extensions.brotli;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
+import io.helidon.common.Api;
 import io.helidon.common.Size;
 
 /**
@@ -25,6 +26,7 @@ import io.helidon.common.Size;
  */
 @Prototype.Blueprint
 @Prototype.Configured
+@Api.Preview
 interface BrotliOutputStreamConfigBlueprint {
     /**
      * Compression quality. Only quality {@code 0} is currently implemented.

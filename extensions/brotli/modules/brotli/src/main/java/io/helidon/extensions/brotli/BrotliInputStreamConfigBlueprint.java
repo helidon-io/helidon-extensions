@@ -20,6 +20,7 @@ import java.util.List;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
+import io.helidon.common.Api;
 import io.helidon.common.Size;
 
 /**
@@ -28,6 +29,7 @@ import io.helidon.common.Size;
 @Prototype.Blueprint
 @Prototype.Configured
 @Prototype.CustomMethods(BrotliInputStreamConfigSupport.class)
+@Api.Preview
 interface BrotliInputStreamConfigBlueprint {
     /**
      * Size of the buffer used for byte-by-byte reads.

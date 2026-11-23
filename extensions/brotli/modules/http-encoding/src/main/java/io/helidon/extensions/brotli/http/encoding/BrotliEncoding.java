@@ -22,6 +22,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 import io.helidon.builder.api.RuntimeType;
+import io.helidon.common.Api;
 import io.helidon.extensions.brotli.BrotliInputStream;
 import io.helidon.extensions.brotli.BrotliInputStreamConfig;
 import io.helidon.extensions.brotli.BrotliOutputStream;
@@ -39,6 +40,7 @@ import io.helidon.http.encoding.ContentEncoding;
  * The content coding identifier is {@code br}. Compression uses the codec's
  * supported quality level, {@code 0}.
  */
+@Api.Preview
 public final class BrotliEncoding implements ContentEncoding, RuntimeType.Api<BrotliEncodingConfig> {
     private static final Header CONTENT_ENCODING_BROTLI = HeaderValues.createCached(HeaderNames.CONTENT_ENCODING,
                                                                                     false,

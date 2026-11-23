@@ -21,10 +21,13 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.util.Objects;
 
+import io.helidon.common.Api;
+
 /**
  * Input stream that decompresses Brotli data without a native library.
  * Closing this stream closes the underlying input stream.
  */
+@Api.Preview
 public final class BrotliInputStream extends InputStream {
     /**
      * Default configuration used by the one-argument constructor.

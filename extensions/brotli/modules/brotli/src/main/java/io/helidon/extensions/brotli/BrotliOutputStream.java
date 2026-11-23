@@ -21,11 +21,14 @@ import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.util.Objects;
 
+import io.helidon.common.Api;
+
 /**
  * Output stream that compresses data using Brotli without a native library.
  * Closing this stream finishes the Brotli stream and closes the underlying output stream.
  * Only compression quality {@code 0} is currently supported.
  */
+@Api.Preview
 public final class BrotliOutputStream extends OutputStream {
     /**
      * Default configuration used by the one-argument constructor.

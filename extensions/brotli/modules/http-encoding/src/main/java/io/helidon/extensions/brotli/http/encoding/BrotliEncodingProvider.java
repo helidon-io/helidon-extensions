@@ -27,6 +27,7 @@ import io.helidon.http.encoding.spi.ContentEncodingProvider;
 /**
  * Service provider for Brotli content encoding.
  */
+@Api.Preview
 public final class BrotliEncodingProvider implements ContentEncodingProvider, Weighted {
     /**
      * Public constructor required by {@link java.util.ServiceLoader}.

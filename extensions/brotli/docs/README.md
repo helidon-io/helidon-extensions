@@ -1,6 +1,6 @@
 # Brotli
 
-The Brotli extension provides compression and decompression implemented in Java,
+The Brotli extension is a Helidon preview feature. It provides compression and decompression implemented in Java,
 plus HTTP `br` content encoding for Helidon WebClient and WebServer. The runtime
 does not require JNI, native libraries, or platform-specific artifacts.
 
