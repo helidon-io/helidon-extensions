@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Test;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class BrotliLiteralBatchTest {
     private static final List<Schedule> SCHEDULES = List.of(
@@ -41,6 +42,10 @@ class BrotliLiteralBatchTest {
             new Schedule(Integer.MAX_VALUE, 8192));
 
     static Fixture literalStream(Alphabet alphabet, boolean switches) {
+        return literalStream(alphabet, switches, 0);
+    }
+
+    private static Fixture literalStream(Alphabet alphabet, boolean switches, int excessLiterals) {
         // RFC 7932 sections 2, 3.4, 3.5, 5, 6, 7 and 9.2. A single insert command
         // fills the final metablock, so its copy and distance are never consumed.
         int length = switches ? 1024 : 70_000;
@@ -50,7 +55,7 @@ class BrotliLiteralBatchTest {
         bits.write(1, 0); // Not empty.
         int nibbles = switches ? 4 : 5;
         bits.write(2, nibbles - 4);
-        bits.write(4 * nibbles, length - 1);
+        bits.write(4 * nibbles, length - excessLiterals - 1);
         if (switches) {
             bits.write(4, 1); // Two literal block types: varlen unsigned value 1.
             bits.singleton(2, 1); // Block type 1 means the next type, modulo two.
@@ -130,6 +135,34 @@ class BrotliLiteralBatchTest {
     }
 
     @Test
+    void rejectsUnusedTreeInLiteralAndDistanceMaps() throws IOException {
+        for (boolean literalMap : new boolean[] {true, false}) {
+            byte[] encoded = twoTreeStream(literalMap, 0);
+            try (var stream = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
+                assertThrows(IOException.class, stream::read, literalMap ? "literal map" : "distance map");
+            }
+        }
+    }
+
+    @Test
+    void acceptsAllTreesSelectedByInverseMoveToFront() throws IOException {
+        for (boolean literalMap : new boolean[] {true, false}) {
+            byte[] encoded = twoTreeStream(literalMap, 1);
+            try (var stream = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
+                assertThat(stream.readAllBytes(), is(new byte[] {(byte) (literalMap ? 'B' : 'A')}));
+            }
+        }
+    }
+
+    @Test
+    void rejectsOversizedInsertionBeforeReturningAnyLiteral() throws IOException {
+        var fixture = literalStream(Alphabet.PAIR, true, 1);
+        try (var stream = new BrotliInputStream(new ByteArrayInputStream(fixture.encoded()))) {
+            assertThrows(IOException.class, () -> stream.read(new byte[1]));
+        }
+    }
+
+    @Test
     void decodesLongLiteralRunsAcrossRingGrowthAndWrap() throws IOException {
         // WBITS=16 and 70,000 literal bytes cross the 65,536-byte history window.
         for (Alphabet alphabet : Alphabet.values()) {
@@ -159,6 +192,36 @@ class BrotliLiteralBatchTest {
                 assertThat(input.read(), is(-1));
             }
         }
+    }
+
+    private static byte[] twoTreeStream(boolean literalMap, int moveToFrontIndex) {
+        var bits = new BitWriter();
+        bits.write(1, 0); // WBITS=16.
+        bits.write(1, 1); // Final nonempty metablock, one byte of output.
+        bits.write(1, 0);
+        bits.write(2, 0);
+        bits.write(16, 0);
+        bits.write(11, 0); // One block type per alphabet, default distance parameters and literal context mode.
+        if (!literalMap) {
+            bits.write(1, 0); // One literal tree.
+        }
+        bits.write(4, 1); // Two trees in the selected context map.
+        bits.write(1, 0); // No zero run encoding.
+        bits.singleton(1, moveToFrontIndex);
+        bits.write(1, 1); // Repeated index 1 alternates trees 1 and 0; repeated index 0 selects only tree 0.
+        if (literalMap) {
+            bits.write(1, 0); // One distance tree.
+        }
+        bits.singleton(8, 'A');
+        if (literalMap) {
+            bits.singleton(8, 'B');
+        }
+        bits.singleton(10, 8); // Insert one literal, completing the metablock.
+        bits.singleton(6, 0);
+        if (!literalMap) {
+            bits.singleton(6, 1);
+        }
+        return bits.toByteArray();
     }
 
     private static void assertDecoded(Fixture fixture) throws IOException {

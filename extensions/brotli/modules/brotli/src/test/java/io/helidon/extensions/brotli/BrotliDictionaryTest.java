@@ -56,6 +56,22 @@ class BrotliDictionaryTest {
     }
 
     @Test
+    void reusingLastDictionaryDistancePreservesPreviousDistance() throws IOException {
+        byte[] dictionary = "abcdefghijklmnop".getBytes(StandardCharsets.US_ASCII);
+        for (boolean implicit : new boolean[] {true, false}) {
+            var bits = new BitWriter();
+            bits.write(1, 0); // WBITS=16.
+            // The two most recent initial distances are 4 and 11. Reuse 4 to copy "mn".
+            writeShortDistanceBlock(bits, false, implicit ? 0 : 128, 0);
+            // Short code 1 selects the previous distance, 11, to copy "hi".
+            writeShortDistanceBlock(bits, true, 128, 1);
+            assertThat("implicit last distance: " + implicit,
+                       decode(bits.toByteArray(), List.of(dictionary), 1, 1),
+                       is("mnhi".getBytes(StandardCharsets.US_ASCII)));
+        }
+    }
+
+    @Test
     @DisplayName("RFC 9841 section 3.2 address mapping: copy one complete chunk")
     void copiesWholeChunk() throws IOException {
         assertThat(decode(dictionaryReference(8, 8), List.of(DICTIONARY), 256, 8192), is(DICTIONARY));
@@ -213,6 +229,22 @@ class BrotliDictionaryTest {
         bits.write(1, 1); // Final empty block.
         bits.write(1, 1);
         return bits.toByteArray();
+    }
+
+    private static void writeShortDistanceBlock(BitWriter bits, boolean last, int command, int distanceCode) {
+        bits.write(1, last ? 1 : 0);
+        if (last) {
+            bits.write(1, 0); // ISLASTEMPTY=0.
+        }
+        bits.write(2, 0);
+        bits.write(16, 1); // Two bytes of output.
+        if (!last) {
+            bits.write(1, 0); // ISUNCOMPRESSED=0.
+        }
+        bits.write(13, 0);
+        bits.writeSingleton(8, 'A');
+        bits.writeSingleton(10, command); // Insert zero and copy two, with implicit or explicit distance.
+        bits.writeSingleton(6, distanceCode);
     }
 
     private static void writeDistance(BitWriter bits, int distance, int repetitions) {

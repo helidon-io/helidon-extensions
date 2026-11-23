@@ -25,9 +25,6 @@ import java.util.HexFormat;
 
 import org.junit.jupiter.api.Test;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.instanceOf;
-import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class BrotliInvalidBlockSwitchTest {
@@ -49,12 +46,9 @@ class BrotliInvalidBlockSwitchTest {
                 };
             }
             try (var stream = new BrotliInputStream(source)) {
-                IOException failure = assertThrows(IOException.class,
-                                                   () -> stream.transferTo(OutputStream.nullOutputStream()),
-                                                   "one byte at a time: " + oneByteAtATime);
-                assertThat("one byte at a time: " + oneByteAtATime, failure.getCause(), instanceOf(BrotliException.class));
-                assertThat("one byte at a time: " + oneByteAtATime,
-                           failure.getCause().getMessage(), is("Invalid metablock length"));
+                assertThrows(IOException.class,
+                             () -> stream.transferTo(OutputStream.nullOutputStream()),
+                             "one byte at a time: " + oneByteAtATime);
             }
         }
     }

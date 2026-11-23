@@ -187,7 +187,6 @@ final class Decoder {
     private int cdBrCopied;
     private int cdBlockBits;
     private byte[] cdBlockMap;
-    private byte[] output;
     private int outputOffset;
     private int outputLength;
     private boolean isUncompressed;
@@ -230,7 +229,6 @@ final class Decoder {
      * Actual decompress implementation.
      */
     void decompress(byte[] destBuffer, int destOffset, int destLen) {
-        this.output = destBuffer;
         this.outputOffset = destOffset;
         this.outputLength = destLen;
         this.outputUsed = 0;
@@ -312,7 +310,7 @@ final class Decoder {
                     continue;
                 }
                 case WRITE -> {
-                    if (writeRingBuffer() == 0) {
+                    if (writeRingBuffer(destBuffer) == 0) {
                         return;
                     }
                     write();
@@ -828,7 +826,19 @@ final class Decoder {
         if (bitReader.readBits(1) == 1) {
             inverseMoveToFrontTransform(contextMap, contextMapSize);
         }
-        return numTrees;
+        // The prefix table is no longer needed. Reuse it to mark the tree indices in the decoded map.
+        Arrays.fill(table, 0, numTrees, 0);
+        int remaining = numTrees;
+        for (int i = 0; i < contextMapSize; i++) {
+            int tree = contextMap[i] & 0xFF;
+            if (table[tree] == 0) {
+                table[tree] = 1;
+                if (--remaining == 0) {
+                    return numTrees;
+                }
+            }
+        }
+        throw new BrotliException("Context map does not use all declared trees");
     }
 
     private int decodeBlockTypeAndLength(int treeType, int numBlockTypes) {
@@ -1048,11 +1058,11 @@ final class Decoder {
         runningState = INIT_WRITE;
     }
 
-    private int writeRingBuffer() {
+    private int writeRingBuffer(byte[] destBuffer) {
         int toWrite = Math.min(outputLength - outputUsed,
             ringBufferBytesReady - ringBufferBytesWritten);
         if (toWrite != 0) {
-            System.arraycopy(ringBuffer, ringBufferBytesWritten, output,
+            System.arraycopy(ringBuffer, ringBufferBytesWritten, destBuffer,
                 outputOffset + outputUsed, toWrite);
             outputUsed += toWrite;
             ringBufferBytesWritten += toWrite;
@@ -1172,8 +1182,10 @@ final class Decoder {
         while (address >= cdChunkOffsets[index + 1]) {
             index++;
         }
-        distRbIdx = (distRbIdx + 1) & 0x3;
-        rings[distRbIdx] = distance;
+        if (distanceCode > 0) {
+            distRbIdx = (distRbIdx + 1) & 0x3;
+            rings[distRbIdx] = distance;
+        }
         metaBlockLength -= length;
         cdBrIndex = index;
         cdBrOffset = address - cdChunkOffsets[index];
@@ -1436,6 +1448,9 @@ final class Decoder {
         distanceCode = CMD_LOOKUP[cmdCode + 3];
         int insertLengthExtraBits = insertAndCopyExtraBits & 0xFF;
         insertLength = insertLengthOffset + bitReader.readBits(insertLengthExtraBits);
+        if (insertLength > metaBlockLength) {
+            throw new BrotliException("Invalid metablock length");
+        }
         int copyLengthExtraBits = insertAndCopyExtraBits >> 8;
         copyLength = copyLengthOffset + bitReader.readBits(copyLengthExtraBits);
         j = 0;
