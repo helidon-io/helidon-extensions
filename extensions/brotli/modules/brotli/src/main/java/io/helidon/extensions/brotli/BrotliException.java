@@ -25,8 +25,4 @@ final class BrotliException extends RuntimeException {
     BrotliException(String message) {
         super(message);
     }
-
-    BrotliException(String message, Throwable cause) {
-        super(message, cause);
-    }
 }

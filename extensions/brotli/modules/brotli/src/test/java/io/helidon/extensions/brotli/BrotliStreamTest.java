@@ -19,7 +19,9 @@ package io.helidon.extensions.brotli;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HexFormat;
@@ -30,6 +32,7 @@ import org.junit.jupiter.api.Test;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThan;
+import static org.hamcrest.Matchers.sameInstance;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class BrotliStreamTest {
@@ -193,6 +196,20 @@ class BrotliStreamTest {
     }
 
     @Test
+    void propagatesSourceTimeout() throws IOException {
+        var timeout = new SocketTimeoutException("source timed out");
+        var source = new InputStream() {
+            @Override
+            public int read() throws IOException {
+                throw timeout;
+            }
+        };
+        try (var input = new BrotliInputStream(source)) {
+            assertThat(assertThrows(SocketTimeoutException.class, input::read), sameInstance(timeout));
+        }
+    }
+
+    @Test
     void propagatesOutputFailureAndClosesDestination() throws IOException {
         var destination = new FailingOutputStream();
         var stream = new BrotliOutputStream(destination);
@@ -200,6 +217,25 @@ class BrotliStreamTest {
         IOException failure = assertThrows(IOException.class, stream::close);
         assertThat(failure.getMessage(), is("destination failed"));
         assertThat(destination.closed, is(true));
+    }
+
+    @Test
+    void preservesSharedWriteAndCloseFailure() throws IOException {
+        var failure = new IOException("destination failed");
+        var stream = new BrotliOutputStream(new FailingOutputStream(failure, failure));
+        stream.write(DATA);
+        assertThat(assertThrows(IOException.class, stream::close), sameInstance(failure));
+        assertThat(failure.getSuppressed().length, is(0));
+    }
+
+    @Test
+    void suppressesDistinctCloseFailureOnWriteFailure() throws IOException {
+        var writeFailure = new IOException("write failed");
+        var closeFailure = new IOException("close failed");
+        var stream = new BrotliOutputStream(new FailingOutputStream(writeFailure, closeFailure));
+        stream.write(DATA);
+        assertThat(assertThrows(IOException.class, stream::close), sameInstance(writeFailure));
+        assertThat(writeFailure.getSuppressed(), is(new Throwable[] {closeFailure}));
     }
 
     @Test
@@ -249,16 +285,30 @@ class BrotliStreamTest {
     }
 
     private static final class FailingOutputStream extends OutputStream {
+        private final IOException writeFailure;
+        private final IOException closeFailure;
         private boolean closed;
 
-        @Override
-        public void write(int value) throws IOException {
-            throw new IOException("destination failed");
+        private FailingOutputStream() {
+            this(new IOException("destination failed"), null);
+        }
+
+        private FailingOutputStream(IOException writeFailure, IOException closeFailure) {
+            this.writeFailure = writeFailure;
+            this.closeFailure = closeFailure;
         }
 
         @Override
-        public void close() {
+        public void write(int value) throws IOException {
+            throw writeFailure;
+        }
+
+        @Override
+        public void close() throws IOException {
             closed = true;
+            if (closeFailure != null) {
+                throw closeFailure;
+            }
         }
     }
 }

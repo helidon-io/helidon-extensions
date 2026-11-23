@@ -16,6 +16,7 @@
 
 package io.helidon.extensions.brotli;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -36,6 +37,33 @@ import static org.hamcrest.Matchers.is;
  * and the metadata format in section 9.2. Output scheduling itself is a stream contract.
  */
 class BrotliFlushTest {
+    @Test
+    void closeWritesFinalBytesWithoutFlushingDestination() throws IOException {
+        var destination = new RecordingOutputStream();
+        byte[] data = repetitiveData(76);
+        try (var output = new BrotliOutputStream(destination)) {
+            output.write(data);
+        }
+        assertThat(destination.closed, is(true));
+        assertThat(destination.flushCount, is(0));
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(destination.toByteArray()))) {
+            assertThat(input.readAllBytes(), is(data));
+        }
+    }
+
+    @Test
+    void explicitFlushReachesDestinationOnceBeforeClose() throws IOException {
+        var destination = new RecordingOutputStream();
+        byte[] data = repetitiveData(76);
+        try (var output = new BrotliOutputStream(destination)) {
+            output.write(data);
+            output.flush();
+            assertThat(destination.flushCount, is(1));
+            assertThat(destination.closed, is(false));
+        }
+        assertThat(destination.flushCount, is(1));
+    }
+
     @Test
     @DisplayName("RFC 7932 sections 9.2 and 11.2: flushed compressed data is decodable before close")
     void publishesCompressedPayloadBeforeClose() throws IOException {
@@ -128,6 +156,21 @@ class BrotliFlushTest {
             data[i] = pattern[i % pattern.length];
         }
         return data;
+    }
+
+    private static final class RecordingOutputStream extends ByteArrayOutputStream {
+        private int flushCount;
+        private boolean closed;
+
+        @Override
+        public void flush() {
+            flushCount++;
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+        }
     }
 
     /**

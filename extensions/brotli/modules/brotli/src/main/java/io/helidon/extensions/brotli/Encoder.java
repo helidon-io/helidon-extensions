@@ -948,7 +948,6 @@ class Encoder {
             }
             try {
                 outputStream.write(output.array(), 0, output.byteIx());
-                outputStream.flush();
                 output.clear();
             } catch (IOException e) {
                 throw new UncheckedIOException(e);

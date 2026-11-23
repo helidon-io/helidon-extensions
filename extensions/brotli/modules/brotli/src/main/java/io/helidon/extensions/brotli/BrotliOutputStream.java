@@ -125,12 +125,15 @@ public final class BrotliOutputStream extends OutputStream {
         try {
             encoder.close(input);
         } catch (UncheckedIOException e) {
+            IOException writeFailure = e.getCause();
             try {
                 outputStream.close();
             } catch (IOException closeFailure) {
-                e.getCause().addSuppressed(closeFailure);
+                if (closeFailure != writeFailure) {
+                    writeFailure.addSuppressed(closeFailure);
+                }
             }
-            throw e.getCause();
+            throw writeFailure;
         }
     }
 

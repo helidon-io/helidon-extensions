@@ -22,6 +22,7 @@ package io.helidon.extensions.brotli;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
@@ -175,7 +176,7 @@ final class BitReader {
             endOfStreamReached = count == -1;
             return count > 0;
         } catch (IOException e) {
-            throw new BrotliException("Failed to read input", e);
+            throw new UncheckedIOException(e);
         }
     }
 }

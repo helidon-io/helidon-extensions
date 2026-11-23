@@ -18,6 +18,7 @@ package io.helidon.extensions.brotli;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.util.Objects;
 
 /**
@@ -122,6 +123,8 @@ public final class BrotliInputStream extends InputStream {
             decoder.decompress(destination, offset, length);
             int decoded = decoder.outputUsed();
             return decoded == 0 ? -1 : decoded;
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
         } catch (RuntimeException e) {
             throw new IOException("Brotli stream decoding failed", e);
         }
