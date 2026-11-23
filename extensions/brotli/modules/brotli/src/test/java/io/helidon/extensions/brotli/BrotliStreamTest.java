@@ -18,6 +18,7 @@ package io.helidon.extensions.brotli;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -276,6 +277,63 @@ class BrotliStreamTest {
                 assertThat(failure.getSuppressed(), is(expectedSuppressed));
                 assertThat(destination.closed, is(true));
             }
+        }
+    }
+
+    @Test
+    void reportsCloseFailureAfterSuccessfulReadRetry() throws IOException {
+        var failure = new IOException("source failed");
+        var source = new FilterInputStream(new ByteArrayInputStream(COMPRESSED_DATA)) {
+            private boolean failNextRead = true;
+
+            @Override
+            public int read(byte[] bytes, int offset, int length) throws IOException {
+                if (failNextRead) {
+                    failNextRead = false;
+                    throw failure;
+                }
+                return super.read(bytes, offset, length);
+            }
+
+            @Override
+            public void close() throws IOException {
+                throw failure;
+            }
+        };
+        var input = new BrotliInputStream(source);
+        assertThat(assertThrows(IOException.class, input::read), sameInstance(failure));
+        assertThat(input.readAllBytes(), is(DATA));
+        assertThat(assertThrows(IOException.class, input::close), sameInstance(failure));
+    }
+
+    @Test
+    void reportsFinalWriteFailureAfterContinuedOutput() throws IOException {
+        for (boolean retryFlush : new boolean[] {false, true}) {
+            var failure = new IOException("destination failed");
+            var destination = new OutputStream() {
+                private boolean failNextFlush = true;
+
+                @Override
+                public void flush() throws IOException {
+                    if (failNextFlush) {
+                        failNextFlush = false;
+                        throw failure;
+                    }
+                }
+
+                @Override
+                public void write(int value) throws IOException {
+                    throw failure;
+                }
+            };
+            var output = new BrotliOutputStream(destination);
+            assertThat(assertThrows(IOException.class, output::flush), sameInstance(failure));
+            if (retryFlush) {
+                output.flush();
+            } else {
+                output.write(DATA);
+            }
+            assertThat(assertThrows(IOException.class, output::close), sameInstance(failure));
         }
     }
 

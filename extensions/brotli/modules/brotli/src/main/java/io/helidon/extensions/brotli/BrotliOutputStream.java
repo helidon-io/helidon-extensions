@@ -89,6 +89,7 @@ public final class BrotliOutputStream extends OutputStream {
             flush();
         }
         input.writeByte(value & 0xFF);
+        reportedFlushFailure = null;
     }
 
     @Override
@@ -104,6 +105,7 @@ public final class BrotliOutputStream extends OutputStream {
             offset += count;
             length -= count;
         }
+        reportedFlushFailure = null;
     }
 
     @Override
@@ -115,6 +117,7 @@ public final class BrotliOutputStream extends OutputStream {
                 input.clear();
             }
             outputStream.flush();
+            reportedFlushFailure = null;
         } catch (UncheckedIOException e) {
             reportedFlushFailure = e.getCause();
             throw reportedFlushFailure;

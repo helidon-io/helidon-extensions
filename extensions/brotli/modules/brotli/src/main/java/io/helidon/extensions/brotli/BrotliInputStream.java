@@ -118,6 +118,7 @@ public final class BrotliInputStream extends InputStream {
     public int read(byte[] destination, int offset, int length) throws IOException {
         Objects.checkFromIndexSize(offset, length, destination.length);
         ensureOpen();
+        reportedReadFailure = null;
         if (length == 0) {
             return 0;
         }
