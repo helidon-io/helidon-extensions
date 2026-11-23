@@ -18,6 +18,7 @@ package io.helidon.extensions.brotli;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.util.Objects;
 
@@ -27,6 +28,7 @@ import io.helidon.common.Api;
  * Input stream that decompresses Brotli data without a native library.
  * Closing this stream closes the underlying input stream.
  * After the decoder detects malformed data, subsequent reads of data fail.
+ * A source I/O failure is retryable only before the source has supplied any bytes.
  */
 @Api.Preview
 public final class BrotliInputStream extends InputStream {
@@ -120,13 +122,13 @@ public final class BrotliInputStream extends InputStream {
     public int read(byte[] destination, int offset, int length) throws IOException {
         Objects.checkFromIndexSize(offset, length, destination.length);
         ensureOpen();
-        reportedReadFailure = null;
         if (length == 0) {
             return 0;
         }
         if (decodingFailure != null) {
             throw decodingFailure;
         }
+        reportedReadFailure = null;
         int copied = Math.min(Math.max(remainingBufferBytes - bufferOffset, 0), length);
         if (copied > 0) {
             System.arraycopy(buffer, bufferOffset, destination, offset, copied);
@@ -143,6 +145,10 @@ public final class BrotliInputStream extends InputStream {
             return decoded == 0 ? -1 : decoded;
         } catch (UncheckedIOException e) {
             reportedReadFailure = e.getCause();
+            if (decoder != null || (reportedReadFailure instanceof InterruptedIOException interrupted
+                    && interrupted.bytesTransferred > 0)) {
+                decodingFailure = reportedReadFailure;
+            }
             throw reportedReadFailure;
         } catch (RuntimeException e) {
             decodingFailure = new IOException("Brotli stream decoding failed", e);

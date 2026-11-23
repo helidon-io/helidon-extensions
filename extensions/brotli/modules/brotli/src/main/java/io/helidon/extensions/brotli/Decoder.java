@@ -211,6 +211,8 @@ final class Decoder {
         this.maxWindowBits = maxWindowBits;
         this.verifyEndOfInput = verifyEndOfInput;
         this.bitReader = new BitReader(input);
+        // Publish a decoder only after the source has supplied its first byte.
+        bitReader.ensureBits(1);
         this.blockTrees = new int[BLOCK_TREE_OFFSETS];
         this.blockTrees[0] = BLOCK_TREE_OFFSETS;
         this.distRbIdx = 3;

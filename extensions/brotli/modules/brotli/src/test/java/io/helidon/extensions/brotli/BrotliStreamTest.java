@@ -282,6 +282,47 @@ class BrotliStreamTest {
     }
 
     @Test
+    void preservesSourceFailureAfterHeaderParsingStarts() throws IOException {
+        var timeout = new SocketTimeoutException("source timed out");
+        var source = new FilterInputStream(new ByteArrayInputStream(INTEROP_DATA)) {
+            private int reads;
+
+            @Override
+            public int read(byte[] bytes, int offset, int length) throws IOException {
+                if (++reads == 2) {
+                    throw timeout;
+                }
+                return super.read(bytes, offset, Math.min(length, 1));
+            }
+        };
+        try (var input = new BrotliInputStream(source)) {
+            assertThat(assertThrows(IOException.class, input::read), sameInstance(timeout));
+            assertThat(assertThrows(IOException.class, () -> input.read(new byte[8])), sameInstance(timeout));
+            assertThat(assertThrows(IOException.class, input::read), sameInstance(timeout));
+            assertThat(source.reads, is(2));
+        }
+    }
+
+    @Test
+    void preservesInterruptionDuringFirstTransfer() throws IOException {
+        var timeout = new SocketTimeoutException("partial transfer");
+        var source = new FilterInputStream(new ByteArrayInputStream(INTEROP_DATA)) {
+            @Override
+            public int read(byte[] bytes, int offset, int length) throws IOException {
+                if (timeout.bytesTransferred == 0) {
+                    timeout.bytesTransferred = super.read(bytes, offset, 1);
+                    throw timeout;
+                }
+                return super.read(bytes, offset, length);
+            }
+        };
+        try (var input = new BrotliInputStream(source)) {
+            assertThat(assertThrows(IOException.class, input::read), sameInstance(timeout));
+            assertThat(assertThrows(IOException.class, input::read), sameInstance(timeout));
+        }
+    }
+
+    @Test
     void reportsCloseFailureAfterSuccessfulReadRetry() throws IOException {
         var failure = new IOException("source failed");
         var source = new FilterInputStream(new ByteArrayInputStream(COMPRESSED_DATA)) {
