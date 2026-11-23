@@ -154,6 +154,8 @@ class BrotliStreamingTest {
 
             source.releaseThrough(encoded.length);
             assertThrows(IOException.class, input::readAllBytes);
+            assertThrows(IOException.class, input::read);
+            assertThrows(IOException.class, () -> input.read(new byte[8]));
         }
     }
 

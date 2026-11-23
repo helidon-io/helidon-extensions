@@ -26,6 +26,7 @@ import io.helidon.common.Api;
 /**
  * Input stream that decompresses Brotli data without a native library.
  * Closing this stream closes the underlying input stream.
+ * After the decoder detects malformed data, subsequent reads of data fail.
  */
 @Api.Preview
 public final class BrotliInputStream extends InputStream {
@@ -45,6 +46,7 @@ public final class BrotliInputStream extends InputStream {
     private final int dictionarySize;
 
     private Decoder decoder;
+    private IOException decodingFailure;
     private IOException reportedReadFailure;
     private int remainingBufferBytes;
     private int bufferOffset;
@@ -122,6 +124,9 @@ public final class BrotliInputStream extends InputStream {
         if (length == 0) {
             return 0;
         }
+        if (decodingFailure != null) {
+            throw decodingFailure;
+        }
         int copied = Math.min(Math.max(remainingBufferBytes - bufferOffset, 0), length);
         if (copied > 0) {
             System.arraycopy(buffer, bufferOffset, destination, offset, copied);
@@ -140,7 +145,8 @@ public final class BrotliInputStream extends InputStream {
             reportedReadFailure = e.getCause();
             throw reportedReadFailure;
         } catch (RuntimeException e) {
-            throw new IOException("Brotli stream decoding failed", e);
+            decodingFailure = new IOException("Brotli stream decoding failed", e);
+            throw decodingFailure;
         }
     }
 
