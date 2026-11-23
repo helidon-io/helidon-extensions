@@ -27,7 +27,7 @@ import io.helidon.common.features.api.Features;
 module io.helidon.extensions.jakarta.transaction.jta {
     requires static io.helidon.common.features.api;
 
-    requires transitive jakarta.transaction;
+    requires jakarta.transaction;
     requires io.helidon.service.registry;
     requires io.helidon.transaction;
 
