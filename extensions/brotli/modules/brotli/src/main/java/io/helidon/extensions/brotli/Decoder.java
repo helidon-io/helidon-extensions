@@ -1094,6 +1094,10 @@ final class Decoder {
         if (n == 1) {
             return decodeSingleHuffmanTree(group, alphabetSizeMax, alphabetSizeLimit, maxTableSize);
         }
+        if (n == 2) {
+            // Reserve the pair together to avoid growing and copying the first table.
+            group = reuseScratch(group, 2 + 2 * maxTableSize);
+        }
         int next = n;
         for (int i = 0; i < n; ++i) {
             group = ensureTreeCapacity(group, next, maxTableSize, n);
