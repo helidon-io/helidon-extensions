@@ -28,17 +28,24 @@ import java.util.Set;
 import io.helidon.common.Size;
 import io.helidon.config.Config;
 import io.helidon.config.ConfigSources;
+import io.helidon.config.metadata.model.CmModel;
+import io.helidon.config.metadata.model.CmModel.CmType;
+import io.helidon.config.metadata.model.CmResolver;
 import io.helidon.extensions.brotli.BrotliInputStreamConfig;
 import io.helidon.extensions.brotli.BrotliOutputStream;
 import io.helidon.extensions.brotli.BrotliOutputStreamConfig;
 import io.helidon.http.HeaderNames;
 import io.helidon.http.WritableHeaders;
+import io.helidon.http.encoding.ContentEncoding;
 import io.helidon.http.encoding.ContentEncodingContext;
 
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.hasItems;
+import static org.hamcrest.Matchers.hasKey;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class BrotliEncodingTest {
@@ -179,6 +186,18 @@ class BrotliEncodingTest {
 
         assertThat(context.contentEncodingSupported("br"), is(true));
         assertThat(context.contentDecodingSupported("br"), is(true));
+    }
+
+    @Test
+    void providerIsDiscoveredInConfigMetadata() {
+        var resolver = CmResolver.create(CmModel.loadAll(getClass().getClassLoader()));
+        var providers = resolver.providers(ContentEncoding.class.getName());
+
+        assertThat(providers, hasKey("br"));
+        var brotli = providers.get("br");
+        assertThat(brotli.stream().map(CmType::typeName).toList(), contains(BrotliEncoding.class.getName()));
+        assertThat(brotli.getFirst().options().stream().flatMap(option -> option.key().stream()).toList(),
+                   hasItems("input-stream", "output-stream"));
     }
 
     @Test
