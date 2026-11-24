@@ -53,8 +53,6 @@ import static io.helidon.extensions.brotli.Decoder.RunningState.WRITE;
  * API for Brotli decompression.
  */
 final class Decoder {
-    private static final int MIN_LARGE_WINDOW_BITS = 10;
-    private static final int MAX_LARGE_WINDOW_BITS = 30;
     private static final int DEFAULT_CODE_LENGTH = 8;
     private static final int CODE_LENGTH_REPEAT_CODE = 16;
     private static final int NUM_LITERAL_CODES = 256;
@@ -73,7 +71,6 @@ final class Decoder {
     private static final int NUM_DISTANCE_SHORT_CODES = 16;
     private static final int MAX_TRANSFORMED_WORD_LENGTH = 37;
     private static final int MAX_DISTANCE_BITS = 24;
-    private static final int MAX_LARGE_WINDOW_DISTANCE_BITS = 62;
     private static final int MAX_LENGTH = 15;
     // A block switch plus command and two 24-bit lengths needs at most 117 bits.
     private static final int MAX_ATOMIC_INPUT_BITS = 128;
@@ -191,7 +188,6 @@ final class Decoder {
     private int outputLength;
     private boolean isUncompressed;
     private boolean isMetadata;
-    private boolean isLargeWindow;
     private int fence;
     private int ringBufferMask;
     private int j;
@@ -464,29 +460,12 @@ final class Decoder {
         return totalSize;
     }
 
-    private int calculateDistanceAlphabetSize(int postFix, int direct, int maxDistBits) {
-        return NUM_DISTANCE_SHORT_CODES + direct + 2 * (maxDistBits << postFix);
-    }
-
-    private int calculateDistanceAlphabetLimit(int postFix, int direct) {
-        if (Decoder.MAX_ALLOWED_DISTANCE < direct + (2 << postFix)) {
-            throw new IllegalArgumentException("maxDistance is too small");
-        }
-        int offset = ((Decoder.MAX_ALLOWED_DISTANCE - direct) >> postFix) + 4;
-        int distBits = log2floor(offset) - 1;
-        int group = ((distBits - 1) << 1) | ((offset >> distBits) & 1);
-        return ((group - 1) << postFix) + (1 << postFix) + direct + NUM_DISTANCE_SHORT_CODES;
-    }
-
     /**
      * Reads brotli stream header and parses "window bits".
      *
      * @return -1 if header is invalid
      */
     private int decodeWindowBits() {
-        boolean largeWindowEnabled = isLargeWindow;
-        isLargeWindow = false;
-
         if (bitReader.readBits(1) == 0) {
             return 16;
         }
@@ -495,25 +474,14 @@ final class Decoder {
             return 17 + n;
         }
         n = bitReader.readBits(3);
-        if (n != 0) {
-            if (n == 1) {
-                if (!largeWindowEnabled) {
-                    return -1;
-                }
-                isLargeWindow = true;
-                if (bitReader.readBits(1) == 1) {
-                    return -1;
-                }
-                n = bitReader.readBits(6);
-                if (n < MIN_LARGE_WINDOW_BITS || n > MAX_LARGE_WINDOW_BITS) {
-                    return -1;
-                }
-                return n;
-            } else {
-                return 8 + n;
-            }
+        if (n == 0) {
+            return 17;
         }
-        return 17;
+        if (n == 1) {
+            // RFC 7932 section 9.1 reserves this pattern.
+            return -1;
+        }
+        return 8 + n;
     }
 
     /**
@@ -698,21 +666,21 @@ final class Decoder {
     /**
      * Reads up to 4 symbols directly and applies predefined histograms.
      */
-    private int readSimpleHuffmanCode(int alphabetSizeMax, int alphabetSizeLimit, int[] tableGroup, int tableIdx) {
-        int histogramId = readSimpleHuffmanSymbols(alphabetSizeMax, alphabetSizeLimit);
+    private int readSimpleHuffmanCode(int alphabetSize, int[] tableGroup, int tableIdx) {
+        int histogramId = readSimpleHuffmanSymbols(alphabetSize);
         return buildSimpleHuffmanTable(tableGroup, tableIdx, histogramId);
     }
 
-    private int readSimpleHuffmanSymbols(int alphabetSizeMax, int alphabetSizeLimit) {
+    private int readSimpleHuffmanSymbols(int alphabetSize) {
         simpleSymbols = reuseScratch(simpleSymbols, 4);
         int[] symbols = simpleSymbols;
-        int maxBits = 1 + log2floor(alphabetSizeMax - 1);
+        int maxBits = 1 + log2floor(alphabetSize - 1);
         int numSymbols = bitReader.readBits(2) + 1;
         int histogramId = numSymbols;
 
         for (int i = 0; i < numSymbols; i++) {
             int symbol = bitReader.readBits(maxBits);
-            if (symbol >= alphabetSizeLimit) {
+            if (symbol >= alphabetSize) {
                 throw new BrotliException("Can't readHuffmanCode");
             }
             symbols[i] = symbol;
@@ -760,10 +728,10 @@ final class Decoder {
         return tableSize;
     }
 
-    private int readComplexHuffmanCode(int alphabetSizeLimit, int skip, int[] tableGroup, int tableIdx) {
-        huffmanCodeLengths = reuseScratch(huffmanCodeLengths, alphabetSizeLimit);
+    private int readComplexHuffmanCode(int alphabetSize, int skip, int[] tableGroup, int tableIdx) {
+        huffmanCodeLengths = reuseScratch(huffmanCodeLengths, alphabetSize);
         int[] codeLengths = huffmanCodeLengths;
-        Arrays.fill(codeLengths, 0, alphabetSizeLimit, 0);
+        Arrays.fill(codeLengths, 0, alphabetSize, 0);
         codeLengthDepths = reuseScratch(codeLengthDepths, CODE_LENGTH_CODES);
         int[] codeLengthCodeLengths = codeLengthDepths;
         Arrays.fill(codeLengthCodeLengths, 0);
@@ -781,8 +749,8 @@ final class Decoder {
         if (space != 0 && numCodes != 1) {
             throw new BrotliException("Corrupted Huffman code histogram");
         }
-        readHuffmanCodeLengths(codeLengthCodeLengths, alphabetSizeLimit, codeLengths);
-        return buildHuffmanTable(tableGroup, tableIdx, HUFFMAN_TABLE_BITS, codeLengths, alphabetSizeLimit);
+        readHuffmanCodeLengths(codeLengthCodeLengths, alphabetSize, codeLengths);
+        return buildHuffmanTable(tableGroup, tableIdx, HUFFMAN_TABLE_BITS, codeLengths, alphabetSize);
     }
 
     /**
@@ -790,12 +758,12 @@ final class Decoder {
      *
      * @return number of slots used by resulting Huffman table
      */
-    private int readHuffmanCode(int alphabetSizeMax, int alphabetSizeLimit, int[] tableGroup, int tableIdx) {
+    private int readHuffmanCode(int alphabetSize, int[] tableGroup, int tableIdx) {
         int simpleCodeOrSkip = bitReader.readBits(2);
         if (simpleCodeOrSkip == 1) {
-            return readSimpleHuffmanCode(alphabetSizeMax, alphabetSizeLimit, tableGroup, tableIdx);
+            return readSimpleHuffmanCode(alphabetSize, tableGroup, tableIdx);
         } else {
-            return readComplexHuffmanCode(alphabetSizeLimit, simpleCodeOrSkip, tableGroup, tableIdx);
+            return readComplexHuffmanCode(alphabetSize, simpleCodeOrSkip, tableGroup, tableIdx);
         }
     }
 
@@ -817,7 +785,7 @@ final class Decoder {
         int[] table = contextMapTable;
         int tableIdx = table.length - 1;
         table[tableIdx] = 0;
-        readHuffmanCode(alphabetSize, alphabetSize, table, tableIdx);
+        readHuffmanCode(alphabetSize, table, tableIdx);
         for (int i = 0; i < contextMapSize;) {
             int code = readSymbol(table, tableIdx);
             if (code == 0) {
@@ -947,25 +915,24 @@ final class Decoder {
         }
 
         int blockTypeAlphabetSize = numBlockTypes + 2;
-        offset += readHuffmanCode(blockTypeAlphabetSize, blockTypeAlphabetSize, blockTrees, 2 * treeType);
+        offset += readHuffmanCode(blockTypeAlphabetSize, blockTrees, 2 * treeType);
         blockTrees[2 * treeType + 1] = offset;
 
         int blockLengthAlphabetSize = NUM_BLOCK_LENGTH_CODES;
-        offset += readHuffmanCode(blockLengthAlphabetSize, blockLengthAlphabetSize, blockTrees, 2 * treeType + 1);
+        offset += readHuffmanCode(blockLengthAlphabetSize, blockTrees, 2 * treeType + 1);
         blockTrees[2 * treeType + 2] = offset;
 
         return readBlockLength(blockTrees, 2 * treeType + 1);
     }
 
-    private void calculateDistanceLut(int alphabetSizeLimit) {
-        if (distancePostfixBits == 0 && numDirectDistanceCodes == 0
-                && alphabetSizeLimit == DEFAULT_DISTANCE_LUT.extraBits.length) {
+    private void calculateDistanceLut(int alphabetSize) {
+        if (distancePostfixBits == 0 && numDirectDistanceCodes == 0) {
             distanceLut = DEFAULT_DISTANCE_LUT;
             return;
         }
         // Retain custom capacity across default metablocks without ever modifying the shared default tables.
-        if (customDistanceLut == null || customDistanceLut.extraBits.length < alphabetSizeLimit) {
-            customDistanceLut = new DistanceLut(alphabetSizeLimit);
+        if (customDistanceLut == null || customDistanceLut.extraBits.length < alphabetSize) {
+            customDistanceLut = new DistanceLut(alphabetSize);
         }
         distanceLut = customDistanceLut;
         byte[] distExtraBits = distanceLut.extraBits;
@@ -983,7 +950,7 @@ final class Decoder {
         }
 
         /* Fill regular distance codes. */
-        while (i < alphabetSizeLimit) {
+        while (i < alphabetSize) {
             int base = numDirectDistanceCodes + ((((2 + half) << bits) - 4) << distancePostfixBits) + 1;
             /* Always fill the complete group. */
             for (int j = 0; j < postfix; ++j) {
@@ -1026,24 +993,12 @@ final class Decoder {
         distContextMap = reuseScratch(distContextMap, numDistanceBlockTypes << DISTANCE_CONTEXT_BITS);
         int numDistTrees = decodeContextMap(numDistanceBlockTypes << DISTANCE_CONTEXT_BITS, distContextMap);
 
-        literalTreeGroup = decodeHuffmanTreeGroup(literalTreeGroup, NUM_LITERAL_CODES, NUM_LITERAL_CODES,
-                                                 numLiteralTrees);
-        commandTreeGroup = decodeHuffmanTreeGroup(commandTreeGroup, NUM_COMMAND_CODES, NUM_COMMAND_CODES,
-                                                 numCommandBlockTypes);
-        int distanceAlphabetSizeMax = calculateDistanceAlphabetSize(
-                distancePostfixBits,
-                numDirectDistanceCodes,
-                MAX_DISTANCE_BITS);
-        int distanceAlphabetSizeLimit = distanceAlphabetSizeMax;
-        if (isLargeWindow) {
-            distanceAlphabetSizeMax = calculateDistanceAlphabetSize(distancePostfixBits,
-                    numDirectDistanceCodes,
-                    MAX_LARGE_WINDOW_DISTANCE_BITS);
-            distanceAlphabetSizeLimit = calculateDistanceAlphabetLimit(distancePostfixBits, numDirectDistanceCodes);
-        }
-        distanceTreeGroup = decodeHuffmanTreeGroup(distanceTreeGroup, distanceAlphabetSizeMax, distanceAlphabetSizeLimit,
-                                                  numDistTrees);
-        calculateDistanceLut(distanceAlphabetSizeLimit);
+        literalTreeGroup = decodeHuffmanTreeGroup(literalTreeGroup, NUM_LITERAL_CODES, numLiteralTrees);
+        commandTreeGroup = decodeHuffmanTreeGroup(commandTreeGroup, NUM_COMMAND_CODES, numCommandBlockTypes);
+        int distanceAlphabetSize = NUM_DISTANCE_SHORT_CODES + numDirectDistanceCodes
+                + 2 * (MAX_DISTANCE_BITS << distancePostfixBits);
+        distanceTreeGroup = decodeHuffmanTreeGroup(distanceTreeGroup, distanceAlphabetSize, numDistTrees);
+        calculateDistanceLut(distanceAlphabetSize);
 
         contextMapSlice = 0;
         distContextMapSlice = 0;
@@ -1089,10 +1044,10 @@ final class Decoder {
         }
     }
 
-    private int[] decodeHuffmanTreeGroup(int[] group, int alphabetSizeMax, int alphabetSizeLimit, int n) {
-        int maxTableSize = Context.MAX_HUFFMAN_TABLE_SIZE[(alphabetSizeLimit + 31) >> 5];
+    private int[] decodeHuffmanTreeGroup(int[] group, int alphabetSize, int n) {
+        int maxTableSize = Context.MAX_HUFFMAN_TABLE_SIZE[(alphabetSize + 31) >> 5];
         if (n == 1) {
-            return decodeSingleHuffmanTree(group, alphabetSizeMax, alphabetSizeLimit, maxTableSize);
+            return decodeSingleHuffmanTree(group, alphabetSize, maxTableSize);
         }
         if (n == 2) {
             // Reserve the pair together to avoid growing and copying the first table.
@@ -1102,22 +1057,22 @@ final class Decoder {
         for (int i = 0; i < n; ++i) {
             group = ensureTreeCapacity(group, next, maxTableSize, n);
             group[i] = next;
-            next += readHuffmanCode(alphabetSizeMax, alphabetSizeLimit, group, i);
+            next += readHuffmanCode(alphabetSize, group, i);
         }
         return group;
     }
 
-    private int[] decodeSingleHuffmanTree(int[] group, int alphabetSizeMax, int alphabetSizeLimit, int maxTableSize) {
+    private int[] decodeSingleHuffmanTree(int[] group, int alphabetSize, int maxTableSize) {
         int simpleCodeOrSkip = bitReader.readBits(2);
         if (simpleCodeOrSkip == 1) {
-            int histogramId = readSimpleHuffmanSymbols(alphabetSizeMax, alphabetSizeLimit);
+            int histogramId = readSimpleHuffmanSymbols(alphabetSize);
             group = reuseScratch(group, 1 + (1 << HUFFMAN_TABLE_BITS));
             group[0] = 1;
             buildSimpleHuffmanTable(group, 0, histogramId);
         } else {
             group = reuseScratch(group, 1 + maxTableSize);
             group[0] = 1;
-            readComplexHuffmanCode(alphabetSizeLimit, simpleCodeOrSkip, group, 0);
+            readComplexHuffmanCode(alphabetSize, simpleCodeOrSkip, group, 0);
         }
         return group;
     }

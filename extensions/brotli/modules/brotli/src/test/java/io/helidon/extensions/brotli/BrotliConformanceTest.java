@@ -46,6 +46,17 @@ class BrotliConformanceTest {
                     + "c67b2aa0683c1603018cca1ce88549446e1b0d04eb2f70477f194e1c9f9071a03");
 
     @Test
+    @DisplayName("RFC 7932 section 9.1: the large-window marker is not a standard window code")
+    void rejectsLargeWindowHeader() throws IOException {
+        // RFC 9841 section 6: extended header, window exponent 24, and a final empty block.
+        byte[] encoded = HexFormat.of().parseHex("11d8");
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
+            IOException failure = assertThrows(IOException.class, input::read);
+            assertThat(failure.getCause().getMessage(), is("Invalid 'windowBits' code"));
+        }
+    }
+
+    @Test
     @DisplayName("RFC 7932 sections 9.2 and 10: metadata has no ISUNCOMPRESSED field")
     void decodesMetadataAfterCompressedBlock() throws IOException {
         // Each stream contains the compressed literal C, one metadata byte (00 or 80), then a final empty block.
