@@ -219,19 +219,6 @@ final class Decoder {
         runningState = INITIALIZED;
     }
 
-    static int[] ensureTreeCapacity(int[] group, int nextOffset, int maxTableSize, int treeCount) {
-        int required = nextOffset + maxTableSize;
-        if (group == null) {
-            return new int[required];
-        }
-        if (group.length >= required) {
-            return group;
-        }
-        int maxCapacity = treeCount + treeCount * maxTableSize;
-        int capacity = Math.min(maxCapacity, Math.max(required, group.length * 2));
-        return Arrays.copyOf(group, capacity);
-    }
-
     void close() throws IOException {
         if (runningState == CLOSED) {
             return;
@@ -388,6 +375,19 @@ final class Decoder {
             left <<= 1;
         }
         return len - rootBits;
+    }
+
+    private static int[] ensureTreeCapacity(int[] group, int nextOffset, int maxTableSize, int treeCount) {
+        int required = nextOffset + maxTableSize;
+        if (group == null) {
+            return new int[required];
+        }
+        if (group.length >= required) {
+            return group;
+        }
+        int maxCapacity = treeCount + treeCount * maxTableSize;
+        int capacity = Math.min(maxCapacity, Math.max(required, group.length * 2));
+        return Arrays.copyOf(group, capacity);
     }
 
     private static int[] reuseScratch(int[] scratch, int size) {

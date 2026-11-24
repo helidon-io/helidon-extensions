@@ -34,7 +34,6 @@ import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThan;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Regression tests for the <a href="https://www.rfc-editor.org/rfc/rfc7932.html">Brotli format (RFC 7932)</a>.
@@ -211,21 +210,13 @@ class BrotliConformanceTest {
     @DisplayName("A declared metablock length cannot reserve an output window before decoding")
     void truncatedMetablockDoesNotReserveOutputWindow() throws Exception {
         // RFC 7932 section 9.2 defines the length field; the allocation bound is a decoder policy.
-        // Query public JDK management APIs without adding a dependency to the production JPMS module.
-        var managementFactory = Class.forName("java.lang.management.ManagementFactory");
-        Object allocationBean = managementFactory.getMethod("getThreadMXBean").invoke(null);
-        var threadMxBean = Class.forName("com.sun.management.ThreadMXBean");
-        assumeTrue(threadMxBean.isInstance(allocationBean), "Thread allocation measurements are unavailable");
-        assumeTrue((boolean) threadMxBean.getMethod("isThreadAllocatedMemoryEnabled").invoke(allocationBean),
-                   "Thread allocation measurements are disabled");
-        var getAllocatedBytes = threadMxBean.getMethod("getThreadAllocatedBytes", long.class);
+        var counter = ThreadAllocation.counter();
 
         byte[] encoded = {(byte) 0xCF, (byte) 0xFF, (byte) 0xFF, (byte) 0x7F};
         try (var input = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
-            long threadId = Thread.currentThread().threadId();
-            long before = (long) getAllocatedBytes.invoke(allocationBean, threadId);
+            long before = counter.getAsLong();
             assertThrows(IOException.class, input::readAllBytes);
-            long allocated = (long) getAllocatedBytes.invoke(allocationBean, threadId) - before;
+            long allocated = counter.getAsLong() - before;
             assertThat("bytes allocated before any decoded output", allocated, lessThan(1L << 20));
         }
     }

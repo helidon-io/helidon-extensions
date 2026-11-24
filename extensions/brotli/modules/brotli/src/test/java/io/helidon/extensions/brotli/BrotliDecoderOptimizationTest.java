@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.sameInstance;
+import static org.hamcrest.Matchers.lessThan;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class BrotliDecoderOptimizationTest {
@@ -88,13 +88,14 @@ class BrotliDecoderOptimizationTest {
     // Sections 3.2, 3.5, 7 and 9.2: complex code lengths cross the eight-bit table root,
     // and four literal context trees replace a single tree between metablocks.
     // Google Brotli 1.2.1 independently verified every encoded stream and expected output.
+    private static final Fixture FOUR_LITERAL_TREES = new Fixture("four literal context trees",
+            "3000000053930300000050555555adaaaaaafaffffff27200224600220400860", "10203000");
     private static final List<Fixture> COMPLEX_AND_CONTEXT_TREES = List.of(
             new Fixture("complex lengths three",
                     "700000005055445555cccccccc8143004039dd07", "0001020304050607"),
             new Fixture("complex lengths one through nine",
                     "900000005055445555482c6a1e9901500068f7bedfdfbfff03", "00010203040506070809"),
-            new Fixture("four literal context trees",
-                    "3000000053930300000050555555adaaaaaafaffffff27200224600220400860", "10203000"),
+            FOUR_LITERAL_TREES,
             new Fixture("one, four, one literal trees",
                     "700000005055445555cccccccc8143004039dd3100000053930300000050555555adaaaaaafaffffff"
                             + "27200224600220400800090000005545545585c4a2e6911900058076effbfdfdfb3f",
@@ -190,20 +191,36 @@ class BrotliDecoderOptimizationTest {
     }
 
     @Test
-    void allocatesTreeGroupStorageAsTreesAreDecoded() {
-        int treeCount = 16;
-        int maxTableSize = 512;
-        int[] group = Decoder.ensureTreeCapacity(null, treeCount, maxTableSize, treeCount);
-        assertThat(group.length, is(treeCount + maxTableSize));
-        group[0] = treeCount;
-        group[treeCount] = 42;
+    void allocatesTreeGroupStorageAsTreesAreDecoded() throws Exception {
+        byte[] encoded = HexFormat.of().parseHex(FOUR_LITERAL_TREES.encoded());
+        byte[] expected = HexFormat.of().parseHex(FOUR_LITERAL_TREES.expected());
+        try (var warmup = new BrotliInputStream(new ByteArrayInputStream(encoded))) {
+            assertThat(warmup.readAllBytes(), is(expected));
+        }
+        var allocated = ThreadAllocation.counter();
+        var source = new ByteArrayInputStream(encoded) {
+            private long beforeTrees;
+            private long afterFirstGrowth;
 
-        int nextOffset = treeCount + 256;
-        int[] grown = Decoder.ensureTreeCapacity(group, nextOffset, maxTableSize, treeCount);
-        assertThat(grown.length, greaterThan(nextOffset + maxTableSize - 1));
-        assertThat(grown[0], is(treeCount));
-        assertThat(grown[treeCount], is(42));
-        assertThat(Decoder.ensureTreeCapacity(grown, nextOffset, maxTableSize, treeCount), sameInstance(grown));
+            @Override
+            public int read(byte[] bytes, int offset, int length) {
+                // These offsets bracket the initial reservation and first growth in this frozen fixture.
+                if (pos == 22) {
+                    beforeTrees = allocated.getAsLong();
+                } else if (pos == 25) {
+                    afterFirstGrowth = allocated.getAsLong();
+                }
+                return super.read(bytes, offset, Math.min(length, 1));
+            }
+        };
+        try (var input = new BrotliInputStream(source)) {
+            assertThat(input.readAllBytes(), is(expected));
+        }
+        assertThat(source.beforeTrees, greaterThan(0L));
+        assertThat(source.afterFirstGrowth, greaterThan(source.beforeTrees));
+        // The first two incremental arrays total about 7.5 KiB; a full four-tree array alone exceeds 9 KiB.
+        assertThat("bytes allocated while starting the literal tree group",
+                   source.afterFirstGrowth - source.beforeTrees, lessThan(9L * 1024));
     }
 
     private static void assertDecoded(Fixture fixture) throws IOException {
