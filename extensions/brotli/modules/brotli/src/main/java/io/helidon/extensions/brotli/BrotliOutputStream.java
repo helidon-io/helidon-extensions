@@ -146,28 +146,31 @@ public final class BrotliOutputStream extends OutputStream {
         // Try-with-resources cannot suppress a cleanup failure on the identical exception from flush.
         IOException reported = reportedFlushFailure;
         reportedFlushFailure = null;
-        IOException finishFailure = null;
+        Throwable finishFailure = null;
         try {
             if (!writeFailed) {
                 encoder.finish(input);
             }
         } catch (UncheckedIOException e) {
-            if (e.getCause() != reported) {
-                finishFailure = e.getCause();
+            IOException cause = e.getCause();
+            if (cause != reported) {
+                finishFailure = cause;
+                throw cause;
             }
-        }
-        try {
-            outputStream.close();
-        } catch (IOException e) {
-            if (e != reported && e != finishFailure) {
-                if (finishFailure == null) {
-                    throw e;
+        } catch (RuntimeException | Error e) {
+            finishFailure = e;
+            throw e;
+        } finally {
+            try {
+                outputStream.close();
+            } catch (IOException | RuntimeException | Error e) {
+                if (e != reported && e != finishFailure) {
+                    if (finishFailure == null) {
+                        throw e;
+                    }
+                    finishFailure.addSuppressed(e);
                 }
-                finishFailure.addSuppressed(e);
             }
-        }
-        if (finishFailure != null) {
-            throw finishFailure;
         }
     }
 

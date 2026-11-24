@@ -486,6 +486,41 @@ class BrotliStreamTest {
     }
 
     @Test
+    void closesDestinationAfterUncheckedWriteFailure() throws IOException {
+        for (boolean sharedFailure : new boolean[] {false, true}) {
+            var writeFailure = new IllegalStateException("write failed");
+            var closeFailure = new IOException("close failed");
+            var destination = new OutputStream() {
+                private int closeAttempts;
+
+                @Override
+                public void write(int value) {
+                    throw writeFailure;
+                }
+
+                @Override
+                public void close() throws IOException {
+                    closeAttempts++;
+                    if (sharedFailure) {
+                        throw writeFailure;
+                    }
+                    throw closeFailure;
+                }
+            };
+            var stream = new BrotliOutputStream(destination);
+            stream.write(1);
+
+            assertThat(assertThrows(IllegalStateException.class, stream::close), sameInstance(writeFailure));
+            assertThat("destination cleanup after failed final write", destination.closeAttempts, is(1));
+            Throwable[] expectedSuppressed = sharedFailure ? new Throwable[0] : new Throwable[] {closeFailure};
+            assertThat(writeFailure.getSuppressed(), is(expectedSuppressed));
+
+            stream.close();
+            assertThat("destination cleanup after a repeated close", destination.closeAttempts, is(1));
+        }
+    }
+
+    @Test
     void rejectsUnsupportedCompressionQuality() {
         var outputConfig = BrotliOutputStreamConfig.builder().quality(1).build();
         assertThrows(IllegalArgumentException.class,
