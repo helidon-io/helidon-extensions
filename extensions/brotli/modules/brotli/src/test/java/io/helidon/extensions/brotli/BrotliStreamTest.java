@@ -24,6 +24,7 @@ import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -473,6 +474,33 @@ class BrotliStreamTest {
         stream.write(DATA);
         assertThat(assertThrows(IOException.class, stream::close), sameInstance(failure));
         assertThat(failure.getSuppressed().length, is(0));
+    }
+
+    @Test
+    void preservesSharedUncheckedIoFailureOnClose() throws IOException {
+        var cause = new IOException("destination failed");
+        var failure = new UncheckedIOException(cause);
+        var destination = new OutputStream() {
+            private int closeAttempts;
+
+            @Override
+            public void write(int value) {
+                throw failure;
+            }
+
+            @Override
+            public void close() {
+                closeAttempts++;
+                throw failure;
+            }
+        };
+        var stream = new BrotliOutputStream(destination);
+        stream.write(1);
+
+        assertThat(assertThrows(IOException.class, stream::close), sameInstance(cause));
+        assertThat("suppressed failures on the original I/O error", cause.getSuppressed().length, is(0));
+        stream.close();
+        assertThat("destination close attempts", destination.closeAttempts, is(1));
     }
 
     @Test

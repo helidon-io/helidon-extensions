@@ -164,7 +164,8 @@ public final class BrotliOutputStream extends OutputStream {
             try {
                 outputStream.close();
             } catch (IOException | RuntimeException | Error e) {
-                if (e != reported && e != finishFailure) {
+                Throwable closeFailure = e instanceof UncheckedIOException unchecked ? unchecked.getCause() : e;
+                if (closeFailure != reported && closeFailure != finishFailure) {
                     if (finishFailure == null) {
                         throw e;
                     }
