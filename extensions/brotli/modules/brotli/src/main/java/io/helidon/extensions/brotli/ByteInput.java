@@ -117,7 +117,7 @@ final class ByteInput {
 
     private void ensureCapacity(int required) {
         if (required > array.length) {
-            int capacity = Math.min(limit, Math.max(required, Math.max(32, array.length << 1)));
+            int capacity = Math.clamp(Math.max(32, array.length << 1), required, limit);
             array = Arrays.copyOf(array, capacity);
         }
     }

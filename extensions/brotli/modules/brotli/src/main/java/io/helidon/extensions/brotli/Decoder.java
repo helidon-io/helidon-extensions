@@ -382,7 +382,7 @@ final class Decoder {
             return group;
         }
         int maxCapacity = treeCount + treeCount * maxTableSize;
-        int capacity = Math.min(maxCapacity, Math.max(required, group.length * 2));
+        int capacity = Math.clamp(group.length * 2, required, maxCapacity);
         return Arrays.copyOf(group, capacity);
     }
 

@@ -503,7 +503,7 @@ class HuffmanTree {
         }
         if (required > counts.length) {
             int oldSize = counts.length;
-            int size = Math.min(maximumSize, Math.max(required, oldSize << 1));
+            int size = Math.clamp(oldSize << 1, required, maximumSize);
             counts = Arrays.copyOf(counts, size);
             leftChildren = Arrays.copyOf(leftChildren, size);
             rightChildren = Arrays.copyOf(rightChildren, size);

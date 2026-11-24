@@ -129,7 +129,7 @@ public final class BrotliInputStream extends InputStream {
             throw decodingFailure;
         }
         reportedReadFailure = null;
-        int copied = Math.min(Math.max(remainingBufferBytes - bufferOffset, 0), length);
+        int copied = Math.clamp(remainingBufferBytes - bufferOffset, 0, length);
         if (copied > 0) {
             System.arraycopy(buffer, bufferOffset, destination, offset, copied);
             bufferOffset += copied;
