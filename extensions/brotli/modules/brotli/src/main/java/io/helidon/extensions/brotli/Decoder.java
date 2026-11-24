@@ -382,7 +382,7 @@ final class Decoder {
             return group;
         }
         int maxCapacity = treeCount + treeCount * maxTableSize;
-        int capacity = Math.clamp(group.length * 2, required, maxCapacity);
+        int capacity = Math.clamp(group.length * 2L, required, maxCapacity);
         return Arrays.copyOf(group, capacity);
     }
 
@@ -918,8 +918,7 @@ final class Decoder {
         offset += readHuffmanCode(blockTypeAlphabetSize, blockTrees, 2 * treeType);
         blockTrees[2 * treeType + 1] = offset;
 
-        int blockLengthAlphabetSize = NUM_BLOCK_LENGTH_CODES;
-        offset += readHuffmanCode(blockLengthAlphabetSize, blockTrees, 2 * treeType + 1);
+        offset += readHuffmanCode(NUM_BLOCK_LENGTH_CODES, blockTrees, 2 * treeType + 1);
         blockTrees[2 * treeType + 2] = offset;
 
         return readBlockLength(blockTrees, 2 * treeType + 1);

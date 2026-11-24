@@ -1401,7 +1401,7 @@ final class Dictionary {
                 offset++;
             }
             for (int j = 0; j < flip; ++j) {
-                dict[offset] ^= 236;
+                dict[offset] = (byte) (dict[offset] ^ 236);
                 offset++;
             }
         }

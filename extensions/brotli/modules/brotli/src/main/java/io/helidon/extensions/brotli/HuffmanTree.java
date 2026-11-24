@@ -79,7 +79,7 @@ class HuffmanTree {
         for (int i = 0; i < length; i++) {
             depths.set(i, 0);
         }
-        buildHuffmanTree(length, histogram, depths);
+        createHuffmanTree(histogram, 0, length, 14, depths, 0);
         convertBitDepthsToSymbols(depths, length, bits, 0);
         storeHuffmanTree(count, length, depths, storage, symbols);
     }
@@ -238,43 +238,6 @@ class HuffmanTree {
         int temp = array[i];
         array[i] = array[j];
         array[j] = temp;
-    }
-
-    private void buildHuffmanTree(int length, int[] histogram, Buffer depths) {
-        ensureCapacity(2 * length + 1);
-        for (int countLimit = 1; ; countLimit *= 2) {
-            int nodeIndex = 0;
-            for (int symbol = length - 1; symbol >= 0; symbol--) {
-                if (histogram[symbol] != 0) {
-                    setNode(nodeIndex++, Math.max(histogram[symbol], countLimit), -1, symbol);
-                }
-            }
-            int n = nodeIndex;
-            int i = 0;
-            int j = n + 1;
-            sortNodes(n);
-            setNode(nodeIndex++, Integer.MAX_VALUE, -1, -1);
-            setNode(nodeIndex++, Integer.MAX_VALUE, -1, -1);
-            for (int k = n - 1; k > 0; k--) {
-                int left;
-                int right;
-                if (counts[i] <= counts[j]) {
-                    left = i++;
-                } else {
-                    left = j++;
-                }
-                if (counts[i] <= counts[j]) {
-                    right = i++;
-                } else {
-                    right = j++;
-                }
-                setNode(nodeIndex - 1, counts[left] + counts[right], left, right);
-                setNode(nodeIndex++, Integer.MAX_VALUE, -1, -1);
-            }
-            if (setDepth(2 * n - 1, depths, 14, 0)) {
-                break;
-            }
-        }
     }
 
     private void storeHuffmanTreeOfHuffmanTreeToBitMask(int numCodes, Buffer codeLengthBitdepth, BitBuffer storage) {
@@ -503,7 +466,7 @@ class HuffmanTree {
         }
         if (required > counts.length) {
             int oldSize = counts.length;
-            int size = Math.clamp(oldSize << 1, required, maximumSize);
+            int size = Math.clamp((long) oldSize << 1, required, maximumSize);
             counts = Arrays.copyOf(counts, size);
             leftChildren = Arrays.copyOf(leftChildren, size);
             rightChildren = Arrays.copyOf(rightChildren, size);

@@ -51,8 +51,8 @@ final class ByteInput {
         return position;
     }
 
-    void position(int position) {
-        this.position = position;
+    void rewind() {
+        position = 0;
     }
 
     int remaining() {

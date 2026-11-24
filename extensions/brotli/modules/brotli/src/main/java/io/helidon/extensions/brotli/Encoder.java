@@ -103,7 +103,7 @@ class Encoder {
             return;
         }
         inputBuffer = input;
-        inputBuffer.position(0);
+        inputBuffer.rewind();
         checkInitialization();
         if (quality == QUALITY_LEVEL_0) {
             brotliCompressStreamFast(eof);
@@ -133,9 +133,9 @@ class Encoder {
             isInitialized = true;
         }
         if (cmdDepth == null && inputBuffer.remaining() != 0) {
-            cmdDepth = new Buffer(128);
-            cmdBits = new Buffer(128);
-            cmdCode = new BitBuffer(512);
+            cmdDepth = new Buffer(128, Context.DEFAULT_COMMAND_DEPTHS);
+            cmdBits = new Buffer(128, Context.DEFAULT_COMMAND_BITS);
+            cmdCode = new BitBuffer(512, Context.DEFAULT_COMMAND_CODE, Context.DEFAULT_COMMAND_CODE_BITS);
             smallTable = new Buffer(1024);
             largeTable = new Buffer();
             cmdHisto = new int[128];
@@ -143,15 +143,7 @@ class Encoder {
             litDepth = new Buffer(256);
             litBits = new Buffer(256);
             literalTree = new HuffmanTree(513);
-            initCommandPrefixCodes();
         }
-    }
-
-    private void initCommandPrefixCodes() {
-        cmdDepth.writeArray(Context.DEFAULT_COMMAND_DEPTHS, 0, Context.DEFAULT_COMMAND_DEPTHS.length, 0);
-        cmdBits.writeArray(Context.DEFAULT_COMMAND_BITS, 0, Context.DEFAULT_COMMAND_BITS.length, 0);
-        cmdCode.writeArray(Context.DEFAULT_COMMAND_CODE, 0, Context.DEFAULT_COMMAND_CODE.length, 0);
-        cmdCode.bitIx(Context.DEFAULT_COMMAND_CODE_BITS);
     }
 
     /**
@@ -292,14 +284,14 @@ class Encoder {
             int prefix = tail >> nBits;
             int insCode = (nBits << 1) + prefix + 42;
             storage.writeBit(depth.get(insCode), bits.get(insCode));
-            storage.writeBit(nBits, (tail - (prefix << nBits)));
+            storage.writeBit(nBits, (tail - ((long) prefix << nBits)));
             ++histo[insCode];
         } else if (insertLen < 2114) {
             int tail = insertLen - 66;
             int nBits = log2FloorNonZero(tail);
             int code = nBits + 50;
             storage.writeBit(depth.get(code), bits.get(code));
-            storage.writeBit(nBits, (tail - (1 << nBits)));
+            storage.writeBit(nBits, (tail - (1L << nBits)));
             ++histo[code];
         } else {
             storage.writeBit(depth.get(61), bits.get(61));
@@ -422,7 +414,7 @@ class Encoder {
             int prefix = tail >> nBits;
             int code = (nBits << 1) + prefix + 4;
             storage.writeBit(depth.get(code), bits.get(code));
-            storage.writeBit(nBits, (tail - (prefix << nBits)));
+            storage.writeBit(nBits, (tail - ((long) prefix << nBits)));
             ++histo[code];
         } else if (copyLen < 136) {
             int tail = copyLen - 8;
@@ -437,7 +429,7 @@ class Encoder {
             int nBits = log2FloorNonZero(tail);
             int code = nBits + 28;
             storage.writeBit(depth.get(code), bits.get(code));
-            storage.writeBit(nBits, (tail - (1 << nBits)));
+            storage.writeBit(nBits, (tail - (1L << nBits)));
             storage.writeBit(depth.get(64), bits.get(64));
             ++histo[code];
             ++histo[64];
@@ -460,14 +452,14 @@ class Encoder {
             int prefix = tail >> nbits;
             int code = (nbits << 1) + prefix + 20;
             storage.writeBit(depth.get(code), bits.get(code));
-            storage.writeBit(nbits, (tail - (prefix << nbits)));
+            storage.writeBit(nbits, (tail - ((long) prefix << nbits)));
             ++histo[code];
         } else if (copyLen < 2118) {
             int tail = copyLen - 70;
             int nBits = log2FloorNonZero(tail);
             int code = nBits + 28;
             storage.writeBit(depth.get(code), bits.get(code));
-            storage.writeBit(nBits, (tail - (1 << nBits)));
+            storage.writeBit(nBits, (tail - (1L << nBits)));
             ++histo[code];
         } else {
             storage.writeBit(depth.get(39), bits.get(39));
@@ -577,7 +569,7 @@ class Encoder {
                     storage.writeBit(2, 3);
                     lastBytes = storage.get16Bits(storage.bitIx() >> 3);
                     lastBytesBits = storage.bitIx() & 7;
-                    outputManager.finished(true);
+                    outputManager.markFinished();
                     while (injectFlushOrPushOutput(output, storage)) {
                         // Drain complete bytes and the zero-filled final partial byte.
                     }
@@ -606,10 +598,6 @@ class Encoder {
                 storage.writeByte(lastBytes >> 8);
                 storage.bitIx(lastBytesBits);
                 outputManager.resetLastFlushPosition();
-                if (forceFlush && blockSize == 0) {
-                    outputManager.finished(false);
-                    continue;
-                }
                 getHashTable(blockSize);
 
                 brotliCompressFragmentFast(blockSize, isLast);
@@ -629,7 +617,7 @@ class Encoder {
                 lastBytes = storage.get16Bits((storage.bitIx() >> 3));
                 lastBytesBits = storage.bitIx() & 7;
                 if (isLast) {
-                    outputManager.finished(true);
+                    outputManager.markFinished();
                 }
                 continue;
             }
@@ -992,8 +980,8 @@ class Encoder {
             return lastBytesBit;
         }
 
-        void finished(boolean isFinished) {
-            this.isFinished = isFinished;
+        void markFinished() {
+            isFinished = true;
         }
     }
 }

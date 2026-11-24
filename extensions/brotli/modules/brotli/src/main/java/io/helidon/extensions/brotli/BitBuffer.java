@@ -42,6 +42,15 @@ final class BitBuffer {
         this.capacity = capacity;
     }
 
+    BitBuffer(int capacity, int[] initialBytes, int initialBitCount) {
+        this(capacity);
+        ensureCapacity(initialBytes.length + 1);
+        for (int i = 0; i < initialBytes.length; i++) {
+            array[i] = (byte) initialBytes[i];
+        }
+        this.bitIx = initialBitCount;
+    }
+
     int bitIx() {
         return bitIx;
     }
@@ -77,13 +86,6 @@ final class BitBuffer {
 
     void applyMask(int index, int mask) {
         array[index] &= (byte) mask;
-    }
-
-    void writeArray(int[] source, int offset, int length, int destination) {
-        ensureCapacity(destination + length + 1);
-        for (int i = 0; i < length; i++) {
-            array[destination + i] = (byte) source[offset + i];
-        }
     }
 
     void writeBuffer(BitBuffer source, int offset, int length) {

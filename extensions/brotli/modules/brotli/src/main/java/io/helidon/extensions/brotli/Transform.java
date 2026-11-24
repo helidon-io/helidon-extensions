@@ -25,14 +25,14 @@ import java.nio.ByteBuffer;
 
 /**
  * Transformations on dictionary words.
- *
+ * <p>
  * Transform descriptor is a triplet: {prefix, operator, suffix}.
  * "prefix" and "suffix" are short strings inserted before and after transformed dictionary word.
  * "operator" is applied to dictionary word itself.
- *
+ * <p>
  * Some operators has "built-in" parameters, i.e. parameter is defined by operator ordinal. Other
  * operators have "external" parameters, supplied via additional table encoded in shared dictionary.
- *
+ * <p>
  * Operators:
  *  - IDENTITY (0): dictionary word is inserted "as is"
  *  - OMIT_LAST_N (1 - 9): last N octets of dictionary word are not inserted; N == ordinal
@@ -41,7 +41,7 @@ import java.nio.ByteBuffer;
  *  - UPPERCASE_ALL (11): all "scalars" are XOR'ed with number 32
  *  - SHIFT_FIRST (21): first "scalar" is shifted by number form parameter table
  *  - SHIFT_ALL (22): all "scalar" is shifted by number form parameter table
- *
+ * <p>
  * Here "scalar" is a variable length character coding similar to UTF-8 encoding.
  * UPPERCASE_XXX / SHIFT_XXX operators were designed to change the case of UTF-8 encoded characters.
  * While UPPERCASE_XXX works well only on ASCII charset, SHIFT is much more generic and could be

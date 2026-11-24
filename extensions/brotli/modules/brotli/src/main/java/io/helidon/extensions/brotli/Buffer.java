@@ -30,6 +30,10 @@ final class Buffer {
         array = new int[capacity];
     }
 
+    Buffer(int capacity, int[] initialValues) {
+        array = Arrays.copyOf(initialValues, capacity);
+    }
+
     Buffer() {
         this(0);
     }
@@ -52,10 +56,6 @@ final class Buffer {
 
     void writeBuffer(Buffer source, int offset, int length, int destination) {
         System.arraycopy(source.array, offset, array, destination, length);
-    }
-
-    void writeArray(int[] source, int offset, int length, int destination) {
-        System.arraycopy(source, offset, array, destination, length);
     }
 
     void reverse(int start, int end) {
