@@ -1,7 +1,7 @@
 # Jakarta integration tests
 
 The `tests` profile includes this aggregator, following the shared extension layout.
-There are currently no separate integration-test modules. JSON-P, JSON-B, and DBClient JSON-P
+JSON-P, JSON-B, and DBClient JSON-P
 unit tests reside in their production modules under `src/test/java`.
 
 The [examples](../examples/README.md) include application tests and module-path launches.
@@ -14,3 +14,33 @@ from the Jakarta release root:
 ```shell
 mvn clean install -Ptests,examples
 ```
+
+## MySQL transaction integration
+
+The opt-in `transaction-mysql` profile adds Hibernate and EclipseLink suites ported from
+core revision `ecc7e16e3e37b48c3aca684126eee982ecc8d51b`. Each module runs the original
+transaction-method and transaction-annotation tests against MySQL, using the extension
+JTA and Narayana modules. This covers transaction propagation, persistence after commit,
+and failure behavior through the repository API.
+
+Ordinary JUnit tests use the default Maven test naming conventions. An extension-owned
+JUnit callback starts MySQL and initializes the service registry before the inherited
+fixture lifecycle methods run. Its JUnit store resource shuts down the registry and
+container after the inherited fixture cleanup, including setup failures.
+Both provider modules compile the shared `transaction-mysql/src/test/java` sources
+independently with their own provider dependencies and configuration.
+
+The suites reuse core's test-only data model, generated repositories, and common assertions.
+Those fixtures require the core Jakarta persistence runtime pending its separate migration.
+The deprecated core JTA and Narayana implementations are absent from these test dependencies.
+Transaction consumers and the independent transaction example have no persistence dependency.
+
+With an available Docker runtime and the core test fixtures installed, run from the Jakarta root:
+
+```shell
+mvn clean verify -Ptests,transaction-mysql
+```
+
+The profile is explicit because these tests start MySQL containers. Tests use the same pinned
+MySQL image as the recorded core revision. Check the test reports for skipped tests when Docker
+is unavailable.

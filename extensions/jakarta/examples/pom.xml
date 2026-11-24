@@ -37,5 +37,6 @@
         <module>jsonb</module>
         <module>dbclient-jsonp</module>
         <module>jsonb-declarative</module>
+        <module>transaction-narayana</module>
     </modules>
 </project>

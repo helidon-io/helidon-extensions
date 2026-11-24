@@ -1,10 +1,12 @@
-# Jakarta JSON integrations
+# Jakarta integrations
 
 ## Overview
 
-The Jakarta extension provides JSON-P HTTP media, JSON-B HTTP media, and DBClient JSON-P mapping for Helidon 28.
+The Jakarta extension provides JSON-P HTTP media, JSON-B HTTP media, DBClient JSON-P mapping, and JTA/Narayana
+transaction integrations for Helidon 28.
 Its modules share one extension version and release cycle, while applications select only the integrations they use.
 The JSON modules do not depend on persistence or transaction integrations.
+See [JTA and Narayana transactions](transactions.md) for transaction dependencies, migration mappings, and configuration.
 
 This extension supports Helidon 28 only and preserves the repository's Java 27 compiler baseline. The current development
 coordinates use extension version `1.0.0-SNAPSHOT` and Helidon version `28.0.0-SNAPSHOT`. These are development artifacts;
@@ -20,6 +22,8 @@ All extension artifacts use group ID `io.helidon.extensions.jakarta`.
 | `helidon-extensions-jakarta-http-media-jsonp` | Read and write Jakarta JSON-P objects and arrays over HTTP. | `jakarta.json:jakarta.json-api` |
 | `helidon-extensions-jakarta-http-media-jsonb` | Bind Java objects to and from JSON over HTTP. | `jakarta.json.bind:jakarta.json.bind-api` and `jakarta.json:jakarta.json-api` |
 | `helidon-extensions-jakarta-dbclient-jsonp` | Map DBClient rows and parameters to and from `jakarta.json.JsonObject`. | `jakarta.json:jakarta.json-api` |
+| `helidon-extensions-jakarta-transaction-jta` | Connect the Helidon Transaction API to a Jakarta Transactions provider. | `jakarta.transaction:jakarta.transaction-api` |
+| `helidon-extensions-jakarta-transaction-narayana` | Supply the Narayana implementation and the required JTA integration. | `jakarta.transaction:jakarta.transaction-api` |
 
 The Jakarta release root manages dependencies separately from the extension BOM. It imports
 [`jakarta.platform:jakarta.jakartaee-bom:11.0.0`](https://central.sonatype.com/artifact/jakarta.platform/jakarta.jakartaee-bom/11.0.0)
@@ -38,7 +42,7 @@ JSON-B's optional CDI integration does not require adding CDI, Inject, Annotatio
 ordinary JSON consumers. The JSON modules do not add those ancillary APIs.
 
 Applications manage Helidon and third-party dependency versions separately: importing the Jakarta extension BOM manages
-only the three extension modules. The following JSON-P application uses the Helidon application parent, the Jakarta EE 11
+only the extension modules. The following JSON-P application uses the Helidon application parent, the Jakarta EE 11
 specification BOM, and the Jakarta extension BOM:
 
 ```xml
@@ -202,12 +206,13 @@ Generated configuration reference:
 
 ## Examples
 
-The extension owns examples for each selectable integration:
+The extension owns examples demonstrating the selectable integrations:
 
 - [JSON-P imperative client and server](../examples/jsonp/README.md)
 - [JSON-B imperative client and server](../examples/jsonb/README.md)
 - [DBClient JSON-P mapping](../examples/dbclient-jsonp/README.md)
 - [JSON-B declarative greeting server](../examples/jsonb-declarative/README.md)
+- [Narayana transaction completion and rollback](../examples/transaction-narayana/README.md)
 
 Each example declares its own Helidon SE parent, Jakarta EE 11 specification BOM, and Jakarta extension BOM.
 It can be copied outside this repository and built
@@ -221,7 +226,8 @@ its README documents the endpoints and how to stop it.
 The DBClient example inserts a JSON-P object into an embedded H2 database using named SQL parameters and reads the row
 back as JSON. None of the examples requires an external database or container.
 
-Each example selects only its own Jakarta integration module.
+Each example selects its own Jakarta integration. The Narayana example also receives its required sibling JTA
+integration transitively.
 
 When migrating an existing application, inspect its runtime graph with `mvn dependency:tree -Dscope=runtime` and check
 that only the selected extension integrations and their required APIs and implementations are present. A JSON-B

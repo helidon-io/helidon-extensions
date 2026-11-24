@@ -7,8 +7,9 @@ Jakarta EE 11 specification BOM, and Jakarta extension BOM.
 - [JSON-B imperative client and server](jsonb/README.md)
 - [DBClient JSON-P mapping](dbclient-jsonp/README.md)
 - [JSON-B declarative greeting server](jsonb-declarative/README.md)
+- [Narayana transaction completion and rollback](transaction-narayana/README.md)
 
-The imperative HTTP and DBClient examples perform a finite demonstration and exit. The declarative example stays
+The imperative HTTP, DBClient, and transaction examples perform a finite demonstration and exit. The declarative example stays
 running so you can call its endpoints with curl. None needs an external database or container;
 the DBClient example uses an embedded H2 database.
 Use JDK 27 with Maven: set `JAVA_HOME` to that JDK and put its `bin` directory on `PATH`.
