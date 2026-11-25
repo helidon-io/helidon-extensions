@@ -386,6 +386,41 @@ class BrotliStreamTest {
     }
 
     @Test
+    void stopsEncodingAfterUncheckedPartialWrite() {
+        for (boolean sharedCloseFailure : new boolean[] {false, true}) {
+            var failure = new IllegalStateException("partial write");
+            var destination = new OutputStream() {
+                private int bytesAccepted;
+                private int closes;
+
+                @Override
+                public void write(int value) {
+                    if (++bytesAccepted == 2) {
+                        throw failure;
+                    }
+                }
+
+                @Override
+                public void close() {
+                    closes++;
+                    if (sharedCloseFailure) {
+                        throw failure;
+                    }
+                }
+            };
+            var thrown = assertThrows(IllegalStateException.class, () -> {
+                try (var stream = new BrotliOutputStream(destination)) {
+                    stream.write(DATA);
+                    stream.flush();
+                }
+            });
+            assertThat(thrown, sameInstance(failure));
+            assertThat("accepted bytes after cleanup", destination.bytesAccepted, is(2));
+            assertThat("destination close attempts", destination.closes, is(1));
+        }
+    }
+
+    @Test
     void preservesCompressedWriteFailureWhenOuterStreamFlushesOnClose() {
         var failure = new IOException("destination write failed");
         var destination = new FailingOutputStream(failure, null);

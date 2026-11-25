@@ -46,7 +46,7 @@ public final class BrotliOutputStream extends OutputStream {
 
     private boolean closed;
     private boolean writeFailed;
-    private IOException reportedFlushFailure;
+    private Throwable reportedFlushFailure;
 
     /**
      * Create an encoder with the default configuration.
@@ -121,7 +121,11 @@ public final class BrotliOutputStream extends OutputStream {
                 // The destination may already have accepted part of this compressed block.
                 writeFailed = true;
                 reportedFlushFailure = e.getCause();
-                throw reportedFlushFailure;
+                throw e.getCause();
+            } catch (RuntimeException | Error e) {
+                writeFailed = true;
+                reportedFlushFailure = e;
+                throw e;
             }
             input.clear();
         }
@@ -130,7 +134,7 @@ public final class BrotliOutputStream extends OutputStream {
             reportedFlushFailure = null;
         } catch (UncheckedIOException e) {
             reportedFlushFailure = e.getCause();
-            throw reportedFlushFailure;
+            throw e.getCause();
         } catch (IOException e) {
             reportedFlushFailure = e;
             throw e;
@@ -144,7 +148,7 @@ public final class BrotliOutputStream extends OutputStream {
         }
         closed = true;
         // Try-with-resources cannot suppress a cleanup failure on the identical exception from flush.
-        IOException reported = reportedFlushFailure;
+        Throwable reported = reportedFlushFailure;
         reportedFlushFailure = null;
         Throwable finishFailure = null;
         try {
