@@ -81,6 +81,8 @@ The service-loaded provider accepts the same options under `input-stream` and
 `output-stream` in a `content-encodings` entry with `type: br`; for example,
 `input-stream.max-window-bits: 22` and `output-stream.window: 18`. The
 builder's `config(...)` method accepts those properties in the component node.
+Building the HTTP encoding checks the configured quality, windows and cache sizes
+and throws `IllegalArgumentException` if a value is outside the codec's supported range.
 Use `name(...)` to set the instance name, which defaults to `br`; the content
 coding identifier remains `br`. For service-loaded instances, the name
 supplied by the content-encoding context takes precedence over the node's

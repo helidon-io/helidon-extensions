@@ -241,6 +241,68 @@ class BrotliEncodingTest {
     }
 
     @Test
+    void invalidEncoderQualityFailsWhenBuilt() {
+        for (int quality : new int[] {-1, 1}) {
+            var config = Config.just(ConfigSources.create(Map.of("output-stream.quality", Integer.toString(quality))));
+            var outputConfig = BrotliOutputStreamConfig.builder().quality(quality).build();
+            assertThrows(IllegalArgumentException.class,
+                         () -> BrotliEncoding.builder().outputStreamConfig(outputConfig).build(),
+                         "programmatic quality " + quality);
+            assertThrows(IllegalArgumentException.class,
+                         () -> BrotliEncoding.builder().config(config).build(),
+                         "configured quality " + quality);
+        }
+    }
+
+    @Test
+    void invalidEncoderWindowFailsWhenBuilt() {
+        for (int window : new int[] {9, 25}) {
+            var config = Config.just(ConfigSources.create(Map.of("output-stream.window", Integer.toString(window))));
+            var outputConfig = BrotliOutputStreamConfig.builder().window(window).build();
+            assertThrows(IllegalArgumentException.class,
+                         () -> BrotliEncoding.builder().outputStreamConfig(outputConfig).build(),
+                         "programmatic window " + window);
+            assertThrows(IllegalArgumentException.class,
+                         () -> BrotliEncoding.builder().config(config).build(),
+                         "configured window " + window);
+        }
+    }
+
+    @Test
+    void invalidEncoderCacheFailsWhenBuilt() {
+        for (long cacheSize : new long[] {0, 3, 536_870_912, 2_147_483_648L}) {
+            var config = Config.just(ConfigSources.create(Map.of("output-stream.cache-input-size", Long.toString(cacheSize))));
+            var outputConfig = BrotliOutputStreamConfig.builder().cacheInputSize(Size.create(cacheSize)).build();
+            assertThrows(IllegalArgumentException.class,
+                         () -> BrotliEncoding.builder().outputStreamConfig(outputConfig).build(),
+                         "programmatic input cache " + cacheSize);
+            assertThrows(IllegalArgumentException.class,
+                         () -> BrotliEncoding.builder().config(config).build(),
+                         "configured input cache " + cacheSize);
+        }
+    }
+
+    @Test
+    void invalidDecoderCacheFailsWhenBuilt() {
+        for (long cacheSize : new long[] {0, 2_147_483_640L, 2_147_483_648L}) {
+            var config = Config.just(ConfigSources.create(Map.of("input-stream.cache-buffer-size", Long.toString(cacheSize))));
+            var inputConfig = BrotliInputStreamConfig.builder().cacheBufferSize(Size.create(cacheSize)).build();
+            assertThrows(IllegalArgumentException.class,
+                         () -> BrotliEncoding.builder().inputStreamConfig(inputConfig).build(),
+                         "programmatic read cache " + cacheSize);
+            assertThrows(IllegalArgumentException.class,
+                         () -> BrotliEncoding.builder().config(config).build(),
+                         "configured read cache " + cacheSize);
+        }
+    }
+
+    @Test
+    void validStreamBoundsBuildWithoutAllocatingCaches() {
+        assertValidStreamBounds(10, 4, 1);
+        assertValidStreamBounds(24, 536_870_911, Integer.MAX_VALUE - 8);
+    }
+
+    @Test
     void factoriesUseEncodingConfiguration() {
         var inputConfig = BrotliInputStreamConfig.builder().maxWindowBits(10).build();
         var config = BrotliEncodingConfig.builder().name("prototype-brotli").inputStreamConfig(inputConfig).buildPrototype();
@@ -288,5 +350,28 @@ class BrotliEncodingTest {
         try (var input = BrotliEncoding.create().decoder().apply(source)) {
             assertThat(input.read(), is((int) 'm'));
         }
+    }
+
+    private static void assertValidStreamBounds(int window, int outputCache, int inputCache) {
+        var properties = Map.of("input-stream.cache-buffer-size", Integer.toString(inputCache),
+                                "input-stream.max-window-bits", Integer.toString(window),
+                                "output-stream.cache-input-size", Integer.toString(outputCache),
+                                "output-stream.window", Integer.toString(window));
+        var config = Config.just(ConfigSources.create(properties));
+        var configured = BrotliEncoding.builder().config(config).build();
+        assertThat(configured.prototype().inputStreamConfig().cacheBufferSize(), is(Size.create(inputCache)));
+        assertThat(configured.prototype().outputStreamConfig().cacheInputSize(), is(Size.create(outputCache)));
+
+        var inputConfig = BrotliInputStreamConfig.builder()
+                .maxWindowBits(window)
+                .cacheBufferSize(Size.create(inputCache))
+                .build();
+        var outputConfig = BrotliOutputStreamConfig.builder()
+                .window(window)
+                .cacheInputSize(Size.create(outputCache))
+                .build();
+        var programmatic = BrotliEncoding.builder().inputStreamConfig(inputConfig).outputStreamConfig(outputConfig).build();
+        assertThat(programmatic.prototype().inputStreamConfig(), is(inputConfig));
+        assertThat(programmatic.prototype().outputStreamConfig(), is(outputConfig));
     }
 }

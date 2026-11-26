@@ -23,6 +23,7 @@ import java.io.UncheckedIOException;
 import java.util.Objects;
 
 import io.helidon.common.Api;
+import io.helidon.extensions.brotli.internal.StreamConfigValidation;
 
 /**
  * Input stream that decompresses Brotli data without a native library.
@@ -37,7 +38,6 @@ public final class BrotliInputStream extends InputStream {
      */
     public static final BrotliInputStreamConfig DEFAULT_CONFIG = BrotliInputStreamConfig.builder().build();
 
-    private static final int MAX_CACHE_BUFFER_SIZE = Integer.MAX_VALUE - 8;
     private static final int MAX_DICTIONARY_SIZE = 64 * 1024 * 1024;
 
     private final InputStream inputStream;
@@ -72,18 +72,7 @@ public final class BrotliInputStream extends InputStream {
     public BrotliInputStream(InputStream inputStream, BrotliInputStreamConfig config) {
         this.inputStream = Objects.requireNonNull(inputStream, "inputStream");
         this.config = Objects.requireNonNull(config, "config");
-        int cacheBufferSize;
-        try {
-            cacheBufferSize = Math.toIntExact(config.cacheBufferSize().toBytes());
-        } catch (ArithmeticException e) {
-            throw new IllegalArgumentException("Cache buffer size must be between 1 and " + MAX_CACHE_BUFFER_SIZE + " bytes", e);
-        }
-        if (cacheBufferSize <= 0 || cacheBufferSize > MAX_CACHE_BUFFER_SIZE) {
-            throw new IllegalArgumentException("Cache buffer size must be between 1 and " + MAX_CACHE_BUFFER_SIZE + " bytes");
-        }
-        if (config.maxWindowBits() < 10 || config.maxWindowBits() > 24) {
-            throw new IllegalArgumentException("Maximum Brotli window exponent must be between 10 and 24");
-        }
+        int cacheBufferSize = StreamConfigValidation.validateInput(config);
         var chunks = config.dictionaryChunks();
         if (chunks.size() > 15) {
             throw new IllegalArgumentException("At most 15 dictionary chunks are supported");

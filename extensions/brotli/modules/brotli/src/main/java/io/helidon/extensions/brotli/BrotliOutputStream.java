@@ -22,6 +22,7 @@ import java.io.UncheckedIOException;
 import java.util.Objects;
 
 import io.helidon.common.Api;
+import io.helidon.extensions.brotli.internal.StreamConfigValidation;
 
 /**
  * Output stream that compresses data using Brotli without a native library.
@@ -36,9 +37,6 @@ public final class BrotliOutputStream extends OutputStream {
      * Default configuration used by the one-argument constructor.
      */
     public static final BrotliOutputStreamConfig DEFAULT_CONFIG = BrotliOutputStreamConfig.builder().build();
-
-    // The output buffer's unsigned 32-bit bit cursor must not wrap before a full cache is flushed.
-    private static final int MAX_CACHE_INPUT_SIZE = (1 << 29) - 1;
 
     private final OutputStream outputStream;
     private final Encoder encoder;
@@ -66,21 +64,7 @@ public final class BrotliOutputStream extends OutputStream {
     public BrotliOutputStream(OutputStream outputStream, BrotliOutputStreamConfig config) {
         this.outputStream = Objects.requireNonNull(outputStream, "outputStream");
         Objects.requireNonNull(config, "config");
-        if (config.quality() != 0) {
-            throw new IllegalArgumentException("Only Brotli compression quality 0 is supported");
-        }
-        if (config.window() < 10 || config.window() > 24) {
-            throw new IllegalArgumentException("Brotli window must be between 10 and 24");
-        }
-        int cacheInputSize;
-        try {
-            cacheInputSize = Math.toIntExact(config.cacheInputSize().toBytes());
-        } catch (ArithmeticException e) {
-            throw new IllegalArgumentException("Input cache size must be between 4 and " + MAX_CACHE_INPUT_SIZE + " bytes", e);
-        }
-        if (cacheInputSize < 4 || cacheInputSize > MAX_CACHE_INPUT_SIZE) {
-            throw new IllegalArgumentException("Input cache size must be between 4 and " + MAX_CACHE_INPUT_SIZE + " bytes");
-        }
+        int cacheInputSize = StreamConfigValidation.validateOutput(config);
         encoder = new Encoder(outputStream, config.quality(), config.window(), cacheInputSize);
         input = new ByteInput(cacheInputSize);
     }
