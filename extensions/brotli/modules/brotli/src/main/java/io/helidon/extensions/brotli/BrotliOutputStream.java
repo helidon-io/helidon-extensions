@@ -1,0 +1,190 @@
+/*
+ * Copyright (c) 2026 Oracle and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.helidon.extensions.brotli;
+
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.util.Objects;
+
+import io.helidon.common.Api;
+
+/**
+ * Output stream that compresses data using Brotli without a native library.
+ * Closing this stream finishes the Brotli stream and closes the underlying output stream.
+ * If writing compressed bytes to the destination fails, subsequent writes and flushes fail,
+ * and closing the stream only closes the destination.
+ * Only compression quality {@code 0} is currently supported.
+ */
+@Api.Preview
+public final class BrotliOutputStream extends OutputStream {
+    /**
+     * Default configuration used by the one-argument constructor.
+     */
+    public static final BrotliOutputStreamConfig DEFAULT_CONFIG = BrotliOutputStreamConfig.builder().build();
+
+    private final OutputStream outputStream;
+    private final Encoder encoder;
+    private final ByteInput input;
+
+    private boolean closed;
+    private boolean writeFailed;
+    private Throwable reportedFlushFailure;
+
+    /**
+     * Create an encoder with the default configuration.
+     *
+     * @param outputStream destination for Brotli-compressed data
+     */
+    public BrotliOutputStream(OutputStream outputStream) {
+        this(outputStream, DEFAULT_CONFIG);
+    }
+
+    /**
+     * Create an encoder with the provided configuration.
+     *
+     * @param outputStream destination for Brotli-compressed data
+     * @param config encoder configuration
+     */
+    public BrotliOutputStream(OutputStream outputStream, BrotliOutputStreamConfig config) {
+        this.outputStream = Objects.requireNonNull(outputStream, "outputStream");
+        Objects.requireNonNull(config, "config");
+        int cacheInputSize = StreamConfigValidation.validateOutput(config);
+        encoder = new Encoder(outputStream, config.quality(), config.window(), cacheInputSize);
+        input = new ByteInput(cacheInputSize);
+    }
+
+    /**
+     * Validate encoder settings without creating a stream or allocating its buffers.
+     *
+     * @param config encoder configuration
+     * @throws IllegalArgumentException if the quality, window or cache size is unsupported
+     * @throws NullPointerException if the configuration is null
+     */
+    public static void validateConfig(BrotliOutputStreamConfig config) {
+        StreamConfigValidation.validateOutput(Objects.requireNonNull(config, "config"));
+    }
+
+    @Override
+    public void write(int value) throws IOException {
+        ensureOpen();
+        if (input.size() == input.limit()) {
+            drainInput();
+        }
+        input.writeByte(value & 0xFF);
+        reportedFlushFailure = null;
+    }
+
+    @Override
+    public void write(byte[] buffer, int offset, int length) throws IOException {
+        Objects.checkFromIndexSize(offset, length, buffer.length);
+        ensureOpen();
+        while (length > 0) {
+            if (input.size() == input.limit()) {
+                drainInput();
+            }
+            int count = Math.min(length, input.limit() - input.size());
+            input.write(buffer, offset, count);
+            offset += count;
+            length -= count;
+        }
+        reportedFlushFailure = null;
+    }
+
+    @Override
+    public void flush() throws IOException {
+        ensureOpen();
+        if (input.size() > 0) {
+            drainInput();
+        }
+        try {
+            outputStream.flush();
+            reportedFlushFailure = null;
+        } catch (UncheckedIOException e) {
+            reportedFlushFailure = e.getCause();
+            throw e.getCause();
+        } catch (IOException | RuntimeException | Error e) {
+            reportedFlushFailure = e;
+            throw e;
+        }
+    }
+
+    @Override
+    public void close() throws IOException {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        // Try-with-resources cannot suppress a cleanup failure on the identical exception from flush.
+        Throwable reported = reportedFlushFailure;
+        reportedFlushFailure = null;
+        Throwable finishFailure = null;
+        try {
+            if (!writeFailed) {
+                encoder.finish(input);
+            }
+        } catch (UncheckedIOException e) {
+            IOException cause = e.getCause();
+            if (cause != reported) {
+                finishFailure = cause;
+                throw cause;
+            }
+        } catch (RuntimeException | Error e) {
+            if (e != reported) {
+                finishFailure = e;
+                throw e;
+            }
+        } finally {
+            try {
+                outputStream.close();
+            } catch (IOException | RuntimeException | Error e) {
+                Throwable closeFailure = e instanceof UncheckedIOException unchecked ? unchecked.getCause() : e;
+                if (closeFailure != reported && closeFailure != finishFailure) {
+                    if (finishFailure == null) {
+                        throw e;
+                    }
+                    finishFailure.addSuppressed(e);
+                }
+            }
+        }
+    }
+
+    private void drainInput() throws IOException {
+        try {
+            encoder.compress(input);
+        } catch (UncheckedIOException e) {
+            // The destination may already have accepted part of this compressed block.
+            writeFailed = true;
+            reportedFlushFailure = e.getCause();
+            throw e.getCause();
+        } catch (RuntimeException | Error e) {
+            writeFailed = true;
+            reportedFlushFailure = e;
+            throw e;
+        }
+        input.clear();
+    }
+
+    private void ensureOpen() throws IOException {
+        if (closed) {
+            throw new IOException("Brotli output stream is closed");
+        }
+        if (writeFailed) {
+            throw new IOException("Brotli output stream cannot continue after a compression failure");
+        }
+    }
+}
