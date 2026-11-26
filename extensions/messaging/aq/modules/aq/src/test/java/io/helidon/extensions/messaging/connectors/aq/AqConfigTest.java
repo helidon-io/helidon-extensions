@@ -1,0 +1,472 @@
+/*
+ * Copyright (c) 2026 Oracle and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.helidon.extensions.messaging.connectors.aq;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import javax.jms.ConnectionFactory;
+import javax.jms.DeliveryMode;
+import javax.sql.DataSource;
+
+import io.helidon.common.Errors;
+import io.helidon.common.Size;
+import io.helidon.config.Config;
+import io.helidon.config.ConfigSources;
+import io.helidon.messaging.spi.MessagingIncomingConfig;
+import io.helidon.service.registry.ServiceRegistryConfig;
+import io.helidon.service.registry.ServiceRegistryManager;
+
+import org.junit.jupiter.api.Test;
+
+import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.not;
+import static org.hamcrest.CoreMatchers.notNullValue;
+import static org.hamcrest.CoreMatchers.sameInstance;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyZeroInteractions;
+
+class AqConfigTest {
+    @Test
+    void testConstructionDoesNotBorrowSharedDataSourceConnection() {
+        DataSource source = mock(DataSource.class);
+        AqConnector connector = AqConnector.builder()
+                .name("aq")
+                .dataSource(source)
+                .destination("ORDERS")
+                .build();
+
+        assertThat(connector.incoming(incoming()), notNullValue());
+        assertThat(connector.outgoing(outgoing()), notNullValue());
+        verifyZeroInteractions(source);
+    }
+
+    @Test
+    void testEffectiveDefaultsAndChannelOverrides() {
+        AqConnectorConfig defaults = defaults();
+        AqRuntimeConfig incoming = AqRuntimeConfig.incoming(defaults, incoming());
+        assertThat(incoming.destinationType(), is(AqDestinationType.QUEUE));
+        assertThat(incoming.payloadType(), is(AqPayloadType.JMS));
+        assertThat(incoming.transacted(), is(true));
+        assertThat(incoming.allowObjectMessages(), is(false));
+        assertThat(incoming.receiveTimeout(), is(Duration.ofMillis(100)));
+        assertThat(incoming.closeTimeout(), is(Duration.ofSeconds(10)));
+        assertThat(incoming.maxBodyBytes(), is(1_048_576));
+        assertThat(incoming.maxLobCharacters(), is(1_048_576));
+        assertThat(incoming.deliveryMode(), is(DeliveryMode.PERSISTENT));
+        assertThat(incoming.priority(), is(4));
+        assertThat(incoming.timeToLive(), is(Duration.ZERO));
+
+        AqIncomingConfig overrides = AqIncomingConfig.builder(incoming())
+                .destination("CUSTOM_ORDERS")
+                .payloadType(AqPayloadType.ADT)
+                .transacted(false)
+                .receiveTimeout(Duration.ofSeconds(2))
+                .build();
+        AqRuntimeConfig effective = AqRuntimeConfig.incoming(defaults, overrides);
+        assertThat(effective.destination(), is("CUSTOM_ORDERS"));
+        assertThat(effective.payloadType(), is(AqPayloadType.ADT));
+        assertThat(effective.transacted(), is(false));
+        assertThat(effective.receiveTimeout(), is(Duration.ofSeconds(2)));
+    }
+
+    @Test
+    void testChannelResourceSelectionReplacesConnectorSelection() {
+        DataSource source = mock(DataSource.class);
+        ConnectionFactory factory = mock(ConnectionFactory.class);
+        AqConnectorConfig defaults = AqConnectorConfig.builder().name("aq").destination("ORDERS")
+                .dataSource(source)
+                .buildPrototype();
+        AqOutgoingConfig channel = AqOutgoingConfig.builder(outgoing())
+                .connectionFactory(factory)
+                .build();
+
+        AqRuntimeConfig effective = AqRuntimeConfig.outgoing(defaults, channel);
+        assertThat(effective.dataSource(), is(Optional.empty()));
+        assertThat(effective.connectionFactory().orElseThrow(), sameInstance(factory));
+        verifyZeroInteractions(source, factory);
+    }
+
+    @Test
+    void testConfigurationKeysAndSecretRedaction() {
+        Config config = Config.just(ConfigSources.create(Map.ofEntries(
+                Map.entry("destination", "ORDERS"),
+                Map.entry("schema", "AQ_OWNER"),
+                Map.entry("connection.url", "jdbc:oracle:thin:@localhost:1521/FREEPDB1"),
+                Map.entry("connection.username", "user"),
+                Map.entry("connection.password", "secret-password"),
+                Map.entry("payload-type", "XML"),
+                Map.entry("receive-timeout", "PT1S"),
+                Map.entry("close-timeout", "PT4S"),
+                Map.entry("max-body-bytes", "2048"),
+                Map.entry("max-lob-characters", "17"))));
+        AqConnectorConfig defaults = AqConnectorConfig.builder().name("aq").config(config).buildPrototype();
+        AqRuntimeConfig runtime = AqRuntimeConfig.incoming(defaults, incoming());
+
+        assertThat(runtime.schema(), is(Optional.of("AQ_OWNER")));
+        assertThat(runtime.connection().orElseThrow().url(), is("jdbc:oracle:thin:@localhost:1521/FREEPDB1"));
+        assertThat(runtime.connection().orElseThrow().password(), is(Optional.of("secret-password")));
+        assertThat(runtime.payloadType(), is(AqPayloadType.XML));
+        assertThat(runtime.receiveTimeout(), is(Duration.ofSeconds(1)));
+        assertThat(runtime.closeTimeout(), is(Duration.ofSeconds(4)));
+        assertThat(runtime.maxBodyBytes(), is(2048));
+        assertThat(runtime.maxLobCharacters(), is(17));
+        assertThat(defaults.toString(), not(containsString("secret-password")));
+        assertThat(runtime.toString(), not(containsString("secret-password")));
+        assertThat(AqIncomingConfig.builder(incoming()).connection(defaults.connection().orElseThrow()).build().toString(),
+                   not(containsString("secret-password")));
+        assertThat(AqOutgoingConfig.builder(outgoing()).connection(defaults.connection().orElseThrow()).build().toString(),
+                   not(containsString("secret-password")));
+    }
+
+    @Test
+    void connectionUrlIsRequiredAndCredentialsAreLocalToTheConnection() {
+        assertThrows(Errors.ErrorMessagesException.class, () -> AqConnectionConfig.builder().build());
+        assertThrows(NullPointerException.class, () -> AqConnectionConfig.builder().url(null));
+        for (String url : List.of("", " ", "\t\n")) {
+            assertThrows(IllegalArgumentException.class, () -> AqConnectionConfig.builder().url(url).build());
+        }
+        AqConnectionConfig connection = AqConnectionConfig.builder().url("jdbc:oracle:thin:@db").build();
+        assertThat(connection.username(), is(Optional.empty()));
+        assertThat(connection.password(), is(Optional.empty()));
+        assertThrows(Errors.ErrorMessagesException.class,
+                     () -> AqConnectorConfig.builder().connection(config -> config.username("user").password("secret")));
+    }
+
+    @Test
+    void missingSourceIsRejectedAfterInheritance() {
+        AqConnectorConfig defaults = AqConnectorConfig.builder().name("aq").destination("ORDERS").buildPrototype();
+        var failure = assertThrows(IllegalArgumentException.class, () -> AqRuntimeConfig.incoming(defaults, incoming()));
+        assertThat(failure.getMessage(), containsString("connection source"));
+        AqIncomingConfig channel = AqIncomingConfig.builder(incoming()).dataSourceName("channel-db").build();
+        assertThat(AqRuntimeConfig.incoming(defaults, channel).dataSourceName(), is(Optional.of("channel-db")));
+    }
+
+    @Test
+    void namedConnectionSourcesUseHelidonDataStyleKeys() {
+        AqConnectorConfig source = AqConnectorConfig.builder().name("aq").destination("ORDERS")
+                .config(Config.just(ConfigSources.create(Map.of("data-source", "orders-db")))).buildPrototype();
+        assertThat(AqRuntimeConfig.incoming(source, incoming()).dataSourceName(), is(Optional.of("orders-db")));
+        AqOutgoingConfig factory = AqOutgoingConfig.builder(outgoing())
+                .config(Config.just(ConfigSources.create(Map.of("connection-factory", "orders-factory")))).build();
+        AqRuntimeConfig effective = AqRuntimeConfig.outgoing(source, factory);
+        assertThat(effective.dataSourceName(), is(Optional.empty()));
+        assertThat(effective.connectionFactoryName(), is(Optional.of("orders-factory")));
+    }
+
+    @Test
+    void channelConnectionReplacesAllInheritedCredentials() {
+        AqConnectionConfig parent = AqConnectionConfig.builder().url("jdbc:oracle:thin:@parent")
+                .username("parent-user").password("parent-secret").build();
+        AqConnectorConfig defaults = AqConnectorConfig.builder().name("aq").destination("ORDERS")
+                .connection(parent).buildPrototype();
+        assertThat(AqRuntimeConfig.incoming(defaults, incoming()).connection().orElseThrow(), sameInstance(parent));
+
+        AqIncomingConfig channel = AqIncomingConfig.builder(incoming())
+                .connection(connection -> connection.url("jdbc:oracle:thin:@channel")).build();
+        AqConnectionConfig effective = AqRuntimeConfig.incoming(defaults, channel).connection().orElseThrow();
+        assertThat(effective.url(), is("jdbc:oracle:thin:@channel"));
+        assertThat(effective.username(), is(Optional.empty()));
+        assertThat(effective.password(), is(Optional.empty()));
+
+        DataSource source = mock(DataSource.class);
+        AqOutgoingConfig datasource = AqOutgoingConfig.builder(outgoing()).dataSource(source).build();
+        AqRuntimeConfig shared = AqRuntimeConfig.outgoing(defaults, datasource);
+        assertThat(shared.connection(), is(Optional.empty()));
+        assertThat(shared.dataSource().orElseThrow(), sameInstance(source));
+        verifyZeroInteractions(source);
+    }
+
+    @Test
+    void directConnectionConflictsWithOtherSourceModes() {
+        AqConnectionConfig direct = AqConnectionConfig.builder().url("jdbc:oracle:thin:@db").build();
+        for (AqConnectorConfig defaults : List.of(
+                AqConnectorConfig.builder().name("aq").destination("ORDERS").connection(direct)
+                        .dataSourceName("db").buildPrototype(),
+                AqConnectorConfig.builder().name("aq").destination("ORDERS").connection(direct)
+                        .dataSource(mock(DataSource.class)).buildPrototype(),
+                AqConnectorConfig.builder().name("aq").destination("ORDERS").connection(direct)
+                        .connectionFactoryName("factory").buildPrototype(),
+                AqConnectorConfig.builder().name("aq").destination("ORDERS").connection(direct)
+                        .connectionFactory(mock(ConnectionFactory.class)).buildPrototype())) {
+            var failure = assertThrows(IllegalArgumentException.class, () -> AqRuntimeConfig.incoming(defaults, incoming()));
+            assertThat(failure.getMessage(), containsString("mutually exclusive"));
+        }
+        AqOutgoingConfig conflictingChannel = AqOutgoingConfig.builder(outgoing()).connection(direct)
+                .dataSourceName("db").build();
+        assertThrows(IllegalArgumentException.class, () -> AqRuntimeConfig.outgoing(defaults(), conflictingChannel));
+    }
+
+    @Test
+    void binarySizeAndLobCharacterLimitInheritIndependently() {
+        AqConnectorConfig defaults = AqConnectorConfig.builder(defaults())
+                .maxBodyBytes(Size.create(2048)).maxLobCharacters(12).buildPrototype();
+        AqRuntimeConfig inherited = AqRuntimeConfig.incoming(defaults, incoming());
+        assertThat(inherited.maxBodyBytes(), is(2048));
+        assertThat(inherited.maxLobCharacters(), is(12));
+
+        AqRuntimeConfig binaryOverride = AqRuntimeConfig.incoming(defaults,
+                AqIncomingConfig.builder(incoming()).maxBodyBytes(Size.parse("3 KiB")).build());
+        assertThat(binaryOverride.maxBodyBytes(), is(3072));
+        assertThat(binaryOverride.maxLobCharacters(), is(12));
+
+        AqRuntimeConfig characterOverride = AqRuntimeConfig.incoming(defaults,
+                AqIncomingConfig.builder(incoming()).maxLobCharacters(5).build());
+        assertThat(characterOverride.maxBodyBytes(), is(2048));
+        assertThat(characterOverride.maxLobCharacters(), is(5));
+
+        Config config = Config.just(ConfigSources.create(Map.of("destination", "ORDERS", "data-source", "test-db",
+                                                                "max-body-bytes", "1 MiB")));
+        AqConnectorConfig configured = AqConnectorConfig.builder().name("aq").config(config).buildPrototype();
+        assertThat(AqRuntimeConfig.incoming(configured, incoming()).maxBodyBytes(), is(1_048_576));
+    }
+
+    @Test
+    void testProviderDiscoveryUsesConnectorName() {
+        ServiceRegistryManager manager = ServiceRegistryManager.create(ServiceRegistryConfig.builder()
+                .discoverServicesFromServiceLoader(false)
+                .build());
+        try {
+            var connector = manager.registry().get(AqConnectorProvider.class)
+                    .create(Config.just(ConfigSources.create(Map.of("destination", "ORDERS"))), "orders-aq");
+            assertThat(connector.name(), is("orders-aq"));
+            assertThat(connector.type(), is("helidon-aq"));
+        } finally {
+            manager.shutdown();
+        }
+    }
+
+    @Test
+    void testConflictingResourcesAreRejectedBeforeStart() {
+        AqConnector connector = AqConnector.builder()
+                .name("aq")
+                .dataSource(mock(DataSource.class))
+                .connectionFactoryName("factory")
+                .destination("ORDERS")
+                .build();
+        var failure = assertThrows(IllegalArgumentException.class, () -> connector.incoming(incoming()));
+        assertThat(failure.getMessage(), containsString("mutually exclusive"));
+    }
+
+    @Test
+    void testInvalidSubscriptionCombinationsAreRejectedBeforeStart() {
+        List<AqIncomingConfig> invalid = List.of(
+                AqIncomingConfig.builder(incoming()).durable(true).build(),
+                AqIncomingConfig.builder(incoming()).destinationType(AqDestinationType.TOPIC).durable(true).build(),
+                AqIncomingConfig.builder(incoming()).destinationType(AqDestinationType.TOPIC)
+                        .subscriptionName("sub").build(),
+                AqIncomingConfig.builder(incoming()).destinationType(AqDestinationType.TOPIC)
+                        .durable(true).subscriptionName("sub").recipientName("recipient").build(),
+                AqIncomingConfig.builder(incoming()).destinationType(AqDestinationType.TOPIC)
+                        .recipientName("recipient").noLocal(true).build());
+        for (var channel : invalid) {
+            assertThrows(IllegalArgumentException.class, () -> AqRuntimeConfig.incoming(defaults(), channel));
+        }
+        assertThat(AqRuntimeConfig.incoming(defaults(), AqIncomingConfig.builder(incoming())
+                .destinationType(AqDestinationType.TOPIC)
+                .recipientName("recipient")
+                .build()).recipientName(), is(Optional.of("recipient")));
+    }
+
+    @Test
+    void testTimeToLiveRange() {
+        Duration maximum = Duration.ofMillis(Integer.MAX_VALUE);
+        for (Duration ttl : List.of(Duration.ZERO, Duration.ofMillis(1), Duration.ofMillis(500),
+                                    Duration.ofMillis(60_500), maximum)) {
+            var channel = AqOutgoingConfig.builder(outgoing()).timeToLive(ttl).build();
+            assertThat(AqRuntimeConfig.outgoing(defaults(), channel).timeToLive(), is(ttl));
+        }
+        for (Duration ttl : List.of(Duration.ofMillis(-1), Duration.ofNanos(1), maximum.plusMillis(1), Duration.ofDays(50))) {
+            var channel = AqOutgoingConfig.builder(outgoing()).timeToLive(ttl).build();
+            var failure = assertThrows(IllegalArgumentException.class, () -> AqRuntimeConfig.outgoing(defaults(), channel));
+            assertThat(failure.getMessage(), containsString("time-to-live"));
+        }
+    }
+
+    @Test
+    void testInvalidDurationAndProducerOptionsAreRejectedBeforeStart() {
+        assertThrows(IllegalArgumentException.class,
+                     () -> AqRuntimeConfig.incoming(defaults(),
+                             AqIncomingConfig.builder(incoming()).receiveTimeout(Duration.ofNanos(1)).build()));
+        assertThrows(IllegalArgumentException.class,
+                     () -> AqRuntimeConfig.outgoing(defaults(),
+                             AqOutgoingConfig.builder(outgoing()).deliveryMode(3).build()));
+        assertThrows(IllegalArgumentException.class,
+                     () -> AqRuntimeConfig.outgoing(defaults(),
+                             AqOutgoingConfig.builder(outgoing()).priority(10).build()));
+        assertThrows(IllegalArgumentException.class,
+                     () -> AqRuntimeConfig.incoming(defaults(),
+                             AqIncomingConfig.builder(incoming()).maxBodyBytes(Size.ZERO).build()));
+        assertThrows(IllegalArgumentException.class,
+                     () -> AqRuntimeConfig.incoming(defaults(),
+                             AqIncomingConfig.builder(incoming()).maxBodyBytes(Size.create(-1)).build()));
+        assertThrows(IllegalArgumentException.class,
+                     () -> AqRuntimeConfig.incoming(defaults(),
+                             AqIncomingConfig.builder(incoming()).maxBodyBytes(Size.create((long) Integer.MAX_VALUE + 1)).build()));
+        assertThrows(IllegalArgumentException.class,
+                     () -> AqRuntimeConfig.incoming(defaults(),
+                             AqIncomingConfig.builder(incoming()).maxBodyBytes(Size.parse("18446744073709551616")).build()));
+        assertThrows(IllegalArgumentException.class,
+                     () -> AqRuntimeConfig.incoming(defaults(),
+                             AqIncomingConfig.builder(incoming()).maxLobCharacters(0).build()));
+    }
+
+    @Test
+    void testNullResourceIsRejectedByBuilder() {
+        assertThrows(NullPointerException.class, () -> AqConnector.builder().dataSource((DataSource) null));
+        assertThrows(NullPointerException.class,
+                     () -> AqConnector.builder().connectionFactory((ConnectionFactory) null));
+    }
+
+    @Test
+    void testCredentialsMustBeConfiguredTogether() {
+        for (AqConnectionConfig.Builder builder : List.of(AqConnectionConfig.builder().url("jdbc:oracle:thin:@db")
+                                                                 .username("user"),
+                                                         AqConnectionConfig.builder().url("jdbc:oracle:thin:@db")
+                                                                 .password("password"))) {
+            var failure = assertThrows(IllegalArgumentException.class, builder::build);
+            assertThat(failure.getMessage(), containsString("connection.username and connection.password must be configured together"));
+        }
+    }
+
+    @Test
+    void testChannelCanDisableInheritedDurableSubscription() {
+        AqConnector connector = AqConnectorConfig.builder(defaults())
+                .destinationType(AqDestinationType.TOPIC)
+                .durable(true)
+                .subscriptionName("default-subscription")
+                .build();
+        AqIncomingConfig typed = AqIncomingConfig.builder(incoming()).durable(false).build();
+        AqRuntimeConfig runtime = AqRuntimeConfig.incoming(connector.prototype(), typed);
+        assertThat(runtime.durable(), is(false));
+        assertThat(runtime.subscriptionName(), is(Optional.empty()));
+        assertThat(connector.incoming(typed), notNullValue());
+
+        MessagingIncomingConfig configured = MessagingIncomingConfig.builder()
+                .connector("aq")
+                .channelName("orders")
+                .config(Config.just(ConfigSources.create(Map.of("durable", "false"))))
+                .build();
+        assertThat(connector.incoming(configured).orElseThrow(), notNullValue());
+
+        assertThrows(IllegalArgumentException.class,
+                     () -> connector.incoming(AqIncomingConfig.builder(typed).subscriptionName("explicit").build()));
+    }
+
+    @Test
+    void testReconnectDefaultsAndWholePolicyOverride() {
+        AqReconnectConfig defaults = AqRuntimeConfig.incoming(defaults(), incoming()).reconnect();
+        assertThat(defaults.enabled(), is(true));
+        assertThat(defaults.retry().prototype().delay(), is(Duration.ofMillis(100)));
+        assertThat(defaults.retry().prototype().maxDelay(), is(Optional.of(Duration.ofSeconds(30))));
+        assertThat(defaults.retry().prototype().jitterFactor(), is(0.2));
+        assertThat(defaults.retry().prototype().delayFactor(), is(2.0));
+        assertThat(defaults.retry().prototype().calls(), is(Integer.MAX_VALUE));
+        assertThat(defaults.retry().prototype().overallTimeout(), is(Duration.ofDays(365)));
+        assertThat(defaults.connectTimeout(), is(Duration.ofSeconds(10)));
+        assertThat(defaults.waitTimeout(), is(Duration.ofSeconds(30)));
+
+        AqReconnectConfig policy = AqReconnectConfig.builder().enabled(false).waitTimeout(Duration.ofSeconds(3)).build();
+        AqConnectorConfig connector = AqConnectorConfig.builder(defaults()).reconnect(policy).buildPrototype();
+        assertThat(AqRuntimeConfig.incoming(connector, incoming()).reconnect(), sameInstance(policy));
+        AqReconnectConfig override = AqReconnectConfig.builder().waitTimeout(Duration.ofSeconds(2)).build();
+        AqIncomingConfig channel = AqIncomingConfig.builder(incoming()).reconnect(override).build();
+        assertThat(AqRuntimeConfig.incoming(connector, channel).reconnect(), sameInstance(override));
+        assertThat(AqRuntimeConfig.incoming(connector, channel).reconnect().enabled(), is(true));
+    }
+
+    @Test
+    void testReconnectConfigurationKeys() {
+        Config config = Config.just(ConfigSources.create(Map.of(
+                "destination", "ORDERS",
+                "data-source", "test-db",
+                "reconnect.enabled", "false",
+                "reconnect.retry.delay", "PT0.2S",
+                "reconnect.retry.max-delay", "PT2S",
+                "reconnect.retry.jitter-factor", "0.5",
+                "reconnect.retry.calls", "10",
+                "reconnect.retry.overall-timeout", "PT1H",
+                "reconnect.connect-timeout", "PT4S",
+                "reconnect.wait-timeout", "PT3S")));
+        AqReconnectConfig policy = AqRuntimeConfig.incoming(AqConnectorConfig.builder()
+                .name("aq").config(config).buildPrototype(), incoming()).reconnect();
+        assertThat(policy.enabled(), is(false));
+        assertThat(policy.retry().prototype().delay(), is(Duration.ofMillis(200)));
+        assertThat(policy.retry().prototype().maxDelay(), is(Optional.of(Duration.ofSeconds(2))));
+        assertThat(policy.retry().prototype().jitterFactor(), is(0.5));
+        assertThat(policy.retry().prototype().delayFactor(), is(2.0));
+        assertThat(policy.retry().prototype().calls(), is(10));
+        assertThat(policy.retry().prototype().overallTimeout(), is(Duration.ofHours(1)));
+        assertThat(policy.connectTimeout(), is(Duration.ofSeconds(4)));
+        assertThat(policy.waitTimeout(), is(Duration.ofSeconds(3)));
+    }
+
+    @Test
+    void testReconnectRejectsInvalidDurationsAndJitter() {
+        assertThrows(IllegalArgumentException.class,
+                     () -> AqReconnectConfig.builder().retry(retry -> retry.delay(Duration.ofMillis(-1))).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> AqReconnectConfig.builder().connectTimeout(Duration.ofNanos(1)).build());
+        assertThrows(IllegalArgumentException.class,
+                     () -> AqReconnectConfig.builder().waitTimeout(Duration.ofSeconds(-1)).build());
+        for (double jitter : List.of(-0.1, 1.0, 1.1, Double.NaN, Double.POSITIVE_INFINITY)) {
+            assertThrows(IllegalArgumentException.class,
+                         () -> AqReconnectConfig.builder().retry(retry -> retry.jitterFactor(jitter)).build());
+        }
+    }
+
+    @Test
+    void testPartialRetryConfigurationPreservesAqDefaults() {
+        AqReconnectConfig configured = AqReconnectConfig.create(Config.just(ConfigSources.create(Map.of("retry.calls", "7"))));
+        AqReconnectConfig programmatic = AqReconnectConfig.builder()
+                .retry(retry -> retry.from(AqReconnectConfig.create().retry().prototype()).calls(7)).build();
+        for (AqReconnectConfig policy : List.of(configured, programmatic)) {
+            assertThat(policy.retry().prototype().calls(), is(7));
+            assertThat(policy.retry().prototype().overallTimeout(), is(Duration.ofDays(365)));
+            assertThat(policy.retry().prototype().delay(), is(Duration.ofMillis(100)));
+            assertThat(policy.retry().prototype().delayFactor(), is(2.0));
+            assertThat(policy.retry().prototype().jitterFactor(), is(0.2));
+            assertThat(policy.retry().prototype().maxDelay(), is(Optional.of(Duration.ofSeconds(30))));
+        }
+    }
+
+    @Test
+    void testRetryConsumerReplacesPolicyWithFaultToleranceDefaults() {
+        AqReconnectConfig policy = AqReconnectConfig.builder().retry(retry -> retry.calls(7)).build();
+        assertThat(policy.retry().prototype().calls(), is(7));
+        assertThat(policy.retry().prototype().overallTimeout(), is(Duration.ofSeconds(1)));
+        assertThat(policy.retry().prototype().delay(), is(Duration.ofMillis(200)));
+        assertThat(policy.retry().prototype().maxDelay(), is(Optional.empty()));
+    }
+
+    private static AqConnectorConfig defaults() {
+        return AqConnectorConfig.builder().name("aq").destination("ORDERS").dataSourceName("test-db").buildPrototype();
+    }
+
+    private static AqIncomingConfig incoming() {
+        return AqIncomingConfig.builder().connector("aq").channelName("orders").build();
+    }
+
+    private static AqOutgoingConfig outgoing() {
+        return AqOutgoingConfig.builder().connector("aq").channelName("orders").build();
+    }
+}
