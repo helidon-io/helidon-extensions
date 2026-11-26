@@ -284,6 +284,136 @@ class BrotliStreamTest {
     }
 
     @Test
+    void preservesUncheckedFlushFailureAcrossResourceCleanup() {
+        for (boolean failFinalWrite : new boolean[] {false, true}) {
+            for (boolean distinctCloseFailure : new boolean[] {false, true}) {
+                var flushFailure = new IllegalStateException("flush failed");
+                var closeFailure = distinctCloseFailure ? new IllegalArgumentException("close failed") : flushFailure;
+                var destination = new OutputStream() {
+                    private boolean flushed;
+                    private int closes;
+
+                    @Override
+                    public void write(int value) {
+                        if (flushed && failFinalWrite) {
+                            throw flushFailure;
+                        }
+                    }
+
+                    @Override
+                    public void flush() {
+                        flushed = true;
+                        throw flushFailure;
+                    }
+
+                    @Override
+                    public void close() {
+                        closes++;
+                        throw closeFailure;
+                    }
+                };
+                var thrown = assertThrows(IllegalStateException.class, () -> {
+                    try (var output = new BrotliOutputStream(destination)) {
+                        output.write(DATA);
+                        output.flush();
+                    }
+                });
+                assertThat(thrown, sameInstance(flushFailure));
+                Throwable[] expectedSuppressed = distinctCloseFailure ? new Throwable[] {closeFailure} : new Throwable[0];
+                assertThat(thrown.getSuppressed(), is(expectedSuppressed));
+                assertThat(destination.closes, is(1));
+            }
+        }
+    }
+
+    @Test
+    void preservesFlushErrorAcrossResourceCleanup() {
+        var failure = new AssertionError("flush failed");
+        var destination = new ByteArrayOutputStream() {
+            private int closes;
+
+            @Override
+            public void flush() {
+                throw failure;
+            }
+
+            @Override
+            public void close() {
+                closes++;
+                throw failure;
+            }
+        };
+        var thrown = assertThrows(AssertionError.class, () -> {
+            try (var output = new BrotliOutputStream(destination)) {
+                output.write(DATA);
+                output.flush();
+            }
+        });
+        assertThat(thrown, sameInstance(failure));
+        assertThat(thrown.getSuppressed().length, is(0));
+        assertThat(destination.closes, is(1));
+    }
+
+    @Test
+    void retriesUncheckedDestinationFlush() throws IOException {
+        var failure = new IllegalStateException("flush failed");
+        var destination = new ByteArrayOutputStream() {
+            private boolean failNextFlush = true;
+
+            @Override
+            public void flush() {
+                if (failNextFlush) {
+                    failNextFlush = false;
+                    throw failure;
+                }
+            }
+        };
+        try (var output = new BrotliOutputStream(destination)) {
+            output.write(DATA);
+            assertThat(assertThrows(IllegalStateException.class, output::flush), sameInstance(failure));
+            output.write(DATA);
+            output.flush();
+        }
+        var expected = new ByteArrayOutputStream();
+        expected.write(DATA);
+        expected.write(DATA);
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(destination.toByteArray()))) {
+            assertThat(input.readAllBytes(), is(expected.toByteArray()));
+        }
+    }
+
+    @Test
+    void reportsUncheckedFinalWriteFailureAfterContinuedOutput() throws IOException {
+        for (boolean retryFlush : new boolean[] {false, true}) {
+            var failure = new IllegalStateException("destination failed");
+            var destination = new OutputStream() {
+                private boolean failNextFlush = true;
+
+                @Override
+                public void flush() {
+                    if (failNextFlush) {
+                        failNextFlush = false;
+                        throw failure;
+                    }
+                }
+
+                @Override
+                public void write(int value) {
+                    throw failure;
+                }
+            };
+            var output = new BrotliOutputStream(destination);
+            assertThat(assertThrows(IllegalStateException.class, output::flush), sameInstance(failure));
+            if (retryFlush) {
+                output.flush();
+            } else {
+                output.write(DATA);
+            }
+            assertThat(assertThrows(IllegalStateException.class, output::close), sameInstance(failure));
+        }
+    }
+
+    @Test
     void preservesSourceFailureAfterHeaderParsingStarts() throws IOException {
         var timeout = new SocketTimeoutException("source timed out");
         var source = new FilterInputStream(new ByteArrayInputStream(INTEROP_DATA)) {

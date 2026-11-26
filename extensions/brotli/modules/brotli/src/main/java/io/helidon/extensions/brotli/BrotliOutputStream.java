@@ -107,7 +107,7 @@ public final class BrotliOutputStream extends OutputStream {
         } catch (UncheckedIOException e) {
             reportedFlushFailure = e.getCause();
             throw e.getCause();
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException | Error e) {
             reportedFlushFailure = e;
             throw e;
         }
@@ -134,8 +134,10 @@ public final class BrotliOutputStream extends OutputStream {
                 throw cause;
             }
         } catch (RuntimeException | Error e) {
-            finishFailure = e;
-            throw e;
+            if (e != reported) {
+                finishFailure = e;
+                throw e;
+            }
         } finally {
             try {
                 outputStream.close();
