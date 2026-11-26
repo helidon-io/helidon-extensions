@@ -89,7 +89,7 @@ public final class BrotliOutputStream extends OutputStream {
     public void write(int value) throws IOException {
         ensureOpen();
         if (input.size() == input.limit()) {
-            flush();
+            drainInput();
         }
         input.writeByte(value & 0xFF);
         reportedFlushFailure = null;
@@ -101,7 +101,7 @@ public final class BrotliOutputStream extends OutputStream {
         ensureOpen();
         while (length > 0) {
             if (input.size() == input.limit()) {
-                flush();
+                drainInput();
             }
             int count = Math.min(length, input.limit() - input.size());
             input.write(buffer, offset, count);
@@ -115,19 +115,7 @@ public final class BrotliOutputStream extends OutputStream {
     public void flush() throws IOException {
         ensureOpen();
         if (input.size() > 0) {
-            try {
-                encoder.compress(input);
-            } catch (UncheckedIOException e) {
-                // The destination may already have accepted part of this compressed block.
-                writeFailed = true;
-                reportedFlushFailure = e.getCause();
-                throw e.getCause();
-            } catch (RuntimeException | Error e) {
-                writeFailed = true;
-                reportedFlushFailure = e;
-                throw e;
-            }
-            input.clear();
+            drainInput();
         }
         try {
             outputStream.flush();
@@ -177,6 +165,22 @@ public final class BrotliOutputStream extends OutputStream {
                 }
             }
         }
+    }
+
+    private void drainInput() throws IOException {
+        try {
+            encoder.compress(input);
+        } catch (UncheckedIOException e) {
+            // The destination may already have accepted part of this compressed block.
+            writeFailed = true;
+            reportedFlushFailure = e.getCause();
+            throw e.getCause();
+        } catch (RuntimeException | Error e) {
+            writeFailed = true;
+            reportedFlushFailure = e;
+            throw e;
+        }
+        input.clear();
     }
 
     private void ensureOpen() throws IOException {

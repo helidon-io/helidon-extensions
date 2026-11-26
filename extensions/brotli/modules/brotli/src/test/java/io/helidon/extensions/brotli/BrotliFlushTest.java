@@ -65,6 +65,16 @@ class BrotliFlushTest {
     }
 
     @Test
+    void bulkWriteAcrossCacheBoundaryDoesNotFlushDestination() throws IOException {
+        assertCacheRollover(false);
+    }
+
+    @Test
+    void singleByteWriteAcrossCacheBoundaryDoesNotFlushDestination() throws IOException {
+        assertCacheRollover(true);
+    }
+
+    @Test
     @DisplayName("RFC 7932 sections 9.2 and 11.2: flushed compressed data is decodable before close")
     void publishesCompressedPayloadBeforeClose() throws IOException {
         assertFlushedPayloads(18, 64_000, new byte[][] {repetitiveData(76)});
@@ -125,6 +135,26 @@ class BrotliFlushTest {
             source.publish(destination.toByteArray());
             source.finish();
             assertThat(input.read(), is(-1));
+        }
+    }
+
+    private static void assertCacheRollover(boolean singleByteWrites) throws IOException {
+        byte[] data = repetitiveData(64_001);
+        var destination = new RecordingOutputStream();
+        try (var output = new BrotliOutputStream(destination)) {
+            if (singleByteWrites) {
+                for (byte value : data) {
+                    output.write(value);
+                }
+            } else {
+                output.write(data);
+            }
+            assertThat(destination.flushCount, is(0));
+            output.flush();
+            assertThat(destination.flushCount, is(1));
+        }
+        try (var input = new BrotliInputStream(new ByteArrayInputStream(destination.toByteArray()))) {
+            assertThat(input.readAllBytes(), is(data));
         }
     }
 
