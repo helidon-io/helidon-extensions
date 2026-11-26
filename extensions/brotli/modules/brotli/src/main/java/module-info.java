@@ -25,5 +25,4 @@ module io.helidon.extensions.brotli {
     requires transitive io.helidon.config;
 
     exports io.helidon.extensions.brotli;
-    exports io.helidon.extensions.brotli.internal to io.helidon.extensions.brotli.http.encoding;
 }

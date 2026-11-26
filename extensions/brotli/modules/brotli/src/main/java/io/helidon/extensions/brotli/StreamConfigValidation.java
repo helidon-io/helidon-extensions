@@ -14,18 +14,14 @@
  * limitations under the License.
  */
 
-package io.helidon.extensions.brotli.internal;
+package io.helidon.extensions.brotli;
 
-import io.helidon.common.Api;
 import io.helidon.common.Size;
-import io.helidon.extensions.brotli.BrotliInputStreamConfig;
-import io.helidon.extensions.brotli.BrotliOutputStreamConfig;
 
 /**
  * Scalar configuration checks shared by the Brotli streams and HTTP encoding.
  */
-@Api.Internal
-public final class StreamConfigValidation {
+final class StreamConfigValidation {
     private static final int MAX_CACHE_BUFFER_SIZE = Integer.MAX_VALUE - 8;
     // The output buffer's unsigned 32-bit bit cursor must not wrap before a full cache is drained.
     private static final int MAX_CACHE_INPUT_SIZE = (1 << 29) - 1;
@@ -39,7 +35,7 @@ public final class StreamConfigValidation {
      * @param config decoder configuration
      * @return the cache buffer size in bytes
      */
-    public static int validateInput(BrotliInputStreamConfig config) {
+    static int validateInput(BrotliInputStreamConfig config) {
         int size = cacheSize(config.cacheBufferSize(), 1, MAX_CACHE_BUFFER_SIZE,
                              "Cache buffer size must be between 1 and " + MAX_CACHE_BUFFER_SIZE + " bytes");
         if (config.maxWindowBits() < 10 || config.maxWindowBits() > 24) {
@@ -54,7 +50,7 @@ public final class StreamConfigValidation {
      * @param config encoder configuration
      * @return the input cache size in bytes
      */
-    public static int validateOutput(BrotliOutputStreamConfig config) {
+    static int validateOutput(BrotliOutputStreamConfig config) {
         if (config.quality() != 0) {
             throw new IllegalArgumentException("Only Brotli compression quality 0 is supported");
         }

@@ -23,7 +23,6 @@ import java.io.UncheckedIOException;
 import java.util.Objects;
 
 import io.helidon.common.Api;
-import io.helidon.extensions.brotli.internal.StreamConfigValidation;
 
 /**
  * Input stream that decompresses Brotli data without a native library.
@@ -74,24 +73,34 @@ public final class BrotliInputStream extends InputStream {
         this.config = Objects.requireNonNull(config, "config");
         int cacheBufferSize = StreamConfigValidation.validateInput(config);
         var chunks = config.dictionaryChunks();
-        if (chunks.size() > 15) {
-            throw new IllegalArgumentException("At most 15 dictionary chunks are supported");
-        }
+        validateChunkCount(chunks.size());
         dictionaryChunks = chunks.toArray(byte[][]::new);
         chunkOffsets = new int[dictionaryChunks.length + 1];
-        long totalSize = 0;
         for (int i = 0; i < dictionaryChunks.length; i++) {
-            totalSize += dictionaryChunks[i].length;
-            if (totalSize > MAX_DICTIONARY_SIZE) {
-                throw new IllegalArgumentException("Combined dictionary size exceeds 64 MiB");
-            }
-            chunkOffsets[i + 1] = (int) totalSize;
+            chunkOffsets[i + 1] = addChunkSize(chunkOffsets[i], dictionaryChunks[i].length);
         }
-        dictionarySize = (int) totalSize;
+        dictionarySize = chunkOffsets[dictionaryChunks.length];
         for (int i = 0; i < dictionaryChunks.length; i++) {
             dictionaryChunks[i] = dictionaryChunks[i].clone();
         }
         buffer = new byte[cacheBufferSize];
+    }
+
+    /**
+     * Validate decoder settings and dictionary limits without allocating stream buffers or copying dictionary data.
+     *
+     * @param config decoder configuration
+     * @throws IllegalArgumentException if the cache size, window, dictionary chunk count or total size is unsupported
+     * @throws NullPointerException if the configuration or a dictionary chunk is null
+     */
+    public static void validateConfig(BrotliInputStreamConfig config) {
+        StreamConfigValidation.validateInput(Objects.requireNonNull(config, "config"));
+        var chunks = config.dictionaryChunks();
+        validateChunkCount(chunks.size());
+        int size = 0;
+        for (byte[] chunk : chunks) {
+            size = addChunkSize(size, chunk.length);
+        }
     }
 
     @Override
@@ -163,6 +172,19 @@ public final class BrotliInputStream extends InputStream {
                 reportedReadFailure = null;
             }
         }
+    }
+
+    private static void validateChunkCount(int count) {
+        if (count > 15) {
+            throw new IllegalArgumentException("At most 15 dictionary chunks are supported");
+        }
+    }
+
+    private static int addChunkSize(int total, int size) {
+        if (size > MAX_DICTIONARY_SIZE - total) {
+            throw new IllegalArgumentException("Combined dictionary size exceeds 64 MiB");
+        }
+        return total + size;
     }
 
     private void ensureOpen() throws IOException {

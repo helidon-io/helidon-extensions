@@ -197,6 +197,7 @@ class BrotliConfigTest {
         }
         var config = Config.just(ConfigSources.create(properties));
         var inputConfig = BrotliInputStreamConfig.builder().config(config).build();
+        assertThrows(IllegalArgumentException.class, () -> BrotliInputStream.validateConfig(inputConfig));
         assertThrows(IllegalArgumentException.class,
                      () -> new BrotliInputStream(new ByteArrayInputStream(COMPRESSED_DATA), inputConfig));
     }

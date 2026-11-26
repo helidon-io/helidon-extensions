@@ -22,7 +22,6 @@ import java.io.UncheckedIOException;
 import java.util.Objects;
 
 import io.helidon.common.Api;
-import io.helidon.extensions.brotli.internal.StreamConfigValidation;
 
 /**
  * Output stream that compresses data using Brotli without a native library.
@@ -67,6 +66,17 @@ public final class BrotliOutputStream extends OutputStream {
         int cacheInputSize = StreamConfigValidation.validateOutput(config);
         encoder = new Encoder(outputStream, config.quality(), config.window(), cacheInputSize);
         input = new ByteInput(cacheInputSize);
+    }
+
+    /**
+     * Validate encoder settings without creating a stream or allocating its buffers.
+     *
+     * @param config encoder configuration
+     * @throws IllegalArgumentException if the quality, window or cache size is unsupported
+     * @throws NullPointerException if the configuration is null
+     */
+    public static void validateConfig(BrotliOutputStreamConfig config) {
+        StreamConfigValidation.validateOutput(Objects.requireNonNull(config, "config"));
     }
 
     @Override

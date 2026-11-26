@@ -26,7 +26,6 @@ import io.helidon.common.Api;
 import io.helidon.extensions.brotli.BrotliInputStream;
 import io.helidon.extensions.brotli.BrotliInputStreamConfig;
 import io.helidon.extensions.brotli.BrotliOutputStream;
-import io.helidon.extensions.brotli.internal.StreamConfigValidation;
 import io.helidon.http.Header;
 import io.helidon.http.HeaderNames;
 import io.helidon.http.HeaderValues;
@@ -55,11 +54,11 @@ public final class BrotliEncoding implements ContentEncoding, RuntimeType.Api<Br
         Objects.requireNonNull(config.name(), "name");
         var inputStreamConfig = Objects.requireNonNull(config.inputStreamConfig(), "inputStreamConfig");
         var outputStreamConfig = Objects.requireNonNull(config.outputStreamConfig(), "outputStreamConfig");
-        StreamConfigValidation.validateInput(inputStreamConfig);
-        StreamConfigValidation.validateOutput(outputStreamConfig);
         if (!inputStreamConfig.dictionaryChunks().isEmpty()) {
             throw new IllegalArgumentException("HTTP br content encoding does not support attached dictionaries");
         }
+        BrotliInputStream.validateConfig(inputStreamConfig);
+        BrotliOutputStream.validateConfig(outputStreamConfig);
     }
 
     /**

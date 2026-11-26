@@ -49,10 +49,12 @@ class BrotliDictionaryTest {
         byte[] chunk = new byte[8 * 1024 * 1024];
         System.arraycopy(DICTIONARY, 0, chunk, chunk.length - DICTIONARY.length, DICTIONARY.length);
         var chunks = new ArrayList<>(Collections.nCopies(8, chunk));
+        BrotliInputStream.validateConfig(BrotliInputStreamConfig.builder().dictionaryChunks(chunks).build());
         assertThat(decode(dictionaryReference(8, 8), chunks, 256, 8192), is(DICTIONARY));
 
         chunks.add(new byte[1]);
         var config = BrotliInputStreamConfig.builder().dictionaryChunks(chunks).build();
+        assertThrows(IllegalArgumentException.class, () -> BrotliInputStream.validateConfig(config));
         assertThrows(IllegalArgumentException.class,
                      () -> new BrotliInputStream(InputStream.nullInputStream(), config));
     }
