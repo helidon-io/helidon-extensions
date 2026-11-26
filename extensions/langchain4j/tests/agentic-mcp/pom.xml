@@ -78,6 +78,15 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>io.helidon.webclient</groupId>
+            <artifactId>helidon-webclient-http2</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.helidon.webserver</groupId>
+            <artifactId>helidon-webserver-http2</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>io.helidon.webserver</groupId>
             <artifactId>helidon-webserver</artifactId>
             <scope>test</scope>
@@ -99,6 +108,17 @@
     </dependencies>
 
     <build>
+        <testResources>
+            <testResource>
+                <directory>src/test/resources</directory>
+            </testResource>
+            <testResource>
+                <directory>${project.basedir}/../../modules/langchain4j/src/test/resources</directory>
+                <includes>
+                    <include>mcp-server.p12</include>
+                </includes>
+            </testResource>
+        </testResources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

@@ -31,6 +31,14 @@
 
     <dependencies>
         <dependency>
+            <groupId>io.helidon.extensions.langchain4j</groupId>
+            <artifactId>helidon-extensions-langchain4j-http-client</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.helidon.webclient</groupId>
+            <artifactId>helidon-webclient</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.helidon.service</groupId>
             <artifactId>helidon-service-registry</artifactId>
         </dependency>
@@ -87,6 +95,16 @@
         <dependency>
             <groupId>io.helidon.metrics</groupId>
             <artifactId>helidon-metrics</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.helidon.webserver</groupId>
+            <artifactId>helidon-webserver</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.helidon.webclient</groupId>
+            <artifactId>helidon-webclient-context</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

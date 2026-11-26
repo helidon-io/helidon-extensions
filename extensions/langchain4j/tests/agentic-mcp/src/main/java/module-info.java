@@ -21,6 +21,7 @@ module io.helidon.extensions.langchain4j.tests.agenticmcp {
     requires langchain4j.agentic;
     requires langchain4j;
     requires io.helidon.extensions.langchain4j;
+    requires io.helidon.webclient.http2;
     requires langchain4j.core;
     requires io.helidon.metrics.api;
     requires io.helidon.extensions.langchain4j.providers.mock;
