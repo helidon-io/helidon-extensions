@@ -17,7 +17,10 @@
 package io.helidon.extensions.messaging.tests.pulsar;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -25,6 +28,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarMessage;
 import io.helidon.extensions.messaging.connectors.pulsar.PulsarSchemaProvider;
+import io.helidon.messaging.BatchDeliveryException;
+import io.helidon.messaging.BatchItemOutcome;
 import io.helidon.messaging.Emitter;
 import io.helidon.messaging.Message;
 import io.helidon.messaging.MessageBatch;
@@ -43,6 +48,7 @@ final class PulsarMessagingTypes {
     static final String REDELIVERY_CHANNEL = "pulsar-redelivery-in";
     static final String FAILED_MAPPING_INCOMING_CHANNEL = "pulsar-failed-mapping-in";
     static final String FAILED_MAPPING_DEAD_LETTER_CHANNEL = "pulsar-failed-mapping-dlq";
+    static final String BATCH_INCOMING_CHANNEL = "pulsar-batch-in";
     static final String JSON_SCHEMA_PROVIDER = "json-orders";
 
     private PulsarMessagingTypes() {
@@ -100,6 +106,97 @@ final class PulsarMessagingTypes {
 
         PulsarMessage<String> awaitMessage(Duration timeout) throws InterruptedException {
             return messages.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }
+    }
+
+    @Service.Singleton
+    static class BatchReceiver {
+        private final BlockingQueue<MessageBatch<String>> batches = new LinkedBlockingQueue<>();
+
+        @Messaging.ReceiveFrom(BATCH_INCOMING_CHANNEL)
+        void receive(MessageBatch<String> batch) {
+            batches.add(batch);
+        }
+
+        MessageBatch<String> awaitBatch(Duration timeout) throws InterruptedException {
+            return batches.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }
+    }
+
+    @Service.Singleton
+    static class BatchPayloadReceiver {
+        private final BlockingQueue<String> payloads = new LinkedBlockingQueue<>();
+
+        @Messaging.ReceiveFrom(BATCH_INCOMING_CHANNEL)
+        void receive(String payload) {
+            payloads.add(payload);
+        }
+
+        String awaitPayload(Duration timeout) throws InterruptedException {
+            return payloads.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }
+    }
+
+    @Service.Singleton
+    static class BatchMessageReceiver {
+        private final BlockingQueue<Message<String>> messages = new LinkedBlockingQueue<>();
+
+        @Messaging.ReceiveFrom(BATCH_INCOMING_CHANNEL)
+        void receive(Message<String> message) {
+            messages.add(message);
+        }
+
+        Message<String> awaitMessage(Duration timeout) throws InterruptedException {
+            return messages.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }
+    }
+
+    @Service.Singleton
+    static class PartialBatchReceiver {
+        private final BlockingQueue<MessageBatch<String>> batches = new LinkedBlockingQueue<>();
+
+        @Messaging.ReceiveFrom(BATCH_INCOMING_CHANNEL)
+        void receive(MessageBatch<String> batch) {
+            batches.add(batch);
+            List<BatchItemOutcome> outcomes = new ArrayList<>();
+            for (int i = 0; i < batch.size(); i++) {
+                outcomes.add("poison".equals(batch.get(i).entity())
+                                     ? BatchItemOutcome.failed(i)
+                                     : BatchItemOutcome.succeeded(i));
+            }
+            throw new BatchDeliveryException("Expected partial Pulsar batch failure",
+                                             new IllegalStateException("Expected poison message failure"),
+                                             batch,
+                                             outcomes);
+        }
+
+        MessageBatch<String> awaitBatch(Duration timeout) throws InterruptedException {
+            return batches.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }
+    }
+
+    @Service.Singleton
+    static class BlockingBatchReceiver {
+        private final BlockingQueue<MessageBatch<String>> batches = new LinkedBlockingQueue<>();
+        private final CountDownLatch release = new CountDownLatch(1);
+
+        @Messaging.ReceiveFrom(BATCH_INCOMING_CHANNEL)
+        void receive(MessageBatch<String> batch) {
+            batches.add(batch);
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Pulsar batch handler interrupted during shutdown", e);
+            }
+        }
+
+        MessageBatch<String> awaitBatch(Duration timeout) throws InterruptedException {
+            return batches.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }
+
+        void release() {
+            release.countDown();
         }
     }
 

@@ -35,6 +35,9 @@ messaging:
       type: helidon-pulsar
       service-url: pulsar://pulsar.example:6650
       schema: STRING
+      batch-receive-max-messages: 100
+      batch-receive-max-bytes: 10 MiB
+      receiver-queue-size: 100
       receive-timeout: PT0.1S
       send-timeout: PT30S
       settlement-timeout: PT30S
@@ -133,10 +136,54 @@ Configure a compatible schema for every producer and consumer of a topic. The co
 types without numeric widening or string coercion. It defensively snapshots mutable built-in values (`byte[]`,
 `ByteBuffer`, and legacy date/time types); custom schema payloads otherwise retain their application-defined mutability.
 
-Incoming buffering defaults to `receiver-queue-size: 1` per topic partition. Pulsar may prefetch that many messages for
-each partition, while the connector acquires only one message after reserving Helidon retained-delivery capacity.
-`max-message-bytes` defaults to 10 MiB and rejects an oversized encoded payload before runtime dispatch.
-`settlement-timeout` bounds how long the connector waits for broker acknowledgment after successful runtime processing.
+Incoming channels use Pulsar's native batch receive. When all messages map successfully, a `MessageBatch` consumer
+receives the native batch in order with its per-message metadata. Payload and `Message` consumers receive each item
+individually. If a message fails mapping and the failure policy drops or dead-letters it, the ordinary handler receives
+only the successfully mapped messages in their original order. For example, dropping an oversized message between
+`a` and `b` leaves a handler batch containing `a` and `b`. The native receive policy determines the original batch
+membership independently of producer batching and outgoing Helidon batch boundaries.
+
+| Incoming option | Default | Meaning |
+| --- | --- | --- |
+| `batch-receive-max-messages` | `100` | Maximum messages requested in one batch |
+| `batch-receive-max-bytes` | `10 MiB` | Encoded size target for one batch, from 1 to 2147483647 bytes |
+| `receive-timeout` | `PT0.1S` | Maximum native wait to accumulate a batch |
+| `receiver-queue-size` | `100` | Per-partition receive queue setting used for Pulsar flow control |
+| `max-message-bytes` | `10485760` | Maximum encoded payload size for each incoming message |
+
+The effective queue size is the smaller of `receiver-queue-size` and the runtime delivery limit. The effective batch
+count is the smaller of that queue size and `batch-receive-max-messages`.
+The connector reserves capacity before acquiring a batch and pauses acquisition while processing and settling it.
+Pulsar uses the effective queue size to request flow permits from the broker. A single producer-batched entry can
+contain more messages than the remaining permits. The client unpacks the entry before applying the batch count limit,
+so even one partition can buffer more logical messages than the effective queue size. For example, with the queue
+and batch count both set to five, a producer entry containing 20 messages can put all 20 in the client queue.
+Each batch delivered to Helidon still contains at most five.
+
+Pulsar asks the broker to refill several queue slots at a time. With a queue and batch count of five, an oversized
+first message can be delivered alone and leave four small messages in the queue. If those four fall below the byte
+threshold, the next batch can wait for `receive-timeout` even with a broker backlog.
+
+To leave room for refills, configure `receiver-queue-size: 7` with `batch-receive-max-messages: 5` and a runtime
+delivery limit of at least seven. The two extra permits allow the next five-message batch to fill while the client
+waits to return receiver permits.
+
+The connector disables native automatic receiver-queue scaling to keep the configured permit limit per partition.
+It overrides `consumer-properties.autoScaledReceiverQueueSizeEnabled`.
+
+A native receive completes when its count or byte threshold is reached, or when `receive-timeout` expires. Sparse
+traffic can wait for this collection window. An idle timeout does not dispatch an empty batch. To receive one message at
+a time, set `batch-receive-max-messages: 1`; this uses the same native receive path and completes when a message is
+available. An explicitly configured `receiver-queue-size: 1` also limits receives to one message. The default queue size
+has increased from one to 100 to permit multi-message batches by default.
+
+Both batch limits must be positive. `receive-timeout` must be positive and fit the supported range of 1 through
+2147483647 milliseconds. Pulsar permits the first message in a batch to exceed `batch-receive-max-bytes`; that option is
+a collection target, not a hard memory limit. `max-message-bytes` independently rejects an oversized encoded payload
+before runtime dispatch. Decoded payloads and client prefetch can require additional memory.
+
+`settlement-timeout` bounds the total wait for broker acknowledgment receipts for one receive batch. It is shared by
+all messages in that batch.
 
 ## Imperative channels
 
@@ -148,6 +195,10 @@ PulsarConnector pulsar = PulsarConnector.builder()
         .name("orders-broker")
         .serviceUrl("pulsar://localhost:6650")
         .schema(PulsarSchemaType.STRING)
+        .batchReceiveMaxMessages(100)
+        .batchReceiveMaxBytes(Size.create(10, Size.Unit.MIB))
+        .receiverQueueSize(100)
+        .receiveTimeout(Duration.ofMillis(100))
         .build();
 
 MessagingChannel<String> incoming = MessagingChannel.create("orders", String.class);
@@ -213,19 +264,28 @@ different subscription name. Multiple application instances that intentionally s
 The connector acknowledges every source message individually and only after runtime delivery, including configured
 retry, drop, or dead-letter handling, has completed successfully. It never uses cumulative acknowledgment, because that
 could acknowledge an earlier message that is still being processed and is not supported by `SHARED` or `KEY_SHARED`
-subscriptions. A terminal processing failure is negatively acknowledged and becomes eligible for broker redelivery
-after `negative-ack-redelivery-delay` while the consumer remains connected. That delay is best-effort on a terminal
-graph failure: closing or losing the consumer can make its unacknowledged message eligible for redelivery sooner.
+subscriptions. On a structured partial failure, successfully settled indexes are acknowledged, while failed,
+unattempted, or indeterminate indexes are negatively acknowledged. A failure without proven per-item outcomes negatively
+acknowledges the complete receive batch. Messages become eligible for broker redelivery after
+`negative-ack-redelivery-delay` while the consumer remains connected. That delay is best-effort on a terminal graph
+failure: closing or losing the consumer can make its unacknowledged messages eligible for redelivery sooner.
+
+All required acknowledgments are submitted before waiting for their receipts under one settlement deadline. If an
+acknowledgment fails or times out, acquisition stops and the consumer closes; uncertain settlement can cause duplicates.
+The connector retains runtime admission until the native messages have been settled or abandoned to redelivery.
 
 If decoding fails, the decoded value is null, or the encoded size exceeds `max-message-bytes`, the connector retains an
 immutable metadata-only envelope without reading or copying the raw payload and submits it through the configured failure
 policy. Its `entity()` method throws `MessagingException`. A same-Pulsar dead-letter route publishes that unavailable
 entity as a native null value while retaining available keys, properties, and source metadata. Other outgoing connector
 types must reject the unavailable entity before reporting transport success.
+Successfully mapped siblings remain unattempted until the failed items are settled by the configured drop or dead-letter
+policy, then the runtime dispatches those siblings normally.
 
 The connector enables broker acknowledgment receipts, disables acknowledgment timeouts, client-side retry/dead-letter
 handling, and pooled messages, and starts the consumer paused until the messaging graph is running. These settlement
-controls remain connector-owned and cannot be overridden through `consumer-properties`.
+controls and the bounded native batch receive policy remain connector-owned and cannot be overridden through
+`consumer-properties`.
 
 Batch-index acknowledgment is disabled by default, matching a stock Pulsar broker. With that default, acknowledged
 messages from one producer-side Pulsar batch can be redelivered until every index in the broker entry is acknowledged;
@@ -256,10 +316,11 @@ Pass-through property maps are treated as confidential configuration and are not
 
 ## Shutdown
 
-Graceful shutdown stops new receives and lets the active retained delivery settle before closing the Pulsar consumer,
-producer, and client. `close-timeout` bounds connector-owned cleanup waits. Forced shutdown interrupts receive and
-delivery waits and closes the active client resources; any source message that was not successfully acknowledged remains
-eligible for redelivery. `PT0S` performs a non-blocking completion check: already-completed closes succeed, while an
+Graceful shutdown stops new receives, interrupts a pending batch receive, and lets the active retained delivery settle
+before closing the Pulsar consumer, producer, and client. A batch returned after acquisition stops is negatively
+acknowledged before dispatch. `close-timeout` bounds connector-owned cleanup waits. Forced shutdown interrupts receive
+and delivery waits and closes the active client resources; any source message that was not successfully acknowledged
+remains eligible for redelivery. `PT0S` performs a non-blocking completion check: already-completed closes succeed, while an
 unfinished close times out and uses the existing forced client-shutdown fallback. Close operations are idempotent, and
 shutdown never deletes the durable subscription.
 

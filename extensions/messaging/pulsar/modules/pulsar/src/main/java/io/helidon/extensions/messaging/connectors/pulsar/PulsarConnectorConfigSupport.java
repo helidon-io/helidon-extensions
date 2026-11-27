@@ -24,7 +24,9 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 import io.helidon.builder.api.Prototype;
+import io.helidon.common.Size;
 
+import org.apache.pulsar.client.api.BatchReceivePolicy;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.ConsumerBuilder;
 import org.apache.pulsar.client.api.ProducerBuilder;
@@ -163,6 +165,9 @@ final class PulsarConnectorConfigSupport {
     @Prototype.Constant
     static final int DEFAULT_MAX_MESSAGE_BYTES = 10 * 1024 * 1024;
 
+    private static final String BATCH_RECEIVE_MAX_MESSAGES_PROPERTY = "batch-receive-max-messages";
+    private static final String BATCH_RECEIVE_MAX_BYTES_PROPERTY = "batch-receive-max-bytes";
+
     private PulsarConnectorConfigSupport() {
     }
 
@@ -178,6 +183,12 @@ final class PulsarConnectorConfigSupport {
                                            PulsarSchemaResolver.ResolvedSchema schema,
                                            int maxDeliveryMessages) throws PulsarClientException {
         int queueSize = Math.min(config.receiverQueueSize(), maxDeliveryMessages);
+        BatchReceivePolicy batchReceivePolicy = BatchReceivePolicy.builder()
+                .maxNumMessages(batchReceiveMaxMessages(config, maxDeliveryMessages))
+                .maxNumBytes(config.batchReceiveMaxBytes())
+                .timeout(receiveTimeoutMillis(config), TimeUnit.MILLISECONDS)
+                .messagesFromMultiTopicsEnabled(true)
+                .build();
         ConsumerBuilder<Object> builder = client.newConsumer(schema.schema())
                 .loadConf(objectProperties(config.consumerProperties()))
                 .topic(config.topic())
@@ -186,6 +197,9 @@ final class PulsarConnectorConfigSupport {
                 .subscriptionMode(SubscriptionMode.Durable)
                 .subscriptionInitialPosition(config.subscriptionInitialPosition().nativePosition())
                 .receiverQueueSize(queueSize)
+                // Native autoscaling can initialize a batch receive queue above receiverQueueSize.
+                .autoScaledReceiverQueueSizeEnabled(false)
+                .batchReceivePolicy(batchReceivePolicy)
                 .negativeAckRedeliveryDelay(durationMillis(config.negativeAckRedeliveryDelay()), TimeUnit.MILLISECONDS)
                 .ackTimeout(0, TimeUnit.MILLISECONDS)
                 .isAckReceiptEnabled(true)
@@ -209,6 +223,10 @@ final class PulsarConnectorConfigSupport {
         return durationMillisInt(config.receiveTimeout(), RECEIVE_TIMEOUT_PROPERTY);
     }
 
+    static int batchReceiveMaxMessages(IncomingSettings config, int maxDeliveryMessages) {
+        return Math.min(config.batchReceiveMaxMessages(), Math.min(config.receiverQueueSize(), maxDeliveryMessages));
+    }
+
     static IncomingSettings incoming(PulsarConnectorConfig common, PulsarIncomingConfig channel) {
         return new IncomingSettings(channel.channelName(),
                                     channel.serviceUrl().orElse(common.serviceUrl()),
@@ -223,6 +241,8 @@ final class PulsarConnectorConfigSupport {
                                     channel.subscriptionInitialPosition().orElse(common.subscriptionInitialPosition()),
                                     channel.batchIndexAcknowledgmentEnabled().orElse(common.batchIndexAcknowledgmentEnabled()),
                                     channel.receiverQueueSize().orElse(common.receiverQueueSize()),
+                                    channel.batchReceiveMaxMessages().orElse(common.batchReceiveMaxMessages()),
+                                    batchBytes(channel.batchReceiveMaxBytes().orElse(common.batchReceiveMaxBytes())),
                                     channel.maxMessageBytes().orElse(common.maxMessageBytes()),
                                     channel.receiveTimeout().orElse(common.receiveTimeout()),
                                     channel.negativeAckRedeliveryDelay().orElse(common.negativeAckRedeliveryDelay()),
@@ -266,6 +286,17 @@ final class PulsarConnectorConfigSupport {
         if (value < 1) {
             throw new IllegalArgumentException(name + " must be greater than zero");
         }
+    }
+
+    private static int batchBytes(Size size) {
+        int bytes;
+        try {
+            bytes = Math.toIntExact(size.toBytes());
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(BATCH_RECEIVE_MAX_BYTES_PROPERTY + " must fit in a signed integer", e);
+        }
+        requirePositive(BATCH_RECEIVE_MAX_BYTES_PROPERTY, bytes);
+        return bytes;
     }
 
     private static void requireReceiveTimeout(Duration timeout) {
@@ -344,6 +375,8 @@ final class PulsarConnectorConfigSupport {
             requireNonNullEntries(CONSUMER_PROPERTIES_PROPERTY, target.consumerProperties());
             requireNonNullEntries(PRODUCER_PROPERTIES_PROPERTY, target.producerProperties());
             requirePositive(RECEIVER_QUEUE_SIZE_PROPERTY, target.receiverQueueSize());
+            requirePositive(BATCH_RECEIVE_MAX_MESSAGES_PROPERTY, target.batchReceiveMaxMessages());
+            batchBytes(target.batchReceiveMaxBytes());
             requirePositive(MAX_MESSAGE_BYTES_PROPERTY, target.maxMessageBytes());
             requireReceiveTimeout(target.receiveTimeout());
             requireSendTimeout(target.sendTimeout());
@@ -367,6 +400,8 @@ final class PulsarConnectorConfigSupport {
             target.clientProperties().ifPresent(values -> requireNonNullEntries(CLIENT_PROPERTIES_PROPERTY, values));
             target.consumerProperties().ifPresent(values -> requireNonNullEntries(CONSUMER_PROPERTIES_PROPERTY, values));
             target.receiverQueueSize().ifPresent(value -> requirePositive(RECEIVER_QUEUE_SIZE_PROPERTY, value));
+            target.batchReceiveMaxMessages().ifPresent(value -> requirePositive(BATCH_RECEIVE_MAX_MESSAGES_PROPERTY, value));
+            target.batchReceiveMaxBytes().ifPresent(PulsarConnectorConfigSupport::batchBytes);
             target.maxMessageBytes().ifPresent(value -> requirePositive(MAX_MESSAGE_BYTES_PROPERTY, value));
             target.receiveTimeout().ifPresent(PulsarConnectorConfigSupport::requireReceiveTimeout);
             target.settlementTimeout().ifPresent(value -> requirePositive(SETTLEMENT_TIMEOUT_PROPERTY, value));
@@ -404,6 +439,8 @@ final class PulsarConnectorConfigSupport {
                             PulsarSubscriptionInitialPosition subscriptionInitialPosition,
                             boolean batchIndexAcknowledgmentEnabled,
                             int receiverQueueSize,
+                            int batchReceiveMaxMessages,
+                            int batchReceiveMaxBytes,
                             int maxMessageBytes,
                             Duration receiveTimeout,
                             Duration negativeAckRedeliveryDelay,

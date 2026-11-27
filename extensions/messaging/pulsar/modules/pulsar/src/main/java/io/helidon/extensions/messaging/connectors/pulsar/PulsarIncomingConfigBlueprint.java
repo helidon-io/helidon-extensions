@@ -23,6 +23,7 @@ import java.util.Optional;
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
 import io.helidon.common.Api;
+import io.helidon.common.Size;
 import io.helidon.messaging.spi.MessagingIncomingConfig;
 
 /**
@@ -110,14 +111,35 @@ interface PulsarIncomingConfigBlueprint extends MessagingIncomingConfig {
     Optional<Boolean> batchIndexAcknowledgmentEnabled();
 
     /**
-     * Maximum Pulsar client receive queue size per topic partition. The runtime delivery limit further bounds each
-     * partition queue, although aggregate client prefetch can exceed that limit for a partitioned topic. The connector
-     * retains and delivers only one message after acquiring a runtime reservation.
+     * Pulsar receive queue size used to request flow permits per topic partition. The runtime delivery limit caps this
+     * setting. Unpacking a producer-batched entry can buffer more logical messages than this size in a single partition.
+     * The connector reserves runtime capacity before acquiring each batch.
      *
      * @return receive queue size
      */
     @Option.Configured(PulsarConnectorConfigSupport.RECEIVER_QUEUE_SIZE_PROPERTY)
     Optional<Integer> receiverQueueSize();
+
+    /**
+     * Maximum number of messages in one native receive batch, bounded by the receiver queue size and runtime delivery
+     * limit. When the effective queue size equals the batch count, a partial batch can leave the next receive waiting
+     * for its timeout despite a backlog. A queue of seven with a runtime limit of at least seven provides refill
+     * headroom for five-message batches. Use one for single-message batches.
+     *
+     * @return maximum batch message count override
+     */
+    @Option.Configured
+    Optional<Integer> batchReceiveMaxMessages();
+
+    /**
+     * Target maximum encoded bytes in one native receive batch. Pulsar permits the first message to exceed this target;
+     * {@link #maxMessageBytes()} independently limits each incoming payload.
+     * Supported values range from one byte to {@link Integer#MAX_VALUE} bytes.
+     *
+     * @return batch byte target override
+     */
+    @Option.Configured
+    Optional<Size> batchReceiveMaxBytes();
 
     /**
      * Maximum incoming payload size copied into one Helidon message.
@@ -128,7 +150,8 @@ interface PulsarIncomingConfigBlueprint extends MessagingIncomingConfig {
     Optional<Integer> maxMessageBytes();
 
     /**
-     * Maximum duration of one incoming receive call.
+     * Maximum wait to accumulate a native receive batch before returning the available messages. A batch can return
+     * earlier when its count or byte target is reached. A message count of one returns when one message is available.
      *
      * @return receive timeout
      */
@@ -144,7 +167,7 @@ interface PulsarIncomingConfigBlueprint extends MessagingIncomingConfig {
     Optional<Duration> negativeAckRedeliveryDelay();
 
     /**
-     * Maximum duration to await a broker-confirmed incoming acknowledgement.
+     * Maximum total duration to await broker-confirmed incoming acknowledgements for one receive batch.
      *
      * @return settlement timeout
      */
